@@ -1,0 +1,9 @@
+(op = 2)
+
+(axiom eqTran ((: aeb (= a b)) (: bec (= b c)))
+ (= a c))
+
+(fun eqTran3(aeb bec ced)
+ (eqTran (eqTran aeb bec) ced))
+
+(eqTran3 (= a b) (= b c) (= c d))

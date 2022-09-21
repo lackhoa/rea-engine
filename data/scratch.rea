@@ -1,0 +1,11 @@
+((: aeb (= a b)) (: bec (= b c)))
+stack: empty
+
+(<- (: aeb (= a b)) (: bec (= b c)))
+stack: StackItem{expression: new; list_index: 0}
+
+((<- : aeb (= a b)) (: bec (= b c)))
+stack: StackItem{expression: new; list_index: 0} StackItem{expression: new; list_index: 0}
+
+((:<- aeb (= a b)) (: bec (= b c)))
+stack: StackItem{expression: new; list_index: 1} StackItem{expression: new; list_index: 0}
