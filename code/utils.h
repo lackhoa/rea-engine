@@ -22,6 +22,7 @@ global_variable b32 globalRunning;
 global_variable s64 globalPerfCountFrequency;
 
 #define assert(claim) if (!(claim)) { __debugbreak(); }
+#define invalidCodePath { __debugbreak(); }
 #define invalidDefaultCase default: { assert(false) };
 
 #define UTILS_H

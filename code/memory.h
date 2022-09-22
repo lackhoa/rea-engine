@@ -13,7 +13,7 @@ zeroSize(void *base, size_t size)
 #define zeroStruct(base, type) zeroSize(base, sizeof(type));
 #define zeroOut(base) zeroSize(base, sizeof(base))
 
-struct Memory_arena
+struct MemoryArena
 {
     size_t cap;
     u8 *base;
@@ -21,7 +21,7 @@ struct Memory_arena
 };
 
 inline void *
-pushSize(Memory_arena *arena, size_t size, b32 zero = false)
+pushSize(MemoryArena *arena, size_t size, b32 zero = false)
 {
     assert((arena->used + size) <= arena->cap);
     void *result = arena->base + arena->used;
@@ -35,10 +35,10 @@ pushSize(Memory_arena *arena, size_t size, b32 zero = false)
 #define pushStructZero(arena, type) (type *) pushSize(arena, sizeof(type), true)
 #define pushArray(arena, count, type) (type *) pushSize(arena, count*sizeof(type))
 
-inline Memory_arena
+inline MemoryArena
 newArena(size_t size, void *base)
 {
-    Memory_arena arena;
+    MemoryArena arena;
     arena.cap = size;
     arena.base = (u8 *)base;
     arena.used = 0;

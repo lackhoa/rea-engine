@@ -17,7 +17,7 @@ struct ArrayListChunk
 struct ArrayList
 {
     // NOTE: We don't know what the count of the whole list is.
-    Memory_arena *arena;
+    MemoryArena *arena;
     s32 item_size;
     s32 chunk_size;
     ArrayListChunk first_chunk;
@@ -72,7 +72,7 @@ advance(ArrayListIterator *it)
 }
 
 inline void
-initializeArrayList(Memory_arena *arena, ArrayList *list, s32 chunk_size, s32 item_size)
+initializeArrayList(MemoryArena *arena, ArrayList *list, s32 chunk_size, s32 item_size)
 {
     list->arena = arena;
     list->item_size = item_size;
@@ -83,7 +83,7 @@ initializeArrayList(Memory_arena *arena, ArrayList *list, s32 chunk_size, s32 it
 }
 
 inline ArrayList *
-allocateArrayList(Memory_arena *arena, s32 chunk_size, s32 item_size)
+allocateArrayList(MemoryArena *arena, s32 chunk_size, s32 item_size)
 {
     ArrayList *list = pushStruct(arena, ArrayList);
     initializeArrayList(arena, list, chunk_size, item_size);
@@ -109,62 +109,19 @@ arrayListAdd_(ArrayList *list, s32 item_size)
     return added;
 }
 
-struct Expression;
-struct ExpressionSlot
-{
-    Expression *expression;
-    ExpressionSlot *next;
-};
-
-struct Expression
-{
-    Expression *op;
-    // TODO: @Memory: Do we want the arg list in the expression always? Most
-    // expressions don't have args.
-    ExpressionSlot args;
-
-    // NOTE: Name is mandatory for  expressions with 0 args.
-    char *name;
-    s32  name_length;
-};
-
 #define arrayListAdd(list, type) (type*) arrayListAdd_(list, sizeof(type))
-
-#if 0
-internal b32
-metaEqual(Expression *a, Expression *b)
-{
-    if (a->op == b->op)
-    {
-        if (operatorArgCount[a->op] == 0)
-        {
-            return (a->name == b->name);
-        }
-        else
-        {
-            for (s32 arg_index = 0;
-                 arg_index < operatorArgCount[a->op];
-                 arg_index++)
-            {
-                if (!metaEqual(a->args[arg_index],
-                               b->args[arg_index]))
-                    return false;
-            }
-            return true;
-        }
-    }
-    else return false;
-}
-#endif
 
 enum TokenType
 {
     // 0-255 reserved for single-char ASCII types.
-    TokenTypeNull = 0,
+    TokenTypeNull_ = 0,
 
     TokenTypeSpace = 256,
     TokenTypeOperator = 257,
     TokenTypeAlphabetical = 258,
+
+    TokenTypeKeywords_ = 259,
+    TokenTypeKeywordOperatorDefinition = 260,
 };
 
 
@@ -176,21 +133,33 @@ struct Token
 };
 
 inline b32
-tokenEqualString(Token *token, const char *string)
+equalToCString(char *chars, s32 length, const char *string)
 {
     b32 result = true;
-    for (s32 i = 0;
-         (i < token->length);
-         i++)
+    if (!chars)
     {
-        if ((string[i] == '\0')
-            || (token->chars[i] != string[i]))
+        result = false;
+    }
+    else
+    {
+        for (s32 i = 0;
+          (i < length);
+          i++)
         {
-            result = false;
-            break;
+            if ((string[i] == '\0') || (chars[i] != string[i]))
+            {
+                result = false;
+                break;
+            }
         }
     }
     return result;
+}
+
+inline b32
+tokenEqualCString(Token *token, const char *string)
+{
+    return equalToCString(token->chars, token->length, string);
 }
 
 inline b32
@@ -218,9 +187,27 @@ newToken(char *first_char, TokenType category)
     return result;
 }
 
+struct Ast;
+struct AstSlot
+{
+    Ast *ast;
+    AstSlot *next;
+};
+
+struct Ast
+{
+    TokenType type;
+    // TODO: No more linked list please!
+    AstSlot args;
+
+    // NOTE: Single-token leaf ast.
+    // TODO: union these up!
+    Token *token;
+};
+
 struct EngineState
 {
-    Memory_arena arena;
+    MemoryArena arena;
 };
 
 internal TokenType
@@ -269,9 +256,9 @@ categorizeCharacter(char character)
     }
 }
 
-struct ExpressionStackItem
+struct AstStackItem
 {
-    Expression *expression;
+    Ast *expression;
 };
 
 inline void
@@ -301,31 +288,98 @@ printCharToBufferRepeat(char *buffer, char c, s32 repeat)
 }
 
 internal void
-printExpression(Expression *expression, s32 indentation)
+printExpression(Ast *ast, s32 indentation)
 {
-    if (expression->op)
+    if (ast->type != 0)
     {
-        printExpression(expression->op, indentation+1);
-        for (ExpressionSlot *arg = &expression->args;
-             arg && arg->expression;
+        for (AstSlot *arg = &ast->args;
+             arg && arg->ast;
              arg = arg->next)
         {
-            printExpression(arg->expression, indentation+1);
+            printExpression(arg->ast, indentation+1);
         }
     }
     else
     {
         char buffer[256];
-        assert(expression->name);
+        assert(ast->token);
         printCharToBufferRepeat(buffer, ' ', 4*indentation);
         platformPrint(buffer);
 
-        printStringToBuffer(buffer, expression->name, expression->name_length);
+        printStringToBuffer(buffer, ast->token->chars, ast->token->length);
         platformPrint(buffer);
 
         sprintf(buffer, "\n");
         platformPrint(buffer);
     }
+}
+
+struct Operator
+{
+    s32  arg_count;
+    char *text;
+    s32  text_length;
+};
+
+struct OperatorChunk
+{
+    s32           count;
+    Operator      items[32];
+    OperatorChunk *next;
+};
+
+struct OperatorPool
+{
+    OperatorChunk first;
+};
+
+internal void
+addOperator(OperatorPool *pool, Ast *expression)
+{
+    assert(expression->type == TokenTypeKeywordOperatorDefinition);
+
+    Ast *arg_count = expression->args.ast;
+    // TODO: Error report: Expected arg count.
+    assert(arg_count);
+    assert(arg_count->token);
+
+    s32 arg_count_parsed = 0;
+    if (tokenEqualCString(arg_count->token, "unary"))
+    {
+        arg_count_parsed = 1;
+    }
+    else if (tokenEqualCString(arg_count->token, "binary"))
+    {
+        arg_count_parsed = 2;
+    }
+    else if (tokenEqualCString(arg_count->token, "ternary"))
+    {
+        arg_count_parsed = 3;
+    }
+    else
+    {
+        // TODO: Error report: Invalid arg count.
+        invalidCodePath;
+    }
+
+    // TODO: Error: Expect operator specifier.
+    assert(expression->args.next);
+    Token *operator_token = expression->args.next->ast->token;
+    assert(operator_token);
+
+    if (pool->first.count == arrayCount(OperatorChunk::items))
+    {
+        OperatorChunk *copy_destination = pushStruct(global_arena, OperatorChunk);
+        *copy_destination = pool->first;
+        copy_destination->next = pool->first.next;
+        pool->first.next = copy_destination;
+        pool->first.count = 0;
+    }
+
+    Operator *op = pool->first.items + pool->first.count++;
+    op->arg_count = arg_count_parsed;
+    op->text = operator_token->chars;
+    op->text_length = operator_token->length;
 }
 
 internal void
@@ -335,19 +389,20 @@ engineTest(EngineMemory *memory)
 
     if (!memory->initialized)
     {
-        Memory_arena init_arena = newArena(memory->storage_size, memory->storage);
+        MemoryArena init_arena = newArena(memory->storage_size, memory->storage);
         EngineState *state = pushStruct(&init_arena, EngineState);
         state->arena = init_arena;
         memory->initialized = true;
     }
 
     EngineState *state = (EngineState *)memory->storage;
-    Memory_arena *arena = &state->arena;
+    MemoryArena *arena = &state->arena;
+    global_arena = arena;
 
     ReadFileResult read = memory->platformReadEntireFile("test.rea");
     if (read.content)
     {
-        TokenType previous_category = (TokenTypeNull);
+        TokenType previous_category = (TokenTypeNull_);
         s32 token_count = 0;
         s32 todo_token_cap = read.content_size / 2;
         Token *tokens = pushArray(arena, todo_token_cap, Token);
@@ -379,30 +434,39 @@ engineTest(EngineMemory *memory)
                     token->length = 0;
                 }
 
-                b32 token_extended = partOfToken(token_type);
-                if (token_extended)
+                b32 extending_previous_token = partOfToken(token_type);
+                if (extending_previous_token)
                 {
                     tokens[token_count-1].length++;
+                }
+                else if (token_count >= 1)
+                {
+                    Token *previous_token = tokens + token_count-1;
+                    if (tokenEqualCString(previous_token, "operator"))
+                    {
+                        previous_token->type = TokenTypeKeywordOperatorDefinition;
+                    }
                 }
 
                 previous_category = token_type;
             }
         }
 
+        s32 todo_expression_chunk_size = 1024;
+        ArrayList *expressions = allocateArrayList(&state->arena, todo_expression_chunk_size, sizeof(Ast));
+        Ast *root_ast = arrayListAdd(expressions, Ast);
         {   // MARK: Parsing
-            s32 todo_expression_chunk_size = 1024;
-            ArrayList *expressions = allocateArrayList(&state->arena, todo_expression_chunk_size, sizeof(Expression));
             if (expressions->last_chunk != &expressions->first_chunk)
             {
                 assert(expressions->first_chunk.next != 0);
             }
-            s32 expression_count = 0;
-            ExpressionStackItem expression_stack[128];
-            Expression *root_expression = arrayListAdd(expressions, Expression);
-            *root_expression = {};
-            root_expression->name = (char *)"<ROOT>";
-            root_expression->name_length = 6;
-            expression_stack[0].expression = root_expression;
+            s32 ast_count = 0;
+            AstStackItem ast_stack[128];
+            *root_ast = {};
+            root_ast->token = pushStruct(arena, Token);
+            root_ast->token->chars = (char *)"<ROOT>";
+            root_ast->token->length = 6;
+            ast_stack[0].expression = root_ast;
             s32 stack_size = 1;
             b32 input_error = false;
             for (s32 token_index = 0;
@@ -424,7 +488,7 @@ engineTest(EngineMemory *memory)
                     if (stack_size > 1)  // NOTE: 0 is root.
                     {
                         stack_size--;
-                        ExpressionStackItem *outer = expression_stack + stack_size-1;
+                        AstStackItem *outer = ast_stack + stack_size-1;
                     }
                     else
                     {
@@ -435,51 +499,63 @@ engineTest(EngineMemory *memory)
                 }
                 else
                 {
-                    Expression *new_expression = pushStructZero(arena, Expression);
-                    ExpressionStackItem *outer = ((stack_size > 0) ?
-                                                  (expression_stack + stack_size-1) : 0);
-                    if ((outer->expression != root_expression) && (outer->expression->op == 0))
-                    {
-                        outer->expression->op = new_expression;
-                    }
+                    Ast *new_expression = pushStructZero(arena, Ast);
+                    AstStackItem *outer = ((stack_size > 0) ?
+                                                  (ast_stack + stack_size-1) : 0);
+                    
+                    if (!outer->expression->args.ast)
+                        outer->expression->args.ast = new_expression;
                     else
                     {
-                        if (!outer->expression->args.expression)
-                            outer->expression->args.expression = new_expression;
-                        else
+                        AstSlot *final_arg = &outer->expression->args;
+                        while (final_arg->next != 0)
                         {
-                            ExpressionSlot *final_arg = &outer->expression->args;
-                            while (final_arg->next != 0)
-                            {
-                                final_arg = final_arg->next;
-                            }
-                            final_arg->next = pushStruct(arena, ExpressionSlot);
-                            final_arg->next->expression = new_expression;
-                            final_arg->next->next = 0;
+                            final_arg = final_arg->next;
                         }
+                        final_arg->next = pushStruct(arena, AstSlot);
+                        final_arg->next->ast = new_expression;
+                        final_arg->next->next = 0;
                     }
+
 
                     if (token->type == '(')
                     {
-                        ExpressionStackItem *new_outer = expression_stack + (stack_size++);
-                        assert(stack_size <= arrayCount(expression_stack));
+                        AstStackItem *new_outer = ast_stack + (stack_size++);
+                        assert(stack_size <= arrayCount(ast_stack));
                         new_outer->expression = new_expression;
+                        new_expression->token = token;
                     }
                     else
                     {
-                        new_expression->name = token->chars;
-                        new_expression->name_length = token->length;
+                        new_expression->token = token;
                     }
                 }
             }
+        }
 
-            {// MARK: Test parsing
-                for (ExpressionSlot *arg = &root_expression->args;
-                     arg && arg->expression;
-                     arg = arg->next)
+        {// MARK: Executing
+            OperatorPool operators = {};
+            for (AstSlot *arg = &root_ast->args;
+                 arg && arg->ast;
+                 arg = arg->next)
+            {
+#if 1
+                printExpression(arg->ast, 0);
+#endif
+
+#if 0
+                Ast *ast = arg->ast;
+                switch (ast->type)
                 {
-                    printExpression(arg->expression, 0);
+                    case TokenTypeKeywordOperatorDefinition:
+                    {
+                        addOperator(&operators, ast);
+                    } break;
+
+                    invalidDefaultCase;
                 }
+#else
+#endif
             }
         }
 

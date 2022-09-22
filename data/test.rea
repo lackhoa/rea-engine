@@ -1,10 +1,8 @@
-binop =
+(operator binary =)
 
-(axiom eqTran ((: aeb (= a b)) (: bec (= b c)))
- (= a c))
+(axiom eqTran ((aeb (= a b)) (bec (= b c))))
 
-(fun eqTran3(aeb bec ced)
+(define eqTran3 (aeb bec ced)
  (eqTran (eqTran aeb bec) ced))
 
-(eqTran3 (= a b) (= b c) (= c d))
-
+; (eqTran3 (a = b) (b = c) (c = d))
