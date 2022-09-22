@@ -1,4 +1,4 @@
-(op = 2)
+binop =
 
 (axiom eqTran ((: aeb (= a b)) (: bec (= b c)))
  (= a c))
@@ -7,3 +7,4 @@
  (eqTran (eqTran aeb bec) ced))
 
 (eqTran3 (= a b) (= b c) (= c d))
+

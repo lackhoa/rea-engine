@@ -3,7 +3,7 @@
 #include "utils.h"
 
 inline void
-zeroSize(void *base, memory_index size)
+zeroSize(void *base, size_t size)
 {
     u8 *ptr = (u8 *) base;
     while(size--)
@@ -15,25 +15,28 @@ zeroSize(void *base, memory_index size)
 
 struct Memory_arena
 {
-    memory_index cap;
+    size_t cap;
     u8 *base;
-    memory_index used;
+    size_t used;
 };
 
 inline void *
-pushSize(Memory_arena *arena, memory_index size)
+pushSize(Memory_arena *arena, size_t size, b32 zero = false)
 {
     assert((arena->used + size) <= arena->cap);
     void *result = arena->base + arena->used;
     arena->used += size;
+    if (zero)
+        zeroSize(result, size);
     return(result);
 }
 
 #define pushStruct(arena, type) (type *) pushSize(arena, sizeof(type))
+#define pushStructZero(arena, type) (type *) pushSize(arena, sizeof(type), true)
 #define pushArray(arena, count, type) (type *) pushSize(arena, count*sizeof(type))
 
 inline Memory_arena
-newArena(memory_index size, void *base)
+newArena(size_t size, void *base)
 {
     Memory_arena arena;
     arena.cap = size;

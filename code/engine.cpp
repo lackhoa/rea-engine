@@ -7,14 +7,6 @@
 
 // TODO: Eventually this will talk to the editor, but let's work in console mode for now.
 
-enum Operator
-{
-    OperatorSymbol,
-    OperatorEquality,
-
-    OperatorCOUNT,
-};
-
 struct ArrayListChunk
 {
     s32  count;
@@ -37,6 +29,7 @@ struct ArrayListIterator
 {
     ArrayList *list;
     ArrayListChunk *chunk;
+    void *current;
     s32 index;
 };
 
@@ -47,12 +40,19 @@ getIterator(ArrayList *list)
     it.list = list;
     it.chunk = &list->first_chunk;
     it.index = 0;
+
+    if (list->first_chunk.count != 0)
+        it.current = list->first_chunk.items;
+    else
+        it.current = 0;
+
     return it;
 }
 
 inline void
 advance(ArrayListIterator *it)
 {
+    void *current = 0;
     if (it->chunk)
     {
         it->index++;
@@ -60,23 +60,16 @@ advance(ArrayListIterator *it)
         {
             it->chunk = it->chunk->next;
             it->index = 0;
+            if ((it->chunk) && (it->chunk->count != 0))
+                it->current = it->chunk->items + 0;
+        }
+        else
+        {
+            current = it->chunk + it->index;
         }
     }
+    it->current = current;
 }
-
-inline void *
-getCurrent_(ArrayListIterator *it, s32 item_size)
-{
-    assert(it->list->item_size == item_size);
-    void *result = 0;
-    if (it->chunk)
-    {
-        result = it->chunk->items + (item_size * it->index);
-    }
-    return result;
-}
-
-#define getCurrent(it, type) (type *) getCurrent_(it, sizeof(type))
 
 inline void
 initializeArrayList(Memory_arena *arena, ArrayList *list, s32 chunk_size, s32 item_size)
@@ -116,26 +109,24 @@ arrayListAdd_(ArrayList *list, s32 item_size)
     return added;
 }
 
+struct Expression;
+struct ExpressionSlot
+{
+    Expression *expression;
+    ExpressionSlot *next;
+};
+
 struct Expression
 {
     Expression *op;
     // TODO: @Memory: Do we want the arg list in the expression always? Most
     // expressions don't have args.
-    ArrayList  args;  // NOTE: Pool of Expression*
+    ExpressionSlot args;
 
-    // NOTE: Mandatory for  expressions with 0 args.
-    char       *name;
-    s32        name_length;
+    // NOTE: Name is mandatory for  expressions with 0 args.
+    char *name;
+    s32  name_length;
 };
-
-inline void
-initializeExpression(Memory_arena *arena, Expression *expression)
-{
-    initializeArrayList(arena, &expression->args, 8, sizeof(Expression*));
-    expression->name = 0;
-    expression->name_length = 0;
-    expression->op = 0;
-}
 
 #define arrayListAdd(list, type) (type*) arrayListAdd_(list, sizeof(type))
 
@@ -166,36 +157,51 @@ metaEqual(Expression *a, Expression *b)
 }
 #endif
 
-enum CharacterCategory
+enum TokenType
 {
-    CharacterCategoryNull,
-    CharacterCategorySpace,
-    CharacterCategoryNewline,
-    CharacterCategorySemicolon,
-    CharacterCategoryGroupBegin,
-    CharacterCategoryGroupEnd,
-    CharacterCategoryOperator,
-    CharacterCategoryAlphabetical,
+    // 0-255 reserved for single-char ASCII types.
+    TokenTypeNull = 0,
 
-    CharacterCategoryCOUNT,
+    TokenTypeSpace = 256,
+    TokenTypeOperator = 257,
+    TokenTypeAlphabetical = 258,
 };
+
 
 struct Token
 {
     char *chars;
     s32 length;
-    CharacterCategory category;  // NOTE: Characters in a token are the same, for now...
+    TokenType type;
 };
 
 inline b32
-partOfToken(CharacterCategory category)
+tokenEqualString(Token *token, const char *string)
+{
+    b32 result = true;
+    for (s32 i = 0;
+         (i < token->length);
+         i++)
+    {
+        if ((string[i] == '\0')
+            || (token->chars[i] != string[i]))
+        {
+            result = false;
+            break;
+        }
+    }
+    return result;
+}
+
+inline b32
+partOfToken(TokenType category)
 {
     switch (category)
     {
-        case CharacterCategoryNull:
-        case CharacterCategorySpace:
-        case CharacterCategoryNewline:
-        case CharacterCategorySemicolon:
+        case 0:
+        case TokenTypeSpace:
+        case '\n':
+        case ';':
             return false;
         default:
             return true;
@@ -203,82 +209,63 @@ partOfToken(CharacterCategory category)
 }
 
 inline Token
-newToken(char *first_char, CharacterCategory category)
+newToken(char *first_char, TokenType category)
 {
     Token result;
     result.chars = first_char;
     result.length = 0;
-    result.category = category;
+    result.type = category;
     return result;
 }
-
-struct TokenPool
-{
-    s32       capacity;
-    s32       count;
-    Token     *tokens;
-    TokenPool *next;
-};
 
 struct EngineState
 {
     Memory_arena arena;
 };
 
-internal CharacterCategory
+internal TokenType
 categorizeCharacter(char character)
 {
-    switch (character)
+    if ((65 <= character) && (character <= 122))
     {
-        case ' ':
+        return TokenTypeAlphabetical;
+    }
+    else
+    {
+        switch (character)
         {
-            return CharacterCategorySpace;
-        } break;
+            case '\t':
+            case ' ':
+            {
+                return TokenTypeSpace;
+            } break;
 
-        case '\n':
-        {
-            return CharacterCategoryNewline;
-        } break;
+            case '.':
+            case '`':
+            case ',':
+            case '/':
+            case '?':
+            case '<':
+            case '>':
+            case '!':
+            case '~':
+            case '@':
+            case '#':
+            case '$':
+            case '^':
+            case '&':
+            case '*':
+            case '-':
+            case '+':
+            case '=':
+            {
+                return TokenTypeOperator;
+            } break;
 
-        case ';':
-        {
-            return CharacterCategorySemicolon;
-        } break;
-
-        // NOTE: We're not gonna reserve brackets or braces
-        case '(':
-        {
-            return CharacterCategoryGroupBegin;
-        } break;
-        case ')':
-        {
-            return CharacterCategoryGroupEnd;
-        } break;
-
-        case '.':
-        case '`':
-        case ',':
-        case '/':
-        case '?':
-        case '<':
-        case '>':
-        case '!':
-        case '~':
-        case '@':
-        case '#':
-        case '$':
-        case '^':
-        case '&':
-        case '*':
-        case '-':
-        case '+':
-        case '=':
-        {
-            return CharacterCategoryOperator;
-        } break;
-
-        default:
-            return CharacterCategoryAlphabetical;
+            default:
+                // NOTE: Self-describing category
+                return (TokenType)character;
+        }
     }
 }
 
@@ -286,15 +273,6 @@ struct ExpressionStackItem
 {
     Expression *expression;
 };
-
-inline void
-addTokenToPool(Memory_arena *arena, ArrayList *token_pool, char *first_char, CharacterCategory category)
-{
-    Token *token = arrayListAdd(token_pool, Token);
-    token->chars = first_char;
-    token->category = category;
-    token->length = 0;
-}
 
 inline void
 printStringToBuffer(char *buffer, char *first_char, s32 count)
@@ -328,19 +306,18 @@ printExpression(Expression *expression, s32 indentation)
     if (expression->op)
     {
         printExpression(expression->op, indentation+1);
-        for (ArrayListIterator arg_it = getIterator(&expression->args);
-             arg_it.chunk;
-             advance(&arg_it))
+        for (ExpressionSlot *arg = &expression->args;
+             arg && arg->expression;
+             arg = arg->next)
         {
-            Expression **arg = getCurrent(&arg_it, Expression *);
-            printExpression(*arg, indentation+1);
+            printExpression(arg->expression, indentation+1);
         }
     }
     else
     {
         char buffer[256];
         assert(expression->name);
-        printCharToBufferRepeat(buffer, ' ', indentation);
+        printCharToBufferRepeat(buffer, ' ', 4*indentation);
         platformPrint(buffer);
 
         printStringToBuffer(buffer, expression->name, expression->name_length);
@@ -368,101 +345,81 @@ engineTest(EngineMemory *memory)
     Memory_arena *arena = &state->arena;
 
     ReadFileResult read = memory->platformReadEntireFile("test.rea");
-    if (read.contents)
+    if (read.content)
     {
-        CharacterCategory previous_category = CharacterCategoryNull;
-        s32 todo_token_pool_size = 1024;
-        ArrayList *token_pool = allocateArrayList(arena, todo_token_pool_size, sizeof(Token));
+        TokenType previous_category = (TokenTypeNull);
+        s32 token_count = 0;
+        s32 todo_token_cap = read.content_size / 2;
+        Token *tokens = pushArray(arena, todo_token_cap, Token);
         b32 being_commented = false;
         // TODO: Unicode support?
         for (s32 content_index = 0;
-             content_index < read.contentsSize;
+             content_index < read.content_size;
              content_index++)
         {   // MARK: tokenizing
-            char *character = &((char *)read.contents)[content_index];
-            CharacterCategory category = categorizeCharacter(*character);
-            if (category == CharacterCategoryNewline)
+            char *character = &((char *)read.content)[content_index];
+            TokenType token_type = categorizeCharacter(*character);
+            if (token_type == TokenTypeSpace)
                 being_commented = false;
 
             if (!being_commented)
             {
-                switch (category)
+                b32 add_token = (((previous_category != token_type)
+                                  || (token_type == '(')
+                                  || (token_type == ')'))
+                                 && (partOfToken(token_type)));
+
+                if (add_token)
                 {
-                    case CharacterCategorySpace:
-                    case CharacterCategoryNewline:
-                    {
-                        // NOTE: space means the next character makes a new token.
-                    } break;
-
-                    case CharacterCategoryGroupBegin:
-                    case CharacterCategoryGroupEnd:
-                    {
-                        addTokenToPool(arena, token_pool, character, category);
-                    } break;
-
-                    case CharacterCategorySemicolon:
-                    {
-                        being_commented = true;
-                    } break;
-
-                    case CharacterCategoryOperator:
-                    {
-                        if (previous_category != CharacterCategoryOperator)
-                        {
-                            addTokenToPool(arena, token_pool, character, category);
-                        }
-                    } break;
-
-                    case CharacterCategoryAlphabetical:
-                    {
-                        if (previous_category != CharacterCategoryAlphabetical)
-                        {
-                            addTokenToPool(arena, token_pool, character, category);
-                        }
-                    } break;
-
-                    invalidDefaultCase;
+                    Token *token = tokens + token_count;
+                    token_count += 1;
+                    token->chars = character;
+                    TokenType token_category;
+                    token->type = token_type;
+                    token->length = 0;
                 }
 
-                if (partOfToken(category))
+                b32 token_extended = partOfToken(token_type);
+                if (token_extended)
                 {
-                    Token *current_token =
-                        (Token *)token_pool->last_chunk->items + (token_pool->last_chunk->count-1);
-                    current_token->length++;
+                    tokens[token_count-1].length++;
                 }
 
-                previous_category = category;
+                previous_category = token_type;
             }
         }
 
         {   // MARK: Parsing
-            s32 todo_expression_pool_size = 1024;
-            ArrayList *expression_pool = allocateArrayList(&state->arena, todo_expression_pool_size, sizeof(Expression));
-            if (expression_pool->last_chunk != &expression_pool->first_chunk)
+            s32 todo_expression_chunk_size = 1024;
+            ArrayList *expressions = allocateArrayList(&state->arena, todo_expression_chunk_size, sizeof(Expression));
+            if (expressions->last_chunk != &expressions->first_chunk)
             {
-                assert(expression_pool->first_chunk.next != 0);
+                assert(expressions->first_chunk.next != 0);
             }
             s32 expression_count = 0;
             ExpressionStackItem expression_stack[128];
-            Expression *root_expression = arrayListAdd(expression_pool, Expression);
-            initializeExpression(arena, root_expression);
+            Expression *root_expression = arrayListAdd(expressions, Expression);
+            *root_expression = {};
             root_expression->name = (char *)"<ROOT>";
             root_expression->name_length = 6;
             expression_stack[0].expression = root_expression;
             s32 stack_size = 1;
             b32 input_error = false;
-            for (ArrayListIterator token_it = getIterator(token_pool);
-                 token_it.chunk && (!input_error);
-                 advance(&token_it))
+            for (s32 token_index = 0;
+                 token_index < token_count;
+                 token_index++)
             {
                 char buffer[256];
-                Token *token = getCurrent(&token_it, Token);
+                Token *token = tokens + token_index;
+
+#if 0
                 printStringToBuffer(buffer, token->chars, token->length);
                 platformPrint(buffer);
                 sprintf(buffer, "\n");
                 platformPrint(buffer);
+#endif
 
-                if (token->category == CharacterCategoryGroupEnd)
+                if (token->type == ')')
                 {
                     if (stack_size > 1)  // NOTE: 0 is root.
                     {
@@ -478,23 +435,31 @@ engineTest(EngineMemory *memory)
                 }
                 else
                 {
-                    Expression *new_expression = arrayListAdd(expression_pool, Expression);
-                    initializeExpression(&state->arena, new_expression);
-                    ExpressionStackItem *outer = ((stack_size > 0) ? (expression_stack + stack_size-1) : 0);
-                    if (outer)
+                    Expression *new_expression = pushStructZero(arena, Expression);
+                    ExpressionStackItem *outer = ((stack_size > 0) ?
+                                                  (expression_stack + stack_size-1) : 0);
+                    if ((outer->expression != root_expression) && (outer->expression->op == 0))
                     {
-                        if ((outer->expression != root_expression) && (outer->expression->op == 0))
-                        {
-                            outer->expression->op = new_expression;
-                        }
+                        outer->expression->op = new_expression;
+                    }
+                    else
+                    {
+                        if (!outer->expression->args.expression)
+                            outer->expression->args.expression = new_expression;
                         else
                         {
-                            Expression **arg = arrayListAdd(&outer->expression->args, Expression*);
-                            *arg = new_expression;
+                            ExpressionSlot *final_arg = &outer->expression->args;
+                            while (final_arg->next != 0)
+                            {
+                                final_arg = final_arg->next;
+                            }
+                            final_arg->next = pushStruct(arena, ExpressionSlot);
+                            final_arg->next->expression = new_expression;
+                            final_arg->next->next = 0;
                         }
                     }
 
-                    if (token->category == CharacterCategoryGroupBegin)
+                    if (token->type == '(')
                     {
                         ExpressionStackItem *new_outer = expression_stack + (stack_size++);
                         assert(stack_size <= arrayCount(expression_stack));
@@ -509,18 +474,17 @@ engineTest(EngineMemory *memory)
             }
 
             {// MARK: Test parsing
-                for (ArrayListIterator expression_it = getIterator(&root_expression->args);
-                     expression_it.chunk;
-                     advance(&expression_it))
+                for (ExpressionSlot *arg = &root_expression->args;
+                     arg && arg->expression;
+                     arg = arg->next)
                 {
-                    Expression **expression = getCurrent(&expression_it, Expression*);
-                    printExpression(*expression, 0);
+                    printExpression(arg->expression, 0);
                 }
             }
         }
 
         // TODO: Only free when we have edits;
-        memory->platformFreeFileMemory(read.contents);
+        memory->platformFreeFileMemory(read.content);
     }
     else
     {

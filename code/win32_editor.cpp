@@ -82,18 +82,18 @@ platformReadEntireFile(const char *file_name)
         if (GetFileSizeEx(fileHandle, &fileSize))
         {
             u32 fileSize32 = SafeTruncateUInt64((u64)fileSize.QuadPart);
-            result.contents = VirtualAlloc(0, fileSize32, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
-            if (result.contents)
+            result.content = VirtualAlloc(0, fileSize32, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
+            if (result.content)
             {
                 DWORD bytesRead;
-                if (ReadFile(fileHandle, result.contents, fileSize32, &bytesRead, 0)
+                if (ReadFile(fileHandle, result.content, fileSize32, &bytesRead, 0)
                     && (fileSize32 == bytesRead))
                 {
                     // File read successfully
-                    result.contentsSize = fileSize32;
+                    result.content_size = fileSize32;
                 }
                 else
-                    platformFreeFileMemory(result.contents);
+                    platformFreeFileMemory(result.content);
             }
             else
             {

@@ -10,7 +10,6 @@ typedef unsigned long u64;
 typedef float r32;
 typedef char u8;
 typedef unsigned int u32;
-typedef u64 memory_index;
 
 #define kiloBytes(value) ((value)*1024LL)
 #define megaBytes(value) (kiloBytes(value)*1024LL)
