@@ -1,5 +1,5 @@
 operator binary =
-axiom eqTran ((aeb: a = b) (bec: b = c))
+; axiom eqTran ((aeb: a = b) (bec: b = c))
 
 ; defun eqTran3 (aeb bec ced)
 ; eqTran(eqTran(aeb bec) ced)

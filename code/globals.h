@@ -5,6 +5,8 @@
 
 PlatformPrint *platformPrint;
 MemoryArena *global_arena;
+PlatformReadEntireFile *platformReadEntireFile;
+PlatformFreeFileMemory *platformFreeFileMemory;
 
 #define GLOBALS_H
 #endif

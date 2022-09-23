@@ -1,4 +1,6 @@
 CompileFlags:
   Compiler: clang
   Add:
+    - -xc++
     - -Wno-switch
+    - -DReaWindows

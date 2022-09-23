@@ -2,8 +2,7 @@
 #include "engine.cpp"
 #include "platform.h"
 
-#include <winsock2.h>
-#include <dwrite.h>
+#include <windows.h>
 
 struct win32_offscreen_buffer
 {
@@ -64,14 +63,14 @@ SafeTruncateUInt64(u64 Value)
 }
 
 inline void
-platformFreeFileMemory(void *memory)
+win32FreeFileMemory(void *memory)
 {
     if (memory)
         VirtualFree(memory, 0, MEM_RELEASE);
 }
 
 inline ReadFileResult
-platformReadEntireFile(const char *file_name)
+win32ReadEntireFile(const char *file_name)
 {
     ReadFileResult result = {};
 
@@ -236,16 +235,15 @@ WinMain(HINSTANCE instance,
         int       show_code)
 {
     EngineMemory engine_memory;
-    engine_memory.platformReadEntireFile = &platformReadEntireFile;
-    engine_memory.platformFreeFileMemory = &platformFreeFileMemory;
+    engine_memory.platformReadEntireFile = &win32ReadEntireFile;
+    engine_memory.platformFreeFileMemory = &win32FreeFileMemory;
     engine_memory.platformPrint = &OutputDebugStringA;
     LPVOID base_address = 0;
     engine_memory.storage_size = megaBytes(256);
     engine_memory.storage = VirtualAlloc(base_address, engine_memory.storage_size,
                                          MEM_RESERVE|MEM_COMMIT,
                                          PAGE_READWRITE);
-    engine_memory.initialized = false;
-    engineTest(&engine_memory);
+    engineMain(&engine_memory);
 
     (void)prev_instance; (void)cmd_line; (void)show_code;
     WNDCLASSA window_class = {};

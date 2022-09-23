@@ -14,11 +14,10 @@ typedef void PlatformPrint(const char *string);
 
 struct EngineMemory
 {
-    b32 initialized;
     PlatformReadEntireFile *platformReadEntireFile;
     PlatformFreeFileMemory *platformFreeFileMemory;
     PlatformPrint *platformPrint;
-    void* storage;
+    void* storage;  // IMPORTANT: Required to be cleared to zero at startup.
     size_t storage_size;
 };
 

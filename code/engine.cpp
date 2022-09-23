@@ -2,6 +2,7 @@
 #include "memory.h"
 #include "globals.h"
 #include "platform.h"
+#include "intrinsics.h"
 
 #include <stdio.h>
 
@@ -114,39 +115,44 @@ arrayListAdd_(ArrayList *list, s32 item_size)
 enum TokenType
 {
     // 0-255 reserved for single-char ASCII types.
-    TokenTypeNull_ = 0,
+    TokenTypeNull_           = 0,
 
-    TokenTypeSpace = 256,
-    TokenTypeOperator = 257,
-    TokenTypeAlphabetical = 258,
+    TokenTypeSpace           = 256,
+    TokenTypeOperator        = 257,
+    TokenTypeAlphabetical    = 258,
 
-    TokenTypeKeywords_ = 259,
-    TokenTypeKeywordOperatorDefinition = 260,
+    TokenTypeKeywords_       = 259,
+    TokenTypeKeywordOperator = 260,
+    TokenTypeKeywordAxiom    = 261,
 };
 
-
-struct Token
+struct String
 {
     char *chars;
     s32 length;
+};
+
+struct Token
+{
+    String text;
     TokenType type;
 };
 
 inline b32
-equalToCString(char *chars, s32 length, const char *string)
+equalToCString(String s, const char *string)
 {
     b32 result = true;
-    if (!chars)
+    if (!s.chars)
     {
         result = false;
     }
     else
     {
         for (s32 i = 0;
-          (i < length);
+          (i < s.length);
           i++)
         {
-            if ((string[i] == '\0') || (chars[i] != string[i]))
+            if ((string[i] == '\0') || (s.chars[i] != string[i]))
             {
                 result = false;
                 break;
@@ -159,7 +165,7 @@ equalToCString(char *chars, s32 length, const char *string)
 inline b32
 tokenEqualCString(Token *token, const char *string)
 {
-    return equalToCString(token->chars, token->length, string);
+    return equalToCString(token->text, string);
 }
 
 inline b32
@@ -181,8 +187,7 @@ inline Token
 newToken(char *first_char, TokenType category)
 {
     Token result;
-    result.chars = first_char;
-    result.length = 0;
+    result.text = {first_char, 0};
     result.type = category;
     return result;
 }
@@ -271,17 +276,17 @@ struct AstStackItem
 };
 
 inline void
-printStringToBuffer(char *buffer, char *first_char, s32 count)
+printStringToBuffer(char *buffer, String s)
 {
-    char *c = first_char;
+    char *c = s.chars;
     for (s32 index = 0 ;
-         index < count;
+         index < s.length;
          index++)
     {
         buffer[index] = *c;
         c++;
     }
-    buffer[count] = 0;
+    buffer[s.length] = 0;
 }
 
 inline void
@@ -315,7 +320,7 @@ debugPrintAst(Ast *ast, s32 indentation)
         printCharToBufferRepeat(buffer, ' ', 4*indentation);
         platformPrint(buffer);
 
-        printStringToBuffer(buffer, ast->token->chars, ast->token->length);
+        printStringToBuffer(buffer, ast->token->text);
         platformPrint(buffer);
 
         sprintf(buffer, "\n");
@@ -326,8 +331,7 @@ debugPrintAst(Ast *ast, s32 indentation)
 struct Operator
 {
     s32  arg_count;
-    char *text;
-    s32  text_length;
+    String text;
 };
 
 struct OperatorChunk
@@ -340,6 +344,39 @@ struct OperatorChunk
 struct OperatorPool
 {
     OperatorChunk first;
+};
+
+inline Operator *
+addToPool(OperatorPool *pool)
+{
+    if (pool->first.count == arrayCount(OperatorChunk::items))
+    {
+        OperatorChunk *copy_destination = pushStruct(global_arena, OperatorChunk);
+        *copy_destination               = pool->first;
+        copy_destination->next          = pool->first.next;
+
+        pool->first.next  = copy_destination;
+        pool->first.count = 0;
+    }
+    return (pool->first.items + pool->first.count++);
+}
+
+struct Axiom
+{
+    String name;
+    // TODO: arguments, and return.
+};
+
+struct AxiomChunk
+{
+    s32        count;
+    Axiom      items[32];
+    AxiomChunk *next;
+};
+
+struct AxiomPool
+{
+    AxiomChunk first;
 };
 
 struct AstIterator
@@ -388,8 +425,7 @@ parseOperatorArgCount(AstIterator *it)
     }
     else
     {
-        // TODO: Error report: Invalid arg count.
-        invalidCodePath;
+        todoErrorReport;
     }
 
     advance(it);
@@ -403,51 +439,50 @@ struct EngineState
 };
 
 inline Token *
-parseOperatorToken(AstIterator *it)
+parseToken(AstIterator *it)
 {
-    Token *operator_token = getCurrent(it)->token;
-    if (!operator_token)
+    Ast *op = advance(it);
+    if (op->is_branch)
     {
         todoErrorReport;
     }
-    advance(it);
-    return operator_token;
+    return op->token;
 }
 
 internal void
 parseOperatorDefinition(EngineState *state, AstIterator *it)
 {
-    OperatorPool *pool = &state->operators;
-    s32 arg_count = parseOperatorArgCount(it);
-    Token *operator_token = parseOperatorToken(it);
+    s32 arg_count         = parseOperatorArgCount(it);
+    Token *operator_token = parseToken(it);
 
-    if (pool->first.count == arrayCount(OperatorChunk::items))
-    {
-        OperatorChunk *copy_destination = pushStruct(global_arena, OperatorChunk);
-        *copy_destination = pool->first;
-        copy_destination->next = pool->first.next;
-        pool->first.next = copy_destination;
-        pool->first.count = 0;
-    }
-
-    Operator *op = pool->first.items + pool->first.count++;
+    Operator *op  = addToPool(&state->operators);
     op->arg_count = arg_count;
-    op->text = operator_token->chars;
-    op->text_length = operator_token->length;
+    op->text      = operator_token->text;
+}
+
+internal void
+parseAxiomDefinition(EngineState *state, AstIterator *it)
+{
+    Token *name = parseToken(it);
 }
 
 // NOTE: Main didspatch parse function
 internal void
-parseAst(EngineState *state, AstIterator *it)
+parseAstTopLevel(EngineState *state, AstIterator *it)
 {
     Ast *ast = advance(it);
     if (Token *token = ast->token)
     {
         switch (token->type)
         {
-            case TokenTypeKeywordOperatorDefinition:
+            case TokenTypeKeywordOperator:
             {
                 parseOperatorDefinition(state, it);
+            } break;
+
+            case TokenTypeKeywordAxiom:
+            {
+                parseAxiomDefinition(state, it);
             } break;
 
             default:
@@ -476,17 +511,10 @@ makeLeafAst(Ast *ast, Token *token)
 }
 
 internal void
-engineTest(EngineMemory *memory)
+compile(EngineState *state, const char *input_file)
 {
-    platformPrint = memory->platformPrint;
-
-    MemoryArena arena_ = newArena(memory->storage_size, memory->storage);
-    EngineState *state = pushStruct(&arena_, EngineState);
-    state->arena = arena_;
-    MemoryArena *arena = &state->arena;
-    global_arena = arena;
-
-    ReadFileResult read = memory->platformReadEntireFile("test.rea");
+    MemoryArena *arena = global_arena;
+    ReadFileResult read = platformReadEntireFile(input_file);
     if (read.content)
     {
         TokenType previous_category = (TokenTypeNull_);
@@ -509,41 +537,39 @@ engineTest(EngineMemory *memory)
 
             if (!being_commented)
             {
+                b32 char_is_part_of_token = partOfToken(token_type);
                 b32 add_token = (((previous_category != token_type)
                                   || (token_type == '(')
                                   || (token_type == ')'))
-                                 && (partOfToken(token_type)));
+                                 && char_is_part_of_token);
 
                 if (add_token)
                 {
-                    Token *token = tokens + token_count;
-                    token_count += 1;
-                    token->chars = character;
-                    TokenType token_category;
+                    Token *token = tokens + token_count++;
+                    token->text = {character, 0};
                     token->type = token_type;
-                    token->length = 0;
                 }
 
-                b32 extending_previous_token = partOfToken(token_type);
+                b32 extending_previous_token = char_is_part_of_token;
                 if (extending_previous_token)
                 {
-                    tokens[token_count-1].length++;
+                    tokens[token_count-1].text.length++;
                 }
                 else if (token_count >= 1)
                 {
                     Token *previous_token = tokens + token_count-1;
                     if (tokenEqualCString(previous_token, "operator"))
-                    {
-                        previous_token->type = TokenTypeKeywordOperatorDefinition;
-                    }
+                        previous_token->type = TokenTypeKeywordOperator;
+                    else if (tokenEqualCString(previous_token, "axiom"))
+                        previous_token->type = TokenTypeKeywordAxiom;
                 }
 
                 previous_category = token_type;
             }
         }
 
-        s32 todo_expression_chunk_size = 1024;
-        ArrayList *expressions = allocateArrayList(&state->arena, todo_expression_chunk_size, sizeof(Ast));
+        s32 todo_ast_chunk_size = 1024;
+        ArrayList *expressions = allocateArrayList(&state->arena, todo_ast_chunk_size, sizeof(Ast));
         Ast *root_ast = arrayListAdd(expressions, Ast);
         makeBranchAst(root_ast);
         {   // MARK: Parsing: Dealing with grouping constructs (not keywords), forming AST
@@ -621,21 +647,50 @@ engineTest(EngineMemory *memory)
         }
 
         {// MARK: Executing
-#if 0
+#if 1
             debugPrintAst(root_ast, 0);
 #endif
 
 #if 1
             AstIterator it = getIterator(root_ast->children);
-            parseAst(state, &it);
+            parseAstTopLevel(state, &it);
 #endif
         }
 
         // TODO: Only free when we have edits;
-        memory->platformFreeFileMemory(read.content);
+        platformFreeFileMemory(read.content);
     }
     else
     {
-        printf("Cannot open test input file!\n");
+        todoErrorReport;
     }
+}
+
+internal void
+testCase(EngineState *state)
+{
+    compile(state, "test.rea");
+    assert(state->operators.first.count == 1);
+}
+
+internal EngineState *
+clearEngineState(EngineMemory *memory)
+{
+    zeroMemory(memory->storage, memory->storage_size);
+    MemoryArena arena_ = newArena(memory->storage_size, memory->storage);
+    EngineState *state = pushStruct(&arena_, EngineState);
+    state->arena = arena_;
+    global_arena = &state->arena;
+    return state;
+}
+
+internal void
+engineMain(EngineMemory *memory)
+{
+    platformPrint = memory->platformPrint;
+    platformReadEntireFile = memory->platformReadEntireFile;
+    platformFreeFileMemory = memory->platformFreeFileMemory;
+
+    EngineState *state = clearEngineState(memory);
+    testCase(state);
 }
