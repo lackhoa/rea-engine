@@ -1,8 +1,8 @@
-(operator binary =)
+operator binary =
 
-(axiom eqTran ((aeb (= a b)) (bec (= b c))))
+; axiom eqTran ((aeb: a = b) (bec: b = c))
 
-(define eqTran3 (aeb bec ced)
- (eqTran (eqTran aeb bec) ced))
+; defun eqTran3 (aeb bec ced)
+; eqTran(eqTran(aeb bec) ced)
 
-; (eqTran3 (a = b) (b = c) (c = d))
+; eqTran3((a = b) (b = c) (c = d))

@@ -188,27 +188,36 @@ newToken(char *first_char, TokenType category)
 }
 
 struct Ast;
-struct AstSlot
+struct AstList
 {
     Ast *ast;
-    AstSlot *next;
+    AstList *next;
 };
 
 struct Ast
 {
-    TokenType type;
-    // TODO: No more linked list please!
-    AstSlot args;
-
-    // NOTE: Single-token leaf ast.
-    // TODO: union these up!
-    Token *token;
+    // TODO: Reduce pointer chasing!
+    b32 is_branch;
+    union
+    {
+        struct
+        {
+            // TODO: No more linked list please!
+            AstList *children;
+        };
+        struct
+        {
+            // NOTE: Single-token leaf ast.
+            Token *token;
+        };
+    };
 };
 
-struct EngineState
+inline b32
+astSlotValid(AstList *slot)
 {
-    MemoryArena arena;
-};
+    return (slot->ast != 0);
+}
 
 internal TokenType
 categorizeCharacter(char character)
@@ -258,7 +267,7 @@ categorizeCharacter(char character)
 
 struct AstStackItem
 {
-    Ast *expression;
+    Ast *ast;
 };
 
 inline void
@@ -288,15 +297,15 @@ printCharToBufferRepeat(char *buffer, char c, s32 repeat)
 }
 
 internal void
-printExpression(Ast *ast, s32 indentation)
+debugPrintAst(Ast *ast, s32 indentation)
 {
-    if (ast->type != 0)
+    if (ast->is_branch)
     {
-        for (AstSlot *arg = &ast->args;
-             arg && arg->ast;
-             arg = arg->next)
+        for (AstList *child = ast->children;
+             child && child->ast;
+             child = child->next)
         {
-            printExpression(arg->ast, indentation+1);
+            debugPrintAst(child->ast, indentation+1);
         }
     }
     else
@@ -333,14 +342,35 @@ struct OperatorPool
     OperatorChunk first;
 };
 
-internal void
-addOperator(OperatorPool *pool, Ast *expression)
+struct AstIterator
 {
-    assert(expression->type == TokenTypeKeywordOperatorDefinition);
+    AstList *list;
+};
 
-    Ast *arg_count = expression->args.ast;
-    // TODO: Error report: Expected arg count.
-    assert(arg_count);
+inline AstIterator
+getIterator(AstList *list)
+{
+    return AstIterator{list};
+}
+
+inline Ast *
+getCurrent(AstIterator *it)
+{
+    return it->list->ast;
+}
+
+inline Ast *
+advance(AstIterator *it)
+{
+    Ast *current = getCurrent(it);
+    it->list = it->list->next;
+    return current;
+}
+
+inline s32
+parseOperatorArgCount(AstIterator *it)
+{
+    Ast *arg_count = getCurrent(it);
     assert(arg_count->token);
 
     s32 arg_count_parsed = 0;
@@ -362,10 +392,34 @@ addOperator(OperatorPool *pool, Ast *expression)
         invalidCodePath;
     }
 
-    // TODO: Error: Expect operator specifier.
-    assert(expression->args.next);
-    Token *operator_token = expression->args.next->ast->token;
-    assert(operator_token);
+    advance(it);
+    return arg_count_parsed;
+}
+
+struct EngineState
+{
+    MemoryArena arena;
+    OperatorPool operators;
+};
+
+inline Token *
+parseOperatorToken(AstIterator *it)
+{
+    Token *operator_token = getCurrent(it)->token;
+    if (!operator_token)
+    {
+        todoErrorReport;
+    }
+    advance(it);
+    return operator_token;
+}
+
+internal void
+parseOperatorDefinition(EngineState *state, AstIterator *it)
+{
+    OperatorPool *pool = &state->operators;
+    s32 arg_count = parseOperatorArgCount(it);
+    Token *operator_token = parseOperatorToken(it);
 
     if (pool->first.count == arrayCount(OperatorChunk::items))
     {
@@ -377,9 +431,48 @@ addOperator(OperatorPool *pool, Ast *expression)
     }
 
     Operator *op = pool->first.items + pool->first.count++;
-    op->arg_count = arg_count_parsed;
+    op->arg_count = arg_count;
     op->text = operator_token->chars;
     op->text_length = operator_token->length;
+}
+
+// NOTE: Main didspatch parse function
+internal void
+parseAst(EngineState *state, AstIterator *it)
+{
+    Ast *ast = advance(it);
+    if (Token *token = ast->token)
+    {
+        switch (token->type)
+        {
+            case TokenTypeKeywordOperatorDefinition:
+            {
+                parseOperatorDefinition(state, it);
+            } break;
+
+            default:
+            {
+                todoIncomplete;
+            }
+        }
+    }
+    else
+    {
+        todoIncomplete;
+    }
+}
+
+inline void
+makeBranchAst(Ast *ast)
+{
+    ast->is_branch = true;
+}
+
+inline void
+makeLeafAst(Ast *ast, Token *token)
+{
+    ast->is_branch = false;
+    ast->token = token;
 }
 
 internal void
@@ -387,15 +480,9 @@ engineTest(EngineMemory *memory)
 {
     platformPrint = memory->platformPrint;
 
-    if (!memory->initialized)
-    {
-        MemoryArena init_arena = newArena(memory->storage_size, memory->storage);
-        EngineState *state = pushStruct(&init_arena, EngineState);
-        state->arena = init_arena;
-        memory->initialized = true;
-    }
-
-    EngineState *state = (EngineState *)memory->storage;
+    MemoryArena arena_ = newArena(memory->storage_size, memory->storage);
+    EngineState *state = pushStruct(&arena_, EngineState);
+    state->arena = arena_;
     MemoryArena *arena = &state->arena;
     global_arena = arena;
 
@@ -414,7 +501,10 @@ engineTest(EngineMemory *memory)
         {   // MARK: tokenizing
             char *character = &((char *)read.content)[content_index];
             TokenType token_type = categorizeCharacter(*character);
-            if (token_type == TokenTypeSpace)
+
+            if (token_type == ';')
+                being_commented = true;
+            if (token_type == '\n')
                 being_commented = false;
 
             if (!being_commented)
@@ -455,20 +545,16 @@ engineTest(EngineMemory *memory)
         s32 todo_expression_chunk_size = 1024;
         ArrayList *expressions = allocateArrayList(&state->arena, todo_expression_chunk_size, sizeof(Ast));
         Ast *root_ast = arrayListAdd(expressions, Ast);
-        {   // MARK: Parsing
+        makeBranchAst(root_ast);
+        {   // MARK: Parsing: Dealing with grouping constructs (not keywords), forming AST
             if (expressions->last_chunk != &expressions->first_chunk)
             {
                 assert(expressions->first_chunk.next != 0);
             }
             s32 ast_count = 0;
             AstStackItem ast_stack[128];
-            *root_ast = {};
-            root_ast->token = pushStruct(arena, Token);
-            root_ast->token->chars = (char *)"<ROOT>";
-            root_ast->token->length = 6;
-            ast_stack[0].expression = root_ast;
+            ast_stack[0].ast = root_ast;
             s32 stack_size = 1;
-            b32 input_error = false;
             for (s32 token_index = 0;
                  token_index < token_count;
                  token_index++)
@@ -492,71 +578,57 @@ engineTest(EngineMemory *memory)
                     }
                     else
                     {
-                        sprintf(buffer, "Invalid end-of-expression");
-                        platformPrint(buffer);
-                        input_error = true;
+                        // TODO: Error
+                        assert(0);
                     }
                 }
                 else
                 {
-                    Ast *new_expression = pushStructZero(arena, Ast);
+                    Ast *new_ast = pushStructZero(arena, Ast);
                     AstStackItem *outer = ((stack_size > 0) ?
-                                                  (ast_stack + stack_size-1) : 0);
+                                           (ast_stack + stack_size-1) : 0);
                     
-                    if (!outer->expression->args.ast)
-                        outer->expression->args.ast = new_expression;
+                    AstList  *last_child;
+                    if (outer->ast->children)
+                    {
+                        last_child = outer->ast->children;
+                        while (last_child->next != 0)
+                            last_child = last_child->next;
+                        last_child->next = pushStruct(arena, AstList);
+                        last_child = last_child->next;
+                    }
                     else
                     {
-                        AstSlot *final_arg = &outer->expression->args;
-                        while (final_arg->next != 0)
-                        {
-                            final_arg = final_arg->next;
-                        }
-                        final_arg->next = pushStruct(arena, AstSlot);
-                        final_arg->next->ast = new_expression;
-                        final_arg->next->next = 0;
+                        outer->ast->children = pushStruct(arena, AstList);
+                        last_child = outer->ast->children;
                     }
-
+                    last_child->ast = new_ast;
+                    last_child->next = 0;
 
                     if (token->type == '(')
                     {
+                        makeBranchAst(new_ast);
                         AstStackItem *new_outer = ast_stack + (stack_size++);
                         assert(stack_size <= arrayCount(ast_stack));
-                        new_outer->expression = new_expression;
-                        new_expression->token = token;
+                        new_outer->ast = new_ast;
                     }
                     else
                     {
-                        new_expression->token = token;
+                        makeLeafAst(new_ast, token);
                     }
                 }
             }
         }
 
         {// MARK: Executing
-            OperatorPool operators = {};
-            for (AstSlot *arg = &root_ast->args;
-                 arg && arg->ast;
-                 arg = arg->next)
-            {
-#if 1
-                printExpression(arg->ast, 0);
-#endif
-
 #if 0
-                Ast *ast = arg->ast;
-                switch (ast->type)
-                {
-                    case TokenTypeKeywordOperatorDefinition:
-                    {
-                        addOperator(&operators, ast);
-                    } break;
-
-                    invalidDefaultCase;
-                }
-#else
+            debugPrintAst(root_ast, 0);
 #endif
-            }
+
+#if 1
+            AstIterator it = getIterator(root_ast->children);
+            parseAst(state, &it);
+#endif
         }
 
         // TODO: Only free when we have edits;

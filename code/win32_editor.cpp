@@ -188,6 +188,7 @@ internal void
 testDraw(win32_offscreen_buffer *buffer)
 {
     u8 *row = (u8 *)buffer->memory;
+    u32 color = 0x00555555;
     for (s32 y = 0;
          y < buffer->height;
          y++)
@@ -197,7 +198,7 @@ testDraw(win32_offscreen_buffer *buffer)
              x < buffer->width;
              x++)
         {
-            *pixel++ = 0x00FF00FF;
+            *pixel++ = color;
         }
         row += buffer->pitch;
     }
@@ -285,7 +286,7 @@ WinMain(HINSTANCE instance,
                 r32 seconds_elapsed_for_frame = win32GetSecondsElapsed(last_counter, work_counter);
                 if (seconds_elapsed_for_frame < target_seconds_per_frame)
                 {
-                    DWORD sleep_ms = (DWORD)(target_seconds_per_frame - seconds_elapsed_for_frame);
+                    DWORD sleep_ms = (DWORD)1000*(target_seconds_per_frame - seconds_elapsed_for_frame);
                     Sleep(sleep_ms);
                 }
                 HDC window_dc = GetDC(window);

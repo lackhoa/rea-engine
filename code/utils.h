@@ -23,7 +23,10 @@ global_variable s64 globalPerfCountFrequency;
 
 #define assert(claim) if (!(claim)) { __debugbreak(); }
 #define invalidCodePath { __debugbreak(); }
+#define todoErrorReport { __debugbreak(); }
+#define todoIncomplete { __debugbreak(); }
 #define invalidDefaultCase default: { assert(false) };
+#define breakhere {int x = 5; (void)x; }
 
 #define UTILS_H
 #endif
