@@ -81,7 +81,7 @@ win32ReadEntireFile(const char *file_name)
         if (GetFileSizeEx(fileHandle, &fileSize))
         {
             u32 fileSize32 = SafeTruncateUInt64((u64)fileSize.QuadPart);
-            result.content = VirtualAlloc(0, fileSize32, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
+            result.content = (char *)VirtualAlloc(0, fileSize32, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
             if (result.content)
             {
                 DWORD bytesRead;
@@ -96,7 +96,7 @@ win32ReadEntireFile(const char *file_name)
             }
             else
             {
-                // TODO: Report error
+                todoErrorReport;
             }
         }
         CloseHandle(fileHandle);

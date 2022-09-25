@@ -27,6 +27,7 @@ global_variable s64 globalPerfCountFrequency;
 #define todoIncomplete { __debugbreak(); }
 #define invalidDefaultCase default: { assert(false) };
 #define breakhere {int x = 5; (void)x; }
+#define generate(whatever...)
 
 #define UTILS_H
 #endif

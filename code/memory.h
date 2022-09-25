@@ -45,5 +45,15 @@ newArena(size_t size, void *base)
     return arena;
 }
 
+inline MemoryArena
+subArena(MemoryArena *parent, size_t size)
+{
+    MemoryArena result;
+    result.base = (u8 *)pushSize(parent, size);
+    result.cap = size;
+    result.used = 0;
+    return result;
+}
+
 #define MEMORY_H
 #endif

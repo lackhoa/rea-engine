@@ -4,7 +4,6 @@
 #include "memory.h"
 
 PlatformPrint *platformPrint;
-MemoryArena *global_arena;
 PlatformReadEntireFile *platformReadEntireFile;
 PlatformFreeFileMemory *platformFreeFileMemory;
 

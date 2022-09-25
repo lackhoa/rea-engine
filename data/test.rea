@@ -1,7 +1,75 @@
-operator binary =
-axiom eqTran ((aeb: a = b) (bec: b = c))
+typedef Bool
+{
+ | true
+ | false
+ }
 
-; defun eqTran3 (aeb bec ced)
-; eqTran(eqTran(aeb bec) ced)
+;; define &(a: Bool, b: Bool) : Bool
+;; {
+;;  switch a
+;;  {
+;;   | true { b }
+;;   | false { false }
+;;   }
+;;  }
 
-; eqTran3((a = b) (b = c) (c = d))
+;; define main()
+;; {
+;;  print(true & true)
+;;  print(true & false)
+;;  print(fase & true)
+;;  print(fase & false)
+;;  }
+
+;; define |(a: Bool, b: Bool) : Bool
+;; {
+;;  switch b
+;;  {
+;;   | true { true }
+;;   | false { b }
+;;   }
+;;  }
+
+;; define andCommutative(a, b) (((a & b) & c) = (a & (b & c)))
+;; {
+;;  switch a
+;;  {
+;;   | true
+;;   equality {;; goal: ((true & b) & c) = (true & (b & c))
+;;             ((true & b) & c)
+;;             = b & c          { reduce(&) }
+;;             = true & (b & c) { reduce(&) }
+;;             }
+
+;;   | false
+;;   equality {;; goal: ((false & b) & c) == (false & (b & c))
+;;             ((false & b) & c)
+;;             = false             { reduce(&) }
+;;             = (false & (b & c)) { reduce(&) }
+;;             }
+;;   }
+;;  }
+
+;; typedef Nat
+;; {
+;;  | 0
+;;  | succ(Nat)
+;;  }
+
+;; define +(a: Nat, b: Nat) : Nat
+;; {
+;;  switch a
+;;  {
+;;   | 0
+;;   { return b }
+
+;;   | succ(a')
+;;   { return succ(+(a' b)) }
+;;   }
+;;  }
+
+;; define 1: Nat { succ(0) }
+;; define 2: Nat { succ(1) }
+;; define 3: Nat { succ(2) }
+;; define 1plus2 : (1 + 2 = 3)
+;; { return reduce(+) }

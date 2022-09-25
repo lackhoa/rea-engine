@@ -3,4 +3,5 @@ CompileFlags:
   Add:
     - -xc++
     - -Wno-switch
+    - -Wno-writable-strings
     - -DReaWindows

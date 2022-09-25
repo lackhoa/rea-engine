@@ -1,11 +1,47 @@
-((: aeb (= a b)) (: bec (= b c)))
-stack: empty
+typedef Nat
+{
+ | 0
+ | succ(Nat)
+ }
 
-(<- (: aeb (= a b)) (: bec (= b c)))
-stack: StackItem{expression: new; list_index: 0}
+defun +((a : Nat) (b : Nat)) : Nat
+{
+ switch a
+ {
+  | 0
+  { return b }
 
-((<- : aeb (= a b)) (: bec (= b c)))
-stack: StackItem{expression: new; list_index: 0} StackItem{expression: new; list_index: 0}
+  | succ(a')
+  { return succ(+(a' b)) }
+  }
+ }
 
-((:<- aeb (= a b)) (: bec (= b c)))
-stack: StackItem{expression: new; list_index: 1} StackItem{expression: new; list_index: 0}
+defun plusZeroRight((a : Nat)) : =(+(a 0) a)
+{
+ switch a
+ {
+  | 0
+  equality { +(a 0) = +(0 0) = 0 = a }
+
+  | succ(a')
+  ind : (+(a' 0) = a')
+  equality
+  {
+   +(succ(a') 0)
+   = succ(+(a' 0))
+   ={ind} succ(a')
+   }
+  }
+ }
+
+equality plusCommutative((a : Nat)) : =(+(a b) +(b a))
+{
+ switch a
+ {
+  | 0
+  { +(a b) = +(0 b) = b ={plusZeroRight(a)} +(b a) }
+
+  | succ(a')
+  { +(a' b) = }
+  }
+ }

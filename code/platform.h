@@ -5,7 +5,7 @@
 struct ReadFileResult
 {
     u32 content_size;
-    void *content;
+    char *content;
 };
 
 typedef ReadFileResult PlatformReadEntireFile(const char *file_name);
@@ -17,7 +17,7 @@ struct EngineMemory
     PlatformReadEntireFile *platformReadEntireFile;
     PlatformFreeFileMemory *platformFreeFileMemory;
     PlatformPrint *platformPrint;
-    void* storage;  // IMPORTANT: Required to be cleared to zero at startup.
+    void* storage;
     size_t storage_size;
 };
 

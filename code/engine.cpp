@@ -8,6 +8,45 @@
 
 // TODO: Eventually this will talk to the editor, but let's work in console mode for now.
 
+struct String
+{
+    char *chars;
+    s32  length;
+};
+// TODO: implement code gen
+generate(List, String)
+
+#include "generated_List.h"
+
+struct Axiom
+{
+    String name;
+    // TODO: arguments, and return.
+};
+generate(Vector, Axiom)
+
+struct Operator
+{
+    s32    arg_count;
+    String name;
+};
+generate(Vector, Operator)
+
+struct Atom
+{
+    String text;
+};
+generate(Vector, Atom)
+
+struct Type
+{
+    String     name;
+    StringList members;
+};
+generate(Vector, Type)
+
+#include "generated_Vector.h"
+
 struct ArrayListChunk
 {
     s32  count;
@@ -115,21 +154,18 @@ arrayListAdd_(ArrayList *list, s32 item_size)
 enum TokenType
 {
     // 0-255 reserved for single-char ASCII types.
-    TokenTypeNull_           = 0,
+    TokenType_Null_           = 0,
 
-    TokenTypeSpace           = 256,
-    TokenTypeOperator        = 257,
-    TokenTypeAlphabetical    = 258,
+    TokenType_Space           = 256,
+    TokenType_Special         = 257,
+    TokenType_PairingOpen     = 258,
+    TokenType_PairingClose    = 259,
+    TokenType_Alphabetical    = 260,
 
-    TokenTypeKeywords_       = 259,
-    TokenTypeKeywordOperator = 260,
-    TokenTypeKeywordAxiom    = 261,
-};
-
-struct String
-{
-    char *chars;
-    s32 length;
+    TokenType_Keywords_       = 300,
+    TokenType_KeywordTypedef  = 301,
+    TokenType_KeywordAxiom    = 302,
+    TokenType_KeywordDefine   = 302,
 };
 
 struct Token
@@ -139,27 +175,26 @@ struct Token
 };
 
 inline b32
-equalToCString(String s, const char *string)
+equalToCString(String s, const char *cstring)
 {
-    b32 result = true;
     if (!s.chars)
     {
-        result = false;
+        return false;
     }
     else
     {
-        for (s32 i = 0;
-          (i < s.length);
-          i++)
+        s32 at = 0;
+        for (;
+             (at < s.length);
+             at++)
         {
-            if ((string[i] == '\0') || (s.chars[i] != string[i]))
+            if ((cstring[at] == 0) || (s.chars[at] != cstring[at]))
             {
-                result = false;
-                break;
+                return false;
             }
         }
+        return (cstring[at] == 0);
     }
-    return result;
 }
 
 inline b32
@@ -174,7 +209,7 @@ partOfToken(TokenType category)
     switch (category)
     {
         case 0:
-        case TokenTypeSpace:
+        case TokenType_Space:
         case '\n':
         case ';':
             return false;
@@ -192,44 +227,32 @@ newToken(char *first_char, TokenType category)
     return result;
 }
 
-struct Ast;
+struct AstListContent;
 struct AstList
 {
-    Ast *ast;
-    AstList *next;
+    AstListContent *c;
 };
-
 struct Ast
 {
     // TODO: Reduce pointer chasing!
     b32 is_branch;
-    union
-    {
-        struct
-        {
-            // TODO: No more linked list please!
-            AstList *children;
-        };
-        struct
-        {
-            // NOTE: Single-token leaf ast.
-            Token *token;
-        };
-    };
+    Token *token;  // NOTE: If this tree is a branch, then this is the group
+                   // begin character (e.g '(' or '{').
+    // TODO: No more linked list please!
+    AstList children;
 };
-
-inline b32
-astSlotValid(AstList *slot)
+struct AstListContent
 {
-    return (slot->ast != 0);
-}
+    Ast     car;
+    AstList cdr;
+};
 
 internal TokenType
 categorizeCharacter(char character)
 {
     if ((65 <= character) && (character <= 122))
     {
-        return TokenTypeAlphabetical;
+        return TokenType_Alphabetical;
     }
     else
     {
@@ -238,7 +261,18 @@ categorizeCharacter(char character)
             case '\t':
             case ' ':
             {
-                return TokenTypeSpace;
+                return TokenType_Space;
+            } break;
+
+            case '(':
+            case '{':
+            {
+                return TokenType_PairingOpen;
+            } break;
+            case ')':
+            case '}':
+            {
+                return TokenType_PairingClose;
             } break;
 
             case '.':
@@ -260,7 +294,7 @@ categorizeCharacter(char character)
             case '+':
             case '=':
             {
-                return TokenTypeOperator;
+                return TokenType_Special;
             } break;
 
             default:
@@ -306,11 +340,11 @@ debugPrintAst(Ast *ast, s32 indentation)
 {
     if (ast->is_branch)
     {
-        for (AstList *child = ast->children;
-             child && child->ast;
-             child = child->next)
+        for (AstList child = ast->children;
+             child.c;
+             child = child.c->cdr)
         {
-            debugPrintAst(child->ast, indentation+1);
+            debugPrintAst(&child.c->car, indentation+1);
         }
     }
     else
@@ -328,64 +362,15 @@ debugPrintAst(Ast *ast, s32 indentation)
     }
 }
 
-struct Operator
-{
-    s32  arg_count;
-    String text;
-};
-
-struct OperatorChunk
-{
-    s32           count;
-    Operator      items[32];
-    OperatorChunk *next;
-};
-
-struct OperatorPool
-{
-    OperatorChunk first;
-};
-
-inline Operator *
-addToPool(OperatorPool *pool)
-{
-    if (pool->first.count == arrayCount(OperatorChunk::items))
-    {
-        OperatorChunk *copy_destination = pushStruct(global_arena, OperatorChunk);
-        *copy_destination               = pool->first;
-        copy_destination->next          = pool->first.next;
-
-        pool->first.next  = copy_destination;
-        pool->first.count = 0;
-    }
-    return (pool->first.items + pool->first.count++);
-}
-
-struct Axiom
-{
-    String name;
-    // TODO: arguments, and return.
-};
-
-struct AxiomChunk
-{
-    s32        count;
-    Axiom      items[32];
-    AxiomChunk *next;
-};
-
-struct AxiomPool
-{
-    AxiomChunk first;
-};
+typedef s32 OpId;
 
 struct AstIterator
 {
-    AstList *list;
+    AstList list;
 };
 
 inline AstIterator
-getIterator(AstList *list)
+getIterator(AstList list)
 {
     return AstIterator{list};
 }
@@ -393,17 +378,18 @@ getIterator(AstList *list)
 inline Ast *
 getCurrent(AstIterator *it)
 {
-    return it->list->ast;
+    return &it->list.c->car;
 }
 
 inline Ast *
 advance(AstIterator *it)
 {
     Ast *current = getCurrent(it);
-    it->list = it->list->next;
+    it->list = it->list.c->cdr;
     return current;
 }
 
+#if 0
 inline s32
 parseOperatorArgCount(AstIterator *it)
 {
@@ -431,11 +417,15 @@ parseOperatorArgCount(AstIterator *it)
     advance(it);
     return arg_count_parsed;
 }
+#endif
 
 struct EngineState
 {
-    MemoryArena arena;
-    OperatorPool operators;
+    MemoryArena permanent_arena;
+
+    OperatorVector operators;
+    AxiomVector    axioms;
+    TypeVector     types;
 };
 
 inline Token *
@@ -449,21 +439,261 @@ parseToken(AstIterator *it)
     return op->token;
 }
 
-internal void
-parseOperatorDefinition(EngineState *state, AstIterator *it)
+inline char
+parseChar(AstIterator *it)
 {
-    s32 arg_count         = parseOperatorArgCount(it);
-    Token *operator_token = parseToken(it);
-
-    Operator *op  = addToPool(&state->operators);
-    op->arg_count = arg_count;
-    op->text      = operator_token->text;
+    Ast *op = advance(it);
+    if (op->token->text.length != 1)
+    {
+        todoErrorReport;
+    }
+    return op->token->text.chars[0];
 }
 
+inline AstList
+parseList(AstIterator *it)
+{
+    AstList result = {};
+    Ast *list = advance(it);
+    if (list->is_branch)
+        result = list->children;
+    else
+        todoErrorReport;
+    return result;
+}
+
+enum ExpressionType
+{
+    ExpressionTypeAtom,
+    ExpressionTypeComposite,
+};
+
+struct ExpressionList;
+struct Expression
+{
+    ExpressionType type;
+    union
+    {
+        // NOTE: Atomic
+        struct
+        {
+            s32 atom_id;
+        };
+        // NOTE: Composite
+        struct
+        {
+            OpId op;
+            ExpressionList *args;
+        };
+    };
+};
+
+// TODO: linked list
+struct ExpressionList
+{
+    Expression car;
+    ExpressionList *cdr;
+};
+
+inline void
+addArg(MemoryArena *arena, Expression *e)
+{
+    if (e->args)
+    {
+        ExpressionList *last = e->args;
+        while(last->cdr)
+            last = last->cdr;
+        last->cdr = pushStruct(arena, ExpressionList);
+        last->cdr->car = *e;
+        last->cdr->cdr = 0;
+    }
+    else
+    {
+        e->args = pushStruct(arena, ExpressionList);
+        e->args->car = *e;
+        e->args->cdr = 0;
+    }
+}
+
+inline b32
+stringEqual(String a, String b)
+{
+    b32 result = true;
+    if (a.length != b.length)
+        result = false;
+    else
+    {
+        for (int i = 0; i < a.length; i++)
+        {
+            if (a.chars[i] != b.chars[i])
+            {
+                result = false;
+                break;
+            }
+        }
+    }
+    return result;
+}
+
+inline OpId
+lookupOperator(EngineState *state, Ast *ast)
+{
+    OpId result = 0;
+    OperatorVector *operators = &state->operators;
+    if (ast->token)
+    {
+        for (s32 i = 1;
+             i < operators->count;
+             i++)
+        {
+            // TODO: could be a hash table lookup
+            if (stringEqual(operators->items[i].name, ast->token->text))
+                result = i;
+        }
+    }
+    return result;
+}
+
+inline s32
+lookupAtom(AtomVector *atoms, Ast *ast)
+{
+    s32 result = 0;
+    assert(!ast->is_branch);
+    for (int i = 1;
+         i < atoms->count;
+         i++)
+    {
+        if (stringEqual(atoms->items[i].text, ast->token->text))
+        {
+            result = i;
+            break;
+        }
+    }
+    return result;
+}
+
+// TODO: Should this take an expression pointer instead?
+internal Expression
+parseExpression(EngineState *state, AtomVector *atoms, AstIterator *it)
+{
+    MemoryArena *arena = &state->permanent_arena;
+    Expression result = {};
+    if (it->list.c)
+    {
+        Ast *first = advance(it);
+        if (it->list.c)
+        {
+            // NOTE: the first thing is either a unary op, a function call, an
+            // identifier, or a composite expression.
+            if (first->is_branch)
+            {
+                todoIncomplete;
+            }
+            else
+            {
+                // NOTE: This is a composite: operator + operands.
+                result.type = ExpressionTypeComposite;
+                OpId op_id = lookupOperator(state, first);
+                if (op_id)
+                {
+                    // MARK: Function call.
+                    // TODO: could also be unary operator, but I suspect they go through the same path?
+                    result.op = op_id;
+                    AstList args = parseList(it);
+                    if (args.c)
+                    {
+                        result.args = pushStruct(arena, ExpressionList);
+                        AstIterator arg_it = getIterator(args);
+                        ExpressionList *result_arg = result.args;
+                        result_arg->car = parseExpression(state, atoms, &arg_it);
+                        while (arg_it.list.c)
+                        {
+                            result_arg->cdr = pushStruct(arena, ExpressionList);
+                            result_arg->cdr->car = parseExpression(state, atoms, &arg_it);
+                            result_arg = result_arg->cdr;
+                        }
+                    }
+                }
+                else
+                    todoErrorReport;
+            }
+        }
+        else
+        {
+            // NOTE: we don't have to worry about operator combinations here.
+            if (first->is_branch)
+            {
+                AstIterator it = getIterator(first->children);
+                // NOTE: Extra parens don't matter (we're not lisp).
+                result = parseExpression(state, atoms, &it);
+            }
+            else
+            {
+                result.type = ExpressionTypeAtom;
+                s32 id = lookupAtom(atoms, first);
+                if (id)
+                {
+                    Atom *atom = pushItem(atoms);
+                    *atom = {first->token->text};
+                    id = atoms->count-1;
+                }
+                result.atom_id = id;
+            }
+        }
+    }
+    else
+    {
+        // NOTE: Empty expression.
+    }
+    return result;
+}
+
+#if 0
 internal void
 parseAxiomDefinition(EngineState *state, AstIterator *it)
 {
     Token *name = parseToken(it);
+    AstList args = parseList(it);
+    // TODO: BOOKMARK: Record the arguments in the axiom type.
+    for (AstList arg = args;
+         arg.c;
+         arg = arg.c->cdr)
+    {
+        MemoryArena temp_arena = subArena(&state->permanent_arena, kiloBytes(256));
+        AtomVector atoms = newAtomVector(&temp_arena, 8);
+        atoms.count = 1;
+        parseExpression(state, &atoms, arg.c->car);
+    }
+    Ast *body = parseBody(it);
+
+    Axiom axiom = {};
+    addItem(&state->axioms, &axiom);
+}
+#endif
+
+internal void
+parseTypedef(EngineState *state, AstIterator *it)
+{
+    Type *result = pushItem(&state->types);
+
+    Token *type_name = parseToken(it);
+    result->name = type_name->text;
+
+    StringList *dst = &result->members;
+    AstList members_ast = parseList(it);
+    AstIterator members_it = getIterator(members_ast);
+    while (members_it.list.c)
+    {
+        if (parseChar(&members_it) == '|')
+        {
+            Token *member = parseToken(&members_it);
+            dst->c = pushStruct(&state->permanent_arena, StringListContent);
+            dst->c->car = member->text;
+            dst = &dst->c->cdr;
+        }
+        else
+            todoErrorReport;
+    }
 }
 
 // NOTE: Main didspatch parse function
@@ -475,212 +705,194 @@ parseAstTopLevel(EngineState *state, AstIterator *it)
     {
         switch (token->type)
         {
-            case TokenTypeKeywordOperator:
+            case TokenType_KeywordTypedef:
             {
-                parseOperatorDefinition(state, it);
+                parseTypedef(state, it);
             } break;
 
-            case TokenTypeKeywordAxiom:
+#if 0
+            case TokenType_KeywordAxiom:
             {
                 parseAxiomDefinition(state, it);
             } break;
+#endif
 
-            default:
-            {
-                todoIncomplete;
-            }
+            default: todoIncomplete;
         }
     }
-    else
-    {
-        todoIncomplete;
-    }
+    else todoIncomplete;
 }
 
-inline void
-makeBranchAst(Ast *ast)
+inline b32
+isMatchingPair(Token *left, Token *right)
 {
-    ast->is_branch = true;
-}
-
-inline void
-makeLeafAst(Ast *ast, Token *token)
-{
-    ast->is_branch = false;
-    ast->token = token;
+    char l = left->text.chars[0];
+    char r = right->text.chars[0];
+    return (((l == '(') && (r == ')')) ||
+            ((l == '{') && (r == '}')));
 }
 
 internal void
-compile(EngineState *state, const char *input_file)
+compile(EngineState *state, ReadFileResult *source_code)
 {
-    MemoryArena *arena = global_arena;
-    ReadFileResult read = platformReadEntireFile(input_file);
-    if (read.content)
-    {
-        TokenType previous_category = (TokenTypeNull_);
-        s32 token_count = 0;
-        s32 todo_token_cap = read.content_size / 2;
-        Token *tokens = pushArray(arena, todo_token_cap, Token);
-        b32 being_commented = false;
-        // TODO: Unicode support?
-        for (s32 content_index = 0;
-             content_index < read.content_size;
-             content_index++)
-        {   // MARK: tokenizing
-            char *character = &((char *)read.content)[content_index];
-            TokenType token_type = categorizeCharacter(*character);
+    MemoryArena *permanent_arena = &state->permanent_arena;
+    TokenType previous_category = (TokenType_Null_);
+    s32 token_count = 0;
+    s32 todo_token_cap = source_code->content_size / 2;
+    Token *tokens = pushArray(permanent_arena, todo_token_cap, Token);
+    b32 being_commented = false;
+    // TODO: Unicode support?
+    for (s32 content_index = 0;
+         content_index < source_code->content_size;
+         content_index++)
+    {   // MARK: tokenizing
+        char *character = &((char *)source_code->content)[content_index];
+        TokenType token_type = categorizeCharacter(*character);
 
-            if (token_type == ';')
-                being_commented = true;
-            if (token_type == '\n')
-                being_commented = false;
+        if (token_type == ';')
+            being_commented = true;
+        if (token_type == '\n')
+            being_commented = false;
 
-            if (!being_commented)
+        if (!being_commented)
+        {
+            b32 char_is_part_of_token = partOfToken(token_type);
+            b32 add_token = (((previous_category != token_type)
+                              || (token_type == TokenType_PairingOpen)
+                              || (token_type == TokenType_PairingClose))
+                             && char_is_part_of_token);
+
+            if (add_token)
             {
-                b32 char_is_part_of_token = partOfToken(token_type);
-                b32 add_token = (((previous_category != token_type)
-                                  || (token_type == '(')
-                                  || (token_type == ')'))
-                                 && char_is_part_of_token);
-
-                if (add_token)
-                {
-                    Token *token = tokens + token_count++;
-                    token->text = {character, 0};
-                    token->type = token_type;
-                }
-
-                b32 extending_previous_token = char_is_part_of_token;
-                if (extending_previous_token)
-                {
-                    tokens[token_count-1].text.length++;
-                }
-                else if (token_count >= 1)
-                {
-                    Token *previous_token = tokens + token_count-1;
-                    if (tokenEqualCString(previous_token, "operator"))
-                        previous_token->type = TokenTypeKeywordOperator;
-                    else if (tokenEqualCString(previous_token, "axiom"))
-                        previous_token->type = TokenTypeKeywordAxiom;
-                }
-
-                previous_category = token_type;
+                Token *token = tokens + token_count++;
+                token->text = {character, 0};
+                token->type = token_type;
             }
+
+            b32 extending_previous_token = char_is_part_of_token;
+            if (extending_previous_token)
+            {
+                tokens[token_count-1].text.length++;
+            }
+            else if (token_count >= 1)
+            {
+                Token *previous_token = tokens + token_count-1;
+                if (tokenEqualCString(previous_token, "axiom"))
+                    previous_token->type = TokenType_KeywordAxiom;
+                else if (tokenEqualCString(previous_token, "typedef"))
+                    previous_token->type = TokenType_KeywordTypedef;
+            }
+
+            previous_category = token_type;
         }
+    }
 
-        s32 todo_ast_chunk_size = 1024;
-        ArrayList *expressions = allocateArrayList(&state->arena, todo_ast_chunk_size, sizeof(Ast));
-        Ast *root_ast = arrayListAdd(expressions, Ast);
-        makeBranchAst(root_ast);
-        {   // MARK: Parsing: Dealing with grouping constructs (not keywords), forming AST
-            if (expressions->last_chunk != &expressions->first_chunk)
-            {
-                assert(expressions->first_chunk.next != 0);
-            }
-            s32 ast_count = 0;
-            AstStackItem ast_stack[128];
-            ast_stack[0].ast = root_ast;
-            s32 stack_size = 1;
-            for (s32 token_index = 0;
-                 token_index < token_count;
-                 token_index++)
-            {
-                char buffer[256];
-                Token *token = tokens + token_index;
+    s32 todo_ast_chunk_size = 1024;
+    ArrayList *expressions = allocateArrayList(&state->permanent_arena, todo_ast_chunk_size, sizeof(Ast));
+    Ast *root_ast = arrayListAdd(expressions, Ast);
+    root_ast->is_branch = true;
+    {   // MARK: Parsing: Dealing with grouping constructs (not keywords), forming AST
+        if (expressions->last_chunk != &expressions->first_chunk)
+        {
+            assert(expressions->first_chunk.next != 0);
+        }
+        s32 ast_count = 0;
+        AstStackItem ast_stack[128];
+        ast_stack[0].ast = root_ast;
+        s32 stack_size = 1;
+        for (s32 token_index = 0;
+             token_index < token_count;
+             token_index++)
+        {
+            char buffer[256];
+            Token *token = tokens + token_index;
 
 #if 0
-                printStringToBuffer(buffer, token->chars, token->length);
-                platformPrint(buffer);
-                sprintf(buffer, "\n");
-                platformPrint(buffer);
+            printStringToBuffer(buffer, token->chars, token->length);
+            platformPrint(buffer);
+            sprintf(buffer, "\n");
+            platformPrint(buffer);
 #endif
 
-                if (token->type == ')')
+            if (token->type == TokenType_PairingClose)
+            {
+                if ((stack_size > 1)  // NOTE: 0 is root.
+                    && isMatchingPair((ast_stack + stack_size-1)->ast->token, token))
                 {
-                    if (stack_size > 1)  // NOTE: 0 is root.
-                    {
-                        stack_size--;
-                        AstStackItem *outer = ast_stack + stack_size-1;
-                    }
-                    else
-                    {
-                        // TODO: Error
-                        assert(0);
-                    }
+                    stack_size--;
+                }
+                else todoErrorReport;
+            }
+            else
+            {
+                AstStackItem *outer = ((stack_size > 0) ?
+                                       (ast_stack + stack_size-1) : 0);
+                    
+                AstList *last_ast_slot = &outer->ast->children;
+                while (last_ast_slot->c)
+                    last_ast_slot = &last_ast_slot->c->cdr;
+                last_ast_slot->c = pushStruct(permanent_arena, AstListContent);
+                Ast *new_ast = &last_ast_slot->c->car;
+
+                new_ast->token = token;
+                if (token->type == TokenType_PairingOpen)
+                {
+                    new_ast->is_branch = true;
+                    new_ast->token = token;
+                    AstStackItem *new_outer = ast_stack + (stack_size++);
+                    assert(stack_size <= arrayCount(ast_stack));
+                    new_outer->ast = new_ast;
+                            
                 }
                 else
                 {
-                    Ast *new_ast = pushStructZero(arena, Ast);
-                    AstStackItem *outer = ((stack_size > 0) ?
-                                           (ast_stack + stack_size-1) : 0);
-                    
-                    AstList  *last_child;
-                    if (outer->ast->children)
-                    {
-                        last_child = outer->ast->children;
-                        while (last_child->next != 0)
-                            last_child = last_child->next;
-                        last_child->next = pushStruct(arena, AstList);
-                        last_child = last_child->next;
-                    }
-                    else
-                    {
-                        outer->ast->children = pushStruct(arena, AstList);
-                        last_child = outer->ast->children;
-                    }
-                    last_child->ast = new_ast;
-                    last_child->next = 0;
-
-                    if (token->type == '(')
-                    {
-                        makeBranchAst(new_ast);
-                        AstStackItem *new_outer = ast_stack + (stack_size++);
-                        assert(stack_size <= arrayCount(ast_stack));
-                        new_outer->ast = new_ast;
-                    }
-                    else
-                    {
-                        makeLeafAst(new_ast, token);
-                    }
+                    new_ast->is_branch = false;
                 }
             }
         }
-
-        {// MARK: Executing
-#if 1
-            debugPrintAst(root_ast, 0);
-#endif
-
-#if 1
-            AstIterator it = getIterator(root_ast->children);
-            parseAstTopLevel(state, &it);
-#endif
-        }
-
-        // TODO: Only free when we have edits;
-        platformFreeFileMemory(read.content);
     }
-    else
-    {
-        todoErrorReport;
+
+    {// MARK: Executing
+#if 1
+        AstIterator it = getIterator(root_ast->children);
+        parseAstTopLevel(state, &it);
+#endif
+
+#if 1
+        debugPrintAst(root_ast, 0);
+#endif
     }
 }
 
-internal void
-testCase(EngineState *state)
+inline void
+testCaseMain(EngineState *state)
 {
-    compile(state, "test.rea");
-    assert(state->operators.first.count == 1);
+    ReadFileResult read = platformReadEntireFile("test.rea");
+    compile(state, &read);
+
+    assert(state->types.count == 2);
+    assert(equalToCString(state->types.items[1].name, "Bool"));
+    assert(length(state->types.items[1].members) == 2);
+
+    platformFreeFileMemory(read.content);
 }
 
 internal EngineState *
-clearEngineState(EngineMemory *memory)
+resetEngineState(EngineMemory *memory)
 {
     zeroMemory(memory->storage, memory->storage_size);
     MemoryArena arena_ = newArena(memory->storage_size, memory->storage);
+
     EngineState *state = pushStruct(&arena_, EngineState);
-    state->arena = arena_;
-    global_arena = &state->arena;
+    state->permanent_arena = arena_;
+
+    state->axioms    = newAxiomVector(&state->permanent_arena, 32);
+    state->operators = newOperatorVector(&state->permanent_arena, 32);
+    state->types     = newTypeVector(&state->permanent_arena, 32);
+    state->axioms.count    = 1;
+    state->operators.count = 1;
+    state->types.count     = 1;
+
     return state;
 }
 
@@ -691,6 +903,6 @@ engineMain(EngineMemory *memory)
     platformReadEntireFile = memory->platformReadEntireFile;
     platformFreeFileMemory = memory->platformFreeFileMemory;
 
-    EngineState *state = clearEngineState(memory);
-    testCase(state);
+    EngineState *state = resetEngineState(memory);
+    testCaseMain(state);
 }
