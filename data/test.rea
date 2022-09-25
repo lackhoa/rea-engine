@@ -1,25 +1,22 @@
 typedef Bool
 {
- | true
  | false
+ | true
  }
 
-;; define &(a: Bool, b: Bool) : Bool
-;; {
-;;  switch a
-;;  {
-;;   | true { b }
-;;   | false { false }
-;;   }
-;;  }
+define &(a: Bool, b: Bool) : Bool
+{
+ switch a
+ {
+  | false { false }
+  | true  { b }
+  }
+ }
 
-;; define main()
-;; {
-;;  print(true & true)
-;;  print(true & false)
-;;  print(fase & true)
-;;  print(fase & false)
-;;  }
+;; print(true & true)
+;; print(true & false)
+;; print(false & true)
+;; print(false & false)
 
 ;; define |(a: Bool, b: Bool) : Bool
 ;; {
@@ -29,6 +26,8 @@ typedef Bool
 ;;   | false { b }
 ;;   }
 ;;  }
+
+;; deMorgan's law
 
 ;; define andCommutative(a, b) (((a & b) & c) = (a & (b & c)))
 ;; {

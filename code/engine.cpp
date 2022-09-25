@@ -16,6 +16,57 @@ struct String
 // TODO: implement code gen
 generate(List, String)
 
+enum ExpressionType
+{
+    ExpressionTypeAtom,
+    ExpressionTypeComposite,
+};
+
+typedef s32 OpId;
+
+struct Expression;
+struct ExpressionListContent;
+struct ExpressionList
+{
+    ExpressionListContent *c;
+};
+struct Expression
+{
+    ExpressionType type;
+    union
+    {
+        // NOTE: Atomic
+        struct
+        {
+            s32 atom_id;
+        };
+        // NOTE: Composite
+        struct
+        {
+            OpId op;
+            ExpressionList args;
+        };
+    };
+};
+struct ExpressionListContent
+{
+    Expression     car;
+    ExpressionList cdr;
+};
+
+inline s32
+length(ExpressionList ls)
+{
+    s32 result = 0;
+    for (ExpressionList l = ls ;
+         l.c;
+         l = l.c->cdr)
+    {
+        result++;
+    }
+    return result;
+}
+
 #include "generated_List.h"
 
 struct Axiom
@@ -164,9 +215,11 @@ enum TokenType
 
     TokenType_Keywords_       = 300,
     TokenType_KeywordTypedef  = 301,
-    TokenType_KeywordAxiom    = 302,
     TokenType_KeywordDefine   = 302,
+    TokenType_KeywordSwitch   = 303,
 };
+
+const char *keywords[] = {"_ignore_", "typedef", "define", "switch"};
 
 struct Token
 {
@@ -198,9 +251,16 @@ equalToCString(String s, const char *cstring)
 }
 
 inline b32
-tokenEqualCString(Token *token, const char *string)
+equalToCString(Token *token, const char *string)
 {
     return equalToCString(token->text, string);
+}
+
+inline b32
+isChar(Token *token, char c)
+{
+    return ((token->text.length == 1)
+            &&  (token->text.chars[0] == c));
 }
 
 inline b32
@@ -362,8 +422,6 @@ debugPrintAst(Ast *ast, s32 indentation)
     }
 }
 
-typedef s32 OpId;
-
 struct AstIterator
 {
     AstList list;
@@ -422,6 +480,7 @@ parseOperatorArgCount(AstIterator *it)
 struct EngineState
 {
     MemoryArena permanent_arena;
+    MemoryArena temporary_arena;
 
     OperatorVector operators;
     AxiomVector    axioms;
@@ -460,59 +519,6 @@ parseList(AstIterator *it)
     else
         todoErrorReport;
     return result;
-}
-
-enum ExpressionType
-{
-    ExpressionTypeAtom,
-    ExpressionTypeComposite,
-};
-
-struct ExpressionList;
-struct Expression
-{
-    ExpressionType type;
-    union
-    {
-        // NOTE: Atomic
-        struct
-        {
-            s32 atom_id;
-        };
-        // NOTE: Composite
-        struct
-        {
-            OpId op;
-            ExpressionList *args;
-        };
-    };
-};
-
-// TODO: linked list
-struct ExpressionList
-{
-    Expression car;
-    ExpressionList *cdr;
-};
-
-inline void
-addArg(MemoryArena *arena, Expression *e)
-{
-    if (e->args)
-    {
-        ExpressionList *last = e->args;
-        while(last->cdr)
-            last = last->cdr;
-        last->cdr = pushStruct(arena, ExpressionList);
-        last->cdr->car = *e;
-        last->cdr->cdr = 0;
-    }
-    else
-    {
-        e->args = pushStruct(arena, ExpressionList);
-        e->args->car = *e;
-        e->args->cdr = 0;
-    }
 }
 
 inline b32
@@ -572,16 +578,19 @@ lookupAtom(AtomVector *atoms, Ast *ast)
     return result;
 }
 
-// TODO: Should this take an expression pointer instead?
 internal Expression
-parseExpression(EngineState *state, AtomVector *atoms, AstIterator *it)
+parseExpression(EngineState *state, AtomVector *atoms, AstIterator *it, char end_delimiter = 0)
 {
-    MemoryArena *arena = &state->permanent_arena;
+    MemoryArena *permanent = &state->permanent_arena;
     Expression result = {};
-    if (it->list.c)
+    b32 not_empty = (it->list.c
+                     && !isChar(it->list.c->car.token, end_delimiter));
+    if (not_empty)
     {
         Ast *first = advance(it);
-        if (it->list.c)
+        b32 is_combination = (it->list.c
+                              && !isChar(it->list.c->car.token, end_delimiter));
+        if (is_combination)
         {
             // NOTE: the first thing is either a unary op, a function call, an
             // identifier, or a composite expression.
@@ -602,15 +611,13 @@ parseExpression(EngineState *state, AtomVector *atoms, AstIterator *it)
                     AstList args = parseList(it);
                     if (args.c)
                     {
-                        result.args = pushStruct(arena, ExpressionList);
+                        ExpressionList *dst = &result.args;
                         AstIterator arg_it = getIterator(args);
-                        ExpressionList *result_arg = result.args;
-                        result_arg->car = parseExpression(state, atoms, &arg_it);
                         while (arg_it.list.c)
                         {
-                            result_arg->cdr = pushStruct(arena, ExpressionList);
-                            result_arg->cdr->car = parseExpression(state, atoms, &arg_it);
-                            result_arg = result_arg->cdr;
+                            dst->c = pushStruct(permanent, ExpressionListContent);
+                            dst->c->car = parseExpression(state, atoms, &arg_it);
+                            dst = &dst->c->cdr;
                         }
                     }
                 }
@@ -620,7 +627,6 @@ parseExpression(EngineState *state, AtomVector *atoms, AstIterator *it)
         }
         else
         {
-            // NOTE: we don't have to worry about operator combinations here.
             if (first->is_branch)
             {
                 AstIterator it = getIterator(first->children);
@@ -631,7 +637,7 @@ parseExpression(EngineState *state, AtomVector *atoms, AstIterator *it)
             {
                 result.type = ExpressionTypeAtom;
                 s32 id = lookupAtom(atoms, first);
-                if (id)
+                if (!id)
                 {
                     Atom *atom = pushItem(atoms);
                     *atom = {first->token->text};
@@ -641,35 +647,8 @@ parseExpression(EngineState *state, AtomVector *atoms, AstIterator *it)
             }
         }
     }
-    else
-    {
-        // NOTE: Empty expression.
-    }
     return result;
 }
-
-#if 0
-internal void
-parseAxiomDefinition(EngineState *state, AstIterator *it)
-{
-    Token *name = parseToken(it);
-    AstList args = parseList(it);
-    // TODO: BOOKMARK: Record the arguments in the axiom type.
-    for (AstList arg = args;
-         arg.c;
-         arg = arg.c->cdr)
-    {
-        MemoryArena temp_arena = subArena(&state->permanent_arena, kiloBytes(256));
-        AtomVector atoms = newAtomVector(&temp_arena, 8);
-        atoms.count = 1;
-        parseExpression(state, &atoms, arg.c->car);
-    }
-    Ast *body = parseBody(it);
-
-    Axiom axiom = {};
-    addItem(&state->axioms, &axiom);
-}
-#endif
 
 internal void
 parseTypedef(EngineState *state, AstIterator *it)
@@ -696,31 +675,92 @@ parseTypedef(EngineState *state, AstIterator *it)
     }
 }
 
+inline void
+eatChar(AstIterator *it, char c)
+{
+    Ast *ast = getCurrent(it);
+    if ((ast->is_branch == false) && isChar(ast->token, c))
+    {
+        advance(it);
+    }
+}
+
+internal void
+parseDefine(EngineState *state, AstIterator *it)
+{
+    Token *name = parseToken(it);
+    MemoryArena *permanent = &state->permanent_arena;
+    MemoryArena temp = subArena(&state->temporary_arena, kiloBytes(256));
+    AtomVector atoms = newAtomVector(&temp, 8);
+    atoms.count = 1;
+
+    ExpressionList exp_args = {};
+    AstList args = parseList(it);
+    {
+        AstIterator it = getIterator(args);
+        while (it.list.c)
+        {
+            eatChar(&it, ',');
+            exp_args.c = pushStruct(permanent, ExpressionListContent);
+
+            // starting from the name
+            Token *arg_name = parseToken(&it);
+            // then the delimiter
+            if (parseChar(&it) != ':')
+                todoErrorReport;
+            // then to the type, which is an arbitrary expression
+            parseExpression(state, &atoms, &it, ',');
+        }
+    }
+    
+    // Type definition
+    if (parseChar(it) != ':')
+        todoErrorReport;
+    Expression return_type = parseExpression(state, &atoms, it, '{');
+
+#if 0
+    // BOOKMARK: parse the body!
+    Ast *body = parseBody(it);
+#endif
+
+    endTemporaryArena(&state->temporary_arena, &temp);
+}
+
+
 // NOTE: Main didspatch parse function
 internal void
 parseAstTopLevel(EngineState *state, AstIterator *it)
 {
-    Ast *ast = advance(it);
-    if (Token *token = ast->token)
+    while (it->list.c)
     {
-        switch (token->type)
+        Ast *ast = advance(it);
+        if (Token *token = ast->token)
         {
-            case TokenType_KeywordTypedef:
+            switch (token->type)
             {
-                parseTypedef(state, it);
-            } break;
+                case TokenType_KeywordTypedef:
+                {
+                    parseTypedef(state, it);
+                } break;
+
+                case TokenType_KeywordDefine:
+                {
+                    parseDefine(state, it);
+                } break;
 
 #if 0
-            case TokenType_KeywordAxiom:
-            {
-                parseAxiomDefinition(state, it);
-            } break;
+                case TokenType_KeywordAxiom:
+                {
+                    parseAxiomDefinition(state, it);
+                } break;
 #endif
 
-            default: todoIncomplete;
+                default: todoIncomplete;
+            }
         }
+        else
+            todoIncomplete;
     }
-    else todoIncomplete;
 }
 
 inline b32
@@ -730,6 +770,23 @@ isMatchingPair(Token *left, Token *right)
     char r = right->text.chars[0];
     return (((l == '(') && (r == ')')) ||
             ((l == '{') && (r == '}')));
+}
+
+inline TokenType
+keywordComparison(Token *token)
+{
+    TokenType result = TokenType_Null_;
+    for (int i = 1;
+         i < arrayCount(keywords);
+         i++)
+    {
+        if (equalToCString(token, keywords[i]))
+        {
+            result = (TokenType)(TokenType_Keywords_ + i);
+            break;
+        }
+    }
+    return result;
 }
 
 internal void
@@ -777,10 +834,8 @@ compile(EngineState *state, ReadFileResult *source_code)
             else if (token_count >= 1)
             {
                 Token *previous_token = tokens + token_count-1;
-                if (tokenEqualCString(previous_token, "axiom"))
-                    previous_token->type = TokenType_KeywordAxiom;
-                else if (tokenEqualCString(previous_token, "typedef"))
-                    previous_token->type = TokenType_KeywordTypedef;
+                if (TokenType type = keywordComparison(previous_token))
+                    previous_token->type = type;
             }
 
             previous_category = token_type;
@@ -842,7 +897,6 @@ compile(EngineState *state, ReadFileResult *source_code)
                     AstStackItem *new_outer = ast_stack + (stack_size++);
                     assert(stack_size <= arrayCount(ast_stack));
                     new_outer->ast = new_ast;
-                            
                 }
                 else
                 {
@@ -881,10 +935,12 @@ internal EngineState *
 resetEngineState(EngineMemory *memory)
 {
     zeroMemory(memory->storage, memory->storage_size);
+    size_t temporary_arena_size = megaBytes(8);
     MemoryArena arena_ = newArena(memory->storage_size, memory->storage);
 
     EngineState *state = pushStruct(&arena_, EngineState);
     state->permanent_arena = arena_;
+    state->temporary_arena = subArena(&state->permanent_arena, temporary_arena_size);
 
     state->axioms    = newAxiomVector(&state->permanent_arena, 32);
     state->operators = newOperatorVector(&state->permanent_arena, 32);

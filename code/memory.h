@@ -55,5 +55,11 @@ subArena(MemoryArena *parent, size_t size)
     return result;
 }
 
+inline void
+endTemporaryArena(MemoryArena *parent, MemoryArena *child)
+{
+    parent->used -= child->cap;
+}
+
 #define MEMORY_H
 #endif
