@@ -31,3 +31,5 @@ new...Vector(MemoryArena *arena, s32 capacity)
     result.arena = arena;
     return result;
 }
+
+// TODO: Implement resize, pushItemNoResize

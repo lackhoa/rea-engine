@@ -13,210 +13,93 @@ struct String
     char *chars;
     s32  length;
 };
-// TODO: implement code gen
-generate(List, String)
 
-enum ExpressionType
+typedef u64 AtomId;
+
+struct Expr
 {
-    ExpressionTypeAtom,
-    ExpressionTypeComposite,
+    AtomId  op;  // NOTE: This might want to be an Expression pointer.
+    s32     arg_count;
+    Expr   *args;
 };
 
-typedef s32 OpId;
-
-struct Expression;
-struct ExpressionListContent;
-struct ExpressionList
+struct ExpSwitch
 {
-    ExpressionListContent *c;
 };
-struct Expression
-{
-    ExpressionType type;
-    union
-    {
-        // NOTE: Atomic
-        struct
-        {
-            s32 atom_id;
-        };
-        // NOTE: Composite
-        struct
-        {
-            OpId op;
-            ExpressionList args;
-        };
-    };
-};
-struct ExpressionListContent
-{
-    Expression     car;
-    ExpressionList cdr;
-};
-
-inline s32
-length(ExpressionList ls)
-{
-    s32 result = 0;
-    for (ExpressionList l = ls ;
-         l.c;
-         l = l.c->cdr)
-    {
-        result++;
-    }
-    return result;
-}
-
-#include "generated_List.h"
-
-struct Axiom
-{
-    String name;
-    // TODO: arguments, and return.
-};
-generate(Vector, Axiom)
 
 struct Operator
 {
-    s32    arg_count;
-    String name;
+    s32  arg_count;
+    Expr *arg_types;
+    Expr return_type;
+    Expr body;
 };
-generate(Vector, Operator)
 
+// There is an infinite type hierarchy, think of a 2D array referenced by
+// "order" and "index".
 struct Atom
 {
-    String text;
-};
-generate(Vector, Atom)
-
-struct Type
-{
-    String     name;
-    StringList members;
-};
-generate(Vector, Type)
-
-#include "generated_Vector.h"
-
-struct ArrayListChunk
-{
-    s32  count;
-    u8 *items;
-    ArrayListChunk *next;
-};
-
-struct ArrayList
-{
-    // NOTE: We don't know what the count of the whole list is.
-    MemoryArena *arena;
-    s32 item_size;
-    s32 chunk_size;
-    ArrayListChunk first_chunk;
-
-    ArrayListChunk *last_chunk;
-};
-
-struct ArrayListIterator
-{
-    ArrayList *list;
-    ArrayListChunk *chunk;
-    void *current;
+    s32 order;  // 0 means atomic values, 1 means sets, then 2 means sets of sets, etc.
     s32 index;
 };
 
-inline ArrayListIterator
-getIterator(ArrayList *list)
+#include "generated/Vector_Atom.h"
+
+struct Type
 {
-    ArrayListIterator it;
-    it.list = list;
-    it.chunk = &list->first_chunk;
-    it.index = 0;
+    s32 member_count;
+    s32 first_member;
+    s32 case_count;  // for now it is equal to member_count, but for complex
+                     // expressions it's different.
+};
 
-    if (list->first_chunk.count != 0)
-        it.current = list->first_chunk.items;
-    else
-        it.current = 0;
-
-    return it;
-}
-
-inline void
-advance(ArrayListIterator *it)
+struct AtomSlot
 {
-    void *current = 0;
-    if (it->chunk)
-    {
-        it->index++;
-        if (it->index >= it->chunk->count)
-        {
-            it->chunk = it->chunk->next;
-            it->index = 0;
-            if ((it->chunk) && (it->chunk->count != 0))
-                it->current = it->chunk->items + 0;
-        }
-        else
-        {
-            current = it->chunk + it->index;
-        }
+    String   key;
+    AtomId   value;
+    AtomSlot *next;
+};
+
+struct Frame
+{
+    AtomSlot slots[128];
+};
+
+struct Bindings
+{
+    MemoryArena *arena;
+    Frame        first;
+    Bindings     *next;
+};
+
+inline Bindings *
+extend(MemoryArena *arena, Bindings *outer)
+{
+    Bindings *result = pushStruct(arena, Bindings);
+    for (int i = 0; i < arrayCount(result->first.slots); i++)
+    {// invalidate these slots
+        result->first.slots[i].key.length = 0;
     }
-    it->current = current;
+    result->next  = outer;
+    result->arena = arena;
+    return result;
 }
-
-inline void
-initializeArrayList(MemoryArena *arena, ArrayList *list, s32 chunk_size, s32 item_size)
-{
-    list->arena = arena;
-    list->item_size = item_size;
-    list->chunk_size = chunk_size;
-    list->first_chunk = {};
-    list->first_chunk.items = (u8 *) pushSize(arena, (chunk_size * item_size));
-    list->last_chunk = &list->first_chunk;
-}
-
-inline ArrayList *
-allocateArrayList(MemoryArena *arena, s32 chunk_size, s32 item_size)
-{
-    ArrayList *list = pushStruct(arena, ArrayList);
-    initializeArrayList(arena, list, chunk_size, item_size);
-    return list;
-}
-
-inline void *
-arrayListAdd_(ArrayList *list, s32 item_size)
-{
-    // TODO: @Polymorphic
-    assert(item_size == list->item_size);
-    assert(list->last_chunk->count <= list->chunk_size);
-    if (list->last_chunk->count == list->chunk_size)
-    {
-        ArrayListChunk *new_chunk = pushStruct(list->arena, ArrayListChunk);
-        new_chunk->items = (u8 *)pushSize(list->arena, (list->chunk_size * list->item_size));
-        new_chunk->count = 0;
-        new_chunk->next = 0;
-        list->last_chunk->next = new_chunk;
-        list->last_chunk = new_chunk;
-    }
-    void *added = (u8 *)list->last_chunk->items + ((list->last_chunk->count++) * list->item_size);
-    return added;
-}
-
-#define arrayListAdd(list, type) (type*) arrayListAdd_(list, sizeof(type))
 
 enum TokenType
 {
     // 0-255 reserved for single-char ASCII types.
-    TokenType_Null_           = 0,
+    TokenType_Special         = 256,
+    TokenType_PairingOpen     = 257,
+    TokenType_PairingClose    = 258,
+    TokenType_Alphanumeric    = 259,
 
-    TokenType_Space           = 256,
-    TokenType_Special         = 257,
-    TokenType_PairingOpen     = 258,
-    TokenType_PairingClose    = 259,
-    TokenType_Alphabetical    = 260,
-
-    TokenType_Keywords_       = 300,
+    // TODO: Do I really need these? The tokenizer doesn't really produce this
+    // information during its tokenization process.
+    TokenType_KeywordsBegin_  = 300,
     TokenType_KeywordTypedef  = 301,
     TokenType_KeywordDefine   = 302,
     TokenType_KeywordSwitch   = 303,
+    TokenType_KeywordsEnd_    = 400,
 };
 
 const char *keywords[] = {"_ignore_", "typedef", "define", "switch"};
@@ -228,7 +111,7 @@ struct Token
 };
 
 inline b32
-equalToCString(String s, const char *cstring)
+equals(String s, const char *cstring)
 {
     if (!s.chars)
     {
@@ -251,31 +134,16 @@ equalToCString(String s, const char *cstring)
 }
 
 inline b32
-equalToCString(Token *token, const char *string)
+equals(Token *token, const char *string)
 {
-    return equalToCString(token->text, string);
+    return equals(token->text, string);
 }
 
 inline b32
-isChar(Token *token, char c)
+equals(Token *token, char c)
 {
     return ((token->text.length == 1)
             &&  (token->text.chars[0] == c));
-}
-
-inline b32
-partOfToken(TokenType category)
-{
-    switch (category)
-    {
-        case 0:
-        case TokenType_Space:
-        case '\n':
-        case ';':
-            return false;
-        default:
-            return true;
-    }
 }
 
 inline Token
@@ -287,54 +155,19 @@ newToken(char *first_char, TokenType category)
     return result;
 }
 
-struct AstListContent;
-struct AstList
-{
-    AstListContent *c;
-};
-struct Ast
-{
-    // TODO: Reduce pointer chasing!
-    b32 is_branch;
-    Token *token;  // NOTE: If this tree is a branch, then this is the group
-                   // begin character (e.g '(' or '{').
-    // TODO: No more linked list please!
-    AstList children;
-};
-struct AstListContent
-{
-    Ast     car;
-    AstList cdr;
-};
-
 internal TokenType
-categorizeCharacter(char character)
+getCharacterType(char c)
 {
-    if ((65 <= character) && (character <= 122))
+    if ((('a' <= c) && (c <= 'z'))
+        || (('A' <= c) && (c <= 'Z'))
+        || (('0' <= c) && (c <= '9')))
     {
-        return TokenType_Alphabetical;
+        return TokenType_Alphanumeric;
     }
     else
     {
-        switch (character)
+        switch (c)
         {
-            case '\t':
-            case ' ':
-            {
-                return TokenType_Space;
-            } break;
-
-            case '(':
-            case '{':
-            {
-                return TokenType_PairingOpen;
-            } break;
-            case ')':
-            case '}':
-            {
-                return TokenType_PairingClose;
-            } break;
-
             case '.':
             case '`':
             case ',':
@@ -357,17 +190,24 @@ categorizeCharacter(char character)
                 return TokenType_Special;
             } break;
 
+            case '(':
+            case '{':
+            {
+                return TokenType_PairingOpen;
+            } break;
+
+            case ')':
+            case '}':
+            {
+                return TokenType_PairingClose;
+            }
+        
             default:
                 // NOTE: Self-describing category
-                return (TokenType)character;
+                return (TokenType)c;
         }
     }
 }
-
-struct AstStackItem
-{
-    Ast *ast;
-};
 
 inline void
 printStringToBuffer(char *buffer, String s)
@@ -395,134 +235,139 @@ printCharToBufferRepeat(char *buffer, char c, s32 repeat)
     buffer[repeat] = 0;
 }
 
-internal void
-debugPrintAst(Ast *ast, s32 indentation)
+struct Tokenizer
 {
-    if (ast->is_branch)
-    {
-        for (AstList child = ast->children;
-             child.c;
-             child = child.c->cdr)
-        {
-            debugPrintAst(&child.c->car, indentation+1);
-        }
-    }
-    else
-    {
-        char buffer[256];
-        assert(ast->token);
-        printCharToBufferRepeat(buffer, ' ', 4*indentation);
-        platformPrint(buffer);
-
-        printStringToBuffer(buffer, ast->token->text);
-        platformPrint(buffer);
-
-        sprintf(buffer, "\n");
-        platformPrint(buffer);
-    }
-}
-
-struct AstIterator
-{
-    AstList list;
+    char *at;
 };
 
-inline AstIterator
-getIterator(AstList list)
+internal void
+eatAllSpaces(Tokenizer *tk)
 {
-    return AstIterator{list};
+    b32 stop = false;
+    while ((*tk->at) && (!stop))
+    {
+        switch (*tk->at)
+        {
+            case '\n':
+            case '\t':
+            case ' ':
+            {
+                tk->at++;
+            } break;
+
+            case ';':
+            {
+                if (*(tk->at+1) == ';')
+                {
+                    tk->at += 2;
+                    while ((*tk->at) && (*tk->at != '\n'))
+                        tk->at++;
+                }
+            } break;
+
+            default:
+                stop = true;
+        }
+    }
 }
 
-inline Ast *
-getCurrent(AstIterator *it)
+inline TokenType
+keywordMatch(Token *token)
 {
-    return &it->list.c->car;
+    TokenType result = (TokenType)0;
+    for (int i = 1;
+         i < arrayCount(keywords);
+         i++)
+    {
+        if (equals(token, keywords[i]))
+        {
+            result = (TokenType)(TokenType_KeywordsBegin_ + i);
+            break;
+        }
+    }
+    return result;
 }
 
-inline Ast *
-advance(AstIterator *it)
+inline b32
+isKeyword(Token *token)
 {
-    Ast *current = getCurrent(it);
-    it->list = it->list.c->cdr;
-    return current;
+    return ((token->type > TokenType_KeywordsBegin_) && (token->type > TokenType_KeywordsEnd_));
 }
 
-#if 0
-inline s32
-parseOperatorArgCount(AstIterator *it)
+inline Token
+advance(Tokenizer *tk)
 {
-    Ast *arg_count = getCurrent(it);
-    assert(arg_count->token);
+    Token result = {};
+    eatAllSpaces(tk);
+    result.text.chars = tk->at;
+    b32 stop = false;
 
-    s32 arg_count_parsed = 0;
-    if (tokenEqualCString(arg_count->token, "unary"))
+    TokenType type = getCharacterType(*tk->at++);
+    result.type = type;
+    switch (type)
     {
-        arg_count_parsed = 1;
+        case TokenType_Alphanumeric:
+        {
+            while (getCharacterType(*tk->at) == type)
+                tk->at++;
+        } break;
+
+        case TokenType_Special:
+        {
+            while (getCharacterType(*tk->at) == type)
+                tk->at++;
+        } break;
+
+        default: {}
     }
-    else if (tokenEqualCString(arg_count->token, "binary"))
+
+    result.text.length = tk->at - result.text.chars;
+    if (result.type == TokenType_Alphanumeric)
     {
-        arg_count_parsed = 2;
+        if (TokenType new_type = keywordMatch(&result))
+            result.type = new_type;
     }
-    else if (tokenEqualCString(arg_count->token, "ternary"))
-    {
-        arg_count_parsed = 3;
-    }
-    else
-    {
+    return result;
+}
+
+inline void
+requireChar(Tokenizer *tk, char c)
+{
+    Token token = advance(tk);
+    if (!((token.text.length == 1) && (token.text.chars[0] == c)))
         todoErrorReport;
-    }
-
-    advance(it);
-    return arg_count_parsed;
 }
-#endif
+
+internal void
+debugPrintTokens(Tokenizer tk)
+{
+    while (*tk.at)
+    {
+        Token token = advance(&tk);
+        printf("%.*s ", token.text.length, token.text.chars);
+    }
+    printf("\n");
+}
+
+#include "generated/Vector_Operator.h"
+#include "generated/Vector_Type.h"
 
 struct EngineState
 {
     MemoryArena permanent_arena;
     MemoryArena temporary_arena;
 
+    Bindings       global_scope;
     OperatorVector operators;
-    AxiomVector    axioms;
-    TypeVector     types;
+
+    s32        zeroth_order_count; // How many items currently are in the 0th order.
+    s32        order_count;        // Including the 0th order.
+    TypeVector orders[3];
+    AtomVector atoms;
 };
 
-inline Token *
-parseToken(AstIterator *it)
-{
-    Ast *op = advance(it);
-    if (op->is_branch)
-    {
-        todoErrorReport;
-    }
-    return op->token;
-}
-
-inline char
-parseChar(AstIterator *it)
-{
-    Ast *op = advance(it);
-    if (op->token->text.length != 1)
-    {
-        todoErrorReport;
-    }
-    return op->token->text.chars[0];
-}
-
-inline AstList
-parseList(AstIterator *it)
-{
-    AstList result = {};
-    Ast *list = advance(it);
-    if (list->is_branch)
-        result = list->children;
-    else
-        todoErrorReport;
-    return result;
-}
-
 inline b32
-stringEqual(String a, String b)
+equals(String a, String b)
 {
     b32 result = true;
     if (a.length != b.length)
@@ -541,48 +386,87 @@ stringEqual(String a, String b)
     return result;
 }
 
-inline OpId
-lookupOperator(EngineState *state, Ast *ast)
+// TODO: Better hash function!
+internal u32
+stringHash(String string)
 {
-    OpId result = 0;
-    OperatorVector *operators = &state->operators;
-    if (ast->token)
+    u32 result = 0;
+    for (int i = 0; i < string.length; i++)
     {
-        for (s32 i = 1;
-             i < operators->count;
-             i++)
-        {
-            // TODO: could be a hash table lookup
-            if (stringEqual(operators->items[i].name, ast->token->text))
-                result = i;
-        }
+        result = 65599*result + string.chars[i];
     }
     return result;
 }
 
-inline s32
-lookupAtom(AtomVector *atoms, Ast *ast)
+struct AtomLookup
 {
-    s32 result = 0;
-    assert(!ast->is_branch);
-    for (int i = 1;
-         i < atoms->count;
-         i++)
+    AtomSlot *slot;
+    b32 found;
+};
+
+internal AtomLookup
+lookupBinding(Bindings *bindings, String key, b32 add_if_missing)
+{
+    AtomLookup result = {};
+    u32 hash = stringHash(key) % arrayCount(Frame::slots);
+    result.slot = (bindings->first.slots + hash);
+    b32 first_slot_valid = result.slot->key.length;
+    if (first_slot_valid)
     {
-        if (stringEqual(atoms->items[i].text, ast->token->text))
+        b32 stop = false;
+        while (!stop)
         {
-            result = i;
-            break;
+            if (equals(result.slot->key, key))
+            {
+                stop = true;
+                result.found = true;
+            }
+            else if (result.slot->next)
+            {
+                result.slot = result.slot->next;
+            }
+            else
+            {
+                stop = true;
+                if (add_if_missing)
+                {
+                    allocate(bindings->arena, result.slot->next);
+                    result.slot = result.slot->next;
+                    result.slot->key  = key;
+                    result.slot->next = 0;
+                }
+            }
         }
     }
+    else
+    {
+        if (add_if_missing)
+        {
+            result.slot->key = key;
+        }
+    }
+
     return result;
 }
 
-internal Expression
-parseExpression(EngineState *state, AtomVector *atoms, AstIterator *it, char end_delimiter = 0)
+inline AtomLookup
+lookupBinding(Bindings *bindings, Token *key, b32 add_if_missing)
+{
+    return lookupBinding(bindings, key->text, add_if_missing);
+}
+
+inline b32
+hasBinding(Bindings *bindings, Token key)
+{
+    AtomLookup lookup = lookupBinding(bindings, key.text, false);
+    return lookup.found;
+}
+
+#if 0
+internal void
+parseExpression(EngineState *state, InstructionVector *instructions, Bindings *bindings, AstIterator *it, char end_delimiter = 0)
 {
     MemoryArena *permanent = &state->permanent_arena;
-    Expression result = {};
     b32 not_empty = (it->list.c
                      && !isChar(it->list.c->car.token, end_delimiter));
     if (not_empty)
@@ -601,7 +485,6 @@ parseExpression(EngineState *state, AtomVector *atoms, AstIterator *it, char end
             else
             {
                 // NOTE: This is a composite: operator + operands.
-                result.type = ExpressionTypeComposite;
                 OpId op_id = lookupOperator(state, first);
                 if (op_id)
                 {
@@ -616,7 +499,7 @@ parseExpression(EngineState *state, AtomVector *atoms, AstIterator *it, char end
                         while (arg_it.list.c)
                         {
                             dst->c = pushStruct(permanent, ExpressionListContent);
-                            dst->c->car = parseExpression(state, atoms, &arg_it);
+                            dst->c->car = parseExpression(state, bindings, &arg_it);
                             dst = &dst->c->cdr;
                         }
                     }
@@ -631,135 +514,270 @@ parseExpression(EngineState *state, AtomVector *atoms, AstIterator *it, char end
             {
                 AstIterator it = getIterator(first->children);
                 // NOTE: Extra parens don't matter (we're not lisp).
-                result = parseExpression(state, atoms, &it);
+                result = parseExpression(state, bindings, &it);
             }
             else
             {
                 result.type = ExpressionTypeAtom;
-                s32 id = lookupAtom(atoms, first);
+                s32 id = lookupAtom(bindings, first);
                 if (!id)
-                {
-                    Atom *atom = pushItem(atoms);
-                    *atom = {first->token->text};
-                    id = atoms->count-1;
-                }
+                    todoErrorReport;
                 result.atom_id = id;
             }
         }
     }
     return result;
 }
-
-internal void
-parseTypedef(EngineState *state, AstIterator *it)
-{
-    Type *result = pushItem(&state->types);
-
-    Token *type_name = parseToken(it);
-    result->name = type_name->text;
-
-    StringList *dst = &result->members;
-    AstList members_ast = parseList(it);
-    AstIterator members_it = getIterator(members_ast);
-    while (members_it.list.c)
-    {
-        if (parseChar(&members_it) == '|')
-        {
-            Token *member = parseToken(&members_it);
-            dst->c = pushStruct(&state->permanent_arena, StringListContent);
-            dst->c->car = member->text;
-            dst = &dst->c->cdr;
-        }
-        else
-            todoErrorReport;
-    }
-}
-
-inline void
-eatChar(AstIterator *it, char c)
-{
-    Ast *ast = getCurrent(it);
-    if ((ast->is_branch == false) && isChar(ast->token, c))
-    {
-        advance(it);
-    }
-}
-
-internal void
-parseDefine(EngineState *state, AstIterator *it)
-{
-    Token *name = parseToken(it);
-    MemoryArena *permanent = &state->permanent_arena;
-    MemoryArena temp = subArena(&state->temporary_arena, kiloBytes(256));
-    AtomVector atoms = newAtomVector(&temp, 8);
-    atoms.count = 1;
-
-    ExpressionList exp_args = {};
-    AstList args = parseList(it);
-    {
-        AstIterator it = getIterator(args);
-        while (it.list.c)
-        {
-            eatChar(&it, ',');
-            exp_args.c = pushStruct(permanent, ExpressionListContent);
-
-            // starting from the name
-            Token *arg_name = parseToken(&it);
-            // then the delimiter
-            if (parseChar(&it) != ':')
-                todoErrorReport;
-            // then to the type, which is an arbitrary expression
-            parseExpression(state, &atoms, &it, ',');
-        }
-    }
-    
-    // Type definition
-    if (parseChar(it) != ':')
-        todoErrorReport;
-    Expression return_type = parseExpression(state, &atoms, it, '{');
-
-#if 0
-    // BOOKMARK: parse the body!
-    Ast *body = parseBody(it);
 #endif
 
-    endTemporaryArena(&state->temporary_arena, &temp);
+internal void
+parseTypedef(EngineState *state, Tokenizer *tk)
+{
+    Type *type = pushItem(&state->orders[1]);
+
+    Token type_name = advance(tk);
+    if (type_name.type == TokenType_Alphanumeric)
+    {
+        // Check for global naming conflict
+        AtomLookup lookup = lookupBinding(&state->global_scope, type_name.text, true);
+        if (lookup.found) {todoErrorReport;}
+        else
+        {
+            // Declare top-level value.
+            Atom *atom = pushItem(&state->atoms);
+            *atom = {};
+            atom->order = 1;
+            type->first_member = state->zeroth_order_count;
+            atom->index = state->orders[1].count;
+
+            requireChar(tk, '{');
+
+            b32 stop = false;
+            while (!stop)
+            {
+                Token token = advance(tk);
+                if (equals(&token, '}'))
+                {
+                    stop = true;
+                }
+                else if (equals(&token, '|'))
+                {
+                    Token token = advance(tk);
+                    if (token.type == TokenType_Alphanumeric)
+                    {
+                        AtomLookup lookup = lookupBinding(&state->global_scope, token.text, true);
+                        if (lookup.found)
+                            todoErrorReport;
+                        else
+                        {
+                            lookup.slot->value = state->zeroth_order_count++;
+                        }
+                        type->member_count++;
+                        type->case_count++;
+                    }
+                }
+                else
+                    todoErrorReport;
+            }
+        }
+    }
 }
 
+struct Argument
+{
+    s32 identifier;
+    s32 type_id;
+};
+
+enum BuiltInOperator
+{
+    BuiltInOperator_Null_,
+
+    BuiltInOperator_Switch,
+
+    BuiltInOperator_Count_,
+};
+
+// this eats the end marker too
+internal Expr
+parseExpression(EngineState *state, Bindings *bindings, Tokenizer *tk, char* end_markers)
+{
+    Expr out = {};
+    Token first = advance(tk);
+    if (isKeyword(&first))
+    {
+        switch (first.type)
+        {
+            out.op = BuiltInOperator_Switch;
+            case TokenType_KeywordSwitch:
+            {
+                Expr switch_subject = parseExpression(state, bindings, tk, "{");
+
+                // TODO: Need to check that all these cases are satisfied, somehow.
+                for (b32 stop = false; !stop;)
+                {
+                    Token bar_or_closing_brace = advance(tk);
+                    switch (bar_or_closing_brace.text.chars[0])
+                    {
+                        case '|':
+                        {
+                            Expr switch_case = parseExpression(state, bindings, tk, "{");
+                            Expr case_body = parseExpression(state, bindings, tk, "}");
+                        } break;
+
+                        case '}':
+                        {
+                            stop = true;
+                        } break;
+
+                        default:
+                            todoErrorReport;  // in switch expression, expect either '|' or '}'
+                    }
+                }
+
+                requireChar(tk, '}');
+            } break;
+
+            default:
+                todoIncomplete;
+        }
+    }
+    else if (first.type == TokenType_Alphanumeric)
+    {
+        AtomLookup lookup = lookupBinding(bindings, &first, false);
+        if (lookup.found)
+        {
+            out.op = lookup.slot->value;
+        }
+        else
+            todoErrorReport;  // Unbound identifier
+    }
+    return out;
+}
+
+internal void
+parseDefine(EngineState *state, Tokenizer *tk)
+{
+    Token define_name = advance(tk);
+    if (define_name.type == TokenType_Alphanumeric)
+    {
+        AtomLookup lookup = lookupBinding(&state->global_scope, define_name.text, true);
+        if (lookup.found)
+            todoErrorReport;
+        else
+        {
+            MemoryArena temp = subArena(&state->temporary_arena, kiloBytes(256));
+            Bindings *bindings = extend(&temp, &state->global_scope);
+            requireChar(tk, '(');
+            Operator op = {};
+
+            s32 arg_count = 0;
+            {
+                Tokenizer tk1_ = *tk;
+                Tokenizer *tk1 = &tk1_;
+                Token token = advance(tk1);
+                b32 stop = false;
+                s32 nesting_depth = 0;
+                b32 previous_is_comma;
+                while (!stop)
+                {
+                    previous_is_comma = false;
+                    if (equals(&token, '('))
+                    {
+                        nesting_depth++;
+                    }
+                    else if (equals(&token, ')'))
+                    {
+                        if (nesting_depth)
+                        {
+                            nesting_depth--;
+                        }
+                        else
+                        {
+                            if (!previous_is_comma)
+                            {
+                                arg_count++;
+                            }
+                            stop = true;
+                        }
+                    }
+                    else if ((nesting_depth == 0)
+                             && (equals(&token, ',')))
+                    {
+                        arg_count++;
+                        previous_is_comma = true;
+                    }
+                }
+            }
+            op.arg_count = arg_count;
+            op.arg_types = pushArray(&state->permanent_arena, arg_count, Expr);
+            
+            s32 arg_it;
+            b32 stop = false;
+            for (arg_it = 0; !stop; arg_it++)
+            {// parsing arguments
+                Token arg_name_or_close = advance(tk);
+                if (equals(&arg_name_or_close, ')'))
+                {
+                    stop = true;
+                }
+                else if (arg_name_or_close.type == TokenType_Alphanumeric)
+                {
+                    requireChar(tk, ':');
+
+                    op.arg_types[arg_it] = parseExpression(state, bindings, tk, ",)");
+
+                    Token delimiter = advance(tk);
+                    if (equals(&delimiter, ')'))
+                        stop = true;
+                    else if (!equals(&delimiter, ','))
+                        todoErrorReport;  // no comma after type
+                }
+                else
+                    todoErrorReport;  // expected arg name
+            }
+            assert(arg_it == arg_count);
+
+            // return type
+            requireChar(tk, ':');
+            op.return_type = parseExpression(state, bindings, tk, "{");
+            op.body = parseExpression(state, bindings, tk, "}");
+
+            endTemporaryArena(&state->temporary_arena, &temp);
+        }
+    }
+    else
+        todoErrorReport;
+}
 
 // NOTE: Main didspatch parse function
 internal void
-parseAstTopLevel(EngineState *state, AstIterator *it)
+parseTopLevel(EngineState *state, Tokenizer *tk)
 {
-    while (it->list.c)
+    b32 eof = false;
+    while (!eof)
     {
-        Ast *ast = advance(it);
-        if (Token *token = ast->token)
+        Token token = advance(tk); 
+        switch (token.type)
         {
-            switch (token->type)
+            case 0:
             {
-                case TokenType_KeywordTypedef:
-                {
-                    parseTypedef(state, it);
-                } break;
+                eof = true;
+            } break;
 
-                case TokenType_KeywordDefine:
-                {
-                    parseDefine(state, it);
-                } break;
+            case TokenType_KeywordTypedef:
+            {
+                parseTypedef(state, tk);
+            } break;
 
-#if 0
-                case TokenType_KeywordAxiom:
-                {
-                    parseAxiomDefinition(state, it);
-                } break;
-#endif
+            case TokenType_KeywordDefine:
+            {
+                parseDefine(state, tk);
+            } break;
 
-                default: todoIncomplete;
-            }
+            default:
+                todoIncomplete;
         }
-        else
-            todoIncomplete;
     }
 }
 
@@ -772,80 +790,12 @@ isMatchingPair(Token *left, Token *right)
             ((l == '{') && (r == '}')));
 }
 
-inline TokenType
-keywordComparison(Token *token)
-{
-    TokenType result = TokenType_Null_;
-    for (int i = 1;
-         i < arrayCount(keywords);
-         i++)
-    {
-        if (equalToCString(token, keywords[i]))
-        {
-            result = (TokenType)(TokenType_Keywords_ + i);
-            break;
-        }
-    }
-    return result;
-}
-
 internal void
-compile(EngineState *state, ReadFileResult *source_code)
+compile(EngineState *state, ReadFileResult *source)
 {
     MemoryArena *permanent_arena = &state->permanent_arena;
-    TokenType previous_category = (TokenType_Null_);
-    s32 token_count = 0;
-    s32 todo_token_cap = source_code->content_size / 2;
-    Token *tokens = pushArray(permanent_arena, todo_token_cap, Token);
-    b32 being_commented = false;
-    // TODO: Unicode support?
-    for (s32 content_index = 0;
-         content_index < source_code->content_size;
-         content_index++)
-    {   // MARK: tokenizing
-        char *character = &((char *)source_code->content)[content_index];
-        TokenType token_type = categorizeCharacter(*character);
 
-        if (token_type == ';')
-            being_commented = true;
-        if (token_type == '\n')
-            being_commented = false;
-
-        if (!being_commented)
-        {
-            b32 char_is_part_of_token = partOfToken(token_type);
-            b32 add_token = (((previous_category != token_type)
-                              || (token_type == TokenType_PairingOpen)
-                              || (token_type == TokenType_PairingClose))
-                             && char_is_part_of_token);
-
-            if (add_token)
-            {
-                Token *token = tokens + token_count++;
-                token->text = {character, 0};
-                token->type = token_type;
-            }
-
-            b32 extending_previous_token = char_is_part_of_token;
-            if (extending_previous_token)
-            {
-                tokens[token_count-1].text.length++;
-            }
-            else if (token_count >= 1)
-            {
-                Token *previous_token = tokens + token_count-1;
-                if (TokenType type = keywordComparison(previous_token))
-                    previous_token->type = type;
-            }
-
-            previous_category = token_type;
-        }
-    }
-
-    s32 todo_ast_chunk_size = 1024;
-    ArrayList *expressions = allocateArrayList(&state->permanent_arena, todo_ast_chunk_size, sizeof(Ast));
-    Ast *root_ast = arrayListAdd(expressions, Ast);
-    root_ast->is_branch = true;
+#if 0
     {   // MARK: Parsing: Dealing with grouping constructs (not keywords), forming AST
         if (expressions->last_chunk != &expressions->first_chunk)
         {
@@ -905,15 +855,17 @@ compile(EngineState *state, ReadFileResult *source_code)
             }
         }
     }
+#endif
 
     {// MARK: Executing
 #if 1
-        AstIterator it = getIterator(root_ast->children);
-        parseAstTopLevel(state, &it);
+        Tokenizer tk = { source->content };
+        parseTopLevel(state, &tk);
 #endif
 
-#if 1
-        debugPrintAst(root_ast, 0);
+#if 0
+        Tokenizer tk = { source->content };
+        debugPrintTokens(tk);
 #endif
     }
 }
@@ -921,20 +873,22 @@ compile(EngineState *state, ReadFileResult *source_code)
 inline void
 testCaseMain(EngineState *state)
 {
-    ReadFileResult read = platformReadEntireFile("test.rea");
-    compile(state, &read);
-
-    assert(state->types.count == 2);
-    assert(equalToCString(state->types.items[1].name, "Bool"));
-    assert(length(state->types.items[1].members) == 2);
-
-    platformFreeFileMemory(read.content);
+    char *input = "test.rea";
+    ReadFileResult read = platformReadEntireFile(input);
+    if (read.content)
+    {
+        compile(state, &read);
+        platformFreeFileMemory(read.content);
+    }
+    else
+        printf("Failed to read input file %s", input);
 }
 
 internal EngineState *
-resetEngineState(EngineMemory *memory)
+resetEngineState(EngineMemory *memory, b32 zero_memory = true)
 {
-    zeroMemory(memory->storage, memory->storage_size);
+    if (zero_memory)
+        zeroMemory(memory->storage, memory->storage_size);
     size_t temporary_arena_size = megaBytes(8);
     MemoryArena arena_ = newArena(memory->storage_size, memory->storage);
 
@@ -942,12 +896,19 @@ resetEngineState(EngineMemory *memory)
     state->permanent_arena = arena_;
     state->temporary_arena = subArena(&state->permanent_arena, temporary_arena_size);
 
-    state->axioms    = newAxiomVector(&state->permanent_arena, 32);
-    state->operators = newOperatorVector(&state->permanent_arena, 32);
-    state->types     = newTypeVector(&state->permanent_arena, 32);
-    state->axioms.count    = 1;
+    state->operators       = newOperatorVector(&state->permanent_arena, 32);
     state->operators.count = 1;
-    state->types.count     = 1;
+
+    // TODO: More orders?
+    state->order_count = 3;
+    state->orders[1]   = newTypeVector(&state->permanent_arena, 128);
+    state->orders[2]   = newTypeVector(&state->permanent_arena, 32);
+
+    state->atoms       = newAtomVector(&state->permanent_arena, 1024);
+    // NOTE: hack to reserve operators, don't this at home!
+    state->atoms.count = BuiltInOperator_Count_;  
+
+    state->global_scope.arena = &state->permanent_arena;
 
     return state;
 }
@@ -959,6 +920,6 @@ engineMain(EngineMemory *memory)
     platformReadEntireFile = memory->platformReadEntireFile;
     platformFreeFileMemory = memory->platformFreeFileMemory;
 
-    EngineState *state = resetEngineState(memory);
+    EngineState *state = resetEngineState(memory, false);
     testCaseMain(state);
 }

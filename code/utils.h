@@ -1,15 +1,18 @@
 #if !defined(UTILS_H)
+#include <cstdint>
 
 #define internal static
 #define global_variable static
 
-typedef int s32;
-typedef int b32;
-typedef long s64;
-typedef unsigned long u64;
-typedef float r32;
-typedef char u8;
-typedef unsigned int u32;
+typedef uint8_t  u8;
+typedef uint16_t u16;
+typedef int32_t  s32;
+typedef int32_t  b32;
+typedef uint32_t u32;
+typedef uint64_t u64;
+
+typedef float    r32;
+typedef long     s64;
 
 #define kiloBytes(value) ((value)*1024LL)
 #define megaBytes(value) (kiloBytes(value)*1024LL)
@@ -22,11 +25,11 @@ global_variable b32 globalRunning;
 global_variable s64 globalPerfCountFrequency;
 
 #define assert(claim) if (!(claim)) { __debugbreak(); }
-#define invalidCodePath { __debugbreak(); }
-#define todoErrorReport { __debugbreak(); }
-#define todoIncomplete { __debugbreak(); }
+#define invalidCodePath __debugbreak()
+#define todoErrorReport __debugbreak()
+#define todoIncomplete __debugbreak()
 #define invalidDefaultCase default: { assert(false) };
-#define breakhere {int x = 5; (void)x; }
+#define breakhere { int x = 5; (void)x; }
 #define generate(whatever...)
 
 #define UTILS_H

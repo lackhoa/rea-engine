@@ -61,5 +61,7 @@ endTemporaryArena(MemoryArena *parent, MemoryArena *child)
     parent->used -= child->cap;
 }
 
+#define allocate(arena, x) x = (__typeof__(x)) pushSize(arena, sizeof(*x))
+
 #define MEMORY_H
 #endif

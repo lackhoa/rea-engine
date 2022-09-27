@@ -52,7 +52,7 @@ define &(a: Bool, b: Bool) : Bool
 ;; typedef Nat
 ;; {
 ;;  | 0
-;;  | succ(Nat)
+;;  | +1(Nat)
 ;;  }
 
 ;; define +(a: Nat, b: Nat) : Nat

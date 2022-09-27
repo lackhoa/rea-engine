@@ -228,23 +228,13 @@ win32ResizeDIBSection(win32_offscreen_buffer *buffer, int width, int height)
     buffer->pitch = width*buffer->bytes_per_pixel;
 }
 
+#if 0
 s32 CALLBACK
 WinMain(HINSTANCE instance,
         HINSTANCE prev_instance,
         LPSTR     cmd_line,
         int       show_code)
 {
-    EngineMemory engine_memory;
-    engine_memory.platformReadEntireFile = &win32ReadEntireFile;
-    engine_memory.platformFreeFileMemory = &win32FreeFileMemory;
-    engine_memory.platformPrint = &OutputDebugStringA;
-    LPVOID base_address = 0;
-    engine_memory.storage_size = megaBytes(256);
-    engine_memory.storage = VirtualAlloc(base_address, engine_memory.storage_size,
-                                         MEM_RESERVE|MEM_COMMIT,
-                                         PAGE_READWRITE);
-    engineMain(&engine_memory);
-
     (void)prev_instance; (void)cmd_line; (void)show_code;
     WNDCLASSA window_class = {};
     window_class.style = CS_HREDRAW|CS_VREDRAW;
@@ -304,4 +294,19 @@ WinMain(HINSTANCE instance,
         // TODO: error handling.
     }
     return 0;
+}
+#endif
+
+int main()
+{
+    EngineMemory engine_memory;
+    engine_memory.platformReadEntireFile = &win32ReadEntireFile;
+    engine_memory.platformFreeFileMemory = &win32FreeFileMemory;
+    engine_memory.platformPrint = &OutputDebugStringA;
+    LPVOID base_address = 0;
+    engine_memory.storage_size = megaBytes(256);
+    engine_memory.storage = VirtualAlloc(base_address, engine_memory.storage_size,
+                                         MEM_RESERVE|MEM_COMMIT,
+                                         PAGE_READWRITE);
+    engineMain(&engine_memory);
 }

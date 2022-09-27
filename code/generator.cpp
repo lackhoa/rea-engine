@@ -2,9 +2,6 @@
 #include <malloc.h>
 #include "utils.h"
 
-char *vector_structs[] = {"Axiom", "Operator", "Atom", "Type"};
-char *linked_list_structs[] = {"String"};
-
 #if 0
 struct Tokenizer
 {
@@ -42,54 +39,52 @@ readEntireFile(char *file_name)
     }
 }
 
+internal void
+generateCode(char *templated_code, char *output_name, char *type)
+{
+    FILE *output;
+    if (fopen_s(&output, output_name, "w") == 0)
+    {
+        char *at = templated_code;
+        while (*at)
+        {
+            if ((*at == '.') && (*(at+1) == '.') && (*(at+2) == '.'))
+            {
+                at += 2;
+                fprintf(output, "%s", type);
+            }
+            else
+            {
+                fprintf(output, "%c", *at);
+            }
+            at++;
+        }
+
+        fclose(output);
+    }
+    else
+    {
+        fprintf(stderr, "Cannot open file %s! \n", output_name);
+    }
+}
+
 int main()
 {
-    const char *data_structures[] = {"Vector", "List"};
-    for (int i = 0;
-         i < arrayCount(data_structures);
-         i++)
+    char *vector_types[] = {"Operator", "Atom", "Type", "Instruction"};
+
+    char *templated_code = readEntireFile("templated_Vector.h");
+    if (templated_code)
     {
-        const char *data_structure = data_structures[i];
-        char input_name[256];
-        sprintf(input_name, "templated_%s.h", data_structure);
-        char *templated_code = readEntireFile(input_name);
-        char output_name[256];
-        sprintf(output_name, "generated_%s.h", data_structure);
-        FILE *output;
-        char **structs = (i == 0) ? vector_structs : linked_list_structs;
-        s32 struct_count = (i == 0) ? arrayCount(vector_structs) : arrayCount(linked_list_structs);
-        if (fopen_s(&output, output_name, "w") == 0)
+        for (int type_it = 0;
+             type_it < arrayCount(vector_types);
+             type_it++)
         {
-            fprintf(output, "#include \"utils.h\" \n");
-            fprintf(output, "#include \"memory.h\" \n");
-            fprintf(output, "#include \"intrinsics.h\" \n");
-            for (int i = 0;
-                 i < struct_count;
-                 i++)
-            {
-                const char *struct_name = structs[i];
-                char *at = templated_code;
-                while (*at)
-                {
-                    if ((*at == '.') && (*(at+1) == '.') && (*(at+2) == '.'))
-                    {
-                        at += 2;
-                        fprintf(output, "%s", struct_name);
-                    }
-                    else
-                    {
-                        fprintf(output, "%c", *at);
-                    }
-                    at++;
-                }
-            }
-            fclose(output);
-        }
-        else
-        {
-            fprintf(stderr, "Cannot open file %s! \n", output_name);
-            return(1);
+            char output_name[256];
+            char *type = vector_types[type_it];
+            sprintf(output_name, "generated/Vector_%s.h", type);
+            generateCode(templated_code, output_name, type);
         }
     }
-    return (0);
+
+    return(0);
 }
