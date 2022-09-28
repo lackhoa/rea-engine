@@ -1,6 +1,7 @@
 #if !defined(MEMORY_H)
 
 #include "utils.h"
+#include "intrinsics.h"
 
 inline void
 zeroSize(void *base, size_t size)
@@ -15,20 +16,30 @@ zeroSize(void *base, size_t size)
 
 struct MemoryArena
 {
-    size_t cap;
-    u8 *base;
+    u8     *base;
     size_t used;
+    size_t cap;
+    s32    temp_count;
 };
+
+inline MemoryArena
+newArena(size_t cap, void *base)
+{
+    MemoryArena arena = {};
+    arena.cap = cap;
+    arena.base = (u8 *)base;
+    return arena;
+}
 
 inline void *
 pushSize(MemoryArena *arena, size_t size, b32 zero = false)
 {
-    assert((arena->used + size) <= arena->cap);
-    void *result = arena->base + arena->used;
+    void *out = (arena->base + arena->used);
     arena->used += size;
+    assert(arena->used <= arena->cap);
     if (zero)
-        zeroSize(result, size);
-    return(result);
+        zeroSize(out, size);
+    return(out);
 }
 
 #define pushStruct(arena, type) (type *) pushSize(arena, sizeof(type))
@@ -36,23 +47,19 @@ pushSize(MemoryArena *arena, size_t size, b32 zero = false)
 #define pushArray(arena, count, type) (type *) pushSize(arena, count*sizeof(type))
 
 inline MemoryArena
-newArena(size_t size, void *base)
-{
-    MemoryArena arena;
-    arena.cap = size;
-    arena.base = (u8 *)base;
-    arena.used = 0;
-    return arena;
-}
-
-inline MemoryArena
 subArena(MemoryArena *parent, size_t size)
 {
-    MemoryArena result;
+    MemoryArena result = {};
     result.base = (u8 *)pushSize(parent, size);
     result.cap = size;
-    result.used = 0;
     return result;
+}
+
+inline MemoryArena 
+beginTemporaryArena(MemoryArena *parent)
+{
+    MemoryArena out = subArena(parent, parent->cap - parent->used);
+    return out;
 }
 
 inline void

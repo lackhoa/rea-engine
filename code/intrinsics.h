@@ -1,5 +1,6 @@
 #if !defined(INTRINSICS_H)
 
+#include "utils.h"
 #include <string.h>
 
 inline void
@@ -12,6 +13,12 @@ inline void
 copyMemory(void *dst, void *src, size_t size)
 {
     memcpy(dst, src, size);
+}
+
+inline s32
+absoluteValue(s32 in)
+{
+    return ((in >= 0) ? in : -in);
 }
 
 #define INTRINSICS_H

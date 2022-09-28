@@ -14,33 +14,79 @@ struct String
     s32  length;
 };
 
-typedef u64 AtomId;
+typedef s32 AtomId;  // This is an array index so it can't be too large.
 
-struct Expr
+enum ExpType
 {
-    AtomId  op;  // NOTE: This might want to be an Expression pointer.
-    s32     arg_count;
-    Expr   *args;
+    ExpType_Atom,
+    ExpType_Composite,
+    ExpType_Switch,
+};
+
+struct Exp;
+
+struct ExpComplex
+{
+    Exp *op;
+    Exp *args;
+};
+
+struct ExpAtom
+{
+    AtomId id;
 };
 
 struct ExpSwitch
 {
+    Exp *subject;
+    Exp *case_bodies;
+};
+
+struct Exp
+{
+    ExpType type;
+    union
+    {
+        ExpComplex abstract;
+        ExpSwitch  switch0;
+        ExpAtom    atom;
+    };
 };
 
 struct Operator
 {
     s32  arg_count;
-    Expr *arg_types;
-    Expr return_type;
-    Expr body;
+    Exp *arg_types;
+    Exp return_type;
+    Exp body;
 };
 
-// There is an infinite type hierarchy, think of a 2D array referenced by
-// "order" and "index".
+enum AtomType
+{
+    AtomType_Data,
+    AtomType_Operator,
+};
+
+// Atoms are just references to stores.
 struct Atom
 {
-    s32 order;  // 0 means atomic values, 1 means sets, then 2 means sets of sets, etc.
-    s32 index;
+    AtomType type;
+    union
+    {
+        struct
+        {
+            // There is an infinite type hierarchy, think of a 2D array
+            // referenced by "order" and "index". 0th order means atomic values, 1st
+            // means sets, 2 means sets of sets.
+            s32 order;
+            s32 order_index;
+            Exp *type_exp;  // so atom types can be complex, and here we are.
+        } data;
+        struct
+        {
+            s32 index;
+        } op;
+    };
 };
 
 #include "generated/Vector_Atom.h"
@@ -49,8 +95,8 @@ struct Type
 {
     s32 member_count;
     s32 first_member;
-    s32 case_count;  // for now it is equal to member_count, but for complex
-                     // expressions it's different.
+    s32 case_count;  // for now it is equal to member_count, but for composite
+                     // cases it's different.
 };
 
 struct AtomSlot
@@ -60,29 +106,25 @@ struct AtomSlot
     AtomSlot *next;
 };
 
-struct Frame
-{
-    AtomSlot slots[128];
-};
-
 struct Bindings
 {
     MemoryArena *arena;
-    Frame        first;
+    AtomSlot     first[128];
     Bindings     *next;
 };
 
 inline Bindings *
 extend(MemoryArena *arena, Bindings *outer)
 {
-    Bindings *result = pushStruct(arena, Bindings);
-    for (int i = 0; i < arrayCount(result->first.slots); i++)
+    Bindings *out = pushStruct(arena, Bindings);
+    for (int i = 0; i < arrayCount(out->first); i++)
     {// invalidate these slots
-        result->first.slots[i].key.length = 0;
+        AtomSlot *slot = &out->first[i];
+        slot->value = 0;
     }
-    result->next  = outer;
-    result->arena = arena;
-    return result;
+    out->next  = outer;
+    out->arena = arena;
+    return out;
 }
 
 enum TokenType
@@ -149,10 +191,10 @@ equals(Token *token, char c)
 inline Token
 newToken(char *first_char, TokenType category)
 {
-    Token result;
-    result.text = {first_char, 0};
-    result.type = category;
-    return result;
+    Token out;
+    out.text = {first_char, 0};
+    out.type = category;
+    return out;
 }
 
 internal TokenType
@@ -274,18 +316,18 @@ eatAllSpaces(Tokenizer *tk)
 inline TokenType
 keywordMatch(Token *token)
 {
-    TokenType result = (TokenType)0;
+    TokenType out = (TokenType)0;
     for (int i = 1;
          i < arrayCount(keywords);
          i++)
     {
         if (equals(token, keywords[i]))
         {
-            result = (TokenType)(TokenType_KeywordsBegin_ + i);
+            out = (TokenType)(TokenType_KeywordsBegin_ + i);
             break;
         }
     }
-    return result;
+    return out;
 }
 
 inline b32
@@ -297,13 +339,13 @@ isKeyword(Token *token)
 inline Token
 advance(Tokenizer *tk)
 {
-    Token result = {};
+    Token out = {};
     eatAllSpaces(tk);
-    result.text.chars = tk->at;
+    out.text.chars = tk->at;
     b32 stop = false;
 
     TokenType type = getCharacterType(*tk->at++);
-    result.type = type;
+    out.type = type;
     switch (type)
     {
         case TokenType_Alphanumeric:
@@ -321,13 +363,13 @@ advance(Tokenizer *tk)
         default: {}
     }
 
-    result.text.length = tk->at - result.text.chars;
-    if (result.type == TokenType_Alphanumeric)
+    out.text.length = tk->at - out.text.chars;
+    if (out.type == TokenType_Alphanumeric)
     {
-        if (TokenType new_type = keywordMatch(&result))
-            result.type = new_type;
+        if (TokenType new_type = keywordMatch(&out))
+            out.type = new_type;
     }
-    return result;
+    return out;
 }
 
 inline void
@@ -354,205 +396,152 @@ debugPrintTokens(Tokenizer tk)
 
 struct EngineState
 {
-    MemoryArena permanent_arena;
-    MemoryArena temporary_arena;
+    MemoryArena scoped_arena;  // used for storing e.g stack frames
 
     Bindings       global_scope;
     OperatorVector operators;
+    AtomVector     atoms;
 
     s32        zeroth_order_count; // How many items currently are in the 0th order.
     s32        order_count;        // Including the 0th order.
-    TypeVector orders[3];
-    AtomVector atoms;
+    FormVector orders[3];
 };
 
 inline b32
 equals(String a, String b)
 {
-    b32 result = true;
+    b32 out = true;
     if (a.length != b.length)
-        result = false;
+        out = false;
     else
     {
         for (int i = 0; i < a.length; i++)
         {
             if (a.chars[i] != b.chars[i])
             {
-                result = false;
+                out = false;
                 break;
             }
         }
     }
-    return result;
+    return out;
 }
 
 // TODO: Better hash function!
 internal u32
 stringHash(String string)
 {
-    u32 result = 0;
+    u32 out = 0;
     for (int i = 0; i < string.length; i++)
     {
-        result = 65599*result + string.chars[i];
+        out = 65599*out + string.chars[i];
     }
-    return result;
+    return out;
 }
 
-struct AtomLookup
+// If the value in the output slot is 0, that means lookup failed
+internal AtomSlot *
+lookupBindingCurrentFrame(Bindings *bindings, String key, b32 add_if_missing = false)
 {
-    AtomSlot *slot;
-    b32 found;
-};
-
-internal AtomLookup
-lookupBinding(Bindings *bindings, String key, b32 add_if_missing)
-{
-    AtomLookup result = {};
-    u32 hash = stringHash(key) % arrayCount(Frame::slots);
-    result.slot = (bindings->first.slots + hash);
-    b32 first_slot_valid = result.slot->key.length;
+    AtomSlot *out = 0;
+    u32 hash = stringHash(key);
+    out = (bindings->first + (hash % arrayCount(bindings->first)));
+    b32 first_slot_valid = out->key.length;
     if (first_slot_valid)
     {
         b32 stop = false;
         while (!stop)
         {
-            if (equals(result.slot->key, key))
+            if (equals(out->key, key))
             {
                 stop = true;
-                result.found = true;
             }
-            else if (result.slot->next)
+            else if (out->next)
             {
-                result.slot = result.slot->next;
+                out = out->next;
             }
             else
             {
                 stop = true;
                 if (add_if_missing)
                 {
-                    allocate(bindings->arena, result.slot->next);
-                    result.slot = result.slot->next;
-                    result.slot->key  = key;
-                    result.slot->next = 0;
+                    allocate(bindings->arena, out->next);
+                    out = out->next;
+                    out->key  = key;
+                    out->value = 0;
+                    out->next = 0;
                 }
             }
         }
     }
-    else
+    else if (add_if_missing)
     {
-        if (add_if_missing)
-        {
-            result.slot->key = key;
-        }
+        out->key = key;
+        out->value = 0;
     }
 
-    return result;
+    return out;
 }
 
-inline AtomLookup
-lookupBinding(Bindings *bindings, Token *key, b32 add_if_missing)
+inline AtomSlot *
+lookupBindingCurrentFrame(Bindings *bindings, Token *key, b32 add_if_missing = false)
 {
-    return lookupBinding(bindings, key->text, add_if_missing);
+    return lookupBindingCurrentFrame(bindings, key->text, add_if_missing);
 }
 
-inline b32
-hasBinding(Bindings *bindings, Token key)
+inline AtomId
+lookupBindingRecursive(Bindings *bindings, Token *key, b32 add_if_missing = false)
 {
-    AtomLookup lookup = lookupBinding(bindings, key.text, false);
-    return lookup.found;
-}
-
-#if 0
-internal void
-parseExpression(EngineState *state, InstructionVector *instructions, Bindings *bindings, AstIterator *it, char end_delimiter = 0)
-{
-    MemoryArena *permanent = &state->permanent_arena;
-    b32 not_empty = (it->list.c
-                     && !isChar(it->list.c->car.token, end_delimiter));
-    if (not_empty)
+    AtomId out = 0;
+    for (b32 stop = false; !stop;)
     {
-        Ast *first = advance(it);
-        b32 is_combination = (it->list.c
-                              && !isChar(it->list.c->car.token, end_delimiter));
-        if (is_combination)
+        AtomSlot *lookup = lookupBindingCurrentFrame(bindings, key, false);
+        if (lookup->value)
         {
-            // NOTE: the first thing is either a unary op, a function call, an
-            // identifier, or a composite expression.
-            if (first->is_branch)
-            {
-                todoIncomplete;
-            }
-            else
-            {
-                // NOTE: This is a composite: operator + operands.
-                OpId op_id = lookupOperator(state, first);
-                if (op_id)
-                {
-                    // MARK: Function call.
-                    // TODO: could also be unary operator, but I suspect they go through the same path?
-                    result.op = op_id;
-                    AstList args = parseList(it);
-                    if (args.c)
-                    {
-                        ExpressionList *dst = &result.args;
-                        AstIterator arg_it = getIterator(args);
-                        while (arg_it.list.c)
-                        {
-                            dst->c = pushStruct(permanent, ExpressionListContent);
-                            dst->c->car = parseExpression(state, bindings, &arg_it);
-                            dst = &dst->c->cdr;
-                        }
-                    }
-                }
-                else
-                    todoErrorReport;
-            }
+            out = lookup->value;
+            stop = true;
         }
         else
         {
-            if (first->is_branch)
-            {
-                AstIterator it = getIterator(first->children);
-                // NOTE: Extra parens don't matter (we're not lisp).
-                result = parseExpression(state, bindings, &it);
-            }
+            if (bindings->next)
+                bindings = bindings->next;
             else
-            {
-                result.type = ExpressionTypeAtom;
-                s32 id = lookupAtom(bindings, first);
-                if (!id)
-                    todoErrorReport;
-                result.atom_id = id;
-            }
+                stop = true;
         }
     }
-    return result;
+    return out;
 }
-#endif
 
 internal void
-parseTypedef(EngineState *state, Tokenizer *tk)
+parseTypedef(EngineState *state, MemoryArena *arena, Tokenizer *tk)
 {
-    Type *type = pushItem(&state->orders[1]);
-
     Token type_name = advance(tk);
     if (type_name.type == TokenType_Alphanumeric)
     {
-        // Check for global naming conflict
-        AtomLookup lookup = lookupBinding(&state->global_scope, type_name.text, true);
-        if (lookup.found) {todoErrorReport;}
+        AtomSlot *type_lookup = lookupBindingCurrentFrame(&state->global_scope, &type_name, true);
+        if (type_lookup->value)
+            todoErrorReport;
         else
         {
-            // Declare top-level value.
-            Atom *atom = pushItem(&state->atoms);
-            *atom = {};
-            atom->order = 1;
+            s32 type_atom_id = state->atoms.count;
+            type_lookup->value = type_atom_id;
+            Atom *type_atom = pushItem(&state->atoms);
+            type_atom->type = AtomType_Data;
+            type_atom->data.order = 1;
+            type_atom->data.order_index = state->orders[1].count;
+            type_atom->data.type_exp = 0;  // todo: not sure what goes here.
+
+            Type *type = pushItem(&state->orders[1]);
             type->first_member = state->zeroth_order_count;
-            atom->index = state->orders[1].count;
 
             requireChar(tk, '{');
 
             b32 stop = false;
+            s32 member_count = 0;
+            s32 case_count = 0;
+            Exp *type_exp = pushStruct(arena, Exp);
+            type_exp->type = ExpType_Atom;
+            type_exp->atom.id = type_atom_id;
             while (!stop)
             {
                 Token token = advance(tk);
@@ -565,22 +554,32 @@ parseTypedef(EngineState *state, Tokenizer *tk)
                     Token token = advance(tk);
                     if (token.type == TokenType_Alphanumeric)
                     {
-                        AtomLookup lookup = lookupBinding(&state->global_scope, token.text, true);
-                        if (lookup.found)
+                        AtomSlot *member_lookup = lookupBindingCurrentFrame(&state->global_scope, &token, true);
+                        if (member_lookup->value)
                             todoErrorReport;
                         else
                         {
-                            lookup.slot->value = state->zeroth_order_count++;
+                            member_lookup->value = state->atoms.count;
+                            Atom *member_atom = pushItem(&state->atoms);
+                            member_atom->type = AtomType_Data;
+                            member_atom->data.order = 0;
+                            member_atom->data.order_index = state->zeroth_order_count++;
+                            member_atom->data.type_exp = type_exp;
                         }
-                        type->member_count++;
-                        type->case_count++;
+                        member_count++;
+                        case_count++;
                     }
+                    else
+                        todoIncomplete;  // implement operators
                 }
                 else
-                    todoErrorReport;
+                    todoErrorReport;  // expected '|' or '}'
             }
+            type->member_count = member_count;
+            type->case_count   = case_count;
         }
     }
+    assert(lookupBindingCurrentFrame(&state->global_scope, &type_name));
 }
 
 struct Argument
@@ -598,31 +597,131 @@ enum BuiltInOperator
     BuiltInOperator_Count_,
 };
 
-// this eats the end marker too
-internal Expr
-parseExpression(EngineState *state, Bindings *bindings, Tokenizer *tk, char* end_markers)
+internal s32
+matchSwitchCase(EngineState *state, Exp *subject_form, Exp *case0)
 {
-    Expr out = {};
+    s32 out = -1;
+    if (case0->type == ExpType_Atom)
+    {
+        Atom *case_atom = &state->atoms.items[case0->atom.id];
+        if (case_atom->type == AtomType_Data)
+        {
+            if (case_atom->data.order == 0)
+            {
+                switch (subject_form->type)
+                {
+                    case ExpType_Atom:
+                    {
+                        s32 case_index = case_atom->data.order_index;
+                        out = (case_index - subject_form->atom.id);
+                    } break;
+
+                    case ExpType_Composite:
+                    {
+                        todoIncomplete;
+                    } break;
+
+                    case ExpType_Switch:
+                    {
+                        todoErrorReport;  // the type of the switch subject is a
+                                          // switch? I guess that could happen
+                                          // but why, man?
+                    } break;
+                }
+                
+            }
+            else
+                todoIncomplete;  // higher-order subjects
+        }
+        else
+            todoErrorReport;  // operators can't be a switch case
+    }
+    else
+        todoIncomplete;  // handle complex cases
+
+    return out;
+}
+
+internal Exp *
+inferForm(EngineState *state, Exp *exp)
+{
+    Exp *out = 0;
+    switch (exp->type)
+    {
+        case ExpType_Atom:
+        {
+            AtomId atom_id = exp->atom.id;
+            Atom *atom = state->atoms.items + atom_id;
+            switch (atom->type)
+            {
+                case AtomType_Data:
+                {
+                    out = atom->data.type_exp;
+                } break;
+
+                case AtomType_Operator:
+                {
+                    todoIncomplete;
+                } break;
+            }
+        } break;
+
+        case ExpType_Switch:
+        {
+            todoIncomplete;
+        } break;
+
+        case ExpType_Composite:
+        {
+            todoIncomplete;
+        } break;
+    }
+
+    return out;
+}
+
+// this eats the end marker too.
+internal void
+parseExp(EngineState *state, MemoryArena *arena, Bindings *bindings, Tokenizer *tk, Exp *out, char* end_markers)
+{
     Token first = advance(tk);
     if (isKeyword(&first))
     {
         switch (first.type)
         {
-            out.op = BuiltInOperator_Switch;
             case TokenType_KeywordSwitch:
             {
-                Expr switch_subject = parseExpression(state, bindings, tk, "{");
+                out->type = ExpType_Switch;
+                allocate(arena, out->switch0.subject);
+                parseExp(state, arena, bindings, tk, out->switch0.subject, "{");
+                Exp *form = inferForm(state, out->switch0.subject);
 
-                // TODO: Need to check that all these cases are satisfied, somehow.
+                // TODO: Need to check that all cases are satisfied, somehow.
+                s32 case_count = 0;
                 for (b32 stop = false; !stop;)
                 {
-                    Token bar_or_closing_brace = advance(tk);
-                    switch (bar_or_closing_brace.text.chars[0])
+                    Token first = advance(tk);
+                    switch (first.text.chars[0])
                     {
                         case '|':
                         {
-                            Expr switch_case = parseExpression(state, bindings, tk, "{");
-                            Expr case_body = parseExpression(state, bindings, tk, "}");
+                            case_count++;
+                            Exp switch_case = {};
+                            s32 case_match;
+                            parseExp(state, arena, bindings, tk, &switch_case, "{");
+                            {
+                                MemoryArena case_arena = beginTemporaryArena(arena);
+                                Exp *subject_form = inferForm(state, out->switch0.subject);
+                                case_match = matchSwitchCase(state, subject_form, &switch_case);
+                                endTemporaryArena(&case_arena, &case_arena);
+                            }
+                            if (case_match == -1)
+                                todoErrorReport;
+                            else
+                            {
+                                out->switch0.case_bodies[case_match] = pushStruct;
+                                parseExp(state, arena, bindings, tk, case_body, "}");
+                            }
                         } break;
 
                         case '}':
@@ -631,73 +730,66 @@ parseExpression(EngineState *state, Bindings *bindings, Tokenizer *tk, char* end
                         } break;
 
                         default:
-                            todoErrorReport;  // in switch expression, expect either '|' or '}'
+                            todoErrorReport;  // expect either '|' or '}'
                     }
                 }
-
-                requireChar(tk, '}');
+                assert(case_count = expected_case_count);
             } break;
 
             default:
-                todoIncomplete;
+                todoErrorReport;
         }
     }
     else if (first.type == TokenType_Alphanumeric)
     {
-        AtomLookup lookup = lookupBinding(bindings, &first, false);
-        if (lookup.found)
+        AtomId identifier_atom = lookupBindingRecursive(bindings, &first, false);
+        if (identifier_atom)
         {
-            out.op = lookup.slot->value;
+            out->type = ExpType_Atom;
+            out->atom.id = identifier_atom;
         }
         else
             todoErrorReport;  // Unbound identifier
     }
-    return out;
 }
 
 internal void
-parseDefine(EngineState *state, Tokenizer *tk)
+parseDefine(EngineState *state, MemoryArena *arena, Tokenizer *tk)
 {
     Token define_name = advance(tk);
-    if (define_name.type == TokenType_Alphanumeric)
+    if ((define_name.type == TokenType_Alphanumeric)
+        || (define_name.type == TokenType_Special))
     {
-        AtomLookup lookup = lookupBinding(&state->global_scope, define_name.text, true);
-        if (lookup.found)
+        AtomSlot *define_slot = lookupBindingCurrentFrame(&state->global_scope, define_name.text, true);
+        if (define_slot->value)
             todoErrorReport;
         else
         {
-            MemoryArena temp = subArena(&state->temporary_arena, kiloBytes(256));
-            Bindings *bindings = extend(&temp, &state->global_scope);
+            define_slot->value = state->operators.count;
+            Operator *op = pushItem(&state->operators);
+
             requireChar(tk, '(');
-            Operator op = {};
 
             s32 arg_count = 0;
-            {
+            {// peek ahead to get the arg count
                 Tokenizer tk1_ = *tk;
                 Tokenizer *tk1 = &tk1_;
-                Token token = advance(tk1);
-                b32 stop = false;
                 s32 nesting_depth = 0;
-                b32 previous_is_comma;
-                while (!stop)
+                b32 previous_is_comma = false;
+                for (b32 stop = false; !stop;)
                 {
-                    previous_is_comma = false;
+                    Token token = advance(tk1);
+                    b32 current_is_comma = false;
                     if (equals(&token, '('))
-                    {
                         nesting_depth++;
-                    }
                     else if (equals(&token, ')'))
                     {
-                        if (nesting_depth)
-                        {
+                        if (nesting_depth > 0)
                             nesting_depth--;
-                        }
                         else
                         {
                             if (!previous_is_comma)
-                            {
                                 arg_count++;
-                            }
                             stop = true;
                         }
                     }
@@ -705,33 +797,46 @@ parseDefine(EngineState *state, Tokenizer *tk)
                              && (equals(&token, ',')))
                     {
                         arg_count++;
-                        previous_is_comma = true;
+                        current_is_comma = true;
                     }
+                    previous_is_comma = current_is_comma;
                 }
             }
-            op.arg_count = arg_count;
-            op.arg_types = pushArray(&state->permanent_arena, arg_count, Expr);
-            
+            op->arg_count = arg_count;
+            op->arg_types = pushArray(arena, arg_count, Exp);
+
+            MemoryArena scoped_arena = beginTemporaryArena(&state->scoped_arena);
+            Bindings *bindings = extend(&scoped_arena, &state->global_scope);
             s32 arg_it;
             b32 stop = false;
             for (arg_it = 0; !stop; arg_it++)
             {// parsing arguments
-                Token arg_name_or_close = advance(tk);
-                if (equals(&arg_name_or_close, ')'))
-                {
+                Token arg_name_or_end = advance(tk);
+                if (equals(&arg_name_or_end, ')'))
                     stop = true;
-                }
-                else if (arg_name_or_close.type == TokenType_Alphanumeric)
+                else if (arg_name_or_end.type == TokenType_Alphanumeric)
                 {
-                    requireChar(tk, ':');
+                    AtomSlot *arg_name_lookup = lookupBindingCurrentFrame(bindings, &arg_name_or_end, true);
+                    if (arg_name_lookup->value)
+                        todoErrorReport;
+                    else
+                    {
+                        arg_name_lookup->value = state->atoms.count;
+                        Atom *arg_atom = pushItem(&state->atoms);
+                        // TODO: not sure what this atom even is, and why do we
+                        // need to store it.
 
-                    op.arg_types[arg_it] = parseExpression(state, bindings, tk, ",)");
+                        requireChar(tk, ':');
 
-                    Token delimiter = advance(tk);
-                    if (equals(&delimiter, ')'))
-                        stop = true;
-                    else if (!equals(&delimiter, ','))
-                        todoErrorReport;  // no comma after type
+                        parseExp(state, arena, bindings, tk, op->arg_types + arg_it, ",)");
+                        arg_atom->data.type_exp = op->arg_types + arg_it;
+
+                        Token delimiter = advance(tk);
+                        if (equals(&delimiter, ')'))
+                            stop = true;
+                        else if (!equals(&delimiter, ','))
+                            todoErrorReport;  // no comma after type
+                    }
                 }
                 else
                     todoErrorReport;  // expected arg name
@@ -740,10 +845,10 @@ parseDefine(EngineState *state, Tokenizer *tk)
 
             // return type
             requireChar(tk, ':');
-            op.return_type = parseExpression(state, bindings, tk, "{");
-            op.body = parseExpression(state, bindings, tk, "}");
+            parseExp(state, arena, bindings, tk, &op->return_type, "{");
+            parseExp(state, arena, bindings, tk, &op->body, "}");
 
-            endTemporaryArena(&state->temporary_arena, &temp);
+            endTemporaryArena(&state->scoped_arena, &scoped_arena);
         }
     }
     else
@@ -752,7 +857,7 @@ parseDefine(EngineState *state, Tokenizer *tk)
 
 // NOTE: Main didspatch parse function
 internal void
-parseTopLevel(EngineState *state, Tokenizer *tk)
+parseTopLevel(EngineState *state, MemoryArena *arena, Tokenizer *tk)
 {
     b32 eof = false;
     while (!eof)
@@ -767,12 +872,12 @@ parseTopLevel(EngineState *state, Tokenizer *tk)
 
             case TokenType_KeywordTypedef:
             {
-                parseTypedef(state, tk);
+                parseTypedef(state, arena, tk);
             } break;
 
             case TokenType_KeywordDefine:
             {
-                parseDefine(state, tk);
+                parseDefine(state, arena, tk);
             } break;
 
             default:
@@ -790,11 +895,29 @@ isMatchingPair(Token *left, Token *right)
             ((l == '{') && (r == '}')));
 }
 
-internal void
-compile(EngineState *state, ReadFileResult *source)
+internal EngineState *
+compile(MemoryArena *arena, ReadFileResult *source)
 {
-    MemoryArena *permanent_arena = &state->permanent_arena;
+    EngineState *state = pushStruct(arena, EngineState);
 
+    {// mark: initialize engine state
+        state->operators       = newOperatorVector(arena, 32);
+        state->operators.count = 1;
+
+        state->scoped_arena = subArena(arena, megaBytes(2));
+
+        // TODO: More orders?
+        state->order_count = 3;
+        state->orders[1]   = newFormVector(arena, 128);
+        state->orders[2]   = newFormVector(arena, 32);
+
+        state->atoms       = newAtomVector(arena, 1024);
+        // NOTE: hack to reserve operators, don't this at home!
+        state->atoms.count = BuiltInOperator_Count_;  
+
+        state->global_scope.arena = arena;
+    }
+    
 #if 0
     {   // MARK: Parsing: Dealing with grouping constructs (not keywords), forming AST
         if (expressions->last_chunk != &expressions->first_chunk)
@@ -836,7 +959,7 @@ compile(EngineState *state, ReadFileResult *source)
                 AstList *last_ast_slot = &outer->ast->children;
                 while (last_ast_slot->c)
                     last_ast_slot = &last_ast_slot->c->cdr;
-                last_ast_slot->c = pushStruct(permanent_arena, AstListContent);
+                last_ast_slot->c = pushStruct(arena, AstListContent);
                 Ast *new_ast = &last_ast_slot->c->car;
 
                 new_ast->token = token;
@@ -860,7 +983,7 @@ compile(EngineState *state, ReadFileResult *source)
     {// MARK: Executing
 #if 1
         Tokenizer tk = { source->content };
-        parseTopLevel(state, &tk);
+        parseTopLevel(state, arena, &tk);
 #endif
 
 #if 0
@@ -871,46 +994,18 @@ compile(EngineState *state, ReadFileResult *source)
 }
 
 inline void
-testCaseMain(EngineState *state)
+testCaseMain(MemoryArena *arena)
 {
     char *input = "test.rea";
     ReadFileResult read = platformReadEntireFile(input);
     if (read.content)
     {
-        compile(state, &read);
+        EngineState *state = compile(arena, &read);
+        // NOTE: you can put some assertions here.
         platformFreeFileMemory(read.content);
     }
     else
         printf("Failed to read input file %s", input);
-}
-
-internal EngineState *
-resetEngineState(EngineMemory *memory, b32 zero_memory = true)
-{
-    if (zero_memory)
-        zeroMemory(memory->storage, memory->storage_size);
-    size_t temporary_arena_size = megaBytes(8);
-    MemoryArena arena_ = newArena(memory->storage_size, memory->storage);
-
-    EngineState *state = pushStruct(&arena_, EngineState);
-    state->permanent_arena = arena_;
-    state->temporary_arena = subArena(&state->permanent_arena, temporary_arena_size);
-
-    state->operators       = newOperatorVector(&state->permanent_arena, 32);
-    state->operators.count = 1;
-
-    // TODO: More orders?
-    state->order_count = 3;
-    state->orders[1]   = newTypeVector(&state->permanent_arena, 128);
-    state->orders[2]   = newTypeVector(&state->permanent_arena, 32);
-
-    state->atoms       = newAtomVector(&state->permanent_arena, 1024);
-    // NOTE: hack to reserve operators, don't this at home!
-    state->atoms.count = BuiltInOperator_Count_;  
-
-    state->global_scope.arena = &state->permanent_arena;
-
-    return state;
 }
 
 internal void
@@ -920,6 +1015,7 @@ engineMain(EngineMemory *memory)
     platformReadEntireFile = memory->platformReadEntireFile;
     platformFreeFileMemory = memory->platformFreeFileMemory;
 
-    EngineState *state = resetEngineState(memory, false);
-    testCaseMain(state);
+    MemoryArena arena = newArena(memory->storage_size, memory->storage);
+    testCaseMain(&arena);
+    // zeroMemory(memory->storage, memory->storage_size);
 }
