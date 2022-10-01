@@ -3,27 +3,16 @@
 #include "globals.h"
 #include "platform.h"
 #include "intrinsics.h"
+#include "tokenization.cpp"
 
 #include <stdio.h>
 
 // TODO: Eventually this will talk to the editor, but let's work in console mode for now.
 
-struct String
-{
-    char *chars;
-    s32  length;
-};
-
-struct Atom
-{
-    s32 stack_depth;
-    u32 id;
-};
-
 enum ExpCat
 {
-    ExpCat_Atom,                // reference to something on "the stack"
-    ExpCat_Apply,               // operator application
+    ExpCat_Variable,            // reference to some unknown on "the stack"
+    ExpCat_Application,         // operator application
     ExpCat_Switch,              // switch statement
     ExpCat_Type,                // type information
     ExpCat_Procedure,           // holds actual computation (ie body that can be executed)
@@ -32,7 +21,14 @@ enum ExpCat
 
 struct Expression;
 
-struct ExpApply
+struct Variable
+{
+    String name;
+    s32    stack_depth;
+    u32    id;
+};
+
+struct Application
 {
     Expression *op;
     u32        arg_count;
@@ -52,16 +48,16 @@ struct Type
     Constructor *ctors;
 };
 
-// kind of like an operator, but we don't allow arbitrary expressions in here
-// (maybe we need to).
+// like procedures, but we don't allow arbitrary expressions in here (maybe we
+// need to).
 struct Constructor
 {
-    Atom  op;
-    u32   arg_count;
-    Type *arg_types;
+    String  name;
+    u32     arg_count;
+    Type   *arg_types;
 };
 
-// NOTE: we need the id to arrange the switch body.
+// NOTE: we need the id to arrange the switch body. otw it's just a pointer.
 struct ConstructorRef
 {
     Type *type;
@@ -70,6 +66,7 @@ struct ConstructorRef
 
 struct Procedure
 {
+    String       name;
     s32          arg_count;
     Type       **arg_types;
     Type        *return_type;
@@ -81,54 +78,42 @@ struct Expression
 {
     ExpCat  cat;
     Type   *type_of_this;       // temporary pointer
-    // todo: this should be a pointer.
+    // todo: these should all be pointers. Saves space, but do they though b/c
+    // expressions are always pointers anyway.
     union
     {
-        Atom            atom;
-        ExpApply        apply;
-        Switch          switch0;
-        Type            type;
-        Procedure       procedure;
-        ConstructorRef  constructor_ref;
+        Variable       variable;
+        Application    apply;
+        Switch         switch0;
+        Type           type;
+        Procedure      procedure;
+        ConstructorRef constructor_ref;
     };
 };
 
-#if 0
-enum AtomCat
-{
-    AtomCat_Unknown,
-    AtomCat_Type,
-    AtomCat_Operator,
-    AtomCat_Constructor,
-};
-#endif
-
-#include "generated/Vector_Atom.h"
-
 typedef u32 AtomId;
-struct AtomSlot
+struct Binding
 {
-    String    key;
-    AtomId    value;  // note: the stack depth is implicit
-    AtomSlot *next;
+    String      key;
+    Expression *value;
+    Binding    *next;
 };
 
 struct Bindings
 {
     u32          stack_depth;
     MemoryArena *arena;
-    AtomSlot     first[128];
+    Binding      first[128];
     Bindings    *next;
 };
 
-struct Environment
+struct Stack
 {
-    u32          stack_depth;
+    u32          depth;
     MemoryArena *arena;
-    u32          cap;  // todo: remove cap
     u32          count;
     Expression  *first;
-    Environment *next;  // maybe we could have Environment** here.
+    Stack       *next;
 };
 
 inline Bindings *
@@ -137,7 +122,7 @@ extendBindings(MemoryArena *arena, Bindings *outer)
     Bindings *out = pushStruct(arena, Bindings);
     for (int i = 0; i < arrayCount(out->first); i++)
     {// invalidate these slots
-        AtomSlot *slot = &out->first[i];
+        Binding *slot = &out->first[i];
         slot->key.length = 0;
     }
     out->stack_depth = outer->stack_depth+1;
@@ -146,322 +131,23 @@ extendBindings(MemoryArena *arena, Bindings *outer)
     return out;
 }
 
-enum TokenCat
-{
-    // 0-255 reserved for single-char ASCII types.
-    TokenCat_Special         = 256,
-    TokenCat_PairingOpen     = 257,
-    TokenCat_PairingClose    = 258,
-    TokenCat_Alphanumeric    = 259,
-
-    // TODO: Do I really need these? The tokenizer doesn't really produce this
-    // information during its tokenization process.
-    TokenCat_KeywordsBegin_  = 300,
-    TokenCat_KeywordTypedef  = 301,
-    TokenCat_KeywordDefine   = 302,
-    TokenCat_KeywordSwitch   = 303,
-    TokenCat_KeywordPrint    = 304,
-    TokenCat_KeywordsEnd_    = 400,
-};
-
-const char *keywords[] = {"_ignore_", "typedef", "define", "switch", "print"};
-
-struct Token
-{
-    String text;
-    TokenCat cat;
-};
-
-inline b32
-equals(String s, const char *cstring)
-{
-    if (!s.chars)
-    {
-        return false;
-    }
-    else
-    {
-        s32 at = 0;
-        for (;
-             (at < s.length);
-             at++)
-        {
-            if ((cstring[at] == 0) || (s.chars[at] != cstring[at]))
-            {
-                return false;
-            }
-        }
-        return (cstring[at] == 0);
-    }
-}
-
-inline b32
-equals(Token *token, const char *string)
-{
-    return equals(token->text, string);
-}
-
-inline b32
-equals(Token *token, char c)
-{
-    return ((token->text.length == 1)
-            &&  (token->text.chars[0] == c));
-}
-
-inline Token
-newToken(char *first_char, TokenCat category)
-{
-    Token out;
-    out.text = {first_char, 0};
-    out.cat = category;
-    return out;
-}
-
-internal TokenCat
-getCharacterType(char c)
-{
-    if ((('a' <= c) && (c <= 'z'))
-        || (('A' <= c) && (c <= 'Z'))
-        || (('0' <= c) && (c <= '9')))
-    {
-        return TokenCat_Alphanumeric;
-    }
-    else
-    {
-        switch (c)
-        {
-            case '.':
-            case '`':
-            case ',':
-            case '/':
-            case '?':
-            case '<':
-            case '>':
-            case '!':
-            case '~':
-            case '@':
-            case '#':
-            case '$':
-            case '^':
-            case '&':
-            case '|':
-            case '*':
-            case '-':
-            case '+':
-            case '=':
-            {
-                return TokenCat_Special;
-            } break;
-
-            case '(':
-            case '{':
-            {
-                return TokenCat_PairingOpen;
-            } break;
-
-            case ')':
-            case '}':
-            {
-                return TokenCat_PairingClose;
-            }
-        
-            default:
-                // NOTE: Self-describing category
-                return (TokenCat)c;
-        }
-    }
-}
-
-inline void
-printStringToBuffer(char *buffer, String s)
-{
-    char *c = s.chars;
-    for (s32 index = 0 ;
-         index < s.length;
-         index++)
-    {
-        buffer[index] = *c;
-        c++;
-    }
-    buffer[s.length] = 0;
-}
-
-inline void
-printCharToBufferRepeat(char *buffer, char c, s32 repeat)
-{
-    for (s32 index = 0 ;
-         index < repeat;
-         index++)
-    {
-        buffer[index] = c;
-    }
-    buffer[repeat] = 0;
-}
-
-struct Tokenizer
-{
-    char *at;
-};
-
-internal void
-eatAllSpaces(Tokenizer *tk)
-{
-    b32 stop = false;
-    while ((*tk->at) && (!stop))
-    {
-        switch (*tk->at)
-        {
-            case '\n':
-            case '\t':
-            case ' ':
-            {
-                tk->at++;
-            } break;
-
-            case ';':
-            {
-                if (*(tk->at+1) == ';')
-                {
-                    tk->at += 2;
-                    while ((*tk->at) && (*tk->at != '\n'))
-                        tk->at++;
-                }
-            } break;
-
-            default:
-                stop = true;
-        }
-    }
-}
-
-inline TokenCat
-matchKeyword(Token *token)
-{
-    TokenCat out = (TokenCat)0;
-    for (int i = 1;
-         i < arrayCount(keywords);
-         i++)
-    {
-        if (equals(token, keywords[i]))
-        {
-            out = (TokenCat)(TokenCat_KeywordsBegin_ + i);
-            break;
-        }
-    }
-    return out;
-}
-
-inline b32
-isKeyword(Token *token)
-{
-    return ((token->cat > TokenCat_KeywordsBegin_)
-            && (token->cat < TokenCat_KeywordsEnd_));
-}
-
-inline Token
-advance(Tokenizer *tk)
-{
-    Token out = {};
-    eatAllSpaces(tk);
-    out.text.chars = tk->at;
-    b32 stop = false;
-
-    TokenCat type = getCharacterType(*tk->at++);
-    out.cat = type;
-    switch (type)
-    {
-        case TokenCat_Alphanumeric:
-        {
-            while (getCharacterType(*tk->at) == type)
-                tk->at++;
-        } break;
-
-        case TokenCat_Special:
-        {
-            while (getCharacterType(*tk->at) == type)
-                tk->at++;
-        } break;
-
-        default: {}
-    }
-
-    out.text.length = tk->at - out.text.chars;
-    if (out.cat == TokenCat_Alphanumeric)
-    {
-        if (TokenCat new_type = matchKeyword(&out))
-            out.cat = new_type;
-    }
-    return out;
-}
-
-inline void
-requireChar(Tokenizer *tk, char c)
-{
-    Token token = advance(tk);
-    if (!((token.text.length == 1) && (token.text.chars[0] == c)))
-        todoErrorReport;
-}
-
-internal void
-debugPrintTokens(Tokenizer tk)
-{
-    while (*tk.at)
-    {
-        Token token = advance(&tk);
-        printf("%.*s ", token.text.length, token.text.chars);
-    }
-    printf("\n");
-}
-
 struct EngineState
 {
     MemoryArena scoped_arena;   // used for storing e.g stack frames
 
     Bindings    global_bindings;
-    Environment global_env;
 };
 
-inline b32
-equals(String a, String b)
-{
-    b32 out = true;
-    if (a.length != b.length)
-        out = false;
-    else
-    {
-        for (int i = 0; i < a.length; i++)
-        {
-            if (a.chars[i] != b.chars[i])
-            {
-                out = false;
-                break;
-            }
-        }
-    }
-    return out;
-}
+struct LookupName { Binding* slot; b32 found; };
 
-// TODO: Better hash function!
-internal u32
-stringHash(String string)
+internal LookupName
+lookupNameCurrentFrame(Bindings *bindings, Token *token, b32 add_if_missing = false)
 {
-    u32 out = 0;
-    for (int i = 0; i < string.length; i++)
-    {
-        out = 65599*out + string.chars[i];
-    }
-    return out;
-}
-
-struct NameLookup { AtomSlot* slot; b32 found; };
-
-internal NameLookup
-lookupNameCurrentFrame(Bindings *bindings, String key, b32 add_if_missing = false)
-{
-    AtomSlot *slot = 0;
+    String key = token->text;
+    Binding *slot = 0;
     b32 found = false;
     u32 hash = stringHash(key);
-    slot = (bindings->first + (hash % arrayCount(bindings->first)));
+    slot = bindings->first + (hash % arrayCount(bindings->first));
     b32 first_slot_valid = slot->key.length;
     if (first_slot_valid)
     {
@@ -483,7 +169,6 @@ lookupNameCurrentFrame(Bindings *bindings, String key, b32 add_if_missing = fals
                     allocate(bindings->arena, slot->next);
                     slot = slot->next;
                     slot->key  = key;
-                    slot->value = 0;
                     slot->next = 0;
                 }
             }
@@ -495,86 +180,66 @@ lookupNameCurrentFrame(Bindings *bindings, String key, b32 add_if_missing = fals
         slot->value = 0;
     }
 
-    NameLookup out = { slot, found };
+    LookupName out = { slot, found };
     return out;
 }
 
-inline NameLookup
-lookupNameCurrentFrame(Bindings *bindings, Token *key, b32 add_if_missing = false)
-{
-    return lookupNameCurrentFrame(bindings, key->text, add_if_missing);
-}
-
-struct LookupNameRecursive {Atom value; b32 found;};
+struct LookupNameRecursive { Expression *value; b32 found; };
 
 inline LookupNameRecursive
 lookupNameRecursive(Bindings *bindings, Token *key)
 {
-    Atom atom = {};
-    atom.stack_depth = bindings->stack_depth;
+    Expression *value = 0;
     b32 found = false;
 
     for (b32 stop = false;
          !stop;
          )
     {
-        assert(atom.stack_depth >= 0);
-        NameLookup lookup = lookupNameCurrentFrame(bindings, key, false);
+        LookupName lookup = lookupNameCurrentFrame(bindings, key, false);
         if (lookup.found)
         {
             found = true;
-            atom.id = lookup.slot->value;
             stop = true;
+            value = lookup.slot->value;
         }
         else
         {
             if (bindings->next)
-            {
                 bindings = bindings->next;
-                atom.stack_depth--;
-            }
             else
                 stop = true;
         }
     }
 
-    LookupNameRecursive out = { atom, found };
+    LookupNameRecursive out = { value, found };
     return out;
 }
 
-inline b32
-atomValid(Atom atom)
-{
-    return ((atom.stack_depth != 0) && (atom.id != 0));
-}
-
-// TODO: we don't handle yet composite cases yet (such as +1(Nat))
 internal void
-parseConstructorDef(EngineState *state, Tokenizer *tk, Type *type, s32 ctor_id, Constructor *out)
+parseConstructorDef(EngineState *state, MemoryArena *arena, Tokenizer *tk, Type *type, s32 ctor_id, Constructor *out)
 {
-    Token ctor = advance(tk);
-    switch (ctor.cat)
+    Token ctor_token = advance(tk);
+    switch (ctor_token.cat)
     {
         case TokenCat_Special:
         case TokenCat_Alphanumeric:
         {
-            NameLookup ctor_lookup = lookupNameCurrentFrame(&state->global_bindings, &ctor, true);
+            LookupName ctor_lookup = lookupNameCurrentFrame(&state->global_bindings, &ctor_token, true);
             if (ctor_lookup.found)
                 todoErrorReport;
             else
             {
-                u32 atom_id = state->global_env.count++;
-                out->op.stack_depth = 0;
-                out->op.id          = atom_id;
-                out->arg_count      = 0;
-                out->arg_types      = 0;
+                out->name      = ctor_token.text;
+                out->arg_count = 0;
+                out->arg_types = 0;
 
-                ctor_lookup.slot->value = out->op.id;
-
-                Expression *exp           = state->global_env.first + atom_id;
-                exp->cat                  = ExpCat_ConstructorRef;
+                Expression *exp = pushStruct(arena, Expression);
+                exp->cat        = ExpCat_ConstructorRef;
                 exp->constructor_ref.type = type;
                 exp->constructor_ref.id   = ctor_id;
+
+                ctor_lookup.slot->value = exp;
             }
         } break;
 
@@ -590,17 +255,15 @@ parseTypedef(EngineState *state, MemoryArena *arena, Tokenizer *tk)
     if (type_name.cat == TokenCat_Alphanumeric)
     {
         // NOTE: the type is in scope of its own constructor.
-        NameLookup type_lookup = lookupNameCurrentFrame(&state->global_bindings, &type_name, true);
+        LookupName type_lookup = lookupNameCurrentFrame(&state->global_bindings, &type_name, true);
         if (type_lookup.found)
             todoErrorReport;
         else
         {
-            assert(state->global_env.count < state->global_env.cap);
-            s32         type_atom_id = state->global_env.count++;
-            type_lookup.slot->value  = type_atom_id;
-            Expression *type_exp     = state->global_env.first + type_atom_id;
-            type_exp->cat            = ExpCat_Type;
-            Type       *type         = &type_exp->type;
+            Expression *type_exp    = pushStruct(arena, Expression);
+            type_lookup.slot->value = type_exp;
+            type_exp->cat           = ExpCat_Type;
+            Type       *type        = &type_exp->type;
 
             requireChar(tk, '{');
 
@@ -638,7 +301,7 @@ parseTypedef(EngineState *state, MemoryArena *arena, Tokenizer *tk)
                     stop = true;
                 else if (equals(&bar_or_stop, '|'))
                 {
-                    parseConstructorDef(state, tk, type, constructor_id, type->ctors + constructor_id);
+                    parseConstructorDef(state, arena, tk, type, constructor_id, type->ctors + constructor_id);
                     actual_case_count++;
                 }
                 else
@@ -651,55 +314,36 @@ parseTypedef(EngineState *state, MemoryArena *arena, Tokenizer *tk)
     assert(lookupNameCurrentFrame(&state->global_bindings, &type_name).found);
 }
 
-struct Argument
-{
-    s32 identifier;
-    s32 type_id;
-};
-
-enum BuiltInOperator
-{
-    BuiltInOperator_Null_,
-
-    BuiltInOperator_Switch,
-
-    BuiltInOperator_Count_,
-};
-
 struct OptionalU32 { b32 success; u32 value; };
 
 inline b32
-equals(Atom atom1, Atom atom2)
+equals(Variable atom1, Variable atom2)
 {
     return ((atom1.id == atom2.id)
             && (atom1.stack_depth == atom2.stack_depth));
 }
 
 internal Expression *
-dereferenceAtom(Environment *env, Atom atom)
+resolve(Stack *stack, Variable variable)
 {
-    u32 traverse_count = env->stack_depth - atom.stack_depth;
+    u32 traverse_count = stack->depth - variable.stack_depth;
     for (u32 i = 0; i < traverse_count; i++)
-        env = env->next;
-    Expression *out = env->first + atom.id;
+        stack = stack->next;
+    assert(variable.id < stack->count);
+    Expression *out = stack->first + variable.id;
     return out;
 }
 
 internal OptionalU32
-matchSwitchCase(EngineState *state, Environment *env, Type *subject_type, Expression *matched_)
+matchSwitchCase(EngineState *state, Type *subject_type, Expression *matched)
 {
     OptionalU32 out = {};
 
-    if (matched_->cat == ExpCat_Atom)
+    if (matched->cat == ExpCat_Variable)
+    {}  // surrender
+    else if (matched->cat == ExpCat_ConstructorRef)
     {
-        auto atom = matched_->atom;
-        Expression *resolved = dereferenceAtom(env, atom);
-        assert(resolved->cat != ExpCat_Atom);
-        out = matchSwitchCase(state, env, subject_type, resolved);
-    }
-    else if (matched_->cat == ExpCat_ConstructorRef)
-    {
-        auto ctor   = matched_->constructor_ref;
+        auto ctor   = matched->constructor_ref;
         out.success = true;
         out.value   = ctor.id;
     }
@@ -720,12 +364,12 @@ inferType(EngineState *state, Expression *exp)
     {
         switch (exp->cat)
         {
-            case ExpCat_Atom:
+            case ExpCat_Variable:
             {
                 invalidCodePath;  // this should already have the type
             } break;
 
-            case ExpCat_Apply:
+            case ExpCat_Application:
             {
                 todoIncomplete;
             } break;
@@ -758,11 +402,11 @@ inferType(EngineState *state, Expression *exp)
     return out;
 }
 
+// todo: is the 'Expression *out' thing wise?  sometimes we want to write to a
+// specific address, other times we just wanna return references.
 internal void
-parseExp(EngineState *state, MemoryArena *arena, Bindings *bindings, Environment *env, Tokenizer *tk, Expression *out)
+parseExp(EngineState *state, MemoryArena *arena, Bindings *bindings, Tokenizer *tk, Expression *out)
 {
-    assert(env);
-
     Token first = advance(tk);
     if (isKeyword(&first))
     {
@@ -772,7 +416,7 @@ parseExp(EngineState *state, MemoryArena *arena, Bindings *bindings, Environment
             {
                 out->cat = ExpCat_Switch;
                 allocate(arena, out->switch0.subject);
-                parseExp(state, arena, bindings, env, tk, out->switch0.subject);
+                parseExp(state, arena, bindings, tk, out->switch0.subject);
                 requireChar(tk, '{');
                 Type *subject_type = inferType(state, out->switch0.subject);
                 auto expected_ctor_count = subject_type->ctor_count;
@@ -788,17 +432,17 @@ parseExp(EngineState *state, MemoryArena *arena, Bindings *bindings, Environment
                         {
                             actual_case_count++;
                             Expression switch_case = {};
-                            parseExp(state, arena, bindings, env, tk, &switch_case);
+                            parseExp(state, arena, bindings, tk, &switch_case);
                             requireChar(tk, '{');
-                            auto case_match = matchSwitchCase(state, env, subject_type, &switch_case);
+                            auto case_match = matchSwitchCase(state, subject_type, &switch_case);
                             if (case_match.success)
                             {
-                                parseExp(state, arena, bindings, env, tk, out->switch0.case_bodies + case_match.value);
+                                parseExp(state, arena, bindings, tk, out->switch0.case_bodies + case_match.value);
                                 requireChar(tk, '}');
                                 // todo: type-check the body
                             }
                             else
-                                todoErrorReport;
+                                todoErrorReport;  // expression is not a constructor for type.
                         } break;
 
                         case '}':
@@ -814,7 +458,7 @@ parseExp(EngineState *state, MemoryArena *arena, Bindings *bindings, Environment
             } break;
 
             default:
-                todoErrorReport;  // keyword not part of expression
+                todoErrorReport; // keyword not part of expression
         }
     }
     else if ((first.cat == TokenCat_Alphanumeric)
@@ -823,16 +467,13 @@ parseExp(EngineState *state, MemoryArena *arena, Bindings *bindings, Environment
         LookupNameRecursive identifier_lookup = lookupNameRecursive(bindings, &first);
         if (identifier_lookup.found)
         {
-            out->cat          = ExpCat_Atom;
-            out->atom         = identifier_lookup.value;
-            Expression *deref = dereferenceAtom(env, out->atom);
-            out->type_of_this = deref->type_of_this;
+            *out = *identifier_lookup.value;
         }
         else
-            todoErrorReport;  // Unbound identifier
+            todoErrorReport;    // Unbound identifier
     }
     else
-        todoErrorReport;  // unexpected start of expression
+        todoErrorReport;        // unexpected start of expression
 }
 
 internal Type  *
@@ -846,10 +487,8 @@ parseType(EngineState *state, Bindings *bindings, Tokenizer *tk)
         auto type_lookup = lookupNameRecursive(bindings, &type);
         if (type_lookup.found)
         {
-            assert(type_lookup.value.stack_depth == 0);
-            auto type_expression = state->global_env.first + type_lookup.value.id;
-            if (type_expression->cat == ExpCat_Type)
-                out = &type_expression->type;
+            if (type_lookup.value->cat == ExpCat_Type)
+                out = &type_lookup.value->type;
             else
                 todoErrorReport; // not a type
         }
@@ -862,15 +501,15 @@ parseType(EngineState *state, Bindings *bindings, Tokenizer *tk)
     return out;
 }
 
-internal Environment
-extendEnvironment(Environment *outer, u32 arg_count, Expression *reduced_args)
+internal Stack
+extendEnvironment(Stack *outer, u32 arg_count, Expression *reduced_args)
 {    
-    Environment out = {};
+    Stack out = {};
 
-    out.stack_depth = outer->stack_depth+1;
+    out.depth       = outer->depth+1;
     out.arena       = outer->arena;
-    out.cap         = arg_count;
-    out.first       = reduced_args;
+    out.count         = arg_count;
+    out.first = reduced_args;
     out.next        = outer;
 
     return out;
@@ -883,16 +522,15 @@ parseDefine(EngineState *state, MemoryArena *arena, Tokenizer *tk)
     if ((define_name.cat == TokenCat_Alphanumeric)
         || (define_name.cat == TokenCat_Special))
     {
-        auto define_slot = lookupNameCurrentFrame(&state->global_bindings, define_name.text, true);
+        auto define_slot = lookupNameCurrentFrame(&state->global_bindings, &define_name, true);
         if (define_slot.found)
             todoErrorReport;
         else
         {
-            u32         define_atom_id    = state->global_env.count++;
-            define_slot.slot->value       = define_atom_id;
-            Expression *define_expression = state->global_env.first + define_atom_id;
-            define_expression->cat        = ExpCat_Procedure;
-            auto        procedure         = &define_expression->procedure;
+            auto *define_exp        = pushStruct(arena, Expression);
+            define_slot.slot->value = define_exp;
+            define_exp->cat         = ExpCat_Procedure;
+            auto  procedure         = &define_exp->procedure;
 
             requireChar(tk, '(');
 
@@ -932,7 +570,7 @@ parseDefine(EngineState *state, MemoryArena *arena, Tokenizer *tk)
             allocateArray(arena, arg_count, procedure->arg_types);
 
             MemoryArena scoped_arena = beginTemporaryArena(&state->scoped_arena);
-            Bindings *bindings = extendBindings(&scoped_arena, &state->global_bindings);
+            Bindings *local_bindings = extendBindings(&scoped_arena, &state->global_bindings);
             for (s32 arg_id = 0, stop = 0; !stop; arg_id++)
             {// parsing arguments
                 Token arg_name_or_end = advance(tk);
@@ -941,16 +579,24 @@ parseDefine(EngineState *state, MemoryArena *arena, Tokenizer *tk)
 
                 else if (arg_name_or_end.cat == TokenCat_Alphanumeric)
                 {
-                    auto arg_name_lookup = lookupNameCurrentFrame(bindings, &arg_name_or_end, true);
+                    auto arg_name_lookup = lookupNameCurrentFrame(local_bindings, &arg_name_or_end, true);
                     if (arg_name_lookup.found)
                         todoErrorReport;  // Duplicate arg name
                     else
                     {
-                        arg_name_lookup.slot->value = arg_id;
+                        Expression *arg_exp         = pushStruct(arena, Expression);
+                        arg_name_lookup.slot->value = arg_exp;
+
+                        arg_exp->cat = ExpCat_Variable;
+                        arg_exp->variable.name        = arg_name_or_end.text;
+                        arg_exp->variable.id          = arg_id;
+                        arg_exp->variable.stack_depth = 1;
 
                         requireChar(tk, ':');
 
-                        procedure->arg_types[arg_id] = parseType(state, bindings, tk);
+                        Type *arg_type               = parseType(state, local_bindings, tk);
+                        procedure->arg_types[arg_id] = arg_type;
+                        arg_exp->type_of_this        = arg_type;
 
                         Token delimiter = advance(tk);
                         if (equals(&delimiter, ')'))
@@ -965,21 +611,14 @@ parseDefine(EngineState *state, MemoryArena *arena, Tokenizer *tk)
                 if (stop)
                     assert(arg_id = arg_count);
             }
-            // TODO: not liking this extension maneuver.
-            Expression *expressions_for_types = pushArray(arena, arg_count, Expression);
-            for (int arg_id = 0; arg_id < arg_count; arg_id++)
-            {
-                expressions_for_types[arg_id].type_of_this = procedure->arg_types[arg_id];
-            }
-            Environment new_env = extendEnvironment(&state->global_env, arg_count, expressions_for_types);
 
             // return type
             requireChar(tk, ':');
-            procedure->return_type = parseType(state, bindings, tk);
+            procedure->return_type = parseType(state, local_bindings, tk);
 
             requireChar(tk, '{');
             allocate(arena, procedure->body);
-            parseExp(state, arena, bindings, &new_env, tk, procedure->body);
+            parseExp(state, arena, local_bindings, tk, procedure->body);
             requireChar(tk, '}');
 
             endTemporaryArena(&state->scoped_arena, &scoped_arena);
@@ -990,19 +629,19 @@ parseDefine(EngineState *state, MemoryArena *arena, Tokenizer *tk)
 }
 
 internal void
-reduce(EngineState *state, MemoryArena *arena, Environment *env, Expression *in, Expression *out)
+reduce(EngineState *state, MemoryArena *arena, Stack *stack, Expression *in, Expression *out)
 {
     out->cat = in->cat;  // assume that we can't reduce this.
     out->type_of_this = in->type_of_this;
 
     switch (in->cat)
     {
-        case ExpCat_Atom:
+        case ExpCat_Variable:
         {
-            *out = *dereferenceAtom(env, in->atom);
+            *out = *resolve(stack, in->variable);
         } break;
 
-        case ExpCat_Apply:
+        case ExpCat_Application:
         {
             auto apply = &in->apply;
             Expression *reduced_args = pushArray(arena, apply->arg_count, Expression);
@@ -1012,15 +651,15 @@ reduce(EngineState *state, MemoryArena *arena, Environment *env, Expression *in,
             {
                 auto in_arg      = apply->args + arg_id;
                 auto reduced_arg = reduced_args + arg_id;
-                reduce(state, arena, env, in_arg, reduced_arg);
+                reduce(state, arena, stack, in_arg, reduced_arg);
             }
 
             Expression *reduced_op = pushStruct(arena, Expression);
-            reduce(state, arena, env, apply->op, reduced_op);
+            reduce(state, arena, stack, apply->op, reduced_op);
 
             if (reduced_op->cat == ExpCat_Procedure)
             {
-                Environment new_env = extendEnvironment(env, apply->arg_count, reduced_args);
+                Stack new_env = extendEnvironment(stack, apply->arg_count, reduced_args);
                 reduce(state, arena, &new_env, reduced_op->procedure.body, out);
             }
             else
@@ -1035,11 +674,11 @@ reduce(EngineState *state, MemoryArena *arena, Environment *env, Expression *in,
         {
             auto switch0 = &in->switch0;
             Expression *reduced_subject = pushStruct(arena, Expression);
-            reduce(state, arena, env, switch0->subject, reduced_subject);
+            reduce(state, arena, stack, switch0->subject, reduced_subject);
             Type *subject_type = reduced_subject->type_of_this;
-            auto ctor_id = matchSwitchCase(state, env, subject_type, reduced_subject);
+            auto ctor_id = matchSwitchCase(state, subject_type, reduced_subject);
             if (ctor_id.success)
-                reduce(state, arena, env, switch0->case_bodies + ctor_id.value, out);
+                reduce(state, arena, stack, switch0->case_bodies + ctor_id.value, out);
             else
                 *out = *in;
         } break;
@@ -1058,12 +697,12 @@ testPrintExp(Expression *out)
 {
     switch (out->cat)
     {
-        case ExpCat_Atom:
+        case ExpCat_Variable:
         {
-            printf("atom(%d, %d)\n", out->atom.stack_depth, out->atom.id);
+            printf("atom(%d, %d)\n", out->variable.stack_depth, out->variable.id);
         } break;
 
-        case ExpCat_Apply:
+        case ExpCat_Application:
         {
             todoIncomplete;
         } break;
@@ -1086,7 +725,7 @@ testPrintExp(Expression *out)
         case ExpCat_ConstructorRef:
         {
             Constructor *ctor = out->constructor_ref.type->ctors + out->constructor_ref.id;
-            printf("ctor which is atom (%d, %d)\n", ctor->op.stack_depth, out->constructor_ref.id);
+            printf("%.*s\n", ctor->name.length, ctor->name.chars);
         } break;
     }
 }
@@ -1125,7 +764,7 @@ parseTopLevel(EngineState *state, MemoryArena *arena, Tokenizer *tk)
                 {
                     MemoryArena *arena = &temp_arena;
                     Expression *exp = pushStruct(arena, Expression);
-                    exp->cat = ExpCat_Apply;
+                    exp->cat = ExpCat_Application;
                     exp->apply.arg_count = 2;
                     allocate(arena, exp->apply.op);
                     allocateArray(arena, 2, exp->apply.args);
@@ -1134,14 +773,16 @@ parseTopLevel(EngineState *state, MemoryArena *arena, Tokenizer *tk)
                     Expression *op   = exp->apply.op;
                     Expression *arg1 = exp->apply.args;
                     Expression *arg2 = exp->apply.args + 1;
-                    parseExp(state, arena, &state->global_bindings, &state->global_env, tk, arg1);
-                    parseExp(state, arena, &state->global_bindings, &state->global_env, tk, op);
-                    parseExp(state, arena, &state->global_bindings, &state->global_env, tk, arg2);
+                    parseExp(state, arena, &state->global_bindings, tk, arg1);
+                    parseExp(state, arena, &state->global_bindings, tk, op);
+                    parseExp(state, arena, &state->global_bindings, tk, arg2);
 
                     requireChar(tk, ')');
 
                     Expression *out = pushStruct(arena, Expression);
-                    reduce(state, arena, &state->global_env, exp, out);
+                    Stack empty_stack = {};
+                    empty_stack.arena = arena;
+                    reduce(state, arena, &empty_stack, exp, out);
                     testPrintExp(out);
                 }
                 endTemporaryArena(arena, &temp_arena);
@@ -1171,10 +812,6 @@ compile(MemoryArena *arena, ReadFileResult *source)
         state->scoped_arena = subArena(arena, megaBytes(2));
 
         state->global_bindings.arena = arena;
-
-        state->global_env.arena = arena;
-        state->global_env.cap   = 1024;
-        allocateArray(arena, state->global_env.cap, state->global_env.first);
     }
     
 #if 0
