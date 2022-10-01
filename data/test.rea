@@ -13,19 +13,24 @@ define &(a: Bool, b: Bool) : Bool
   }
  }
 
-;; print(true & true)
-;; print(true & false)
-;; print(false & true)
-;; print(false & false)
+print(true  & true)
+print(true  & false)
+print(false & true)
+print(false & false)
 
-;; define |(a: Bool, b: Bool) : Bool
-;; {
-;;  switch b
-;;  {
-;;   | true { true }
-;;   | false { b }
-;;   }
-;;  }
+define |(a: Bool, b: Bool) : Bool
+{
+ switch a
+ {
+  | true  { true }
+  | false { b }
+  }
+ }
+
+print(true  | true)
+print(true  | false)
+print(false | true)
+print(false | false)
 
 ;; deMorgan's law
 

@@ -62,6 +62,7 @@ beginTemporaryArena(MemoryArena *parent)
     return out;
 }
 
+// todo: maybe we could put the parent pointer into the child?
 inline void
 endTemporaryArena(MemoryArena *parent, MemoryArena *child)
 {
@@ -69,6 +70,7 @@ endTemporaryArena(MemoryArena *parent, MemoryArena *child)
 }
 
 #define allocate(arena, x) x = (__typeof__(x)) pushSize(arena, sizeof(*x))
+#define allocateArray(arena, count, x) x = (__typeof__(x)) pushSize(arena, count*sizeof(*x))
 
 #define MEMORY_H
 #endif

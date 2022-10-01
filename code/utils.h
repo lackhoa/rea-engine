@@ -32,5 +32,11 @@ global_variable s64 globalPerfCountFrequency;
 #define breakhere { int x = 5; (void)x; }
 #define generate(whatever...)
 
+inline b32
+inRange(s32 min, s32 val, s32 max)
+{
+    return (min <= val) && (val <= max);
+}
+
 #define UTILS_H
 #endif
