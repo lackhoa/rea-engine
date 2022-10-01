@@ -59,6 +59,7 @@ inline MemoryArena
 beginTemporaryArena(MemoryArena *parent)
 {
     MemoryArena out = subArena(parent, parent->cap - parent->used);
+    assert(parent->used == parent->cap);
     return out;
 }
 
@@ -66,6 +67,8 @@ beginTemporaryArena(MemoryArena *parent)
 inline void
 endTemporaryArena(MemoryArena *parent, MemoryArena *child)
 {
+    assert(parent->used == parent->cap);
+    assert(child->cap <= parent->cap);
     parent->used -= child->cap;
 }
 

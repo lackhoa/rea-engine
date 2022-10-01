@@ -32,18 +32,19 @@ struct Application
 {
     Expression *op;
     u32        arg_count;
-    Expression *args;
+    Expression **args;
 };
 
 struct Switch
 {
     Expression *subject;
-    Expression *case_bodies;
+    Expression **case_bodies;
 };
 
 struct Constructor;
 struct Type
 {
+    String       name;
     s32          ctor_count;
     Constructor *ctors;
 };
@@ -70,8 +71,7 @@ struct Procedure
     s32          arg_count;
     Type       **arg_types;
     Type        *return_type;
-    Expression  *body;  // todo: this shouldn't be a pointer. I guess procedures
-                        // shouldn't actually be expressions.
+    Expression  *body;
 };
 
 struct Expression
@@ -83,7 +83,7 @@ struct Expression
     union
     {
         Variable       variable;
-        Application    apply;
+        Application    application;
         Switch         switch0;
         Type           type;
         Procedure      procedure;
@@ -91,7 +91,6 @@ struct Expression
     };
 };
 
-typedef u32 AtomId;
 struct Binding
 {
     String      key;
@@ -101,7 +100,7 @@ struct Binding
 
 struct Bindings
 {
-    u32          stack_depth;
+    s32          stack_depth;
     MemoryArena *arena;
     Binding      first[128];
     Bindings    *next;
@@ -109,11 +108,11 @@ struct Bindings
 
 struct Stack
 {
-    u32          depth;
-    MemoryArena *arena;
-    u32          count;
-    Expression  *first;
-    Stack       *next;
+    s32           depth;
+    MemoryArena  *arena;
+    u32           count;
+    Expression  **first;
+    Stack        *next;
 };
 
 inline Bindings *
@@ -263,7 +262,9 @@ parseTypedef(EngineState *state, MemoryArena *arena, Tokenizer *tk)
             Expression *type_exp    = pushStruct(arena, Expression);
             type_lookup.slot->value = type_exp;
             type_exp->cat           = ExpCat_Type;
-            Type       *type        = &type_exp->type;
+
+            Type *type = &type_exp->type;
+            type->name = type_name.text;
 
             requireChar(tk, '{');
 
@@ -330,7 +331,7 @@ resolve(Stack *stack, Variable variable)
     for (u32 i = 0; i < traverse_count; i++)
         stack = stack->next;
     assert(variable.id < stack->count);
-    Expression *out = stack->first + variable.id;
+    Expression *out = stack->first[variable.id];
     return out;
 }
 
@@ -404,9 +405,10 @@ inferType(EngineState *state, Expression *exp)
 
 // todo: is the 'Expression *out' thing wise?  sometimes we want to write to a
 // specific address, other times we just wanna return references.
-internal void
-parseExp(EngineState *state, MemoryArena *arena, Bindings *bindings, Tokenizer *tk, Expression *out)
+internal Expression *
+parseExp(EngineState *state, MemoryArena *arena, Bindings *bindings, Tokenizer *tk)
 {
+    Expression *out = 0;
     Token first = advance(tk);
     if (isKeyword(&first))
     {
@@ -414,9 +416,11 @@ parseExp(EngineState *state, MemoryArena *arena, Bindings *bindings, Tokenizer *
         {
             case TokenCat_KeywordSwitch:
             {
+                allocate(arena, out);
+
                 out->cat = ExpCat_Switch;
                 allocate(arena, out->switch0.subject);
-                parseExp(state, arena, bindings, tk, out->switch0.subject);
+                out->switch0.subject = parseExp(state, arena, bindings, tk);
                 requireChar(tk, '{');
                 Type *subject_type = inferType(state, out->switch0.subject);
                 auto expected_ctor_count = subject_type->ctor_count;
@@ -431,13 +435,16 @@ parseExp(EngineState *state, MemoryArena *arena, Bindings *bindings, Tokenizer *
                         case '|':
                         {
                             actual_case_count++;
-                            Expression switch_case = {};
-                            parseExp(state, arena, bindings, tk, &switch_case);
+
+                            MemoryArena temp_arena = beginTemporaryArena(arena);
+                            Expression *switch_case = parseExp(state, &temp_arena, bindings, tk);
                             requireChar(tk, '{');
-                            auto case_match = matchSwitchCase(state, subject_type, &switch_case);
+                            auto case_match = matchSwitchCase(state, subject_type, switch_case);
+                            endTemporaryArena(arena, &temp_arena);
+
                             if (case_match.success)
                             {
-                                parseExp(state, arena, bindings, tk, out->switch0.case_bodies + case_match.value);
+                                out->switch0.case_bodies[case_match.value] = parseExp(state, arena, bindings, tk);
                                 requireChar(tk, '}');
                                 // todo: type-check the body
                             }
@@ -466,14 +473,14 @@ parseExp(EngineState *state, MemoryArena *arena, Bindings *bindings, Tokenizer *
     {
         LookupNameRecursive identifier_lookup = lookupNameRecursive(bindings, &first);
         if (identifier_lookup.found)
-        {
-            *out = *identifier_lookup.value;
-        }
+            out = identifier_lookup.value;
         else
             todoErrorReport;    // Unbound identifier
     }
     else
         todoErrorReport;        // unexpected start of expression
+
+    return out;
 }
 
 internal Type  *
@@ -502,15 +509,15 @@ parseType(EngineState *state, Bindings *bindings, Tokenizer *tk)
 }
 
 internal Stack
-extendEnvironment(Stack *outer, u32 arg_count, Expression *reduced_args)
+extendEnvironment(Stack *outer, u32 arg_count, Expression **reduced_args)
 {    
     Stack out = {};
 
-    out.depth       = outer->depth+1;
-    out.arena       = outer->arena;
-    out.count         = arg_count;
+    out.depth = outer->depth+1;
+    out.arena = outer->arena;
+    out.count = arg_count;
     out.first = reduced_args;
-    out.next        = outer;
+    out.next  = outer;
 
     return out;
 }
@@ -618,7 +625,7 @@ parseDefine(EngineState *state, MemoryArena *arena, Tokenizer *tk)
 
             requireChar(tk, '{');
             allocate(arena, procedure->body);
-            parseExp(state, arena, local_bindings, tk, procedure->body);
+            procedure->body = parseExp(state, arena, local_bindings, tk);
             requireChar(tk, '}');
 
             endTemporaryArena(&state->scoped_arena, &scoped_arena);
@@ -628,68 +635,70 @@ parseDefine(EngineState *state, MemoryArena *arena, Tokenizer *tk)
         todoErrorReport;
 }
 
-internal void
-reduce(EngineState *state, MemoryArena *arena, Stack *stack, Expression *in, Expression *out)
+internal Expression *
+reduce(EngineState *state, MemoryArena *arena, Stack *stack, Expression *in)
 {
-    out->cat = in->cat;  // assume that we can't reduce this.
-    out->type_of_this = in->type_of_this;
+    Expression *out = 0;
 
     switch (in->cat)
     {
         case ExpCat_Variable:
         {
-            *out = *resolve(stack, in->variable);
+            out = resolve(stack, in->variable);
         } break;
 
         case ExpCat_Application:
         {
-            auto apply = &in->apply;
-            Expression *reduced_args = pushArray(arena, apply->arg_count, Expression);
+            allocate(arena, out);
+            auto application = &in->application;
+            Expression **reduced_args = pushArray(arena, application->arg_count, Expression*);
             for (auto arg_id = 0;
-                 arg_id < apply->arg_count;
+                 arg_id < application->arg_count;
                  arg_id++)
             {
-                auto in_arg      = apply->args + arg_id;
-                auto reduced_arg = reduced_args + arg_id;
-                reduce(state, arena, stack, in_arg, reduced_arg);
+                Expression *in_arg   = application->args[arg_id];
+                reduced_args[arg_id] = reduce(state, arena, stack, in_arg);
             }
 
-            Expression *reduced_op = pushStruct(arena, Expression);
-            reduce(state, arena, stack, apply->op, reduced_op);
+            Expression *reduced_op = reduce(state, arena, stack, application->op);
 
             if (reduced_op->cat == ExpCat_Procedure)
             {
-                Stack new_env = extendEnvironment(stack, apply->arg_count, reduced_args);
-                reduce(state, arena, &new_env, reduced_op->procedure.body, out);
+                Stack new_env = extendEnvironment(stack, application->arg_count, reduced_args);
+                out = reduce(state, arena, &new_env, reduced_op->procedure.body);
             }
             else
             {
-                out->apply.op        = reduced_op;
-                out->apply.arg_count = apply->arg_count;
-                out->apply.args      = reduced_args;
+                out->cat                   = ExpCat_Application;
+                out->application.op        = reduced_op;
+                out->application.arg_count = application->arg_count;
+                out->application.args      = reduced_args;
             }
         } break;
 
         case ExpCat_Switch:
         {
             auto switch0 = &in->switch0;
-            Expression *reduced_subject = pushStruct(arena, Expression);
-            reduce(state, arena, stack, switch0->subject, reduced_subject);
+            Expression *reduced_subject = reduce(state, arena, stack, switch0->subject);
+
             Type *subject_type = reduced_subject->type_of_this;
             auto ctor_id = matchSwitchCase(state, subject_type, reduced_subject);
+
             if (ctor_id.success)
-                reduce(state, arena, stack, switch0->case_bodies + ctor_id.value, out);
+                out = reduce(state, arena, stack, switch0->case_bodies[ctor_id.value]);
             else
-                *out = *in;
+                todoIncomplete;
         } break;
 
         case ExpCat_Type:
         case ExpCat_Procedure:
         case ExpCat_ConstructorRef:
         {
-            *out = *in;
+            out = in;
         } break;
     }
+
+    return out;
 }
 
 internal void
@@ -761,30 +770,26 @@ parseTopLevel(EngineState *state, MemoryArena *arena, Tokenizer *tk)
                 requireChar(tk, '(');
 
                 auto temp_arena = beginTemporaryArena(arena);
-                {
-                    MemoryArena *arena = &temp_arena;
-                    Expression *exp = pushStruct(arena, Expression);
-                    exp->cat = ExpCat_Application;
-                    exp->apply.arg_count = 2;
-                    allocate(arena, exp->apply.op);
-                    allocateArray(arena, 2, exp->apply.args);
 
-                    // Hacking the expression since we can't parse operators yet.
-                    Expression *op   = exp->apply.op;
-                    Expression *arg1 = exp->apply.args;
-                    Expression *arg2 = exp->apply.args + 1;
-                    parseExp(state, arena, &state->global_bindings, tk, arg1);
-                    parseExp(state, arena, &state->global_bindings, tk, op);
-                    parseExp(state, arena, &state->global_bindings, tk, arg2);
+                Expression *exp = pushStruct(&temp_arena, Expression);
+                exp->cat = ExpCat_Application;
+                exp->application.arg_count = 2;
+                allocate(&temp_arena, exp->application.op);
+                allocateArray(&temp_arena, 2, exp->application.args);
 
-                    requireChar(tk, ')');
+                // Hacking the expression since we can't parse operators yet.
+                exp->application.args[0] = parseExp(state, &temp_arena, &state->global_bindings, tk);
+                exp->application.op      = parseExp(state, &temp_arena, &state->global_bindings, tk);
+                exp->application.args[1] = parseExp(state, &temp_arena, &state->global_bindings, tk);
 
-                    Expression *out = pushStruct(arena, Expression);
-                    Stack empty_stack = {};
-                    empty_stack.arena = arena;
-                    reduce(state, arena, &empty_stack, exp, out);
-                    testPrintExp(out);
-                }
+                requireChar(tk, ')');
+
+                Expression *out = pushStruct(&temp_arena, Expression);
+                Stack empty_stack = {};
+                empty_stack.arena = &temp_arena;
+                out = reduce(state, &temp_arena, &empty_stack, exp);
+                testPrintExp(out);
+
                 endTemporaryArena(arena, &temp_arena);
             } break;
 
