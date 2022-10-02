@@ -1,8 +1,7 @@
-#include "utils.h"
-#include "engine.cpp"
-#include "platform.h"
-
 #include <windows.h>
+
+#include "utils.h"
+#include "platform.h"
 
 struct win32_offscreen_buffer
 {
@@ -92,7 +91,7 @@ win32ReadEntireFile(const char *file_name)
                     result.content_size = fileSize32;
                 }
                 else
-                    platformFreeFileMemory(result.content);
+                    win32FreeFileMemory(result.content);
             }
             else
             {
@@ -299,6 +298,7 @@ WinMain(HINSTANCE instance,
 
 int main()
 {
+    int out = 0;
     EngineMemory engine_memory;
     engine_memory.platformReadEntireFile = &win32ReadEntireFile;
     engine_memory.platformFreeFileMemory = &win32FreeFileMemory;
@@ -308,5 +308,6 @@ int main()
     engine_memory.storage = VirtualAlloc(base_address, engine_memory.storage_size,
                                          MEM_RESERVE|MEM_COMMIT,
                                          PAGE_READWRITE);
-    engineMain(&engine_memory);
+    out = engineMain(&engine_memory);
+    return out;
 }

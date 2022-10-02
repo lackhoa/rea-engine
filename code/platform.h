@@ -21,5 +21,8 @@ struct EngineMemory
     size_t storage_size;
 };
 
+int
+engineMain(EngineMemory *memory);
+
 #define PLATFORM_H
 #endif

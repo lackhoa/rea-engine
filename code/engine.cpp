@@ -7,16 +7,23 @@
 
 #include <stdio.h>
 
+struct ParserErrorData
+{
+    char  *message;
+    Token  token;
+};
+typedef ParserErrorData* ParserError;
+
 // TODO: Eventually this will talk to the editor, but let's work in console mode for now.
 
 enum ExpressionCategory
 {
-    EC_Variable,            // reference to some unknown on "the stack"
-    EC_Application,         // operator application
-    EC_Switch,              // switch statement
-    EC_Type,                // type information
-    EC_Procedure,           // holds actual computation (ie body that can be executed)
-    EC_ConstructorRef,      // reference to a constructor of a type
+    EC_Variable,                // reference to some unknown on "the stack"
+    EC_Application,             // operator application
+    EC_Switch,                  // switch statement
+    EC_Type,                    // type information
+    EC_Procedure,               // holds actual computation (ie body that can be executed)
+    EC_ConstructorId,           // reference to a constructor of a type
 };
 
 #define castExpression(Type, exp, type) Type *type = &exp->Type;
@@ -61,9 +68,8 @@ struct Constructor
 };
 
 // NOTE: we need the id to arrange the switch body. otw it's just a pointer.
-struct ConstructorRef
+struct ConstructorId
 {
-    Type *type;
     u32   id;
 };
 
@@ -87,7 +93,7 @@ struct Expression
         Switch         Switch;
         Type           Type;
         Procedure      Procedure;
-        ConstructorRef ConstructorRef;
+        ConstructorId  ConstructorId;
     };
 };
 
@@ -130,11 +136,11 @@ extendBindings(MemoryArena *arena, Bindings *outer)
     return out;
 }
 
-struct EngineState
+struct ParserState
 {
     MemoryArena scoped_arena;   // used for storing e.g stack frames
-
     Bindings    global_bindings;
+    Tokenizer   tokenizer;
 };
 
 struct LookupName { Binding* slot; b32 found; };
@@ -215,9 +221,11 @@ lookupNameRecursive(Bindings *bindings, Token *key)
     return out;
 }
 
-internal void
-parseConstructorDef(EngineState *state, MemoryArena *arena, Tokenizer *tk, Type *type, s32 ctor_id, Constructor *out)
+internal Constructor
+parseConstructorDef(ParserState *state, MemoryArena *arena, Type *type, s32 ctor_id)
 {
+    Constructor out = {};
+    Tokenizer *tk = &state->tokenizer;
     Token ctor_token = advance(tk);
     switch (ctor_token.cat)
     {
@@ -229,14 +237,16 @@ parseConstructorDef(EngineState *state, MemoryArena *arena, Tokenizer *tk, Type 
                 todoErrorReport;
             else
             {
-                out->name      = ctor_token.text;
-                out->arg_count = 0;
-                out->arg_types = 0;
+                out.name      = ctor_token.text;
+                // todo: incomplete
+                out.arg_count = 0;
+                out.arg_types = 0;
 
                 Expression *exp = pushStruct(arena, Expression);
-                exp->cat        = EC_ConstructorRef;
-                exp->ConstructorRef.type = type;
-                exp->ConstructorRef.id   = ctor_id;
+                exp->cat          = EC_ConstructorId;
+                exp->type_of_this = type;
+                castExpression(ConstructorId, exp, ctor_ref);
+                ctor_ref->id   = ctor_id;
 
                 ctor_lookup.slot->value = exp;
             }
@@ -245,18 +255,29 @@ parseConstructorDef(EngineState *state, MemoryArena *arena, Tokenizer *tk, Type 
         default:
             todoErrorReport;
     }
+    return out;
 }
 
-internal void
-parseTypedef(EngineState *state, MemoryArena *arena, Tokenizer *tk)
+internal ParserError
+parseTypedef(ParserState *state, MemoryArena *arena)
 {
+    ParserError error = 0;
+
+    Tokenizer *tk = &state->tokenizer;
     Token type_name = advance(tk);
     if (type_name.cat == TC_Alphanumeric)
     {
         // NOTE: the type is in scope of its own constructor.
         LookupName type_lookup = lookupNameCurrentFrame(&state->global_bindings, &type_name, true);
         if (type_lookup.found)
-            todoErrorReport;
+        {
+            allocate(arena, error);
+            allocateArray(arena, 256, error->message);
+            char typebuf[256];
+            printStringToBuffer(typebuf, type_name.text);
+            sprintf(error->message, "redefinition of type '%s'", typebuf);
+            error->token = type_name;
+        }
         else
         {
             Expression *type_exp    = pushStruct(arena, Expression);
@@ -302,7 +323,7 @@ parseTypedef(EngineState *state, MemoryArena *arena, Tokenizer *tk)
                     stop = true;
                 else if (equals(&bar_or_stop, '|'))
                 {
-                    parseConstructorDef(state, arena, tk, type, constructor_id, type->ctors + constructor_id);
+                    type->ctors[constructor_id] = parseConstructorDef(state, arena, type, constructor_id);
                     actual_case_count++;
                 }
                 else
@@ -313,6 +334,8 @@ parseTypedef(EngineState *state, MemoryArena *arena, Tokenizer *tk)
         }
     }
     assert(lookupNameCurrentFrame(&state->global_bindings, &type_name).found);
+
+    return error;
 }
 
 struct OptionalU32 { b32 success; u32 value; };
@@ -336,7 +359,7 @@ resolve(Stack *stack, Variable variable)
 }
 
 internal OptionalU32
-matchSwitchCase(EngineState *state, Type *subject_type, Expression *matched)
+matchSwitchCase(ParserState *state, Type *subject_type, Expression *matched)
 {
     OptionalU32 out = {};
 
@@ -344,9 +367,9 @@ matchSwitchCase(EngineState *state, Type *subject_type, Expression *matched)
     {
         if (matched->cat == EC_Variable)
         {}  // surrender
-        else if (matched->cat == EC_ConstructorRef)
+        else if (matched->cat == EC_ConstructorId)
         {
-            auto ctor   = matched->ConstructorRef;
+            auto ctor   = matched->ConstructorId;
             out.success = true;
             out.value   = ctor.id;
         }
@@ -358,7 +381,7 @@ matchSwitchCase(EngineState *state, Type *subject_type, Expression *matched)
 }
 
 internal Type *
-inferType(EngineState *state, Expression *exp)
+inferType(ParserState *state, Expression *exp)
 {
     Type *out = 0;
 
@@ -395,7 +418,7 @@ inferType(EngineState *state, Expression *exp)
                 todoIncomplete;
             } break;
 
-            case EC_ConstructorRef:
+            case EC_ConstructorId:
             {
                 // yet another arrow type
                 todoIncomplete;
@@ -406,12 +429,76 @@ inferType(EngineState *state, Expression *exp)
     return out;
 }
 
-Expression *parseExpression(EngineState *state, MemoryArena *arena, Bindings *bindings, Tokenizer *tk);
+internal Expression *parseExpression(ParserState *state, MemoryArena *arena, Bindings *bindings);
+
+inline b32
+isExpressionEndMarker(Token *token)
+{
+    return inString("{},)", token);
+}
+
+internal Expression *
+parseSubExpression(ParserState *state, MemoryArena *arena, Bindings *bindings);
+
+internal Expression *
+parseExpression(ParserState *state, MemoryArena *arena, Bindings *bindings)
+{
+    Tokenizer *tk = &state->tokenizer;
+    Expression *out = 0;
+
+    Token token1 = peekNext(tk);
+    if (isExpressionEndMarker(&token1))
+        out = 0;
+    else
+    {
+        Expression *e1 = parseSubExpression(state, arena, bindings);
+        if (e1)
+        {
+            Token connecting_token = peekNext(tk);
+            if (isIdentifier(&connecting_token))
+            {// infix operator syntax
+                advance(tk);
+                auto op_lookup = lookupNameRecursive(bindings, &connecting_token);
+                if (op_lookup.found)
+                {
+                    auto e2 = op_lookup.value;
+
+                    auto *e3 = parseExpression(state, arena, bindings);
+                    if (e3)
+                    {
+                        allocate(arena, out);
+                        out->cat = EC_Application;
+                        castExpression(Application, out, application);
+                        application->op = e2;
+                        auto todo_arg_count = 2;
+                        application->arg_count = todo_arg_count;
+                        allocateArray(arena, 2, application->args);
+                        application->args[0] = e1;
+                        application->args[1] = e3;
+                    }
+                    else
+                        todoErrorReport;  // expected final argument, got nothing back
+                }
+                else
+                    todoErrorReport; // unbound operator
+            }
+            else if (isExpressionEndMarker(&connecting_token))
+                out = e1;
+            else
+                todoErrorReport; // unknown connecting token
+        }
+        else
+            out = 0;
+    }
+
+    return out;
+}
 
 // a subexpression is like the '+' or the 'a' in the full expression 'a + b'
 internal Expression *
-parseSubExpression(EngineState *state, MemoryArena *arena, Bindings *bindings, Tokenizer *tk)
+parseSubExpression(ParserState *state, MemoryArena *arena, Bindings *bindings)
 {
+    Tokenizer *tk = &state->tokenizer;
     Expression *out = 0;
     Token token1 = advance(tk);
     if (isKeyword(&token1))
@@ -424,7 +511,7 @@ parseSubExpression(EngineState *state, MemoryArena *arena, Bindings *bindings, T
                 out->cat = EC_Switch;
                 castExpression(Switch, out, switch0);
 
-                switch0->subject = parseExpression(state, arena, bindings, tk);
+                switch0->subject = parseExpression(state, arena, bindings);
                 requireChar(tk, '{');
                 if (switch0->subject)
                 {
@@ -444,7 +531,7 @@ parseSubExpression(EngineState *state, MemoryArena *arena, Bindings *bindings, T
 
                                 MemoryArena temp_arena = beginTemporaryArena(arena);
 
-                                Expression *switch_case = parseExpression(state, &temp_arena, bindings, tk);
+                                Expression *switch_case = parseExpression(state, &temp_arena, bindings);
                                 requireChar(tk, '{');
 
                                 auto case_match = matchSwitchCase(state, subject_type, switch_case);
@@ -452,7 +539,7 @@ parseSubExpression(EngineState *state, MemoryArena *arena, Bindings *bindings, T
 
                                 if (case_match.success)
                                 {
-                                    auto body = parseExpression(state, arena, bindings, tk);
+                                    auto body = parseExpression(state, arena, bindings);
                                     requireChar(tk, '}');
 
                                     // todo: type-check the body
@@ -495,7 +582,7 @@ parseSubExpression(EngineState *state, MemoryArena *arena, Bindings *bindings, T
     }
     else if (equals(&token1, '('))
     {
-        out = parseExpression(state, arena, bindings, tk);
+        out = parseExpression(state, arena, bindings);
         requireChar(tk, ')');
     }
     else
@@ -513,7 +600,7 @@ parseSubExpression(EngineState *state, MemoryArena *arena, Bindings *bindings, T
             !stop;
             arg_id++)
         {
-            auto arg = parseExpression(state, arena, bindings, tk);
+            auto arg = parseExpression(state, arena, bindings);
             if (!arg)
                 stop = true;
             else
@@ -548,69 +635,10 @@ parseSubExpression(EngineState *state, MemoryArena *arena, Bindings *bindings, T
     return out;
 }
 
-inline b32
-isExpressionEndMarker(Token *token)
-{
-    return inString("{},)", token);
-}
-
-// todo: should we really return 0 ever?
-internal Expression *
-parseExpression(EngineState *state, MemoryArena *arena, Bindings *bindings, Tokenizer *tk)
-{
-    Expression *out = 0;
-
-    Token token1 = peekNext(tk);
-    if (isExpressionEndMarker(&token1))
-        out = 0;
-    else
-    {
-        Expression *e1 = parseSubExpression(state, arena, bindings, tk);
-        if (e1)
-        {
-            Token connecting_token = peekNext(tk);
-            if (isIdentifier(&connecting_token))
-            {// infix operator syntax
-                advance(tk);
-                auto op_lookup = lookupNameRecursive(bindings, &connecting_token);
-                if (op_lookup.found)
-                {
-                    auto e2 = op_lookup.value;
-
-                    auto *e3 = parseExpression(state, arena, bindings, tk);
-                    if (e3)
-                    {
-                        allocate(arena, out);
-                        out->cat = EC_Application;
-                        castExpression(Application, out, application);
-                        application->op = e2;
-                        auto todo_arg_count = 2;
-                        application->arg_count = todo_arg_count;
-                        allocateArray(arena, 2, application->args);
-                        application->args[0] = e1;
-                        application->args[1] = e3;
-                    }
-                    else
-                        todoErrorReport;  // expected final argument, got nothing back
-                }
-                else
-                    todoErrorReport; // unbound operator
-            }
-            else if (isExpressionEndMarker(&connecting_token))
-                out = e1;
-            else
-                todoErrorReport; // unknown connecting token
-        }
-        else
-            out = 0;
-    }
-
-    return out;
-}
-
 internal Type  *
-parseType(EngineState *state, Bindings *bindings, Tokenizer *tk)
+parseType(ParserState *state, Bindings *bindings)
 {
+    Tokenizer *tk = &state->tokenizer;
     Type *out = 0;
 
     Token type = advance(tk);
@@ -648,8 +676,9 @@ extendEnvironment(Stack *outer, u32 arg_count, Expression **reduced_args)
 }
 
 internal void
-parseDefine(EngineState *state, MemoryArena *arena, Tokenizer *tk)
+parseDefine(ParserState *state, MemoryArena *arena)
 {
+    Tokenizer *tk = &state->tokenizer;
     Token define_name = advance(tk);
     if ((define_name.cat == TC_Alphanumeric)
         || (define_name.cat == TC_Special))
@@ -728,7 +757,7 @@ parseDefine(EngineState *state, MemoryArena *arena, Tokenizer *tk)
 
                         requireChar(tk, ':');
 
-                        Type *arg_type               = parseType(state, local_bindings, tk);
+                        Type *arg_type               = parseType(state, local_bindings);
                         procedure->arg_types[arg_id] = arg_type;
                         arg_exp->type_of_this        = arg_type;
 
@@ -748,11 +777,11 @@ parseDefine(EngineState *state, MemoryArena *arena, Tokenizer *tk)
 
             // return type
             requireChar(tk, ':');
-            procedure->return_type = parseType(state, local_bindings, tk);
+            procedure->return_type = parseType(state, local_bindings);
 
             requireChar(tk, '{');
             allocate(arena, procedure->body);
-            auto body = parseExpression(state, arena, local_bindings, tk);
+            auto body = parseExpression(state, arena, local_bindings);
             requireChar(tk, '}');
             if (body)
                 procedure->body = body;
@@ -767,7 +796,7 @@ parseDefine(EngineState *state, MemoryArena *arena, Tokenizer *tk)
 }
 
 internal Expression *
-reduce(EngineState *state, MemoryArena *arena, Stack *stack, Expression *in)
+reduce(ParserState *state, MemoryArena *arena, Stack *stack, Expression *in)
 {
     Expression *out = 0;
 
@@ -824,7 +853,7 @@ reduce(EngineState *state, MemoryArena *arena, Stack *stack, Expression *in)
 
         case EC_Type:
         case EC_Procedure:
-        case EC_ConstructorRef:
+        case EC_ConstructorId:
         {
             out = in;
         } break;
@@ -882,9 +911,9 @@ testPrintExpression(char *buf, Expression *exp)
             printed = printStringToBuffer(buf, proc->name);
         } break;
 
-        case EC_ConstructorRef:
+        case EC_ConstructorId:
         {
-            Constructor *ctor = exp->ConstructorRef.type->ctors + exp->ConstructorRef.id;
+            Constructor *ctor = exp->type_of_this->ctors + exp->ConstructorId.id;
             printed = printStringToBuffer(buf, ctor->name);
         } break;
     }
@@ -892,36 +921,38 @@ testPrintExpression(char *buf, Expression *exp)
     return printed;
 }
 
-// NOTE: Main didspatch parse function
-internal void
-parseTopLevel(EngineState *state, MemoryArena *arena, Tokenizer *tk)
+// NOTE: Main dispatch parse function
+internal ParserError
+parseTopLevel(ParserState *state, MemoryArena *arena)
 {
-    b32 eof = false;
-    while (!eof)
+    ParserError error = 0;
+
+    Tokenizer *tk = &state->tokenizer;
+    for (b32 stop = false; !stop;)
     {
         Token token = advance(tk); 
         switch (token.cat)
         {
             case 0:
             {
-                eof = true;
+                stop = true;
             } break;
 
             case TC_KeywordTypedef:
             {
-                parseTypedef(state, arena, tk);
+                error = parseTypedef(state, arena);
             } break;
 
             case TC_KeywordDefine:
             {
-                parseDefine(state, arena, tk);
+                parseDefine(state, arena);
             } break;
 
             case TC_KeywordPrint:
             {
                 requireChar(tk, '(');
                 auto temp_arena = beginTemporaryArena(arena);
-                auto exp = parseExpression(state, &temp_arena, &state->global_bindings, tk);
+                auto exp = parseExpression(state, &temp_arena, &state->global_bindings);
                 requireChar(tk, ')');
                 if (exp)
                 {
@@ -942,7 +973,12 @@ parseTopLevel(EngineState *state, MemoryArena *arena, Tokenizer *tk)
             default:
                 todoErrorReport; // unexpected token at top-level
         }
+
+        if (error)
+            stop = true;
     }
+
+    return error;
 }
 
 inline b32
@@ -954,55 +990,62 @@ isMatchingPair(Token *left, Token *right)
             ((l == '{') && (r == '}')));
 }
 
-internal EngineState *
+struct CompileOutput { ParserState *state; ParserError error; };
+
+internal CompileOutput
 compile(MemoryArena *arena, ReadFileResult *source)
 {
-    EngineState *state = pushStruct(arena, EngineState);
+    ParserState *state = pushStruct(arena, ParserState);
 
-    {// mark: initialize engine state
-        state->scoped_arena = subArena(arena, megaBytes(2));
-
+    {// mark: initialize state
+        state->scoped_arena          = subArena(arena, megaBytes(2));
         state->global_bindings.arena = arena;
+        state->tokenizer             = {};
+        state->tokenizer.line_number = 1;
+        state->tokenizer.column      = 1;
+        state->tokenizer.at          = source->content;
     }
 
-    {// MARK: Executing
-#if 1
-        Tokenizer tk = { source->content };
-        parseTopLevel(state, arena, &tk);
-#endif
+    ParserError error = parseTopLevel(state, arena);
+    if (error)
+        printf("%d:%d: %s\n", error->token.line_number, error->token.column, error->message);
 
-#if 0
-        Tokenizer tk = { source->content };
-        debugPrintTokens(tk);
-#endif
-    }
-
-    return state;
+    return { state, error };
 }
 
-inline void
+inline int
 testCaseMain(MemoryArena *arena)
 {
+    int out = 0;
     char *input = "test.rea";
     ReadFileResult read = platformReadEntireFile(input);
     if (read.content)
     {
-        auto *state = compile(arena, &read);
+        auto [state, error] = compile(arena, &read);
+        if (error)
+            out = 1;
         // NOTE: you can put some assertions here.
         platformFreeFileMemory(read.content);
     }
     else
+    {
         printf("Failed to read input file %s", input);
+        out = 1;
+    }
+    return out;
 }
 
-internal void
+int
 engineMain(EngineMemory *memory)
 {
+    int out = 0;
     platformPrint = memory->platformPrint;
     platformReadEntireFile = memory->platformReadEntireFile;
     platformFreeFileMemory = memory->platformFreeFileMemory;
 
     auto arena = newArena(memory->storage_size, memory->storage);
-    testCaseMain(&arena);
+    if (testCaseMain(&arena))
+        out = 1;
     // zeroMemory(memory->storage, memory->storage_size);
+    return out;
 }

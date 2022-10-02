@@ -30,8 +30,10 @@ const char *keywords[] = {"_ignore_", "typedef", "define", "switch", "print"};
 
 struct Token
 {
-    String text;
+    String        text;
     TokenCategory cat;
+    s32           line_number;
+    s32           column;
 };
 
 inline b32
@@ -68,15 +70,6 @@ equals(Token *token, char c)
 {
     return ((token->text.length == 1)
             &&  (token->text.chars[0] == c));
-}
-
-inline Token
-newToken(char *first_char, TokenCategory category)
-{
-    Token out;
-    out.text = {first_char, 0};
-    out.cat = category;
-    return out;
 }
 
 internal TokenCategory
@@ -165,14 +158,28 @@ printCharToBufferRepeat(char *buffer, char c, s32 repeat)
 struct Tokenizer
 {
     char *at;
-    char end;
+    s32   line_number;
+    s32   column;
 };
+
+inline void
+nextChar(Tokenizer *tk)
+{
+    char previous = *tk->at++;
+    if (previous == '\n')
+    {
+        tk->line_number++;
+        tk->column = 1;
+    }
+    else
+        tk->column++;
+}
 
 internal void
 eatAllSpaces(Tokenizer *tk)
 {
     b32 stop = false;
-    while ((*tk->at) && (*tk->at != tk->end) && (!stop))
+    while ((*tk->at) && (!stop))
     {
         switch (*tk->at)
         {
@@ -180,16 +187,17 @@ eatAllSpaces(Tokenizer *tk)
             case '\t':
             case ' ':
             {
-                tk->at++;
+                nextChar(tk);
             } break;
 
             case ';':
             {
                 if (*(tk->at+1) == ';')
                 {
-                    tk->at += 2;
+                    nextChar(tk);
+                    nextChar(tk);
                     while ((*tk->at) && (*tk->at != '\n'))
-                        tk->at++;
+                        nextChar(tk);
                 }
             } break;
 
@@ -228,23 +236,26 @@ advance(Tokenizer *tk)
 {
     Token out = {};
     eatAllSpaces(tk);
-    out.text.chars = tk->at;
+    out.text.chars  = tk->at;
+    out.line_number = tk->line_number;
+    out.column      = tk->column;
     b32 stop = false;
 
-    TokenCategory type = getCharacterType(*tk->at++);
-    out.cat = type;
-    switch (type)
+    TokenCategory category = getCharacterType(*tk->at);
+    nextChar(tk);
+    out.cat = category;
+    switch (category)
     {
         case TC_Alphanumeric:
         {
-            while (getCharacterType(*tk->at) == type)
-                tk->at++;
+            while (getCharacterType(*tk->at) == category)
+                nextChar(tk);
         } break;
 
         case TC_Special:
         {
-            while (getCharacterType(*tk->at) == type)
-                tk->at++;
+            while (getCharacterType(*tk->at) == category)
+                nextChar(tk);
         } break;
 
         default: {}

@@ -4,6 +4,12 @@ typedef Bool
  | true
  }
 
+typedef Bool
+{
+ | false
+ | true
+ }
+
 define &(a: Bool, b: Bool) : Bool
 {
  switch a
@@ -39,7 +45,7 @@ print(&(true, (false | true)))
 
 print(&(true, |(false,true,),))
 
-print((switch true {| true { & } | false { | } })(true, false))
+;; print((switch true {| true { & } | false { | } })(true, false))
 ;; print((switch false {| true { & } | false { | } })(true, false))
 
 ;; deMorgan's law
