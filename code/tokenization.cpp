@@ -8,22 +8,22 @@ struct String
     s32  length;
 };
 
-enum TokenCat
+enum TokenCategory
 {
     // 0-255 reserved for single-char ASCII types.
-    TokenCat_Special         = 256,
-    TokenCat_PairingOpen     = 257,
-    TokenCat_PairingClose    = 258,
-    TokenCat_Alphanumeric    = 259,
+    TC_Special         = 256,
+    TC_PairingOpen     = 257,
+    TC_PairingClose    = 258,
+    TC_Alphanumeric    = 259,
 
     // TODO: Do I really need these? The tokenizer doesn't really produce this
     // information during its tokenization process.
-    TokenCat_KeywordsBegin_  = 300,
-    TokenCat_KeywordTypedef  = 301,
-    TokenCat_KeywordDefine   = 302,
-    TokenCat_KeywordSwitch   = 303,
-    TokenCat_KeywordPrint    = 304,
-    TokenCat_KeywordsEnd_    = 400,
+    TC_KeywordsBegin_  = 300,
+    TC_KeywordTypedef  = 301,
+    TC_KeywordDefine   = 302,
+    TC_KeywordSwitch   = 303,
+    TC_KeywordPrint    = 304,
+    TC_KeywordsEnd_    = 400,
 };
 
 const char *keywords[] = {"_ignore_", "typedef", "define", "switch", "print"};
@@ -31,7 +31,7 @@ const char *keywords[] = {"_ignore_", "typedef", "define", "switch", "print"};
 struct Token
 {
     String text;
-    TokenCat cat;
+    TokenCategory cat;
 };
 
 inline b32
@@ -71,7 +71,7 @@ equals(Token *token, char c)
 }
 
 inline Token
-newToken(char *first_char, TokenCat category)
+newToken(char *first_char, TokenCategory category)
 {
     Token out;
     out.text = {first_char, 0};
@@ -79,14 +79,14 @@ newToken(char *first_char, TokenCat category)
     return out;
 }
 
-internal TokenCat
+internal TokenCategory
 getCharacterType(char c)
 {
     if ((('a' <= c) && (c <= 'z'))
         || (('A' <= c) && (c <= 'Z'))
         || (('0' <= c) && (c <= '9')))
     {
-        return TokenCat_Alphanumeric;
+        return TC_Alphanumeric;
     }
     else
     {
@@ -94,7 +94,6 @@ getCharacterType(char c)
         {
             case '.':
             case '`':
-            case ',':
             case '/':
             case '?':
             case '<':
@@ -112,29 +111,30 @@ getCharacterType(char c)
             case '+':
             case '=':
             {
-                return TokenCat_Special;
+                return TC_Special;
             } break;
 
             case '(':
             case '{':
             {
-                return TokenCat_PairingOpen;
+                return TC_PairingOpen;
             } break;
 
             case ')':
             case '}':
             {
-                return TokenCat_PairingClose;
+                return TC_PairingClose;
             }
         
             default:
                 // NOTE: Self-describing category
-                return (TokenCat)c;
+                return (TokenCategory)c;
         }
     }
 }
 
-inline void
+// TODO: buffer overflow check
+inline s32
 printStringToBuffer(char *buffer, String s)
 {
     char *c = s.chars;
@@ -146,6 +146,8 @@ printStringToBuffer(char *buffer, String s)
         c++;
     }
     buffer[s.length] = 0;
+
+    return s.length;
 }
 
 inline void
@@ -163,13 +165,14 @@ printCharToBufferRepeat(char *buffer, char c, s32 repeat)
 struct Tokenizer
 {
     char *at;
+    char end;
 };
 
 internal void
 eatAllSpaces(Tokenizer *tk)
 {
     b32 stop = false;
-    while ((*tk->at) && (!stop))
+    while ((*tk->at) && (*tk->at != tk->end) && (!stop))
     {
         switch (*tk->at)
         {
@@ -196,17 +199,17 @@ eatAllSpaces(Tokenizer *tk)
     }
 }
 
-inline TokenCat
+inline TokenCategory
 matchKeyword(Token *token)
 {
-    TokenCat out = (TokenCat)0;
+    TokenCategory out = (TokenCategory)0;
     for (int i = 1;
          i < arrayCount(keywords);
          i++)
     {
         if (equals(token, keywords[i]))
         {
-            out = (TokenCat)(TokenCat_KeywordsBegin_ + i);
+            out = (TokenCategory)(TC_KeywordsBegin_ + i);
             break;
         }
     }
@@ -216,8 +219,8 @@ matchKeyword(Token *token)
 inline b32
 isKeyword(Token *token)
 {
-    return ((token->cat > TokenCat_KeywordsBegin_)
-            && (token->cat < TokenCat_KeywordsEnd_));
+    return ((token->cat > TC_KeywordsBegin_)
+            && (token->cat < TC_KeywordsEnd_));
 }
 
 inline Token
@@ -228,17 +231,17 @@ advance(Tokenizer *tk)
     out.text.chars = tk->at;
     b32 stop = false;
 
-    TokenCat type = getCharacterType(*tk->at++);
+    TokenCategory type = getCharacterType(*tk->at++);
     out.cat = type;
     switch (type)
     {
-        case TokenCat_Alphanumeric:
+        case TC_Alphanumeric:
         {
             while (getCharacterType(*tk->at) == type)
                 tk->at++;
         } break;
 
-        case TokenCat_Special:
+        case TC_Special:
         {
             while (getCharacterType(*tk->at) == type)
                 tk->at++;
@@ -248,12 +251,19 @@ advance(Tokenizer *tk)
     }
 
     out.text.length = tk->at - out.text.chars;
-    if (out.cat == TokenCat_Alphanumeric)
+    if (out.cat == TC_Alphanumeric)
     {
-        if (TokenCat new_type = matchKeyword(&out))
+        if (TokenCategory new_type = matchKeyword(&out))
             out.cat = new_type;
     }
     return out;
+}
+
+inline Token
+peekNext(Tokenizer *tk)
+{
+    auto tk_copy = *tk;
+    return advance(&tk_copy);
 }
 
 inline void
@@ -261,6 +271,29 @@ requireChar(Tokenizer *tk, char c)
 {
     Token token = advance(tk);
     if (!((token.text.length == 1) && (token.text.chars[0] == c)))
+        todoErrorReport;
+}
+
+inline b32
+inString(char *string, Token *token)
+{
+    if (token->text.length == 1)
+    {
+        char character = token->text.chars[0];
+        for (char *c = string; *c; c++)
+        {
+            if (*c == character)
+                return true;
+        }
+    }
+    return false;
+}
+
+inline void
+requireChar(Tokenizer *tk, char *string)
+{
+    Token token = advance(tk);
+    if (!inString(string, &token))
         todoErrorReport;
 }
 
@@ -305,4 +338,11 @@ stringHash(String string)
         out = 65599*out + string.chars[i];
     }
     return out;
+}
+
+inline b32
+isIdentifier(Token *token)
+{
+    return ((token->cat == TC_Alphanumeric)
+            || (token->cat == TC_Special));
 }

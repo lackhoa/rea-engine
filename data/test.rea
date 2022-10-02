@@ -14,9 +14,9 @@ define &(a: Bool, b: Bool) : Bool
  }
 
 print(true  & true)
-print(true  & false)
+print((true  & false))
 print(false & true)
-print(false & false)
+print((false & false))
 
 define |(a: Bool, b: Bool) : Bool
 {
@@ -27,10 +27,20 @@ define |(a: Bool, b: Bool) : Bool
   }
  }
 
-print(true  | true)
-print(true  | false)
-print(false | true)
-print(false | false)
+print(|(true,  true))
+print(|(true,  false))
+print(|(false, true))
+print(|(false, false))
+
+print(true & (false | true))
+print((true & false) | true)
+print(&(true, false) | false)
+print(&(true, (false | true)))
+
+print(&(true, |(false,true,),))
+
+print((switch true {| true { & } | false { | } })(true, false))
+;; print((switch false {| true { & } | false { | } })(true, false))
 
 ;; deMorgan's law
 

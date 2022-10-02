@@ -9,15 +9,17 @@
 
 // TODO: Eventually this will talk to the editor, but let's work in console mode for now.
 
-enum ExpCat
+enum ExpressionCategory
 {
-    ExpCat_Variable,            // reference to some unknown on "the stack"
-    ExpCat_Application,         // operator application
-    ExpCat_Switch,              // switch statement
-    ExpCat_Type,                // type information
-    ExpCat_Procedure,           // holds actual computation (ie body that can be executed)
-    ExpCat_ConstructorRef,      // reference to a constructor of a type
+    EC_Variable,            // reference to some unknown on "the stack"
+    EC_Application,         // operator application
+    EC_Switch,              // switch statement
+    EC_Type,                // type information
+    EC_Procedure,           // holds actual computation (ie body that can be executed)
+    EC_ConstructorRef,      // reference to a constructor of a type
 };
+
+#define castExpression(Type, exp, type) Type *type = &exp->Type;
 
 struct Expression;
 
@@ -76,18 +78,16 @@ struct Procedure
 
 struct Expression
 {
-    ExpCat  cat;
-    Type   *type_of_this;       // temporary pointer
-    // todo: these should all be pointers. Saves space, but do they though b/c
-    // expressions are always pointers anyway.
+    ExpressionCategory  cat;
+    Type   *type_of_this;
     union
     {
-        Variable       variable;
-        Application    application;
-        Switch         switch0;
-        Type           type;
-        Procedure      procedure;
-        ConstructorRef constructor_ref;
+        Variable       Variable;
+        Application    Application;
+        Switch         Switch;
+        Type           Type;
+        Procedure      Procedure;
+        ConstructorRef ConstructorRef;
     };
 };
 
@@ -221,8 +221,8 @@ parseConstructorDef(EngineState *state, MemoryArena *arena, Tokenizer *tk, Type 
     Token ctor_token = advance(tk);
     switch (ctor_token.cat)
     {
-        case TokenCat_Special:
-        case TokenCat_Alphanumeric:
+        case TC_Special:
+        case TC_Alphanumeric:
         {
             LookupName ctor_lookup = lookupNameCurrentFrame(&state->global_bindings, &ctor_token, true);
             if (ctor_lookup.found)
@@ -234,9 +234,9 @@ parseConstructorDef(EngineState *state, MemoryArena *arena, Tokenizer *tk, Type 
                 out->arg_types = 0;
 
                 Expression *exp = pushStruct(arena, Expression);
-                exp->cat        = ExpCat_ConstructorRef;
-                exp->constructor_ref.type = type;
-                exp->constructor_ref.id   = ctor_id;
+                exp->cat        = EC_ConstructorRef;
+                exp->ConstructorRef.type = type;
+                exp->ConstructorRef.id   = ctor_id;
 
                 ctor_lookup.slot->value = exp;
             }
@@ -251,7 +251,7 @@ internal void
 parseTypedef(EngineState *state, MemoryArena *arena, Tokenizer *tk)
 {
     Token type_name = advance(tk);
-    if (type_name.cat == TokenCat_Alphanumeric)
+    if (type_name.cat == TC_Alphanumeric)
     {
         // NOTE: the type is in scope of its own constructor.
         LookupName type_lookup = lookupNameCurrentFrame(&state->global_bindings, &type_name, true);
@@ -261,9 +261,9 @@ parseTypedef(EngineState *state, MemoryArena *arena, Tokenizer *tk)
         {
             Expression *type_exp    = pushStruct(arena, Expression);
             type_lookup.slot->value = type_exp;
-            type_exp->cat           = ExpCat_Type;
+            type_exp->cat           = EC_Type;
 
-            Type *type = &type_exp->type;
+            Type *type = &type_exp->Type;
             type->name = type_name.text;
 
             requireChar(tk, '{');
@@ -276,9 +276,9 @@ parseTypedef(EngineState *state, MemoryArena *arena, Tokenizer *tk)
                 for (b32 stop = false; !stop;)
                 {
                     Token token = advance(&tk1);
-                    if (token.cat == TokenCat_PairingOpen)
+                    if (token.cat == TC_PairingOpen)
                         nesting_depth++;
-                    else if (token.cat == TokenCat_PairingClose)
+                    else if (token.cat == TC_PairingClose)
                     {
                         if (nesting_depth > 0)
                             nesting_depth--;
@@ -340,17 +340,20 @@ matchSwitchCase(EngineState *state, Type *subject_type, Expression *matched)
 {
     OptionalU32 out = {};
 
-    if (matched->cat == ExpCat_Variable)
-    {}  // surrender
-    else if (matched->cat == ExpCat_ConstructorRef)
+    if (matched)
     {
-        auto ctor   = matched->constructor_ref;
-        out.success = true;
-        out.value   = ctor.id;
+        if (matched->cat == EC_Variable)
+        {}  // surrender
+        else if (matched->cat == EC_ConstructorRef)
+        {
+            auto ctor   = matched->ConstructorRef;
+            out.success = true;
+            out.value   = ctor.id;
+        }
+        else
+            todoIncomplete;  // handle composite cases
     }
-    else
-        todoIncomplete;  // handle composite cases
-
+    
     return out;
 }
 
@@ -365,34 +368,34 @@ inferType(EngineState *state, Expression *exp)
     {
         switch (exp->cat)
         {
-            case ExpCat_Variable:
+            case EC_Variable:
             {
                 invalidCodePath;  // this should already have the type
             } break;
 
-            case ExpCat_Application:
+            case EC_Application:
             {
                 todoIncomplete;
             } break;
 
-            case ExpCat_Switch:
+            case EC_Switch:
             {
                 todoIncomplete;
             } break;
 
-            case ExpCat_Type:
+            case EC_Type:
             {
                 // higher-order type
                 todoIncomplete;
             } break;
 
-            case ExpCat_Procedure:
+            case EC_Procedure:
             {
                 // another arrow type
                 todoIncomplete;
             } break;
 
-            case ExpCat_ConstructorRef:
+            case EC_ConstructorRef:
             {
                 // yet another arrow type
                 todoIncomplete;
@@ -403,82 +406,204 @@ inferType(EngineState *state, Expression *exp)
     return out;
 }
 
-// todo: is the 'Expression *out' thing wise?  sometimes we want to write to a
-// specific address, other times we just wanna return references.
+Expression *parseExpression(EngineState *state, MemoryArena *arena, Bindings *bindings, Tokenizer *tk);
+
+// a subexpression is like the '+' or the 'a' in the full expression 'a + b'
 internal Expression *
-parseExp(EngineState *state, MemoryArena *arena, Bindings *bindings, Tokenizer *tk)
+parseSubExpression(EngineState *state, MemoryArena *arena, Bindings *bindings, Tokenizer *tk)
 {
     Expression *out = 0;
-    Token first = advance(tk);
-    if (isKeyword(&first))
+    Token token1 = advance(tk);
+    if (isKeyword(&token1))
     {
-        switch (first.cat)
+        switch (token1.cat)
         {
-            case TokenCat_KeywordSwitch:
+            case TC_KeywordSwitch:
             {
                 allocate(arena, out);
+                out->cat = EC_Switch;
+                castExpression(Switch, out, switch0);
 
-                out->cat = ExpCat_Switch;
-                allocate(arena, out->switch0.subject);
-                out->switch0.subject = parseExp(state, arena, bindings, tk);
+                switch0->subject = parseExpression(state, arena, bindings, tk);
                 requireChar(tk, '{');
-                Type *subject_type = inferType(state, out->switch0.subject);
-                auto expected_ctor_count = subject_type->ctor_count;
-                allocateArray(arena, expected_ctor_count, out->switch0.case_bodies);
-
-                s32 actual_case_count = 0;
-                for (b32 stop = false; !stop;)
+                if (switch0->subject)
                 {
-                    Token bar_or_closing_brace = advance(tk);
-                    switch (bar_or_closing_brace.text.chars[0])
+                    Type *subject_type = inferType(state, switch0->subject);
+                    auto expected_ctor_count = subject_type->ctor_count;
+                    allocateArray(arena, expected_ctor_count, switch0->case_bodies);
+
+                    s32 actual_case_count = 0;
+                    for (b32 stop = false; !stop;)
                     {
-                        case '|':
+                        Token bar_or_closing_brace = advance(tk);
+                        switch (bar_or_closing_brace.text.chars[0])
                         {
-                            actual_case_count++;
-
-                            MemoryArena temp_arena = beginTemporaryArena(arena);
-                            Expression *switch_case = parseExp(state, &temp_arena, bindings, tk);
-                            requireChar(tk, '{');
-                            auto case_match = matchSwitchCase(state, subject_type, switch_case);
-                            endTemporaryArena(arena, &temp_arena);
-
-                            if (case_match.success)
+                            case '|':
                             {
-                                out->switch0.case_bodies[case_match.value] = parseExp(state, arena, bindings, tk);
-                                requireChar(tk, '}');
-                                // todo: type-check the body
-                            }
-                            else
-                                todoErrorReport;  // expression is not a constructor for type.
-                        } break;
+                                actual_case_count++;
 
-                        case '}':
-                        {
-                            stop = true;
-                        } break;
+                                MemoryArena temp_arena = beginTemporaryArena(arena);
 
-                        default:
-                            todoErrorReport;  // expect either '|' or '}'
+                                Expression *switch_case = parseExpression(state, &temp_arena, bindings, tk);
+                                requireChar(tk, '{');
+
+                                auto case_match = matchSwitchCase(state, subject_type, switch_case);
+                                endTemporaryArena(&temp_arena);
+
+                                if (case_match.success)
+                                {
+                                    auto body = parseExpression(state, arena, bindings, tk);
+                                    requireChar(tk, '}');
+
+                                    // todo: type-check the body
+                                    if (body)
+                                        switch0->case_bodies[case_match.value] = body;
+                                    else
+                                        todoErrorReport;  // body cannot be empty
+                                }
+                                else
+                                    todoErrorReport;  // expression is not a constructor for type.
+                            } break;
+
+                            case '}':
+                            {
+                                stop = true;
+                            } break;
+
+                            default:
+                                todoErrorReport;  // expect either '|' or '}'
+                        }
                     }
+                    if (actual_case_count != expected_ctor_count)
+                        todoErrorReport; // wrong number of enough cases
                 }
-                assert(actual_case_count = expected_ctor_count);
+                else
+                    todoErrorReport;  // expected subject
             } break;
 
             default:
                 todoErrorReport; // keyword not part of expression
         }
     }
-    else if ((first.cat == TokenCat_Alphanumeric)
-             || (first.cat == TokenCat_Special))
+    else if (isIdentifier(&token1))
     {
-        LookupNameRecursive identifier_lookup = lookupNameRecursive(bindings, &first);
-        if (identifier_lookup.found)
-            out = identifier_lookup.value;
+        auto lookup1 = lookupNameRecursive(bindings, &token1);
+        if (lookup1.found)
+            out = lookup1.value;
         else
             todoErrorReport;    // Unbound identifier
     }
+    else if (equals(&token1, '('))
+    {
+        out = parseExpression(state, arena, bindings, tk);
+        requireChar(tk, ')');
+    }
     else
-        todoErrorReport;        // unexpected start of expression
+        todoErrorReport;  // expected start of expression
+
+    Token next = peekNext(tk);
+    if (equals(&next, '('))
+    {// function call syntax
+        advance(tk);
+        auto op = out;
+        auto todo_arg_count = 2;  // this requires knowing the type of the operator
+        auto args = pushArray(arena, todo_arg_count, Expression*);
+        s32 actual_arg_count = 0;
+        for(s32 stop = false, arg_id = 0;
+            !stop;
+            arg_id++)
+        {
+            auto arg = parseExpression(state, arena, bindings, tk);
+            if (!arg)
+                stop = true;
+            else
+                args[arg_id] = arg;
+
+            for (b32 non_comma = false; !non_comma;)
+            {// eat all commas for now
+                if (*tk->at == ',')
+                    advance(tk);
+                else
+                    non_comma = true;
+            }
+
+            if (stop)
+                actual_arg_count = arg_id;
+        }
+        requireChar(tk, ')');
+
+        if (actual_arg_count == todo_arg_count)
+        {
+            allocate(arena, out);
+            out->cat = EC_Application;
+            castExpression(Application, out, application);
+            application->op        = op;
+            application->arg_count = todo_arg_count;
+            application->args      = args;
+        }
+        else
+            todoErrorReport;  // incorrect arg count
+    }
+
+    return out;
+}
+
+inline b32
+isExpressionEndMarker(Token *token)
+{
+    return inString("{},)", token);
+}
+
+// todo: should we really return 0 ever?
+internal Expression *
+parseExpression(EngineState *state, MemoryArena *arena, Bindings *bindings, Tokenizer *tk)
+{
+    Expression *out = 0;
+
+    Token token1 = peekNext(tk);
+    if (isExpressionEndMarker(&token1))
+        out = 0;
+    else
+    {
+        Expression *e1 = parseSubExpression(state, arena, bindings, tk);
+        if (e1)
+        {
+            Token connecting_token = peekNext(tk);
+            if (isIdentifier(&connecting_token))
+            {// infix operator syntax
+                advance(tk);
+                auto op_lookup = lookupNameRecursive(bindings, &connecting_token);
+                if (op_lookup.found)
+                {
+                    auto e2 = op_lookup.value;
+
+                    auto *e3 = parseExpression(state, arena, bindings, tk);
+                    if (e3)
+                    {
+                        allocate(arena, out);
+                        out->cat = EC_Application;
+                        castExpression(Application, out, application);
+                        application->op = e2;
+                        auto todo_arg_count = 2;
+                        application->arg_count = todo_arg_count;
+                        allocateArray(arena, 2, application->args);
+                        application->args[0] = e1;
+                        application->args[1] = e3;
+                    }
+                    else
+                        todoErrorReport;  // expected final argument, got nothing back
+                }
+                else
+                    todoErrorReport; // unbound operator
+            }
+            else if (isExpressionEndMarker(&connecting_token))
+                out = e1;
+            else
+                todoErrorReport; // unknown connecting token
+        }
+        else
+            out = 0;
+    }
 
     return out;
 }
@@ -489,13 +614,13 @@ parseType(EngineState *state, Bindings *bindings, Tokenizer *tk)
     Type *out = 0;
 
     Token type = advance(tk);
-    if (type.cat == TokenCat_Alphanumeric)
+    if (type.cat == TC_Alphanumeric)
     {
         auto type_lookup = lookupNameRecursive(bindings, &type);
         if (type_lookup.found)
         {
-            if (type_lookup.value->cat == ExpCat_Type)
-                out = &type_lookup.value->type;
+            if (type_lookup.value->cat == EC_Type)
+                out = &type_lookup.value->Type;
             else
                 todoErrorReport; // not a type
         }
@@ -526,8 +651,8 @@ internal void
 parseDefine(EngineState *state, MemoryArena *arena, Tokenizer *tk)
 {
     Token define_name = advance(tk);
-    if ((define_name.cat == TokenCat_Alphanumeric)
-        || (define_name.cat == TokenCat_Special))
+    if ((define_name.cat == TC_Alphanumeric)
+        || (define_name.cat == TC_Special))
     {
         auto define_slot = lookupNameCurrentFrame(&state->global_bindings, &define_name, true);
         if (define_slot.found)
@@ -536,8 +661,10 @@ parseDefine(EngineState *state, MemoryArena *arena, Tokenizer *tk)
         {
             auto *define_exp        = pushStruct(arena, Expression);
             define_slot.slot->value = define_exp;
-            define_exp->cat         = ExpCat_Procedure;
-            auto  procedure         = &define_exp->procedure;
+
+            define_exp->cat = EC_Procedure;
+            auto procedure  = &define_exp->Procedure;
+            procedure->name = define_name.text;
 
             requireChar(tk, '(');
 
@@ -584,7 +711,7 @@ parseDefine(EngineState *state, MemoryArena *arena, Tokenizer *tk)
                 if (equals(&arg_name_or_end, ')'))
                     stop = true;
 
-                else if (arg_name_or_end.cat == TokenCat_Alphanumeric)
+                else if (arg_name_or_end.cat == TC_Alphanumeric)
                 {
                     auto arg_name_lookup = lookupNameCurrentFrame(local_bindings, &arg_name_or_end, true);
                     if (arg_name_lookup.found)
@@ -594,10 +721,10 @@ parseDefine(EngineState *state, MemoryArena *arena, Tokenizer *tk)
                         Expression *arg_exp         = pushStruct(arena, Expression);
                         arg_name_lookup.slot->value = arg_exp;
 
-                        arg_exp->cat = ExpCat_Variable;
-                        arg_exp->variable.name        = arg_name_or_end.text;
-                        arg_exp->variable.id          = arg_id;
-                        arg_exp->variable.stack_depth = 1;
+                        arg_exp->cat = EC_Variable;
+                        arg_exp->Variable.name        = arg_name_or_end.text;
+                        arg_exp->Variable.id          = arg_id;
+                        arg_exp->Variable.stack_depth = 1;
 
                         requireChar(tk, ':');
 
@@ -625,10 +752,14 @@ parseDefine(EngineState *state, MemoryArena *arena, Tokenizer *tk)
 
             requireChar(tk, '{');
             allocate(arena, procedure->body);
-            procedure->body = parseExp(state, arena, local_bindings, tk);
+            auto body = parseExpression(state, arena, local_bindings, tk);
             requireChar(tk, '}');
+            if (body)
+                procedure->body = body;
+            else
+                todoErrorReport;  // empty procedure body.
 
-            endTemporaryArena(&state->scoped_arena, &scoped_arena);
+            endTemporaryArena(&scoped_arena);
         }
     }
     else
@@ -642,15 +773,15 @@ reduce(EngineState *state, MemoryArena *arena, Stack *stack, Expression *in)
 
     switch (in->cat)
     {
-        case ExpCat_Variable:
+        case EC_Variable:
         {
-            out = resolve(stack, in->variable);
+            out = resolve(stack, in->Variable);
         } break;
 
-        case ExpCat_Application:
+        case EC_Application:
         {
             allocate(arena, out);
-            auto application = &in->application;
+            auto application = &in->Application;
             Expression **reduced_args = pushArray(arena, application->arg_count, Expression*);
             for (auto arg_id = 0;
                  arg_id < application->arg_count;
@@ -662,23 +793,24 @@ reduce(EngineState *state, MemoryArena *arena, Stack *stack, Expression *in)
 
             Expression *reduced_op = reduce(state, arena, stack, application->op);
 
-            if (reduced_op->cat == ExpCat_Procedure)
+            if (reduced_op->cat == EC_Procedure)
             {
                 Stack new_env = extendEnvironment(stack, application->arg_count, reduced_args);
-                out = reduce(state, arena, &new_env, reduced_op->procedure.body);
+                out = reduce(state, arena, &new_env, reduced_op->Procedure.body);
             }
             else
             {
-                out->cat                   = ExpCat_Application;
-                out->application.op        = reduced_op;
-                out->application.arg_count = application->arg_count;
-                out->application.args      = reduced_args;
+                out->cat = EC_Application;
+                castExpression(Application, out, app);
+                app->op        = reduced_op;
+                app->arg_count = application->arg_count;
+                app->args      = reduced_args;
             }
         } break;
 
-        case ExpCat_Switch:
+        case EC_Switch:
         {
-            auto switch0 = &in->switch0;
+            auto switch0 = &in->Switch;
             Expression *reduced_subject = reduce(state, arena, stack, switch0->subject);
 
             Type *subject_type = reduced_subject->type_of_this;
@@ -690,9 +822,9 @@ reduce(EngineState *state, MemoryArena *arena, Stack *stack, Expression *in)
                 todoIncomplete;
         } break;
 
-        case ExpCat_Type:
-        case ExpCat_Procedure:
-        case ExpCat_ConstructorRef:
+        case EC_Type:
+        case EC_Procedure:
+        case EC_ConstructorRef:
         {
             out = in;
         } break;
@@ -701,42 +833,63 @@ reduce(EngineState *state, MemoryArena *arena, Stack *stack, Expression *in)
     return out;
 }
 
-internal void
-testPrintExp(Expression *out)
+internal s32
+testPrintExpression(char *buf, Expression *exp)
 {
-    switch (out->cat)
+    s32 printed = 0;
+
+    switch (exp->cat)
     {
-        case ExpCat_Variable:
+        case EC_Variable:
         {
-            printf("atom(%d, %d)\n", out->variable.stack_depth, out->variable.id);
+            castExpression(Variable, exp, var);
+            printed = sprintf(buf, "var %.*s (%d, %d)", var->name.length, var->name.chars, var->stack_depth, var->id);
         } break;
 
-        case ExpCat_Application:
+        case EC_Application:
+        {
+            char *initial_location = buf;
+
+            castExpression(Application, exp, app);
+
+            buf += testPrintExpression(buf, app->op);
+
+            buf += sprintf(buf, "(");
+            for (s32 arg_id = 0; arg_id < app->arg_count; arg_id++)
+            {
+                buf += testPrintExpression(buf, app->args[arg_id]);
+                if (arg_id < app->arg_count-1)
+                    buf += sprintf(buf, ", ");
+            }
+            buf += sprintf(buf, ")");
+
+            printed = buf - initial_location;
+        } break;
+
+        case EC_Switch:
         {
             todoIncomplete;
         } break;
 
-        case ExpCat_Switch:
+        case EC_Type:
         {
             todoIncomplete;
         } break;
 
-        case ExpCat_Type:
+        case EC_Procedure:
         {
-            todoIncomplete;
+            castExpression(Procedure, exp, proc);
+            printed = printStringToBuffer(buf, proc->name);
         } break;
 
-        case ExpCat_Procedure:
+        case EC_ConstructorRef:
         {
-            todoIncomplete;
-        } break;
-
-        case ExpCat_ConstructorRef:
-        {
-            Constructor *ctor = out->constructor_ref.type->ctors + out->constructor_ref.id;
-            printf("%.*s\n", ctor->name.length, ctor->name.chars);
+            Constructor *ctor = exp->ConstructorRef.type->ctors + exp->ConstructorRef.id;
+            printed = printStringToBuffer(buf, ctor->name);
         } break;
     }
+
+    return printed;
 }
 
 // NOTE: Main didspatch parse function
@@ -754,47 +907,40 @@ parseTopLevel(EngineState *state, MemoryArena *arena, Tokenizer *tk)
                 eof = true;
             } break;
 
-            case TokenCat_KeywordTypedef:
+            case TC_KeywordTypedef:
             {
                 parseTypedef(state, arena, tk);
             } break;
 
-            case TokenCat_KeywordDefine:
+            case TC_KeywordDefine:
             {
                 parseDefine(state, arena, tk);
             } break;
 
-            // TODO: test code!
-            case TokenCat_KeywordPrint:
+            case TC_KeywordPrint:
             {
                 requireChar(tk, '(');
-
                 auto temp_arena = beginTemporaryArena(arena);
-
-                Expression *exp = pushStruct(&temp_arena, Expression);
-                exp->cat = ExpCat_Application;
-                exp->application.arg_count = 2;
-                allocate(&temp_arena, exp->application.op);
-                allocateArray(&temp_arena, 2, exp->application.args);
-
-                // Hacking the expression since we can't parse operators yet.
-                exp->application.args[0] = parseExp(state, &temp_arena, &state->global_bindings, tk);
-                exp->application.op      = parseExp(state, &temp_arena, &state->global_bindings, tk);
-                exp->application.args[1] = parseExp(state, &temp_arena, &state->global_bindings, tk);
-
+                auto exp = parseExpression(state, &temp_arena, &state->global_bindings, tk);
                 requireChar(tk, ')');
-
-                Expression *out = pushStruct(&temp_arena, Expression);
-                Stack empty_stack = {};
-                empty_stack.arena = &temp_arena;
-                out = reduce(state, &temp_arena, &empty_stack, exp);
-                testPrintExp(out);
-
-                endTemporaryArena(arena, &temp_arena);
+                if (exp)
+                {
+                    Stack empty_stack = {};
+                    empty_stack.arena = &temp_arena;
+                    auto reduced = reduce(state, &temp_arena, &empty_stack, exp);
+                    char exp_buffer[256];
+                    char reduced_buffer[256];
+                    testPrintExpression(exp_buffer, exp);
+                    testPrintExpression(reduced_buffer, reduced);
+                    printf("%s => %s\n", exp_buffer, reduced_buffer);
+                    endTemporaryArena(&temp_arena);
+                }
+                else
+                    todoErrorReport; // empty expression passed to "print"
             } break;
 
             default:
-                todoIncomplete;
+                todoErrorReport; // unexpected token at top-level
         }
     }
 }
@@ -818,68 +964,6 @@ compile(MemoryArena *arena, ReadFileResult *source)
 
         state->global_bindings.arena = arena;
     }
-    
-#if 0
-    {   // MARK: Parsing: Dealing with grouping constructs (not keywords), forming AST
-        if (expressions->last_chunk != &expressions->first_chunk)
-        {
-            assert(expressions->first_chunk.next != 0);
-        }
-        s32 ast_count = 0;
-        AstStackItem ast_stack[128];
-        ast_stack[0].ast = root_ast;
-        s32 stack_size = 1;
-        for (s32 token_index = 0;
-             token_index < token_count;
-             token_index++)
-        {
-            char buffer[256];
-            Token *token = tokens + token_index;
-
-#if 0
-            printStringToBuffer(buffer, token->chars, token->length);
-            platformPrint(buffer);
-            sprintf(buffer, "\n");
-            platformPrint(buffer);
-#endif
-
-            if (token->type == TokenCat_PairingClose)
-            {
-                if ((stack_size > 1)  // NOTE: 0 is root.
-                    && isMatchingPair((ast_stack + stack_size-1)->ast->token, token))
-                {
-                    stack_size--;
-                }
-                else todoErrorReport;
-            }
-            else
-            {
-                AstStackItem *outer = ((stack_size > 0) ?
-                                       (ast_stack + stack_size-1) : 0);
-                    
-                AstList *last_ast_slot = &outer->ast->children;
-                while (last_ast_slot->c)
-                    last_ast_slot = &last_ast_slot->c->cdr;
-                last_ast_slot->c = pushStruct(arena, AstListContent);
-                Ast *new_ast = &last_ast_slot->c->car;
-
-                new_ast->token = token;
-                if (token->type == TokenCat_PairingOpen)
-                {
-                    new_ast->is_branch = true;
-                    new_ast->token = token;
-                    AstStackItem *new_outer = ast_stack + (stack_size++);
-                    assert(stack_size <= arrayCount(ast_stack));
-                    new_outer->ast = new_ast;
-                }
-                else
-                {
-                    new_ast->is_branch = false;
-                }
-            }
-        }
-    }
-#endif
 
     {// MARK: Executing
 #if 1

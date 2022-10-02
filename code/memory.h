@@ -17,9 +17,10 @@ zeroSize(void *base, size_t size)
 struct MemoryArena
 {
     u8     *base;
-    size_t used;
-    size_t cap;
-    s32    temp_count;
+    size_t  used;
+    size_t  cap;
+
+    MemoryArena *parent;
 };
 
 inline MemoryArena
@@ -52,6 +53,7 @@ subArena(MemoryArena *parent, size_t size)
     MemoryArena result = {};
     result.base = (u8 *)pushSize(parent, size);
     result.cap = size;
+    result.parent = parent;
     return result;
 }
 
@@ -65,8 +67,9 @@ beginTemporaryArena(MemoryArena *parent)
 
 // todo: maybe we could put the parent pointer into the child?
 inline void
-endTemporaryArena(MemoryArena *parent, MemoryArena *child)
+endTemporaryArena(MemoryArena *child)
 {
+    auto parent = child->parent;
     assert(parent->used == parent->cap);
     assert(child->cap <= parent->cap);
     parent->used -= child->cap;
