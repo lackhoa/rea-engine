@@ -1,4 +1,5 @@
 #include "utils.h"
+#include "memory.h"
 
 #include <stdio.h>
 
@@ -126,21 +127,41 @@ getCharacterType(char c)
     }
 }
 
-// TODO: buffer overflow check
-inline s32
-printStringToBuffer(char *buffer, String s)
+inline void
+testWrapper(char *format, ...)
 {
-    char *c = s.chars;
-    for (s32 index = 0 ;
-         index < s.length;
-         index++)
-    {
-        buffer[index] = *c;
-        c++;
-    }
-    buffer[s.length] = 0;
+    char buf[256];
+    va_list arg_list;
+    __crt_va_start(arg_list, format);
+    vsprintf_s(buf, 256, format, arg_list);
+    __crt_va_end(arg_list);
+}
 
-    return s.length;
+inline void
+printToBuffer(MemoryArena *buffer, char *format, ...)
+{
+    va_list arg_list;
+    __crt_va_start(arg_list, format);
+
+    char *at = (char *)(buffer->base + buffer->used);
+    auto printed = vsprintf_s(at, (buffer->cap - buffer->used), format, arg_list);
+    buffer->used += printed;
+
+    __crt_va_end(arg_list);
+}
+
+inline void
+printToBuffer(MemoryArena *buffer, String s)
+{
+    char *at = (char *)(buffer->base + buffer->used);
+
+    char *c = s.chars;
+    for (s32 index = 0; index < s.length; index++)
+        *at++ = *c++;
+    *at = 0;
+
+    buffer->used = at - (char *)buffer->base;
+    assert(buffer->used <= buffer->cap);
 }
 
 inline void
@@ -155,12 +176,29 @@ printCharToBufferRepeat(char *buffer, char c, s32 repeat)
     buffer[repeat] = 0;
 }
 
+struct ParserErrorData
+{
+    MemoryArena message;
+    Token       token;
+};
+typedef ParserErrorData* ParserError;
+
 struct Tokenizer
 {
+    ParserError  error;
+    MemoryArena *error_arena;
+
     char *at;
+    Token last_token;
     s32   line_number;
     s32   column;
 };
+
+inline b32
+parsing(Tokenizer *tk)
+{
+    return ((*tk->at != 0) && (!tk->error));
+}
 
 inline void
 nextChar(Tokenizer *tk)
@@ -231,6 +269,7 @@ isKeyword(Token *token)
             && (token->cat < TC_KeywordsEnd_));
 }
 
+// bookmark: this should return token *
 inline Token
 advance(Tokenizer *tk)
 {
@@ -267,6 +306,7 @@ advance(Tokenizer *tk)
         if (TokenCategory new_type = matchKeyword(&out))
             out.cat = new_type;
     }
+    tk->last_token = out;
     return out;
 }
 

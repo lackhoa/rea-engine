@@ -4,12 +4,6 @@ typedef Bool
  | true
  }
 
-typedef Bool
-{
- | false
- | true
- }
-
 define &(a: Bool, b: Bool) : Bool
 {
  switch a

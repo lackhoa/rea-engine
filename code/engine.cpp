@@ -7,13 +7,6 @@
 
 #include <stdio.h>
 
-struct ParserErrorData
-{
-    char  *message;
-    Token  token;
-};
-typedef ParserErrorData* ParserError;
-
 // TODO: Eventually this will talk to the editor, but let's work in console mode for now.
 
 enum ExpressionCategory
@@ -258,11 +251,35 @@ parseConstructorDef(ParserState *state, MemoryArena *arena, Type *type, s32 ctor
     return out;
 }
 
-internal ParserError
+internal void
+parseError(Tokenizer *tk, Token *token, char *format, ...)
+{
+    auto arena = tk->error_arena;
+    allocate(arena, tk->error);
+    s32 message_length = strlen(format) + 1;
+    tk->error->message = subArena(tk->error_arena, 256);
+
+    va_list arg_list;
+    __crt_va_start(arg_list, format);
+    printToBuffer(&tk->error->message, format, arg_list);
+    __crt_va_end(arg_list);
+
+    tk->error->token = *token;
+}
+
+internal void
+tokenError(Tokenizer *tk, char *message)
+{
+    auto last_token = &tk->last_token;
+    auto arena = tk->error_arena;
+    parseError(tk, last_token, message);
+    printToBuffer(&tk->error->message, ": ");
+    printToBuffer(&tk->error->message, last_token->text);
+}
+
+internal void
 parseTypedef(ParserState *state, MemoryArena *arena)
 {
-    ParserError error = 0;
-
     Tokenizer *tk = &state->tokenizer;
     Token type_name = advance(tk);
     if (type_name.cat == TC_Alphanumeric)
@@ -270,14 +287,7 @@ parseTypedef(ParserState *state, MemoryArena *arena)
         // NOTE: the type is in scope of its own constructor.
         LookupName type_lookup = lookupNameCurrentFrame(&state->global_bindings, &type_name, true);
         if (type_lookup.found)
-        {
-            allocate(arena, error);
-            allocateArray(arena, 256, error->message);
-            char typebuf[256];
-            printStringToBuffer(typebuf, type_name.text);
-            sprintf(error->message, "redefinition of type '%s'", typebuf);
-            error->token = type_name;
-        }
+            tokenError(tk, "redefinition of type");
         else
         {
             Expression *type_exp    = pushStruct(arena, Expression);
@@ -327,15 +337,14 @@ parseTypedef(ParserState *state, MemoryArena *arena)
                     actual_case_count++;
                 }
                 else
-                    todoErrorReport;  // expected '|' or '}'
+                    parseError(tk, &bar_or_stop, "Expected '|' or '}'");
             }
             assert(actual_case_count == expected_case_count);
             type->ctor_count = actual_case_count;
+
+            assert(lookupNameCurrentFrame(&state->global_bindings, &type_name).found);
         }
     }
-    assert(lookupNameCurrentFrame(&state->global_bindings, &type_name).found);
-
-    return error;
 }
 
 struct OptionalU32 { b32 success; u32 value; };
@@ -562,7 +571,7 @@ parseSubExpression(ParserState *state, MemoryArena *arena, Bindings *bindings)
                         }
                     }
                     if (actual_case_count != expected_ctor_count)
-                        todoErrorReport; // wrong number of enough cases
+                        todoErrorReport; // wrong number of cases
                 }
                 else
                     todoErrorReport;  // expected subject
@@ -862,37 +871,31 @@ reduce(ParserState *state, MemoryArena *arena, Stack *stack, Expression *in)
     return out;
 }
 
-internal s32
-testPrintExpression(char *buf, Expression *exp)
+internal void
+testPrintExpression(MemoryArena *buffer, Expression *exp)
 {
-    s32 printed = 0;
-
     switch (exp->cat)
     {
         case EC_Variable:
         {
             castExpression(Variable, exp, var);
-            printed = sprintf(buf, "var %.*s (%d, %d)", var->name.length, var->name.chars, var->stack_depth, var->id);
+            printToBuffer(buffer, "var %.*s (%d, %d)", var->name.length, var->name.chars, var->stack_depth, var->id);
         } break;
 
         case EC_Application:
         {
-            char *initial_location = buf;
-
             castExpression(Application, exp, app);
 
-            buf += testPrintExpression(buf, app->op);
+            testPrintExpression(buffer, app->op);
 
-            buf += sprintf(buf, "(");
+            printToBuffer(buffer, "(");
             for (s32 arg_id = 0; arg_id < app->arg_count; arg_id++)
             {
-                buf += testPrintExpression(buf, app->args[arg_id]);
+                testPrintExpression(buffer, app->args[arg_id]);
                 if (arg_id < app->arg_count-1)
-                    buf += sprintf(buf, ", ");
+                    printToBuffer(buffer, ", ");
             }
-            buf += sprintf(buf, ")");
-
-            printed = buf - initial_location;
+            printToBuffer(buffer, ")");
         } break;
 
         case EC_Switch:
@@ -908,39 +911,30 @@ testPrintExpression(char *buf, Expression *exp)
         case EC_Procedure:
         {
             castExpression(Procedure, exp, proc);
-            printed = printStringToBuffer(buf, proc->name);
+            printToBuffer(buffer, proc->name);
         } break;
 
         case EC_ConstructorId:
         {
             Constructor *ctor = exp->type_of_this->ctors + exp->ConstructorId.id;
-            printed = printStringToBuffer(buf, ctor->name);
+            printToBuffer(buffer, ctor->name);
         } break;
     }
-
-    return printed;
 }
 
 // NOTE: Main dispatch parse function
-internal ParserError
+internal void
 parseTopLevel(ParserState *state, MemoryArena *arena)
 {
-    ParserError error = 0;
-
     Tokenizer *tk = &state->tokenizer;
-    for (b32 stop = false; !stop;)
+    for (;parsing(tk);)
     {
         Token token = advance(tk); 
         switch (token.cat)
         {
-            case 0:
-            {
-                stop = true;
-            } break;
-
             case TC_KeywordTypedef:
             {
-                error = parseTypedef(state, arena);
+                parseTypedef(state, arena);
             } break;
 
             case TC_KeywordDefine:
@@ -952,33 +946,33 @@ parseTopLevel(ParserState *state, MemoryArena *arena)
             {
                 requireChar(tk, '(');
                 auto temp_arena = beginTemporaryArena(arena);
-                auto exp = parseExpression(state, &temp_arena, &state->global_bindings);
-                requireChar(tk, ')');
-                if (exp)
                 {
-                    Stack empty_stack = {};
-                    empty_stack.arena = &temp_arena;
-                    auto reduced = reduce(state, &temp_arena, &empty_stack, exp);
-                    char exp_buffer[256];
-                    char reduced_buffer[256];
-                    testPrintExpression(exp_buffer, exp);
-                    testPrintExpression(reduced_buffer, reduced);
-                    printf("%s => %s\n", exp_buffer, reduced_buffer);
-                    endTemporaryArena(&temp_arena);
+                    auto arena = &temp_arena;
+                    auto exp = parseExpression(state, arena, &state->global_bindings);
+                    requireChar(tk, ')');
+                    if (exp)
+                    {
+                        Stack empty_stack = {};
+                        empty_stack.arena = arena;
+                        auto reduced = reduce(state, arena, &empty_stack, exp);
+                        auto buffer = subArena(arena, 256);
+                        testPrintExpression(&buffer, exp);
+                        printToBuffer(&buffer, " => ");
+                        testPrintExpression(&buffer, reduced);
+                        printToBuffer(&buffer, "\n");
+                    }
+                    else
+                        tokenError(tk, "empty expression passed to 'print'");
                 }
-                else
-                    todoErrorReport; // empty expression passed to "print"
+                endTemporaryArena(&temp_arena);
             } break;
 
+            case 0: break;
+
             default:
-                todoErrorReport; // unexpected token at top-level
+                tokenError(tk, "unexpected token at top-level");
         }
-
-        if (error)
-            stop = true;
     }
-
-    return error;
 }
 
 inline b32
@@ -990,46 +984,52 @@ isMatchingPair(Token *left, Token *right)
             ((l == '{') && (r == '}')));
 }
 
-struct CompileOutput { ParserState *state; ParserError error; };
+struct CompileOutput { ParserState *state; b32 success; };
 
 internal CompileOutput
-compile(MemoryArena *arena, ReadFileResult *source)
+compile(MemoryArena *arena, char *input, char *input_file)
 {
+    b32 success = 0;
+
     ParserState *state = pushStruct(arena, ParserState);
 
     {// mark: initialize state
         state->scoped_arena          = subArena(arena, megaBytes(2));
         state->global_bindings.arena = arena;
         state->tokenizer             = {};
+        state->tokenizer.error_arena = arena;
         state->tokenizer.line_number = 1;
         state->tokenizer.column      = 1;
-        state->tokenizer.at          = source->content;
+        state->tokenizer.at          = input;
     }
 
-    ParserError error = parseTopLevel(state, arena);
+    parseTopLevel(state, arena);
+    ParserError error = state->tokenizer.error;
     if (error)
-        printf("%d:%d: %s\n", error->token.line_number, error->token.column, error->message);
+    {
+        success = 1;
+        printf("%s:%d:%d: %s\n", input_file, error->token.line_number, error->token.column, error->message.base);
+    }
 
-    return { state, error };
+    return CompileOutput{ state, success, };
 }
 
 inline int
 testCaseMain(MemoryArena *arena)
 {
     int out = 0;
-    char *input = "test.rea";
-    ReadFileResult read = platformReadEntireFile(input);
+    char *input_file = "..\\data\\test.rea";
+    ReadFileResult read = platformReadEntireFile(input_file);
     if (read.content)
     {
-        auto [state, error] = compile(arena, &read);
-        if (error)
-            out = 1;
+        auto [state, success] = compile(arena, read.content, input_file);
+        out = success;
         // NOTE: you can put some assertions here.
         platformFreeFileMemory(read.content);
     }
     else
     {
-        printf("Failed to read input file %s", input);
+        printf("Failed to read input file %s", input_file);
         out = 1;
     }
     return out;
@@ -1038,6 +1038,8 @@ testCaseMain(MemoryArena *arena)
 int
 engineMain(EngineMemory *memory)
 {
+    testWrapper("hello %s", "world");
+
     int out = 0;
     platformPrint = memory->platformPrint;
     platformReadEntireFile = memory->platformReadEntireFile;
