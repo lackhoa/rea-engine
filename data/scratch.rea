@@ -1,47 +1,69 @@
+print(pos  & pos)
+print((pos & neg))
+print(neg & pos)
+print((neg & neg))
+
+print(|(pos,  pos))
+print(|(pos,  neg))
+print(|(neg, pos))
+print(|(neg, neg))
+
+print(pos & (neg | pos))
+print((pos & neg) | pos)
+print(&(pos, neg) | neg)
+print(&(pos, (neg | pos)))
+
+print(&(pos, |(neg,pos,),))
+
+print(pos = pos)
+print(pos = false)
+assert(pos = pos)
+
+print((switch pos {| pos { & } | neg { | } })(pos, neg))
+print((switch neg {| pos { & } | neg { | } })(pos, neg))
+
+deMorgan's law
+
+define andCommutative(a, b) (((a & b) & c) = (a & (b & c)))
+{
+ switch a
+ {
+  | pos
+  equality {;; goal: ((pos & b) & c) = (pos & (b & c))
+            ((pos & b) & c)
+            = b & c          { reduce(&) }
+            = pos & (b & c)  { reduce(&) }
+            }
+
+  | neg
+  equality {;; goal: ((neg & b) & c) == (neg & (b & c))
+            ((neg & b) & c)
+            = neg             { reduce(&) }
+            = (neg & (b & c)) { reduce(&) }
+            }
+  }
+ }
+
 typedef Nat
 {
  | 0
- | succ(Nat)
+ | +1(Nat)
  }
 
-defun +((a : Nat) (b : Nat)) : Nat
+define +(a: Nat, b: Nat) : Nat
 {
  switch a
  {
   | 0
   { return b }
 
-  | succ(a')
-  { return succ(+(a' b)) }
+  | succ a'
+  { return succ(a' + b) }
   }
  }
 
-defun plusZeroRight((a : Nat)) : =(+(a 0) a)
-{
- switch a
- {
-  | 0
-  equality { +(a 0) = +(0 0) = 0 = a }
-
-  | succ(a')
-  ind : (+(a' 0) = a')
-  equality
-  {
-   +(succ(a') 0)
-   = succ(+(a' 0))
-   ={ind} succ(a')
-   }
-  }
- }
-
-equality plusCommutative((a : Nat)) : =(+(a b) +(b a))
-{
- switch a
- {
-  | 0
-  { +(a b) = +(0 b) = b ={plusZeroRight(a)} +(b a) }
-
-  | succ(a')
-  { +(a' b) = }
-  }
- }
+define 1: Nat { succ(0) }
+define 2: Nat { succ(1) }
+define 3: Nat { succ(2) }
+define 1plus2 : (1 + 2 = 3)
+{ return reduce(+) }

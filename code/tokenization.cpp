@@ -24,10 +24,12 @@ enum TokenCategory
     TC_KeywordDefine   = 302,
     TC_KeywordSwitch   = 303,
     TC_KeywordPrint    = 304,
+    TC_KeywordPrintraw = 305,
+    TC_KeywordAssert   = 306,
     TC_KeywordsEnd_    = 400,
 };
 
-const char *keywords[] = {"_ignore_", "typedef", "define", "switch", "print"};
+const char *keywords[] = {"_ignore_", "typedef", "define", "switch", "print", "printraw", "assert"};
 
 struct Token
 {
@@ -154,6 +156,7 @@ inline void
 printToBuffer(MemoryArena *buffer, String s)
 {
     char *at = (char *)(buffer->base + buffer->used);
+    assert((buffer->cap - buffer->used) > s.length);
 
     char *c = s.chars;
     for (s32 index = 0; index < s.length; index++)
@@ -185,8 +188,8 @@ typedef ParserErrorData* ParserError;
 
 struct Tokenizer
 {
-    ParserError  error;
-    MemoryArena *error_arena;
+    ParserError error;
+    MemoryArena error_arena;
 
     char *at;
     Token last_token;
@@ -317,14 +320,6 @@ peekNext(Tokenizer *tk)
     return advance(&tk_copy);
 }
 
-inline void
-requireChar(Tokenizer *tk, char c)
-{
-    Token token = advance(tk);
-    if (!((token.text.length == 1) && (token.text.chars[0] == c)))
-        todoErrorReport;
-}
-
 inline b32
 inString(char *string, Token *token)
 {
@@ -396,4 +391,18 @@ isIdentifier(Token *token)
 {
     return ((token->cat == TC_Alphanumeric)
             || (token->cat == TC_Special));
+}
+
+inline String
+toString(char *c)
+{
+    String out;
+    out.chars = c;
+    out.length = 0;
+    while (*c)
+    {
+        out.length++;
+        c++;
+    }
+    return out;
 }

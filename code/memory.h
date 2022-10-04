@@ -57,6 +57,12 @@ subArena(MemoryArena *parent, size_t size)
     return result;
 }
 
+struct TemporaryMemory
+{
+    MemoryArena *arena;
+    size_t       original_used;
+};
+
 inline MemoryArena 
 beginTemporaryArena(MemoryArena *parent)
 {

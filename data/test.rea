@@ -1,89 +1,45 @@
 typedef Bool
 {
- | false
- | true
+ | F
+ | T
  }
 
 define &(a: Bool, b: Bool) : Bool
 {
  switch a
  {
-  | false { false }
-  | true  { b }
+  | F { F }
+  | T { b }
   }
  }
-
-print(true  & true)
-print((true  & false))
-print(false & true)
-print((false & false))
 
 define |(a: Bool, b: Bool) : Bool
 {
  switch a
  {
-  | true  { true }
-  | false { b }
+  | T { T }
+  | F { b }
   }
  }
 
-print(|(true,  true))
-print(|(true,  false))
-print(|(false, true))
-print(|(false, false))
+print(F&T | T)
+print((F & T) | T)
+print(F & (T | T))
 
-print(true & (false | true))
-print((true & false) | true)
-print(&(true, false) | false)
-print(&(true, (false | true)))
+print(F & T | T = F & (T | T))
 
-print(&(true, |(false,true,),))
-
-;; print((switch true {| true { & } | false { | } })(true, false))
-;; print((switch false {| true { & } | false { | } })(true, false))
-
-;; deMorgan's law
-
-;; define andCommutative(a, b) (((a & b) & c) = (a & (b & c)))
-;; {
-;;  switch a
-;;  {
-;;   | true
-;;   equality {;; goal: ((true & b) & c) = (true & (b & c))
-;;             ((true & b) & c)
-;;             = b & c          { reduce(&) }
-;;             = true & (b & c) { reduce(&) }
-;;             }
-
-;;   | false
-;;   equality {;; goal: ((false & b) & c) == (false & (b & c))
-;;             ((false & b) & c)
-;;             = false             { reduce(&) }
-;;             = (false & (b & c)) { reduce(&) }
-;;             }
-;;   }
+;; {got
+;;  a & (b | c) = F
+;;  (a & b) | c = T
 ;;  }
 
-;; typedef Nat
-;; {
-;;  | 0
-;;  | +1(Nat)
-;;  }
-
-;; define +(a: Nat, b: Nat) : Nat
-;; {
-;;  switch a
-;;  {
-;;   | 0
-;;   { return b }
-
-;;   | succ(a')
-;;   { return succ(+(a' b)) }
-;;   }
-;;  }
-
-;; define 1: Nat { succ(0) }
-;; define 2: Nat { succ(1) }
-;; define 3: Nat { succ(2) }
-;; define 1plus2 : (1 + 2 = 3)
-;; { return reduce(+) }
+;; [switch a
+;;  [a = T
+;;   b | c = F
+;;   b = F
+;;   c = F
+;;   failed]
+;;  [a = F
+;;   c = T
+;;   ]
+;;  ]
