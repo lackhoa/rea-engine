@@ -23,5 +23,5 @@ set LinkedLibs=-l user32.lib -l Gdi32.lib -l winmm.lib
 clang engine.o win32_editor.o -o win32_editor.exe %CommonCompilerFlags% %LinkedLibs%
 
 pushd ..\code
-rem ..\build\win32_editor.exe
+..\build\win32_editor.exe || exit 1
 popd

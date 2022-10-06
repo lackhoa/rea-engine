@@ -13,7 +13,10 @@ struct win32_offscreen_buffer
     s32        pitch;
     s32        bytes_per_pixel;
 };
+
 global_variable win32_offscreen_buffer globalBackBuffer;
+global_variable b32 globalRunning;
+global_variable s64 globalPerfCountFrequency;
 
 struct win32_window_dimension
 {

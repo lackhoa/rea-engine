@@ -1,7 +1,34 @@
-operator binary =
-; axiom eqTran ((aeb: a = b) (bec: b = c))
+typedef Bool
+{
+ | F
+ | T
+ }
 
-; defun eqTran3 (aeb bec ced)
-; eqTran(eqTran(aeb bec) ced)
+define &(a: Bool, b: Bool) : Bool
+{
+ switch a
+ {
+  | F { F }
+  | T { b }
+  }
+ }
 
-; eqTran3((a = b) (b = c) (c = d))
+define |(a: Bool, b: Bool) : Bool
+{
+ switch a
+ {
+  | T { T }
+  | F { b }
+  }
+ }
+
+printRaw((F & T) | T)
+printRaw(&(T, |(F,T,),))
+printRaw(&(T, |(F,T)))
+printRaw((switch T {| T { & } | F { | } })(T, F))
+print((switch T {| T { & } | F { | } })(T, F))
+
+;; assert(&(T, |(F,T,),) = &(T, |(F,T)))
+;; assert((switch T {| T { & } | F { | } })(T, F) = F)
+;; assert(F & T | T = (F & T) | T)
+;; assertFalse(F & T | T = F & (T | T))

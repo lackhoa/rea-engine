@@ -1,48 +1,25 @@
-print(pos  & pos)
-print((pos & neg))
-print(neg & pos)
-print((neg & neg))
-
-print(|(pos,  pos))
-print(|(pos,  neg))
-print(|(neg, pos))
-print(|(neg, neg))
-
-print(pos & (neg | pos))
-print((pos & neg) | pos)
-print(&(pos, neg) | neg)
-print(&(pos, (neg | pos)))
-
-print(&(pos, |(neg,pos,),))
-
-print(pos = pos)
-print(pos = false)
-assert(pos = pos)
-
-print((switch pos {| pos { & } | neg { | } })(pos, neg))
-print((switch neg {| pos { & } | neg { | } })(pos, neg))
-
-deMorgan's law
-
-define andCommutative(a, b) (((a & b) & c) = (a & (b & c)))
+theorem andCommutative(a: Bool, b: Bool, c: Bool)
+: (a & b) & c = a & (b & c)
 {
- switch a
- {
-  | pos
-  equality {;; goal: ((pos & b) & c) = (pos & (b & c))
-            ((pos & b) & c)
-            = b & c          { reduce(&) }
-            = pos & (b & c)  { reduce(&) }
-            }
-
-  | neg
-  equality {;; goal: ((neg & b) & c) == (neg & (b & c))
-            ((neg & b) & c)
-            = neg             { reduce(&) }
-            = (neg & (b & c)) { reduce(&) }
-            }
-  }
+ switch a.
+ -
+ ;; program should print b & c = b & c
+ ;; expression state: switch a { | T { !:(b & c = b & c) } | F { ? }}
+ reflexivity. ;; expression state: switch a { | T { reflexive(b & c) } | F { ? }}
+ -
+ ;; program should print F = F
+ ;; expression state: switch a { | T { reflexive(b & c) } | F { ! }}
+ reflexivity.
+ ;; expression state: switch a { | T { reflexivity(b & c) } | F { reflexivity(F) }}
  }
+
+print(andCommutative)
+
+
+
+
+
+
 
 typedef Nat
 {

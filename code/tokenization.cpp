@@ -6,7 +6,7 @@
 struct String
 {
     char *chars;
-    s32  length;
+    s32  length;  // note: does not include the nil terminator
 };
 
 enum TokenCategory
@@ -19,17 +19,21 @@ enum TokenCategory
 
     // TODO: Do I really need these? The tokenizer doesn't really produce this
     // information during its tokenization process.
-    TC_KeywordsBegin_  = 300,
-    TC_KeywordTypedef  = 301,
-    TC_KeywordDefine   = 302,
-    TC_KeywordSwitch   = 303,
-    TC_KeywordPrint    = 304,
-    TC_KeywordPrintraw = 305,
-    TC_KeywordAssert   = 306,
-    TC_KeywordsEnd_    = 400,
+    TC_KeywordsBegin_     = 300,
+    TC_KeywordTypedef     = 301,
+    TC_KeywordDefine      = 302,
+    TC_KeywordSwitch      = 303,
+    TC_KeywordPrint       = 304,
+    TC_KeywordPrintRaw    = 305,
+    TC_KeywordAssert      = 306,
+    TC_KeywordAssertFalse = 307,
+    TC_KeywordTheorem     = 308,
+    TC_KeywordReturn      = 309,
+    TC_KeywordsEnd_       = 310,
 };
 
-const char *keywords[] = {"_ignore_", "typedef", "define", "switch", "print", "printraw", "assert"};
+const char *keywords[] = {"_ignore_", "typedef", "define", "switch", "print",
+                          "printRaw", "assert", "assertFalse", "theorem", "return"};
 
 struct Token
 {
@@ -88,7 +92,6 @@ getCharacterType(char c)
     {
         switch (c)
         {
-            case '.':
             case '`':
             case '/':
             case '?':
@@ -130,41 +133,52 @@ getCharacterType(char c)
 }
 
 inline void
-testWrapper(char *format, ...)
+printToBufferVA(MemoryArena *buffer, char *format, va_list arg_list)
 {
-    char buf[256];
-    va_list arg_list;
-    __crt_va_start(arg_list, format);
-    vsprintf_s(buf, 256, format, arg_list);
-    __crt_va_end(arg_list);
-}
-
-inline void
-printToBuffer(MemoryArena *buffer, char *format, ...)
-{
-    va_list arg_list;
-    __crt_va_start(arg_list, format);
-
     char *at = (char *)(buffer->base + buffer->used);
     auto printed = vsprintf_s(at, (buffer->cap - buffer->used), format, arg_list);
     buffer->used += printed;
+}
+
+inline void
+myprint(MemoryArena *buffer, char *format, ...)
+{
+    va_list arg_list;
+    __crt_va_start(arg_list, format);
+
+    if (buffer)
+    {
+        char *at = (char *)(buffer->base + buffer->used);
+        auto printed = vsprintf_s(at, (buffer->cap-1 - buffer->used), format, arg_list);
+        buffer->used += printed;
+        buffer->base[buffer->used] = 0; // nil-termination
+    }
+    else
+        vprintf_s(format, arg_list);
 
     __crt_va_end(arg_list);
 }
 
 inline void
-printToBuffer(MemoryArena *buffer, String s)
+myprint(MemoryArena *buffer, String s)
 {
-    char *at = (char *)(buffer->base + buffer->used);
-    assert((buffer->cap - buffer->used) > s.length);
+    if (buffer)
+    {
+        char *at = (char *)(buffer->base + buffer->used);
+        assert((buffer->cap - buffer->used) > s.length);
 
-    char *c = s.chars;
-    for (s32 index = 0; index < s.length; index++)
-        *at++ = *c++;
-    *at = 0;
+        char *c = s.chars;
+        for (s32 index = 0; index < s.length; index++)
+            *at++ = *c++;
+        *at = 0;
 
-    buffer->used = at - (char *)buffer->base;
-    assert(buffer->used <= buffer->cap);
+        buffer->used = at - (char *)buffer->base;
+        assert(buffer->used <= buffer->cap);
+    }
+    else
+    {
+        printf("%.*s", s.length, s.chars);
+    }
 }
 
 inline void
@@ -179,23 +193,56 @@ printCharToBufferRepeat(char *buffer, char c, s32 repeat)
     buffer[repeat] = 0;
 }
 
-struct ParserErrorData
+struct Expression;
+struct ErrorAttachment { char *string; Expression *expression;};
+
+struct ParseErrorData
 {
-    MemoryArena message;
-    Token       token;
+    MemoryArena           message;
+    Token                 token;
+    char                 *context;
+
+    s32                  attached_count;
+    ErrorAttachment attached[8];
 };
-typedef ParserErrorData* ParserError;
+typedef ParseErrorData* ParseError;
+
+struct ParseContext { char *first; ParseContext *next; };
 
 struct Tokenizer
 {
-    ParserError error;
-    MemoryArena error_arena;
+    ParseError    error;
+    MemoryArena   error_arena;
+    ParseContext *context;
 
     char *at;
     Token last_token;
     s32   line_number;
     s32   column;
 };
+
+inline void
+pushAttachment(Tokenizer *tk, char *string, Expression *exp)
+{
+    assert(tk->error->attached_count < arrayCount(tk->error->attached));
+    tk->error->attached[tk->error->attached_count++] = {string, exp};
+}
+
+internal void
+pushContext_(Tokenizer *tk, ParseContext *context)
+{
+    ParseContext *old_first = tk->context;
+    tk->context = context;
+    context->next = old_first;
+}
+
+#define pushContext(tk) { ParseContext context = {(char*)__func__}; pushContext_(tk, &context); }
+
+internal void
+popContext(Tokenizer *tk)
+{
+    tk->context = tk->context->next;
+}
 
 inline b32
 parsing(Tokenizer *tk)
@@ -310,6 +357,10 @@ advance(Tokenizer *tk)
             out.cat = new_type;
     }
     tk->last_token = out;
+
+    if (out.text.chars[0] == '.')
+        breakhere;
+
     return out;
 }
 
@@ -333,14 +384,6 @@ inString(char *string, Token *token)
         }
     }
     return false;
-}
-
-inline void
-requireChar(Tokenizer *tk, char *string)
-{
-    Token token = advance(tk);
-    if (!inString(string, &token))
-        todoErrorReport;
 }
 
 internal void

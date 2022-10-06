@@ -21,15 +21,13 @@ typedef long     s64;
 
 #define arrayCount(array) (sizeof(array) / sizeof((array)[0]))
 
-global_variable b32 globalRunning;
-global_variable s64 globalPerfCountFrequency;
-
-#define assert(claim) if (!(claim)) { __debugbreak(); }
-#define invalidCodePath __debugbreak()
-#define todoErrorReport __debugbreak()
-#define todoIncomplete __debugbreak()
+global_variable b32 global_engine_failed = false;
+#define assert(claim) { if (!(claim)) { __builtin_trap(); } }
+#define invalidCodePath assert(false)
+#define todoErrorReport assert(false)
+#define todoIncomplete  assert(false)
 #define invalidDefaultCase default: { assert(false) };
-#define breakhere { int x = 5; (void)x; }
+#define breakhere  { int x = 5; (void)x; }
 #define generate(whatever...)
 
 inline b32

@@ -2,7 +2,8 @@ CompileFlags:
   Compiler: clang
   Add:
     - -xc++
+    - -DReaWindows
     - -Wno-c++17-extensions
     - -Wno-switch
     - -Wno-writable-strings
-    - -DReaWindows
+    - -Wunused-parameter
