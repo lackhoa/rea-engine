@@ -30,4 +30,3 @@ theorem easyClap(a: Bool) : Bool
 print(easyClap)
 print(easyClap(T))
 print(easyClap(F))
-

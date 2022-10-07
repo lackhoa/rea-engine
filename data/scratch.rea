@@ -44,3 +44,9 @@ define 2: Nat { succ(1) }
 define 3: Nat { succ(2) }
 define 1plus2 : (1 + 2 = 3)
 { return reduce(+) }
+
+typedef <= (a: Bool, b: Bool)
+{
+ | leq0: a = 0
+ | leq1: exists b' { b = S b' && a <= b' }
+ }

@@ -71,10 +71,18 @@ beginTemporaryArena(MemoryArena *parent)
     return out;
 }
 
-// todo: maybe we could put the parent pointer into the child?
 inline void
-endTemporaryArena(MemoryArena *child)
+zeroArena(MemoryArena *arena)
 {
+    zeroMemory(arena->base, arena->used);
+}
+
+inline void
+endTemporaryArena(MemoryArena *child, b32 zero = false)
+{
+    if (zero)
+        zeroMemory(child->base, child->used);
+
     auto parent = child->parent;
     assert(parent->used == parent->cap);
     assert(child->cap <= parent->cap);

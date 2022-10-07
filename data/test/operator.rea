@@ -22,13 +22,15 @@ define |(a: Bool, b: Bool) : Bool
   }
  }
 
-printRaw((F & T) | T)
-printRaw(&(T, |(F,T,),))
-printRaw(&(T, |(F,T)))
-printRaw((switch T {| T { & } | F { | } })(T, F))
-print((switch T {| T { & } | F { | } })(T, F))
 
-;; assert(&(T, |(F,T,),) = &(T, |(F,T)))
-;; assert((switch T {| T { & } | F { | } })(T, F) = F)
-;; assert(F & T | T = (F & T) | T)
-;; assertFalse(F & T | T = F & (T | T))
+printRaw(&(T, |(F,T,),))
+printRaw((switch T {| T { & } | F { | } })(T, F))
+printRaw(F & T | T)
+printRaw(F & T | T & F | T)
+
+;; F & T | T = F & (T | T)
+;; (&(T, |(F,T,),)) = T
+;; ((switch T {| T { & } | F { | } })(T, F)) = F
+
+printRaw(identical(Bool, T, F))
+;; printRaw(T = F)

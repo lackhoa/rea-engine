@@ -17,15 +17,14 @@ enum ExpressionCategory
     EC_Struct,                  // struct information
     EC_Procedure,               // holds actual computation (ie body that can be executed)
     EC_ArrowType,               // type of procedure and built-in objects
-    EC_ConstructorRef,           // reference to a constructor of a type
+    EC_ConstructorRef,          // reference to a constructor of a type
 
-    EC_Builtin_Set_Type,        // a type to hold structs
-    EC_Builtin_Prop_Type,       // a type to hold all propositions
-    EC_Builtin_Proc_Type,       // NOTE: invented type
-    EC_Builtin_Equality,        // computational meta-equality
-    // TODO: remove these after we have proper proof facility!
-    EC_Builtin_True,
-    EC_Builtin_False,
+    EC_Builtin_Identical,
+    EC_Builtin_Reflexivity,
+    EC_Builtin_Set_Type,
+    EC_Builtin_Prop_Type,
+    EC_Builtin_Proc_Type,
+    EC_Builtin_Type_Type,
 };
 
 #define castExpression(Type, exp) (exp->cat == EC_##Type) ? &exp->Type : 0;
@@ -35,7 +34,7 @@ struct Expression;
 struct Variable
 {
     String name;
-    s32    stack_depth;
+    s32    stack_delta;
     u32    id;
 };
 
@@ -58,6 +57,8 @@ struct Struct
     String       name;
     s32          ctor_count;
     Constructor *ctors;
+    s32          parameter_count;
+    Expression  *parameters;
 };
 
 // like procedures, but we don't allow arbitrary expressions in here (maybe we
@@ -103,12 +104,12 @@ struct Expression
     };
 };
 
-Expression builtin_equality;
-Expression builtin_true;
-Expression builtin_false;
-Expression builtin_set_type;
-Expression builtin_prop_type;
-Expression builtin_proc_type;
+global_variable Expression builtin_identical;
+global_variable Expression builtin_reflexivity;
+global_variable Expression builtin_set_type;
+global_variable Expression builtin_prop_type;
+global_variable Expression builtin_proc_type;
+global_variable Expression builtin_type_type;
 
 internal void
 printConstructor(MemoryArena *buffer, Constructor *ctor)
@@ -206,21 +207,6 @@ printExpression(MemoryArena *buffer, Expression *exp, b32 detailed = false)
             myprint(buffer, ctor->name);
         } break;
 
-        case EC_Builtin_Equality:
-        {
-            myprint(buffer, "=");
-        } break;
-
-        case EC_Builtin_True:
-        {
-            myprint(buffer, "true");
-        } break;
-
-        case EC_Builtin_False:
-        {
-            myprint(buffer, "false");
-        } break;
-
         case EC_ArrowType:
         {
             auto arrow = castExpression(ArrowType, exp);
@@ -236,6 +222,31 @@ printExpression(MemoryArena *buffer, Expression *exp, b32 detailed = false)
             myprint(buffer, ") -> ");
 
             printExpression(buffer, arrow->return_type);
+        } break;
+
+        case EC_Builtin_Identical:
+        {
+            myprint(buffer, "identical");
+        } break;
+
+        case EC_Builtin_Set_Type:
+        {
+            myprint(buffer, "Set");
+        } break;
+
+        case EC_Builtin_Proc_Type:
+        {
+            myprint(buffer, "Proc");
+        } break;
+
+        case EC_Builtin_Prop_Type:
+        {
+            myprint(buffer, "Prop");
+        } break;
+
+        case EC_Builtin_Type_Type:
+        {
+            myprint(buffer, "Type");
         } break;
 
         default:
@@ -265,7 +276,6 @@ struct Binding
 
 struct Bindings
 {
-    s32          stack_depth;
     MemoryArena *arena;
     Binding      first[128];
     Bindings    *next;
@@ -273,12 +283,24 @@ struct Bindings
 
 struct Stack
 {
-    s32           depth;
     MemoryArena  *arena;
     u32           count;
     Expression  **first;
     Stack        *next;
 };
+
+internal Stack
+extendStack(Stack *outer, u32 arg_count, Expression **args)
+{    
+    Stack out = {};
+
+    out.arena = outer->arena;
+    out.count = arg_count;
+    out.first = args;
+    out.next  = outer;
+
+    return out;
+}
 
 inline Bindings *
 extendBindings(MemoryArena *arena, Bindings *outer)
@@ -289,7 +311,6 @@ extendBindings(MemoryArena *arena, Bindings *outer)
         Binding *slot = &out->first[i];
         slot->key.length = 0;
     }
-    out->stack_depth = outer->stack_depth+1;
     out->next        = outer;
     out->arena       = arena;
     return out;
@@ -352,6 +373,13 @@ lookupNameCurrentFrame(Bindings *bindings, String key, b32 add_if_missing = fals
 
     LookupName out = { slot, found };
     return out;
+}
+
+inline void
+addBuiltinName(ParserState *state, char *key, Expression *value)
+{
+    auto lookup = lookupNameCurrentFrame(&state->global_bindings, toString(key), true);
+    lookup.slot->value = value;
 }
 
 struct LookupNameRecursive { Expression *value; b32 found; };
@@ -553,14 +581,13 @@ inline b32
 equals(Variable atom1, Variable atom2)
 {
     return ((atom1.id == atom2.id)
-            && (atom1.stack_depth == atom2.stack_depth));
+            && (atom1.stack_delta == atom2.stack_delta));
 }
 
 internal Expression *
 resolve(Stack *stack, Variable variable)
 {
-    u32 traverse_count = stack->depth - variable.stack_depth;
-    for (u32 i = 0; i < traverse_count; i++)
+    for (u32 i = 0; i < variable.stack_delta; i++)
         stack = stack->next;
     assert(variable.id < stack->count);
     Expression *out = stack->first[variable.id];
@@ -591,11 +618,13 @@ matchSwitchCase(Expression *matched)
 
 enum Trinary
 {
-    Trinary_False, Trinary_True, Trinary_Unknown,
+    Trinary_Unknown, Trinary_False, Trinary_True,
 };
 
-inline Trinary
-expressionsIdentical(Expression *lhs, Expression *rhs)
+// NOTE: we need a trinary return value because it will detect if the comparison
+// is false.
+internal Trinary
+compareExpressions(Expression *lhs, Expression *rhs)
 {
     Trinary out = Trinary_Unknown;
 
@@ -607,7 +636,7 @@ expressionsIdentical(Expression *lhs, Expression *rhs)
         {
             case EC_Variable:
             {
-                if ((lhs->Variable.stack_depth == rhs->Variable.stack_depth)
+                if ((lhs->Variable.stack_delta == rhs->Variable.stack_delta)
                     && (lhs->Variable.id == rhs->Variable.id))
                 {
                     out = Trinary_True;
@@ -628,24 +657,30 @@ expressionsIdentical(Expression *lhs, Expression *rhs)
                 if (rhs->ArrowType.arg_count == arg_count)
                 {
                     b32 mismatch_found = false;
+                    b32 unknown_found = false;
                     for (auto arg_id = 0;
-                         (arg_id < arg_count) && (!mismatch_found);
+                         (arg_id < arg_count) && (!mismatch_found) && (!unknown_found);
                          arg_id++)
                     {
                         auto lhs_arg = lhs->ArrowType.args[arg_id];
                         auto rhs_arg = rhs->ArrowType.args[arg_id];
-                        auto compare = expressionsIdentical(lhs_arg->type, rhs_arg->type);
-                        if (compare != Trinary_True)
+                        auto compare = compareExpressions(lhs_arg->type, rhs_arg->type);
+                        if (compare == Trinary_Unknown)
                         {
-                            out = Trinary_False;
+                            unknown_found = true;
+                        }
+                        if (compare == Trinary_False)
+                        {
                             mismatch_found = true;
                         }
                     }
-                    if (!mismatch_found)
+                    if (mismatch_found)
+                        out = Trinary_False;
+                    else if (unknown_found)
+                        out = Trinary_Unknown;   
+                    else
                         out = Trinary_True;
                 }
-                else
-                    out = Trinary_False;
             } break;
 
             default:
@@ -654,6 +689,12 @@ expressionsIdentical(Expression *lhs, Expression *rhs)
     }
 
     return out;
+}
+
+internal b32
+expressionsIdentical(Expression *lhs, Expression *rhs)
+{
+    return (compareExpressions(lhs, rhs) == Trinary_True);
 }
 
 // builtin expession end markers for now
@@ -679,18 +720,13 @@ precedenceOf(Expression *exp)
                 return 100;
         } break;
 
-        case EC_Builtin_Equality:
-        {
-            return 0;
-        } break;
-
         invalidDefaultCase;
     }
     return 0;
 }
 
 internal Expression *
-parseOperand(ExpressionParserState *state);
+parseOperand(ExpressionParserState state);
 
 internal Expression *
 getArgType(Expression *op, s32 arg_id)
@@ -700,116 +736,175 @@ getArgType(Expression *op, s32 arg_id)
     return signature->args[arg_id]->type;
 }
 
-internal b32
-typecheckAndAssignArg(Tokenizer *tk, Token *blame_token, Application *app, Expression *arg, s32 arg_id)
+internal Expression *
+reduceExpression(MemoryArena *arena, Stack *stack, Expression *in)
 {
-    b32 success = false;
-    auto expected_arg_type = getArgType(app->op, arg_id);
-    auto compare = expressionsIdentical(arg->type, expected_arg_type);
-    if (compare == Trinary_True)
+    Expression *out = 0;
+
+    switch (in->cat)
     {
-        success = true;
-        app->args[arg_id] = arg;
-    }
-    else
-    {
-        parseError(tk, blame_token, "argument %d has wrong type", arg_id);
-        auto msg = &tk->error->message;
-        pushAttachment(tk, "got", arg->type);
-        pushAttachment(tk, "expected", expected_arg_type);
+        case EC_Variable:
+        {
+            out = resolve(stack, in->Variable);
+        } break;
+
+        case EC_Application:
+        {
+            auto application = &in->Application;
+            // TODO: we can make this array temporary.
+            Expression **reduced_args = pushArray(arena, application->arg_count, Expression*);
+            for (auto arg_id = 0;
+                 arg_id < application->arg_count;
+                 arg_id++)
+            {
+                Expression *in_arg   = application->args[arg_id];
+                reduced_args[arg_id] = reduceExpression(arena, stack, in_arg);
+            }
+
+            Expression *reduced_op = reduceExpression(arena, stack, application->op);
+            if (reduced_op->cat == EC_Procedure)
+            {
+                Stack new_env = extendStack(stack, application->arg_count, reduced_args);
+                out = reduceExpression(arena, &new_env, reduced_op->Procedure.body);
+            }
+            else
+            {
+                out = newExpression(arena, EC_Application, in->type);
+                out->cat = EC_Application;
+                auto app = castExpression(Application, out);
+                app->op        = reduced_op;
+                app->arg_count = application->arg_count;
+                app->args      = reduced_args;
+            }
+        } break;
+
+        case EC_Switch:
+        {
+            auto switch0 = &in->Switch;
+            Expression *reduced_subject = reduceExpression(arena, stack, switch0->subject);
+
+            auto subject_type = reduced_subject->type;
+            assert(subject_type->cat == EC_Struct);
+            auto ctor_id = matchSwitchCase(reduced_subject);
+
+            if (ctor_id.success)
+                out = reduceExpression(arena, stack, switch0->case_bodies[ctor_id.value]);
+            else
+                todoIncomplete;
+        } break;
+
+        default:
+        {
+            out = in;
+        } break;
     }
 
-    return success;
+    return out;
 }
 
 internal Expression *
-parseExpressionContinue(ExpressionParserState *state, Expression *left, s32 min_precedence, Application *hole)
+newApplication(MemoryArena *arena, Tokenizer *tk, Token *blame_token, Expression *op, Expression **args, s32 arg_count)
 {
-    Tokenizer   *tk       = state->tk;
-    pushContext(tk);
-    MemoryArena *arena    = state->arena;
-    Bindings    *bindings = state->bindings;
-
     Expression *out = 0;
+    auto signature = &op->type->ArrowType;
+    if (signature->arg_count == arg_count)
+    {
+        out = newExpression(arena, EC_Application, signature->return_type);
+        auto app = &out->Application;
+        app->op = op;
+        app->arg_count = signature->arg_count;
+        allocateArray(arena, app->arg_count, app->args);
 
-    Token arg0_token = peekNext(tk);
-    Expression *arg0 = parseOperand(state);
+        Stack stack = {};
+        stack.arena = arena;  // todo: memory leak
+        allocateArray(arena, app->arg_count, stack.first);
+
+        for (int arg_id = 0, stop = 0;
+             (arg_id < signature->arg_count) && !stop;
+             arg_id++)
+        {
+            auto arg = args[arg_id];
+            stack.first[stack.count++] = arg;
+            auto expected_arg_type = reduceExpression(arena, &stack, getArgType(op, arg_id));
+            if (expressionsIdentical(arg->type, expected_arg_type))
+                app->args[arg_id] = arg;
+            else
+            {
+                out = 0;
+                parseError(tk, blame_token, "argument %d has wrong type", arg_id);
+                auto msg = &tk->error->message;
+                pushAttachment(tk, "got", arg->type);
+                pushAttachment(tk, "expected", expected_arg_type);
+                stop = true;
+            }
+        }
+    }
+    else
+    {
+        parseError(tk, blame_token, "incorrect arg count: %d (procedure expected %d)", arg_count, signature->arg_count);
+    }
+    return out;
+}
+
+internal Expression *
+parseExpressionMain(ExpressionParserState state, s32 min_precedence)
+{
+    Tokenizer   *tk       = state.tk;
+    pushContext(tk);
+    MemoryArena *arena    = state.arena;
+    Bindings    *bindings = state.bindings;
+
+    Expression *out = parseOperand(state);
     if (parsing(tk))
     {
         // (a+b) * c
         //     ^
-        Token op_token = peekNext(tk);
-        if (isIdentifier(&op_token))
-        {// infix operator syntax
-            advance(tk);
-            // (a+b) * c
-            //        ^
-            auto op_lookup = lookupNameRecursive(bindings, &op_token);
-            if (op_lookup.found)
-            {
-                auto op = op_lookup.value;
-                if (op->type->cat == EC_ArrowType)
+        for (b32 stop = false; !stop && parsing(tk);)
+        {
+            Token op_token = peekNext(tk);
+            if (isIdentifier(&op_token))
+            {// infix operator syntax
+                // (a+b) * c
+                //        ^
+                LookupNameRecursive op_lookup = lookupNameRecursive(bindings, &op_token);
+                if (op_lookup.found)
                 {
-                    auto return_type = op->type->ArrowType.return_type;
-                    Expression *app_exp = newExpression(arena, EC_Application, return_type);
-                    auto app = &app_exp->Application;
-
-                    auto todo_arg_count = 2;
-                    app->op        = op;
-                    app->arg_count = todo_arg_count;
-                    allocateArray(arena, app->arg_count, app->args);
-
-                    auto precedence = precedenceOf(app->op);
-                    if (left)
+                    Expression *op = op_lookup.value;
+                    if (op->type->cat == EC_ArrowType)
                     {
-                        assert(left->cat == EC_Application);
+                        auto signature = &op->type->ArrowType;
+                        assert(signature->arg_count == 2);
+                        auto precedence = precedenceOf(op);
                         if (precedence >= min_precedence)
                         {
+                            // recurse
+                            advance(tk);
                             // a + b * c
                             //      ^
-                            if (typecheckAndAssignArg(tk, &arg0_token, app, arg0, 0) &&
-                                typecheckAndAssignArg(tk, &op_token, hole, app_exp, 1))
-                            {
-                                out = parseExpressionContinue(state, left, min_precedence, app);
-                            }
+                            Expression *args[2];
+                            args[0] = out;
+                            args[1] = parseExpressionMain(state, precedence);
+                            out = newApplication(arena, tk, &op_token, op, args, 2);
                         }
                         else
                         {
+                            // we are pulled to the left
                             // a * b + c
                             //      ^
-                            if (typecheckAndAssignArg(tk, &arg0_token, hole, arg0, 1) &&
-                                typecheckAndAssignArg(tk, &op_token, app, left, 0))
-                            {
-                                out = parseExpressionContinue(state, app_exp, precedence, app);
-                            }
+                            stop = true;
                         }
                     }
                     else
-                    {
-                        // a * b
-                        //    ^
-                        if (typecheckAndAssignArg(tk, &arg0_token, app, arg0, 0))
-                            out = parseExpressionContinue(state, app_exp, precedence, app);
-                    }
+                        tokenError(tk, &op_token, "operator must have an arrow type");
                 }
                 else
-                    tokenError(tk, &op_token, "operator must have an arrow type");
+                    tokenError(tk, &op_token, "unbound operator");
             }
+            else if (isExpressionEndMarker(&op_token))
+                stop = true;
             else
-                tokenError(tk, &op_token, "unbound operator");
+                tokenError(tk, &op_token, "expected operator token, got");
         }
-        else if (isExpressionEndMarker(&op_token))
-        {
-            if (left)
-            {
-                typecheckAndAssignArg(tk, &arg0_token, hole, arg0, 1);
-                out = left;
-            }
-            else
-                out = arg0;
-        }
-        else
-            tokenError(tk, &op_token, "expected operator token, got");
     }
 
     if (parsing(tk))
@@ -824,28 +919,29 @@ parseExpressionContinue(ExpressionParserState *state, Expression *left, s32 min_
 }
 
 inline Expression *
-parseExpression(ExpressionParserState *state)
+parseExpression(ExpressionParserState state)
 {
-    return parseExpressionContinue(state, 0, 0, 0);
+    Expression *out = parseExpressionMain(state, 0);
+    return out;
 }
 
 inline Expression *
-parseExpression(MemoryArena *arena, Bindings *bindings, Tokenizer *tokenizer)
+parseExpression(MemoryArena *arena, Bindings *bindings, Tokenizer *tk)
 {
     ExpressionParserState state;
     state.arena = arena;
     state.bindings = bindings;
-    state.tk = tokenizer;
-    return parseExpressionContinue(&state, 0, 0, 0);
+    state.tk = tk;
+    return parseExpressionMain(state, 0);
 }
 
 internal Expression *
-parseOperand(ExpressionParserState *state)
+parseOperand(ExpressionParserState state)
 {
-    Tokenizer   *tk       = state->tk;
+    Tokenizer   *tk       = state.tk;
     pushContext(tk);
-    MemoryArena *arena    = state->arena;
-    Bindings    *bindings = state->bindings;
+    MemoryArena *arena    = state.arena;
+    Bindings    *bindings = state.bindings;
 
     Expression *out = 0;
     Token token1 = advance(tk);
@@ -882,7 +978,7 @@ parseOperand(ExpressionParserState *state)
                                 {
                                     MemoryArena temp_arena = beginTemporaryArena(arena);
 
-                                    auto new_state = *state;
+                                    auto new_state = state;
                                     new_state.arena = &temp_arena;
                                     Expression *switch_case = parseExpression(state);
                                     if (parsing(tk) && requireChar(tk, '{'))
@@ -898,8 +994,7 @@ parseOperand(ExpressionParserState *state)
 
                                             if (switch_type)
                                             {
-                                                auto compare = expressionsIdentical(body->type, switch_type);
-                                                if (compare != Trinary_True)
+                                                if (!expressionsIdentical(body->type, switch_type))
                                                 {
                                                     parseError(tk, &body_token, "mismatched return type in input case %d", actual_case_id);
                                                     pushAttachment(tk, "got", body->type);
@@ -983,8 +1078,8 @@ parseOperand(ExpressionParserState *state)
             auto op = out;
             if (op->type->cat == EC_ArrowType)
             {
-                auto arrow = &op->type->ArrowType;
-                auto args = pushArray(arena, arrow->arg_count, Expression*);
+                auto signature = &op->type->ArrowType;
+                auto args = pushArray(arena, signature->arg_count, Expression*);
                 s32 actual_arg_count = 0;
                 for(s32 stop = false, arg_id = 0;
                     !stop;
@@ -1017,16 +1112,7 @@ parseOperand(ExpressionParserState *state)
                 }
                 if (parsing(tk) && requireChar(tk, ')'))
                 {
-                    if (actual_arg_count == arrow->arg_count)
-                    {
-                        out = newExpression(arena, EC_Application, 0);
-                        auto application = &out->Application;;
-                        application->op        = op;
-                        application->arg_count = arrow->arg_count;
-                        application->args      = args;
-                    }
-                    else
-                        parseError(tk, &funcall, "incorrect arg count: %d (procedure expected %d)", actual_arg_count, arrow->arg_count);
+                    out = newApplication(arena, tk, &funcall, op, args, actual_arg_count);
                 }
             }
             else
@@ -1034,55 +1120,7 @@ parseOperand(ExpressionParserState *state)
         }
     }
 
-    if (parsing(tk))
-    {
-        if (out->cat == EC_Application)
-        {// Since there are so many ways application can happen, we typecheck it
-         // after the fact here. Plus this gets complicated with operator overloading.
-            auto app = castExpression(Application, out);
-            auto op_signature = castExpression(ArrowType, app->op->type);
-            assert(app->arg_count == op_signature->arg_count);
-            b32 mismatch_found = false;
-            for (int arg_id = 0;
-                 (arg_id < app->arg_count) && !mismatch_found;
-                 arg_id++)
-            {
-                auto expected_arg_type = op_signature->args[arg_id]->type;
-                auto arg = app->args[arg_id];
-                auto compare = expressionsIdentical(expected_arg_type, arg->type);
-                if (compare != Trinary_True)
-                {
-                    mismatch_found = true;
-                    parseError(tk, &token1, "argument %d has type mismatch", arg_id);
-                    tk->error->attached[tk->error->attached_count++] = {"got", arg->type};
-                    tk->error->attached[tk->error->attached_count++] = {"expected", expected_arg_type};
-                }
-            }
-
-            if (!mismatch_found)
-                out->type = op_signature->return_type;
-        }
-        else
-            assert(out->type);
-    }
-    else
-        out = 0;
-
     popContext(tk);
-    return out;
-}
-
-internal Stack
-extendStack(Stack *outer, u32 arg_count, Expression **args)
-{    
-    Stack out = {};
-
-    out.depth = outer->depth+1;
-    out.arena = outer->arena;
-    out.count = arg_count;
-    out.first = args;
-    out.next  = outer;
-
     return out;
 }
 
@@ -1102,100 +1140,12 @@ makeBinopExpression(MemoryArena *arena, Expression *op, Expression *lhs, Express
 }
 
 internal Expression *
-reduceExpression(MemoryArena *arena, Stack *stack, Expression *in)
+parseProof(ExpressionParserState state, Expression *goal)
 {
-    Expression *out = 0;
-
-    switch (in->cat)
-    {
-        case EC_Variable:
-        {
-            out = resolve(stack, in->Variable);
-        } break;
-
-        case EC_Application:
-        {
-            auto application = &in->Application;
-            Expression **reduced_args = pushArray(arena, application->arg_count, Expression*);
-            for (auto arg_id = 0;
-                 arg_id < application->arg_count;
-                 arg_id++)
-            {
-                Expression *in_arg   = application->args[arg_id];
-                reduced_args[arg_id] = reduceExpression(arena, stack, in_arg);
-            }
-
-            Expression *reduced_op = reduceExpression(arena, stack, application->op);
-            if (reduced_op->cat == EC_Procedure)
-            {
-                Stack new_env = extendStack(stack, application->arg_count, reduced_args);
-                out = reduceExpression(arena, &new_env, reduced_op->Procedure.body);
-            }
-            else if (reduced_op->cat == EC_Builtin_Equality)
-            {
-                assert(application->arg_count == 2);
-                auto lhs = reduceExpression(arena, stack, application->args[0]);
-                auto rhs = reduceExpression(arena, stack, application->args[1]);
-                switch (expressionsIdentical(lhs, rhs))
-                {
-                    case Trinary_True:
-                    {
-                        out = &builtin_true;
-                    } break;
-
-                    case Trinary_False:
-                    {
-                        out = &builtin_false;
-                    } break;
-
-                    case Trinary_Unknown:
-                    {
-                        // I must be confident that reduction preserves type
-                        out = makeBinopExpression(arena, &builtin_equality, lhs, rhs, &builtin_prop_type);
-                    } break;
-                }
-            }
-            else
-            {
-                out->cat = EC_Application;
-                auto app = castExpression(Application, out);
-                app->op        = reduced_op;
-                app->arg_count = application->arg_count;
-                app->args      = reduced_args;
-            }
-        } break;
-
-        case EC_Switch:
-        {
-            auto switch0 = &in->Switch;
-            Expression *reduced_subject = reduceExpression(arena, stack, switch0->subject);
-
-            auto subject_type = reduced_subject->type;
-            assert(subject_type->cat == EC_Struct);
-            auto ctor_id = matchSwitchCase(reduced_subject);
-
-            if (ctor_id.success)
-                out = reduceExpression(arena, stack, switch0->case_bodies[ctor_id.value]);
-            else
-                todoIncomplete;
-        } break;
-
-        default:
-        {
-            out = in;
-        } break;
-    }
-
-    return out;
-}
-
-internal Expression *
-parseProof(ExpressionParserState *state, Expression *goal)
-{
-    auto tk = state->tk;
+    auto tk = state.tk;
     pushContext(tk);
-    auto arena = state->arena;
-    auto bindings = state->bindings;
+    auto arena = state.arena;
+    auto bindings = state.bindings;
 
     Expression *out = 0;
     Token token = advance(tk);
@@ -1247,8 +1197,7 @@ parseProof(ExpressionParserState *state, Expression *goal)
             {
                 if (!returned->type)
                     tokenError(tk, &return_token, "failed to infer type");
-                else if (expressionsIdentical(returned->type, goal)
-                         != Trinary_True)
+                else if (!expressionsIdentical(returned->type, goal))
                 {
                     parseError(tk, &return_token, "returned expression doesn't have the correct type");
                     auto error_buffer = &tk->error->message;
@@ -1348,7 +1297,7 @@ parseDefine(ParserState *state, MemoryArena *arena, b32 is_theorem = false)
 
                         arg_exp->Variable.name        = arg_name_or_end.text;
                         arg_exp->Variable.id          = arg_id;
-                        arg_exp->Variable.stack_depth = 1;
+                        arg_exp->Variable.stack_delta = 0;
 
                         requireChar(tk, ':');
 
@@ -1378,8 +1327,8 @@ parseDefine(ParserState *state, MemoryArena *arena, b32 is_theorem = false)
                 Token body_token = peekNext(tk);
                 ExpressionParserState exp_state = {arena, local_bindings, tk};
                 Expression *body = is_theorem ?
-                    parseProof(&exp_state, signature->return_type) :
-                    parseExpression(&exp_state);
+                    parseProof(exp_state, signature->return_type) :
+                    parseExpression(exp_state);
                 if (parsing(tk) && requireChar(tk, '}'))
                 {
                     proc->body = body;
@@ -1443,7 +1392,7 @@ parseTopLevel(ParserState *state, MemoryArena *arena)
                     exp_state.bindings  = &state->global_bindings;
                     exp_state.tk = tk;
                     exp_state.arena     = arena;
-                    auto exp = parseExpression(&exp_state);
+                    auto exp = parseExpression(exp_state);
 
                     if (parsing(tk) && requireChar(tk, ')'))
                     {
@@ -1464,6 +1413,7 @@ parseTopLevel(ParserState *state, MemoryArena *arena)
                             }
                             printf("%s\n", buffer.base);
                         }
+#if 0
                         else if (token.cat == TC_KeywordAssert)
                         {
                             if (reduced->cat != EC_Builtin_True)
@@ -1475,6 +1425,7 @@ parseTopLevel(ParserState *state, MemoryArena *arena)
                             if (reduced->cat != EC_Builtin_False)
                                 parseError(tk, &token, "assertion failed");
                         }
+#endif
                     }
                 }
                 endTemporaryArena(&temp_arena);
@@ -1517,13 +1468,10 @@ compile(MemoryArena *arena, char *input, char *input_file)
         state->tokenizer.column      = 1;
         state->tokenizer.at          = input;
 
-        auto lookupequal = lookupNameCurrentFrame(&state->global_bindings, toString("="), true);
-        auto lookuptrue  = lookupNameCurrentFrame(&state->global_bindings, toString("true"), true);
-        auto lookupfalse = lookupNameCurrentFrame(&state->global_bindings, toString("false"), true);
-
-        lookupequal.slot->value = &builtin_equality;
-        lookuptrue.slot->value  = &builtin_true;
-        lookupfalse.slot->value = &builtin_false;
+        addBuiltinName(state, "identical", &builtin_identical);
+        addBuiltinName(state, "Set",  &builtin_set_type);
+        addBuiltinName(state, "Prop", &builtin_prop_type);
+        addBuiltinName(state, "Proc", &builtin_proc_type);
     }
 
     parseTopLevel(state, arena);
@@ -1590,20 +1538,51 @@ engineMain(EngineMemory *memory)
     platformReadEntireFile = memory->platformReadEntireFile;
     platformFreeFileMemory = memory->platformFreeFileMemory;
 
-    builtin_equality.cat  = EC_Builtin_Equality;
-    builtin_true.cat      = EC_Builtin_True;
-    builtin_false.cat     = EC_Builtin_False;
-    builtin_set_type.cat  = EC_Builtin_Set_Type;
-    builtin_prop_type.cat = EC_Builtin_Prop_Type;
-    builtin_proc_type.cat = EC_Builtin_Proc_Type;
+    auto init_arena_ = newArena(memory->storage_size, memory->storage);
+    auto init_arena = &init_arena_;
 
-    auto arena = newArena(memory->storage_size, memory->storage);
+    builtin_identical.cat   = EC_Builtin_Identical;
+    builtin_reflexivity.cat = EC_Builtin_Reflexivity;
+    builtin_set_type.cat    = EC_Builtin_Set_Type;
+    builtin_prop_type.cat   = EC_Builtin_Prop_Type;
+    builtin_proc_type.cat   = EC_Builtin_Proc_Type;
+    builtin_type_type.cat   = EC_Builtin_Type_Type;
 
-    if (testCaseCompile(&arena, "..\\data\\test\\operator.rea"))
+    builtin_set_type.type  = &builtin_type_type;
+    builtin_prop_type.type = &builtin_type_type;
+    builtin_proc_type.type = &builtin_type_type;
+
+    {
+        // Here we give 'identical' a type (A: Set, a:A, b:A) -> Prop
+        // TODO: so we can't prove equality between props.
+        builtin_identical.type = newExpression(init_arena, EC_ArrowType, 0);
+        auto signature = castExpression(ArrowType, builtin_identical.type);
+        signature->arg_count   = 3;
+        signature->return_type = &builtin_prop_type;
+
+        allocateArray(init_arena, 3, signature->args);
+        auto args = signature->args;
+        args[0]                       = newExpression(init_arena, EC_Variable, &builtin_set_type);
+        args[0]->Variable.stack_delta = 0;
+        args[0]->Variable.name        = toString("A");
+        args[1]                       = newExpression(init_arena, EC_Variable, args[0]);
+        args[1]->Variable.id          = 1;
+        args[1]->Variable.stack_delta = 0;
+        args[1]->Variable.name        = toString("a");
+        args[2]                       = newExpression(init_arena, EC_Variable, args[0]);
+        args[2]->Variable.id          = 2;
+        args[2]->Variable.stack_delta = 0;
+        args[2]->Variable.name        = toString("b");
+    }
+
+    auto compile_arena_ = beginTemporaryArena(init_arena);
+    auto compile_arena = &compile_arena_;
+
+    if (testCaseCompile(compile_arena, "..\\data\\test\\operator.rea"))
         out = 1;
 
-    zeroMemory(memory->storage, memory->storage_size);
-    if (testCaseCompile(&arena, "..\\data\\test.rea"))
+    zeroArena(compile_arena);
+    if (testCaseCompile(compile_arena, "..\\data\\test.rea"))
         out = 1;
 
     return out;
