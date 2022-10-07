@@ -5,8 +5,8 @@
 
 struct String
 {
-    char *chars;
-    s32  length;  // note: does not include the nil terminator
+    const char *chars;
+    s32         length;         // note: does not include the nil terminator
 };
 
 enum TokenCategory
@@ -167,7 +167,7 @@ myprint(MemoryArena *buffer, String s)
         char *at = (char *)(buffer->base + buffer->used);
         assert((buffer->cap - buffer->used) > s.length);
 
-        char *c = s.chars;
+        const char *c = s.chars;
         for (s32 index = 0; index < s.length; index++)
             *at++ = *c++;
         *at = 0;
@@ -286,6 +286,10 @@ eatAllSpaces(Tokenizer *tk)
                     nextChar(tk);
                     while ((*tk->at) && (*tk->at != '\n'))
                         nextChar(tk);
+                }
+                else
+                {
+                    nextChar(tk);
                 }
             } break;
 
@@ -437,7 +441,7 @@ isIdentifier(Token *token)
 }
 
 inline String
-toString(char *c)
+toString(const char *c)
 {
     String out;
     out.chars = c;

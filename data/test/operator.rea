@@ -28,9 +28,15 @@ printRaw((switch T {| T { & } | F { | } })(T, F))
 printRaw(F & T | T)
 printRaw(F & T | T & F | T)
 
-;; F & T | T = F & (T | T)
+printRaw(identical(Bool, T, F))
+printRaw(F & T | T = F & (T | T))
+
+theorem test() : (F & T | T = T)
+{
+ return truth.
+ }
+
+print(test);
+
 ;; (&(T, |(F,T,),)) = T
 ;; ((switch T {| T { & } | F { | } })(T, F)) = F
-
-printRaw(identical(Bool, T, F))
-;; printRaw(T = F)
