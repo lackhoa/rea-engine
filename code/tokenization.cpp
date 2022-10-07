@@ -16,23 +16,26 @@ enum TokenCategory
     TC_PairingOpen     = 257,
     TC_PairingClose    = 258,
     TC_Alphanumeric    = 259,
-
-    // TODO: Do I really need these? The tokenizer doesn't really produce this
-    // information during its tokenization process.
-    TC_KeywordsBegin_     = 300,
-    TC_KeywordTypedef     = 301,
-    TC_KeywordDefine      = 302,
-    TC_KeywordSwitch      = 303,
-    TC_KeywordPrint       = 304,
-    TC_KeywordPrintRaw    = 305,
-    TC_KeywordAssert      = 306,
-    TC_KeywordAssertFalse = 307,
-    TC_KeywordTheorem     = 308,
-    TC_KeywordReturn      = 309,
-    TC_KeywordsEnd_       = 310,
 };
 
-const char *keywords[] = {"_ignore_", "typedef", "define", "switch", "print",
+enum Keyword
+{
+    Keyword_Null_,
+
+    Keyword_Typedef,
+    Keyword_Define,
+    Keyword_Switch,
+    Keyword_Print,
+    Keyword_PrintRaw,
+    Keyword_Assert,
+    Keyword_AssertFalse,
+    Keyword_Theorem,
+    Keyword_Return,
+
+    Keywords_Count_,
+};
+
+const char *keywords[] = {"_null_", "typedef", "define", "switch", "print",
                           "printRaw", "assert", "assertFalse", "theorem", "return"};
 
 struct Token
@@ -299,28 +302,21 @@ eatAllSpaces(Tokenizer *tk)
     }
 }
 
-inline TokenCategory
+inline Keyword
 matchKeyword(Token *token)
 {
-    TokenCategory out = (TokenCategory)0;
+    auto out = (Keyword)0;
     for (int i = 1;
          i < arrayCount(keywords);
          i++)
     {
         if (equals(token, keywords[i]))
         {
-            out = (TokenCategory)(TC_KeywordsBegin_ + i);
+            out = (Keyword)(i);
             break;
         }
     }
     return out;
-}
-
-inline b32
-isKeyword(Token *token)
-{
-    return ((token->cat > TC_KeywordsBegin_)
-            && (token->cat < TC_KeywordsEnd_));
 }
 
 // bookmark: this should return token *
@@ -355,11 +351,6 @@ advance(Tokenizer *tk)
     }
 
     out.text.length = tk->at - out.text.chars;
-    if (out.cat == TC_Alphanumeric)
-    {
-        if (TokenCategory new_type = matchKeyword(&out))
-            out.cat = new_type;
-    }
     tk->last_token = out;
 
     if (out.text.chars[0] == '.')

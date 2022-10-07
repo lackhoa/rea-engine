@@ -1079,11 +1079,11 @@ parseOperand(ExpressionParserState state)
 
     Expression *out = 0;
     Token token1 = advance(tk);
-    if (isKeyword(&token1))
+    if (Keyword keyword = matchKeyword(&token1))
     {
-        switch (token1.cat)
+        switch (keyword)
         {
-            case TC_KeywordSwitch:
+            case Keyword_Switch:
             {
                 out = newExpression(arena, EC_Switch, 0);
                 auto myswitch = castExpression(Switch, out);
@@ -1275,9 +1275,9 @@ parseProof(ExpressionParserState state, Stack *stack, Expression *goal)
 
     Expression *out = 0;
     Token token = advance(tk);
-    switch (token.cat)
+    switch (auto keyword = matchKeyword(&token))
     {
-        case TC_KeywordSwitch:
+        case Keyword_Switch:
         {
             auto switch_subject = parseExpression(state);
             if (parsing(tk) && requireChar(tk, '.'))
@@ -1312,7 +1312,7 @@ parseProof(ExpressionParserState state, Stack *stack, Expression *goal)
             }
         } break;
 
-        case TC_KeywordReturn:
+        case Keyword_Return:
         {
             Token return_token = peekNext(tk);
             Expression *returned = parseExpression(state);
@@ -1331,6 +1331,9 @@ parseProof(ExpressionParserState state, Stack *stack, Expression *goal)
             }
             optionalChar(tk, '.');
         } break;
+
+        default:
+            tokenError(tk, "unexpected keyword");
     }
 
     popContext(tk);
@@ -1489,27 +1492,27 @@ parseTopLevel(ParserState *state, MemoryArena *arena)
     while (parsing(tk))
     {
         Token token = advance(tk); 
-        switch (token.cat)
+        switch (Keyword keyword = matchKeyword(&token))
         {
-            case TC_KeywordTypedef:
+            case Keyword_Typedef:
                 parseTypedef(state, arena);
                 break;
 
-            case TC_KeywordDefine:
+            case Keyword_Define:
                 parseDefine(state, arena);
                 break;
 
-            case TC_KeywordTheorem:
+            case Keyword_Theorem:
                 parseDefine(state, arena, true);
                 break;
 
-            case TC_KeywordPrint:
-            case TC_KeywordPrintRaw:
-            case TC_KeywordAssert:
-            case TC_KeywordAssertFalse:
+            case Keyword_Print:
+            case Keyword_PrintRaw:
+            case Keyword_Assert:
+            case Keyword_AssertFalse:
             {
-                b32 should_print = ((token.cat == TC_KeywordPrintRaw)
-                                     || (token.cat == TC_KeywordPrint));
+                b32 should_print = ((keyword == Keyword_PrintRaw)
+                                     || (keyword == Keyword_Print));
 
                 requireChar(tk, '(');
                 auto temp_arena = beginTemporaryArena(arena);
@@ -1534,7 +1537,7 @@ parseTopLevel(ParserState *state, MemoryArena *arena)
                         {
                             buffer = subArena(arena, 256);
                             {
-                                if (token.cat == TC_KeywordPrint)
+                                if (keyword == Keyword_Print)
                                     printExpression(&buffer, reduced, true);
                                 else
                                     printExpression(&buffer, exp, true);
@@ -1562,7 +1565,7 @@ parseTopLevel(ParserState *state, MemoryArena *arena)
             case 0: break;
 
             default:
-                tokenError(tk, "unexpected token at top-level");
+                tokenError(tk, "unexpected token");
         }
     }
 
@@ -1668,7 +1671,7 @@ testCaseCompile(MemoryArena *arena, char *input_file)
 int
 engineMain(EngineMemory *memory)
 {
-    assert(arrayCount(keywords) == TC_KeywordsEnd_ - TC_KeywordsBegin_);
+    assert(arrayCount(keywords) == Keywords_Count_);
 
     int out = 0;
     platformPrint = memory->platformPrint;
