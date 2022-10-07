@@ -24,9 +24,9 @@ define |(a: Bool, b: Bool) : Bool
 
 theorem easyClap(a: Bool) : Bool
 {
- return a.
+ return a;
  }
 
-print(easyClap)
-print(easyClap(T))
-print(easyClap(F))
+print(easyClap);
+print(easyClap(T));
+print(easyClap(F));

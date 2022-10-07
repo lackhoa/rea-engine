@@ -513,15 +513,15 @@ tokenError(Tokenizer *tk, char *message)
 inline b32
 requireChar(Tokenizer *tk, char c)
 {
-    auto out = true;
-
-    Token token = advance(tk);
-    if (!((token.text.length == 1) && (token.text.chars[0] == c)))
+    auto out = false;
+    if (parsing(tk))
     {
-        parseError(tk, &token, "expected character %c", c);
-        out = false;
+        Token token = advance(tk);
+        if (token.text.length == 1 && token.text.chars[0] == c)
+            out = true;
+        else
+            parseError(tk, &token, "expected character %c", c);
     }
-
     return out;
 }
 
@@ -763,7 +763,8 @@ expressionsIdentical(Expression *lhs, Expression *rhs)
 inline b32
 isExpressionEndMarker(Token *token)
 {
-    return inString("{},).", token);
+    // #important I really don't want "." to be a special thing, I want to use it in expresions
+    return inString("{},);:", token);
 }
 
 inline s32
@@ -1280,7 +1281,7 @@ parseProof(ExpressionParserState state, Stack *stack, Expression *goal)
         case Keyword_Switch:
         {
             auto switch_subject = parseExpression(state);
-            if (parsing(tk) && requireChar(tk, '.'))
+            if (parsing(tk) && requireChar(tk, ';'))
             {
                 out = newExpression(arena, EC_Switch, 0);
                 auto myswitch = &out->Switch;
@@ -1329,7 +1330,7 @@ parseProof(ExpressionParserState state, Stack *stack, Expression *goal)
                 else
                     out = returned;
             }
-            optionalChar(tk, '.');
+            optionalChar(tk, ';');
         } break;
 
         default:
@@ -1508,24 +1509,21 @@ parseTopLevel(ParserState *state, MemoryArena *arena)
 
             case Keyword_Print:
             case Keyword_PrintRaw:
-            case Keyword_Assert:
-            case Keyword_AssertFalse:
             {
                 b32 should_print = ((keyword == Keyword_PrintRaw)
-                                     || (keyword == Keyword_Print));
+                                    || (keyword == Keyword_Print));
 
-                requireChar(tk, '(');
                 auto temp_arena = beginTemporaryArena(arena);
                 {
                     auto arena = &temp_arena;
 
                     ExpressionParserState exp_state = {};
-                    exp_state.bindings  = &state->global_bindings;
-                    exp_state.tk = tk;
-                    exp_state.arena     = arena;
+                    exp_state.bindings = &state->global_bindings;
+                    exp_state.tk       = tk;
+                    exp_state.arena    = arena;
                     auto exp = parseExpression(exp_state);
 
-                    if (parsing(tk) && requireChar(tk, ')'))
+                    if (parsing(tk))
                     {
                         MemoryArena buffer = {};
 
@@ -1544,22 +1542,36 @@ parseTopLevel(ParserState *state, MemoryArena *arena)
                             }
                             printf("%s\n", buffer.base);
                         }
-#if 0
-                        else if (token.cat == TC_KeywordAssert)
-                        {
-                            if (reduced->cat != EC_Builtin_True)
-                                parseError(tk, &token, "assertion failed");
-                        }
-                        else
-                        {
-                            assert(token.cat == TC_KeywordAssertFalse);
-                            if (reduced->cat != EC_Builtin_False)
-                                parseError(tk, &token, "assertion failed");
-                        }
-#endif
                     }
                 }
                 endTemporaryArena(&temp_arena);
+                requireChar(tk, ';');
+            } break;
+
+            case Keyword_Check:
+            {
+                auto temp_arena = beginTemporaryArena(arena);
+                {
+                    auto arena = &temp_arena;
+                    auto exp = parseExpression(arena, &state->global_bindings, tk);
+                    if (parsing(tk))
+                    {
+                        requireChar(tk, ':');
+                        auto expected_type = parseExpression(arena, &state->global_bindings, tk);
+                        Stack stack = {};
+                        stack.arena = arena;
+                        auto expected_reduced = reduceExpression(arena, &stack, expected_type);
+                        auto actual_reduced = reduceExpression(arena, &stack, exp->type);
+                        if (!expressionsIdentical(expected_reduced, actual_reduced))
+                        {
+                            tokenError(tk, &token, "type check failed");
+                            pushAttachment(tk, "expected type", expected_reduced);
+                            pushAttachment(tk, "actual type", actual_reduced);
+                        }
+                    }
+                }
+                endTemporaryArena(&temp_arena);
+                requireChar(tk, ';');
             } break;
 
             case 0: break;

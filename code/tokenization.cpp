@@ -27,8 +27,7 @@ enum Keyword
     Keyword_Switch,
     Keyword_Print,
     Keyword_PrintRaw,
-    Keyword_Assert,
-    Keyword_AssertFalse,
+    Keyword_Check,
     Keyword_Theorem,
     Keyword_Return,
 
@@ -36,7 +35,7 @@ enum Keyword
 };
 
 const char *keywords[] = {"_null_", "typedef", "define", "switch", "print",
-                          "printRaw", "assert", "assertFalse", "theorem", "return"};
+                          "printRaw", "check", "theorem", "return"};
 
 struct Token
 {
@@ -292,7 +291,7 @@ eatAllSpaces(Tokenizer *tk)
                 }
                 else
                 {
-                    nextChar(tk);
+                    stop = true;
                 }
             } break;
 
@@ -319,7 +318,6 @@ matchKeyword(Token *token)
     return out;
 }
 
-// bookmark: this should return token *
 inline Token
 advance(Tokenizer *tk)
 {
@@ -352,9 +350,6 @@ advance(Tokenizer *tk)
 
     out.text.length = tk->at - out.text.chars;
     tk->last_token = out;
-
-    if (out.text.chars[0] == '.')
-        breakhere;
 
     return out;
 }
