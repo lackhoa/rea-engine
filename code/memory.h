@@ -20,7 +20,7 @@ struct MemoryArena
     size_t  used;
     size_t  cap;
 
-    MemoryArena *parent;
+    s32 temp_count;
 };
 
 inline MemoryArena
@@ -52,8 +52,7 @@ subArena(MemoryArena *parent, size_t size)
 {
     MemoryArena result = {};
     result.base = (u8 *)pushSize(parent, size);
-    result.cap = size;
-    result.parent = parent;
+    result.cap  = size;
     return result;
 }
 
@@ -63,34 +62,44 @@ struct TemporaryMemory
     size_t       original_used;
 };
 
-inline MemoryArena 
-beginTemporaryArena(MemoryArena *parent)
+inline TemporaryMemory
+beginTemporaryMemory(MemoryArena *arena)
 {
-    MemoryArena out = subArena(parent, parent->cap - parent->used);
-    assert(parent->used == parent->cap);
+    TemporaryMemory out = {};
+    out.arena         = arena;
+    out.original_used = arena->used;
+    arena->temp_count++;
     return out;
 }
 
 inline void
-zeroArena(MemoryArena *arena)
+endTemporaryMemory(TemporaryMemory temp)
 {
-    zeroMemory(arena->base, arena->used);
+    temp.arena->temp_count--;
+    temp.arena->used = temp.original_used;
 }
 
 inline void
-endTemporaryArena(MemoryArena *child, b32 zero = false)
+checkArena(MemoryArena *arena)
 {
-    if (zero)
-        zeroMemory(child->base, child->used);
-
-    auto parent = child->parent;
-    assert(parent->used == parent->cap);
-    assert(child->cap <= parent->cap);
-    parent->used -= child->cap;
+    assert(arena->temp_count == 0);
 }
 
-#define allocate(arena, x) x = (__typeof__(x)) pushSize(arena, sizeof(*x))
-#define allocateArray(arena, count, x) x = (__typeof__(x)) pushSize(arena, count*sizeof(*x))
+inline void
+resetZeroArena(MemoryArena *arena)
+{
+    arena->used = 0;
+    zeroMemory(arena->base, arena->cap);
+}
+
+#if COMPILER_MSVC
+#    define mytypeof decltype
+#else
+#    define mytypeof __typeof__
+#endif
+
+#define allocate(arena, x) x = (mytypeof(x)) pushSize(arena, sizeof(*x))
+#define allocateArray(arena, count, x) x = (mytypeof(x)) pushSize(arena, count*sizeof(*x))
 
 #define MEMORY_H
 #endif

@@ -81,7 +81,7 @@ int main()
         {
             char output_name[256];
             char *type = vector_types[type_it];
-            sprintf(output_name, "generated/Vector_%s.h", type);
+            sprintf_s(output_name, 256, "generated/Vector_%s.h", type);
             generateCode(templated_code, output_name, type);
         }
     }

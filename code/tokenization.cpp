@@ -200,11 +200,11 @@ struct ErrorAttachment { char *string; Expression *expression;};
 
 struct ParseErrorData
 {
-    MemoryArena           message;
-    Token                 token;
-    char                 *context;
+    MemoryArena  message;
+    Token        token;
+    char        *context;
 
-    s32                  attached_count;
+    s32             attached_count;
     ErrorAttachment attached[8];
 };
 typedef ParseErrorData* ParseError;
@@ -214,7 +214,7 @@ struct ParseContext { char *first; ParseContext *next; };
 struct Tokenizer
 {
     ParseError    error;
-    MemoryArena   error_arena;
+    MemoryArena  *error_arena;
     ParseContext *context;
 
     char *at;
@@ -348,7 +348,7 @@ advance(Tokenizer *tk)
         default: {}
     }
 
-    out.text.length = tk->at - out.text.chars;
+    out.text.length = (s32)(tk->at - out.text.chars);
     tk->last_token = out;
 
     return out;

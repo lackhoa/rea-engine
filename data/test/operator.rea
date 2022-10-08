@@ -35,10 +35,8 @@ theorem test() : (F & T | T = T)
 {
  return truth;
  }
-
-check truth : F & T | T = T;
-
 print test;
 
-;; (&(T, |(F,T,),)) = T
-;; ((switch T {| T { & } | F { | } })(T, F)) = F
+
+check truth : F & T | T = T;
+check truth : (switch T {| T { & } | F { | } })(T, F) = F;
