@@ -6,7 +6,7 @@
 #include "tokenization.cpp"
 
 // NOTE: Eventually this will talk to the editor, but let's work in console mode for now.
-// Important: abort all parsing when tokenizer reports error.
+// Important: all parsing must be aborted when the tokenizer encounters error.
 
 enum ExpressionCategory
 {
@@ -304,7 +304,7 @@ struct Bindings
 struct Stack
 {
     MemoryArena  *arena;
-    u32           count;
+    s32           count;
     Expression  **first;
     Stack        *next;
 };
@@ -338,17 +338,21 @@ extendBindings(MemoryArena *arena, Bindings *outer)
 
 struct ParserState
 {
-    MemoryArena *stack_arena;
+    MemoryArena *temp_arena;  // NOTE: reset after parsing each top-level form.
     Bindings     global_bindings;
-    Tokenizer    tokenizer;
+    Tokenizer   *tokenizer;
 };
 
 struct ExpressionParserState
 {
-    MemoryArena *arena;
+    MemoryArena *temp_arena;
     Bindings    *bindings;
-    Tokenizer   *tk;
+    Tokenizer   *tokenizer;
 };
+
+#define unpackState \
+    auto tk         = state->tokenizer;         \
+    auto temp_arena = state->temp_arena;
 
 struct LookupName { Binding* slot; b32 found; };
 
@@ -444,8 +448,8 @@ lookupNameRecursive(Bindings *bindings, Token *token)
 internal Constructor
 parseConstructorDef(ParserState *state, MemoryArena *arena, Expression *mystruct, s32 ctor_id)
 {
+    unpackState;
     Constructor out = {};
-    Tokenizer *tk = &state->tokenizer;
     Token ctor_token = advance(tk);
     switch (ctor_token.cat)
     {
@@ -571,7 +575,7 @@ addBuiltinStruct(ParserState *state, MemoryArena *arena, char *name, const char 
 internal void
 parseTypedef(ParserState *state, MemoryArena *arena)
 {
-    Tokenizer *tk = &state->tokenizer;
+    unpackState;
     Token type_name = advance(tk);
     if (type_name.cat == TC_Alphanumeric)
     {
@@ -799,7 +803,7 @@ precedenceOf(Ast op)
 }
 
 internal Expression *
-parseOperand(ParserState*, ExpressionParserState);
+parseOperand(ExpressionParserState*, MemoryArena *arena);
 
 internal Expression *
 getArgType(Expression *op, s32 arg_id)
@@ -823,29 +827,8 @@ makeBinopExpression(MemoryArena *arena, Expression *op, Expression *lhs, Express
     return out;
 }
 
-#if 0
 internal Expression *
-reduceIdentical(MemoryArena *arena, Expression *reduced_lhs, Expression *reduced_rhs)
-{
-    // todo: Leibniz's principle can go here as well
-    auto compare = compareExpressions(reduced_lhs, reduced_rhs);
-    switch (compare)
-    {
-        case Trinary_False:
-            return builtin_False;
-            break;
-        case Trinary_True:
-            return builtin_True;
-            break;
-        case Trinary_Unknown:
-            return makeBinopExpression(arena, &builtin_identical, reduced_lhs, reduced_rhs);
-            break;
-    }
-}
-#endif
-
-internal Expression *
-reduceExpression(ParserState *state, MemoryArena *arena, Stack *stack, Expression *in)
+reduceExpression(ExpressionParserState *state, MemoryArena *arena, Stack *stack, Expression *in)
 {
     Expression *out = 0;
 
@@ -858,10 +841,9 @@ reduceExpression(ParserState *state, MemoryArena *arena, Stack *stack, Expressio
 
         case EC_Application:
         {
-            // TODO: #memory we can make this array temporary.
-            auto temp = beginTemporaryMemory(state->stack_arena);
+            auto temp = beginTemporaryMemory(state->temp_arena);
             auto in_app = &in->Application;
-            Expression **reduced_args = pushArray(state->stack_arena, in_app->arg_count, Expression*);
+            Expression **reduced_args = pushArray(state->temp_arena, in_app->arg_count, Expression*);
             for (auto arg_id = 0;
                  arg_id < in_app->arg_count;
                  arg_id++)
@@ -930,8 +912,9 @@ reduceExpression(ParserState *state, MemoryArena *arena, Stack *stack, Expressio
 }
 
 internal Expression *
-newApplication(ParserState *state, MemoryArena *arena, Tokenizer *tk, Token *blame_token, Expression *op, Expression **args, s32 arg_count)
+newApplication(ExpressionParserState *state, MemoryArena *arena, Token *blame_token, Expression *op, Expression **args, s32 arg_count)
 {
+    unpackState;
     Expression *out = 0;
     auto signature = castExpression(ArrowType, op->type);
     if (signature)
@@ -944,9 +927,10 @@ newApplication(ParserState *state, MemoryArena *arena, Tokenizer *tk, Token *bla
             app->arg_count = signature->arg_count;
             allocateArray(arena, app->arg_count, app->args);
 
+            auto temp = beginTemporaryMemory(temp_arena);
             Stack stack = {};
-            stack.arena = arena;  // todo: #memory leak
-            allocateArray(arena, app->arg_count, stack.first);
+            stack.arena = arena;
+            allocateArray(temp_arena, app->arg_count, stack.first);
 
             for (int arg_id = 0, stop = 0;
                  (arg_id < signature->arg_count) && !stop;
@@ -954,7 +938,7 @@ newApplication(ParserState *state, MemoryArena *arena, Tokenizer *tk, Token *bla
             {
                 auto arg = args[arg_id];
                 stack.first[stack.count++] = arg;
-                auto expected_arg_type = reduceExpression(state, arena, &stack, getArgType(op, arg_id));
+                auto expected_arg_type = reduceExpression(state, temp_arena, &stack, getArgType(op, arg_id));
                 if (expressionsIdenticalB32(arg->type, expected_arg_type))
                     app->args[arg_id] = arg;
                 else
@@ -969,6 +953,7 @@ newApplication(ParserState *state, MemoryArena *arena, Tokenizer *tk, Token *bla
             }
 
             out->type = reduceExpression(state, arena, &stack, signature->return_type);
+            endTemporaryMemory(temp);
         }
         else
         {
@@ -984,14 +969,12 @@ newApplication(ParserState *state, MemoryArena *arena, Tokenizer *tk, Token *bla
 }
 
 internal Expression *
-parseExpressionMain(ParserState *parser_state, ExpressionParserState state, s32 min_precedence)
+parseExpressionMain(ExpressionParserState *state, MemoryArena *arena, s32 min_precedence)
 {
-    Tokenizer   *tk       = state.tk;
+    unpackState;
     pushContext(tk);
-    MemoryArena *arena    = state.arena;
-    Bindings    *bindings = state.bindings;
 
-    Expression *out = parseOperand(parser_state, state);
+    Expression *out = parseOperand(state, arena);
     if (parsing(tk))
     {
         // (a+b) * c
@@ -1003,7 +986,7 @@ parseExpressionMain(ParserState *parser_state, ExpressionParserState state, s32 
             {// infix operator syntax
                 // (a+b) * c
                 //        ^
-                auto op_lookup = lookupNameRecursive(bindings, &op_token);
+                auto op_lookup = lookupNameRecursive(state->bindings, &op_token);
                 if (op_lookup.found)
                 {
                     Ast op = op_lookup.value;
@@ -1014,7 +997,7 @@ parseExpressionMain(ParserState *parser_state, ExpressionParserState state, s32 
                         advance(tk);
                         // a + b * c
                         //      ^
-                        Expression *recurse = parseExpressionMain(parser_state, state, precedence);
+                        Expression *recurse = parseExpressionMain(state, arena, precedence);
                         if (parsing(tk))
                         {
                             switch (op.cat)
@@ -1025,7 +1008,7 @@ parseExpressionMain(ParserState *parser_state, ExpressionParserState state, s32 
                                     auto op_exp = castAst(Expression, op);
                                     args[0] = out;
                                     args[1] = recurse;
-                                    out = newApplication(parser_state, arena, tk, &op_token, op_exp, args, 2);
+                                    out = newApplication(state, arena, &op_token, op_exp, args, 2);
                                 }
                                 break;
 
@@ -1035,7 +1018,7 @@ parseExpressionMain(ParserState *parser_state, ExpressionParserState state, s32 
                                     args[0] = out->type;
                                     args[1] = out;
                                     args[2] = recurse;
-                                    out = newApplication(parser_state, arena, tk, &op_token, &builtin_identical, args, 3);
+                                    out = newApplication(state, arena, &op_token, &builtin_identical, args, 3);
                                 }
                                 break;
                             }
@@ -1070,30 +1053,36 @@ parseExpressionMain(ParserState *parser_state, ExpressionParserState state, s32 
     return out;
 }
 
-inline Expression *
-parseExpression(ParserState *parser_state, ExpressionParserState state)
+inline ExpressionParserState
+toExpressionParserState(ParserState *parser_state, Bindings *bindings)
 {
-    Expression *out = parseExpressionMain(parser_state, state, 0);
+    ExpressionParserState ep_state;
+    ep_state.temp_arena = parser_state->temp_arena;
+    ep_state.bindings   = bindings;
+    ep_state.tokenizer  = parser_state->tokenizer;
+    return ep_state;
+}
+
+inline Expression *
+parseExpression(ExpressionParserState *state, MemoryArena *arena)
+{
+    Expression *out = parseExpressionMain(state, arena, -9999);
     return out;
 }
 
 inline Expression *
-parseExpression(ParserState *parser_state, MemoryArena *arena, Bindings *bindings, Tokenizer *tk)
+parseExpression(ParserState *parser_state, MemoryArena *arena, Bindings *bindings)
 {
-    ExpressionParserState state;
-    state.arena = arena;
-    state.bindings = bindings;
-    state.tk = tk;
-    return parseExpressionMain(parser_state, state, 0);
+    ExpressionParserState ep_state = toExpressionParserState(parser_state, bindings);
+    Expression *out = parseExpressionMain(&ep_state, arena, -9999);
+    return out;
 }
 
 internal Expression *
-parseOperand(ParserState *parser_state, ExpressionParserState state)
+parseOperand(ExpressionParserState *state, MemoryArena *arena)
 {
-    Tokenizer   *tk       = state.tk;
+    unpackState;
     pushContext(tk);
-    MemoryArena *arena    = state.arena;
-    Bindings    *bindings = state.bindings;
 
     Expression *out = 0;
     Token token1 = advance(tk);
@@ -1107,7 +1096,7 @@ parseOperand(ParserState *parser_state, ExpressionParserState state)
                 auto myswitch = castExpression(Switch, out);
 
                 Token subject_token = peekNext(tk);
-                myswitch->subject = parseExpression(parser_state, state);
+                myswitch->subject = parseExpression(state, arena);
                 requireChar(tk, '{');
                 if (myswitch->subject)
                 {
@@ -1130,9 +1119,7 @@ parseOperand(ParserState *parser_state, ExpressionParserState state)
                                 {
                                     auto temp = beginTemporaryMemory(arena);
 
-                                    auto new_state = state;
-                                    new_state.arena = arena;
-                                    Expression *switch_case = parseExpression(parser_state, state);
+                                    Expression *switch_case = parseExpression(state, arena);
                                     if (parsing(tk) && requireChar(tk, '{'))
                                     {
                                         auto matched_case_id = matchSwitchCase(switch_case);
@@ -1141,7 +1128,7 @@ parseOperand(ParserState *parser_state, ExpressionParserState state)
                                         if (matched_case_id.success)
                                         {
                                             auto body_token = peekNext(tk);
-                                            auto body = parseExpression(parser_state, state);
+                                            auto body = parseExpression(state, arena);
                                             requireChar(tk, '}');
 
                                             if (switch_type)
@@ -1206,7 +1193,7 @@ parseOperand(ParserState *parser_state, ExpressionParserState state)
     }
     else if (isIdentifier(&token1))
     {
-        auto lookup1 = lookupNameRecursive(bindings, &token1);
+        auto lookup1 = lookupNameRecursive(state->bindings, &token1);
         if (lookup1.found)
         {
             if (lookup1.value.cat == AstCat_Expression)
@@ -1219,7 +1206,7 @@ parseOperand(ParserState *parser_state, ExpressionParserState state)
     }
     else if (equals(&token1, '('))
     {
-        out = parseExpression(parser_state, state);
+        out = parseExpression(state, arena);
         if (parsing(tk))
             requireChar(tk, ')');
     }
@@ -1249,7 +1236,7 @@ parseOperand(ParserState *parser_state, ExpressionParserState state)
                     }
                     else
                     {
-                        auto arg = parseExpression(parser_state, state);
+                        auto arg = parseExpression(state, arena);
                         // todo: typecheck the arg
                         if (parsing(tk))
                         {
@@ -1269,7 +1256,7 @@ parseOperand(ParserState *parser_state, ExpressionParserState state)
                 }
                 if (parsing(tk) && requireChar(tk, ')'))
                 {
-                    out = newApplication(parser_state, arena, tk, &funcall, op, args, actual_arg_count);
+                    out = newApplication(state, arena, &funcall, op, args, actual_arg_count);
                 }
             }
             else
@@ -1282,22 +1269,21 @@ parseOperand(ParserState *parser_state, ExpressionParserState state)
 }
 
 internal Expression *
-parseProof(ParserState *parser_state, ExpressionParserState state, Stack *stack, Expression *goal)
+parseProof(ExpressionParserState *state, MemoryArena *arena, Stack *stack, Expression *goal)
 {
-    auto tk = state.tk;
-    pushContext(tk);
-    auto arena = state.arena;
-    auto bindings = state.bindings;
-
-    goal = reduceExpression(parser_state, arena, stack, goal);
-
     Expression *out = 0;
+
+    unpackState;
+    pushContext(tk);
+
+    goal = reduceExpression(state, state->temp_arena, stack, goal);
+
     Token token = advance(tk);
     switch (auto keyword = matchKeyword(&token))
     {
         case Keyword_Switch:
         {
-            auto switch_subject = parseExpression(parser_state, state);
+            auto switch_subject = parseExpression(state, arena);
             if (parsing(tk) && requireChar(tk, ';'))
             {
                 out = newExpression(arena, EC_Switch, 0);
@@ -1320,8 +1306,8 @@ parseProof(ParserState *parser_state, ExpressionParserState state, Stack *stack,
                         if (requireChar(tk, '-'))
                         {
                             // todo: bind variable to the stack 
-                            Expression *subgoal = reduceExpression(parser_state, arena, stack, goal);
-                            Expression *subproof = parseProof(parser_state, state, stack, subgoal);
+                            Expression *subgoal = reduceExpression(state, temp_arena, stack, goal);
+                            Expression *subproof = parseProof(state, temp_arena, stack, subgoal);
                         }
                         else
                             tokenError(tk, "please begin subproof with '-'");
@@ -1333,7 +1319,7 @@ parseProof(ParserState *parser_state, ExpressionParserState state, Stack *stack,
         case Keyword_Return:
         {
             Token return_token = peekNext(tk);
-            Expression *returned = parseExpression(parser_state, state);
+            Expression *returned = parseExpression(state, arena);
             if (parsing(tk))
             {
                 if (!returned->type)
@@ -1359,9 +1345,9 @@ parseProof(ParserState *parser_state, ExpressionParserState state, Stack *stack,
 }
 
 internal void
-parseDefine(ParserState *state, MemoryArena *arena, b32 is_theorem = false)
+parseDefine(ParserState *state, MemoryArena* arena, b32 is_theorem = false)
 {
-    Tokenizer *tk = &state->tokenizer;
+    unpackState;
     pushContext(tk);
 
     Token define_name = advance(tk);
@@ -1417,10 +1403,12 @@ parseDefine(ParserState *state, MemoryArena *arena, b32 is_theorem = false)
             signature->arg_count = expected_arg_count;
             allocateArray(arena, expected_arg_count, signature->args);
 
-            auto scoped_arena = beginTemporaryMemory(state->stack_arena);
+            auto temp = beginTemporaryMemory(state->temp_arena);
             Bindings *local_bindings = extendBindings(arena, &state->global_bindings);
             s32 actual_arg_count = 0;
-            for (s32 arg_id = 0, stop = 0; !stop; arg_id++)
+            for (s32 arg_id = 0, stop = 0;
+                 !stop && parsing(tk);
+                 arg_id++)
             {// parsing arguments
                 Token arg_name_or_end = advance(tk);
                 if (equals(&arg_name_or_end, ')'))
@@ -1442,7 +1430,7 @@ parseDefine(ParserState *state, MemoryArena *arena, b32 is_theorem = false)
 
                         requireChar(tk, ':');
 
-                        Expression *arg_type = parseExpression(state, arena, local_bindings, tk);
+                        Expression *arg_type = parseExpression(state, arena, local_bindings);
                         arg_exp->type        = arg_type;
                         signature->args[arg_id] = arg_exp;
                         actual_arg_count++;
@@ -1461,22 +1449,21 @@ parseDefine(ParserState *state, MemoryArena *arena, b32 is_theorem = false)
 
             // return type
             requireChar(tk, ':');
-            signature->return_type = parseExpression(state, arena, local_bindings, tk);
+            auto ep_state = toExpressionParserState(state, local_bindings);
+            signature->return_type = parseExpression(&ep_state, arena);
             if (parsing(tk) && requireChar(tk, '{'))
             {
                 Token body_token = peekNext(tk);
-                ExpressionParserState exp_state = {arena, local_bindings, tk};
-
                 Expression *body = 0;
                 if (is_theorem)
                 {
                     Stack empty_stack = {};
                     empty_stack.arena = arena;
-                    body = parseProof(state, exp_state, &empty_stack, signature->return_type);
+                    body = parseProof(&ep_state, arena, &empty_stack, signature->return_type);
                 }
                 else
                 {
-                    body = parseExpression(state, exp_state);
+                    body = parseExpression(&ep_state, arena);
                 }
                 if (parsing(tk) && requireChar(tk, '}'))
                 {
@@ -1491,7 +1478,7 @@ parseDefine(ParserState *state, MemoryArena *arena, b32 is_theorem = false)
                 }
             }
                 
-            endTemporaryMemory(scoped_arena);
+            endTemporaryMemory(temp);
         }
     }
     else
@@ -1504,11 +1491,12 @@ parseDefine(ParserState *state, MemoryArena *arena, b32 is_theorem = false)
 internal void
 parseTopLevel(ParserState *state, MemoryArena *arena)
 {
-    Tokenizer *tk = &state->tokenizer;
+    unpackState;
     pushContext(tk);
 
     while (parsing(tk))
     {
+        auto top_level_temp = beginTemporaryMemory(temp_arena);
         Token token = advance(tk); 
         switch (Keyword keyword = matchKeyword(&token))
         {
@@ -1531,17 +1519,14 @@ parseTopLevel(ParserState *state, MemoryArena *arena)
                                     || (keyword == Keyword_Print));
 
                 auto temp = beginTemporaryMemory(arena);
-                ExpressionParserState exp_state = {};
-                exp_state.bindings = &state->global_bindings;
-                exp_state.tk       = tk;
-                exp_state.arena    = arena;
-                auto exp = parseExpression(state, exp_state);
+                auto ep_state = toExpressionParserState(state, &state->global_bindings);
+                auto exp = parseExpression(&ep_state, arena);
 
                 if (parsing(tk))
                 {
                     Stack empty_stack = {};
                     empty_stack.arena = arena;
-                    Expression *reduced = reduceExpression(state, arena, &empty_stack, exp);
+                    Expression *reduced = reduceExpression(&ep_state, arena, &empty_stack, exp);
 
                     if (should_print)
                     {
@@ -1561,18 +1546,18 @@ parseTopLevel(ParserState *state, MemoryArena *arena)
 
             case Keyword_Check:
             {
-                auto temp_arena = beginTemporaryMemory(arena);
-                auto exp = parseExpression(state, arena, &state->global_bindings, tk);
+                auto ep_state = toExpressionParserState(state, &state->global_bindings);
+                auto exp = parseExpression(&ep_state, temp_arena);
                 if (parsing(tk))
                 {
                     requireChar(tk, ':');
-                    auto expected_type = parseExpression(state, arena, &state->global_bindings, tk);
+                    auto expected_type = parseExpression(&ep_state, temp_arena);
                     if (parsing(tk))
                     {
                         Stack stack = {};
-                        stack.arena = arena;
-                        auto expected_reduced = reduceExpression(state, arena, &stack, expected_type);
-                        auto actual_reduced = reduceExpression(state, arena, &stack, exp->type);
+                        stack.arena = temp_arena;
+                        auto expected_reduced = reduceExpression(&ep_state, temp_arena, &stack, expected_type);
+                        auto actual_reduced = reduceExpression(&ep_state, temp_arena, &stack, exp->type);
                         if (!expressionsIdenticalB32(expected_reduced, actual_reduced))
                         {
                             tokenError(tk, &token, "type check failed");
@@ -1581,7 +1566,6 @@ parseTopLevel(ParserState *state, MemoryArena *arena)
                         }
                     }
                 }
-                endTemporaryMemory(temp_arena);
                 requireChar(tk, ';');
             } break;
 
@@ -1590,6 +1574,7 @@ parseTopLevel(ParserState *state, MemoryArena *arena)
             default:
                 tokenError(tk, "unexpected token");
         }
+        endTemporaryMemory(top_level_temp);
     }
 
     popContext(tk);
@@ -1612,16 +1597,17 @@ compile(MemoryArena *arena, char *input, char *input_file)
 
     ParserState *state = pushStruct(arena, ParserState);
 
-    auto stack_arena = subArena(arena, megaBytes(2));
+    auto temp_arena  = subArena(arena, megaBytes(2));
     auto error_arena = subArena(arena, kiloBytes(8));
     {// mark: initialize state
-        state->stack_arena           = &stack_arena;
+        state->temp_arena            = &temp_arena;
         state->global_bindings.arena = arena;
-        state->tokenizer             = {};
-        state->tokenizer.error_arena = &error_arena;
-        state->tokenizer.line_number = 1;
-        state->tokenizer.column      = 1;
-        state->tokenizer.at          = input;
+
+        state->tokenizer             = pushStruct(arena, Tokenizer);
+        state->tokenizer->error_arena = &error_arena;
+        state->tokenizer->line_number = 1;
+        state->tokenizer->column      = 1;
+        state->tokenizer->at          = input;
 
         addBuiltinName(state, "identical", &builtin_identical);
         addBuiltinName(state, "Set",  &builtin_Set);
@@ -1639,7 +1625,7 @@ compile(MemoryArena *arena, char *input, char *input_file)
     }
 
     parseTopLevel(state, arena);
-    ParseError error = state->tokenizer.error;
+    ParseError error = state->tokenizer->error;
     if (error)
     {
         success = 1;
@@ -1671,12 +1657,13 @@ compile(MemoryArena *arena, char *input, char *input_file)
     }
 
     checkArena(arena);
-    checkArena(state->stack_arena);
-    checkArena(state->tokenizer.error_arena);
+    checkArena(state->temp_arena);
+    checkArena(state->tokenizer->error_arena);
 
     return CompileOutput{ state, success, };
 }
 
+// todo: not sure what this function is for, remove?
 inline int
 testCaseCompile(MemoryArena *arena, char *input_file)
 {

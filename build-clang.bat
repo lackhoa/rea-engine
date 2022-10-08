@@ -10,10 +10,10 @@ set Constants=-DReaWindows
 set Warnings=-Wall -Wunused-parameter -Wimplicit-int-float-conversion -Wno-unused-function -Wno-missing-braces -Wno-unused-parameter -Wno-unused-but-set-variable -Wno-unused-variable -Wno-switch -Wno-writable-strings -Wno-c++17-extensions
 set CommonCompilerFlags=-g -mavx2 --target=x86_64-pc-windows-msvc %Optimization% %Constants% %Warnings%
 
-clang ..\code\generator.cpp -o generator.exe %CommonCompilerFlags%
-pushd ..\code
-..\build\generator.exe || exit 1
-popd
+rem clang ..\code\generator.cpp -o generator.exe %CommonCompilerFlags%
+rem pushd ..\code
+rem ..\build\generator.exe || exit 1
+rem popd
 
 clang -c "..\code\engine.cpp" -o engine.o %CommonCompilerFlags%
 clang -c "..\code\win32_editor.cpp" -o win32_editor.o %CommonCompilerFlags%

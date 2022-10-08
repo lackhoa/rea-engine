@@ -76,6 +76,7 @@ inline void
 endTemporaryMemory(TemporaryMemory temp)
 {
     temp.arena->temp_count--;
+    assert(temp.arena->used >= temp.original_used);
     temp.arena->used = temp.original_used;
 }
 
