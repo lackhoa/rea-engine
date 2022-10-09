@@ -98,7 +98,7 @@ struct ArrowType
 struct Expression
 {
     ExpressionCategory  cat;
-    Expression         *type;  // always in normal form
+    Expression         *type;  // IMPORTANT: always in normal form
     union
     {
         Variable       Variable;
@@ -124,6 +124,12 @@ internal void
 printConstructor(MemoryArena *buffer, Constructor *ctor)
 {
     myprint(buffer, ctor->name);
+}
+
+inline s32
+switchCtorCount(Switch *myswitch)
+{
+    return myswitch->subject->type->Struct.ctor_count;
 }
 
 internal void
@@ -169,13 +175,13 @@ printExpression(MemoryArena *buffer, Expression *exp, b32 detailed = false)
                  ctor_id < subject_struct->ctor_count;
                  ctor_id++)
             {
-                myprint(buffer, " | ");
                 printConstructor(buffer, subject_struct->ctors + ctor_id);
-                myprint(buffer, " { ");
+                myprint(buffer, " -> ");
                 printExpression(buffer, myswitch->case_bodies[ctor_id]);
-                myprint(buffer, " }");
+                if (ctor_id != subject_struct->ctor_count-1)
+                    myprint(buffer, ", ");
             }
-            myprint(buffer, " }");
+            myprint(buffer, "}");
         } break;
 
         case EC_Struct:
@@ -541,6 +547,21 @@ requireChar(char c)
 }
 
 inline b32
+requireCategory(TokenCategory cat, Tokenizer *tk = global_tokenizer)
+{
+    auto out = false;
+    if (parsing(tk))
+    {
+        Token token = advance(tk);
+        if (token.cat == cat)
+            out = true;
+        else
+            parseError(&token, "expected category %d", cat);
+    }
+    return out;
+}
+
+inline b32
 optionalChar(Tokenizer *tk, char c)
 {
     b32 out = false;
@@ -682,6 +703,7 @@ resolve(Stack *stack, Variable variable)
     return out;
 }
 
+// NOTE: input expression must be normalized first
 internal OptionalU32
 matchSwitchCase(Expression *matched)
 {
@@ -697,8 +719,16 @@ matchSwitchCase(Expression *matched)
             out.success = true;
             out.value   = ctor.id;
         }
-        else
-            todoIncomplete;  // handle composite cases
+        else if (matched->cat == EC_Application)
+        {
+            auto app = castExpression(Application, matched);
+            auto ctor = castExpression(ConstructorRef, app->op);
+            if (ctor)
+            {
+                out.success = true;
+                out.value = ctor->id;
+            }
+        }
     }
     
     return out;
@@ -771,6 +801,37 @@ compareExpressions(Expression *lhs, Expression *rhs)
                 }
             } break;
 
+            case EC_Switch:
+            {
+                b32 unknown_found = false;
+                b32 false_found   = false;
+                auto lhs_switch = castExpression(Switch, lhs);
+                auto rhs_switch = castExpression(Switch, rhs);
+                auto ctor_count = switchCtorCount(lhs_switch);
+                for (int ctor_id = 0, stop = false;
+                     ctor_id < ctor_count && !stop;
+                     ctor_id++)
+                {
+                    auto compare = compareExpressions(lhs_switch->case_bodies[ctor_id],
+                                                      rhs_switch->case_bodies[ctor_id]);
+                    if (compare == Trinary_Unknown)
+                    {
+                        unknown_found = true;
+                    }
+                    else if (compare == Trinary_False)
+                    {
+                        stop = true;
+                        false_found = true;
+                    }
+                }
+                if (false_found)
+                    out = Trinary_False;
+                else if (unknown_found)
+                    out = Trinary_Unknown;
+                else
+                    out = Trinary_True;
+            } break;
+
             default:
                 todoIncomplete;
         }
@@ -789,13 +850,19 @@ expressionsIdenticalB32(Expression *lhs, Expression *rhs)
 inline b32
 isExpressionEndMarker(Token *token)
 {
-    // #important I really don't want "." to be a special thing, I want to use it in expresions
-    return inString("{},);:", token);
+    // IMPORTANT: I really don't want "." to be a special thing, I want to use it in expresions
+    if (token->cat == TC_Arrow)
+        return true;
+    else if (inString("{},);:", token))
+        return true;
+    else
+        return false;
 }
 
 inline s32
 precedenceOf(Ast op)
 {
+    int out = 0;
     switch (op.cat)
     {
         case AstCat_Expression:
@@ -805,12 +872,14 @@ precedenceOf(Ast op)
             if (exp->cat == EC_Procedure)
             {
                 if (equals(exp->Procedure.name, "&"))
-                    return 20;
+                    out = 20;
                 else if (equals(exp->Procedure.name, "|"))
-                    return 10;
+                    out = 10;
                 else
-                    return 100;
+                    out = 100;
             }
+            else if (exp->cat == EC_ConstructorRef)
+                out = 100;
             else
                 invalidCodePath;
         } break;
@@ -818,10 +887,11 @@ precedenceOf(Ast op)
         case AstCat_Macro:
         {
             // also implement for real
-            return 0;
+            out = 0;
         } break;
     }
-    return 0;
+
+    return out;
 }
 
 internal Expression *
@@ -850,7 +920,7 @@ makeBinopExpression(MemoryArena *arena, Expression *op, Expression *lhs, Express
 }
 
 internal Expression *
-reduceExpression(ParserState *state, MemoryArena *arena, Stack *stack, Expression *in)
+normalize(ParserState *state, MemoryArena *arena, Stack *stack, Expression *in)
 {
     Expression *out = 0;
     unpackGlobals;
@@ -873,14 +943,14 @@ reduceExpression(ParserState *state, MemoryArena *arena, Stack *stack, Expressio
                  arg_id++)
             {
                 Expression *in_arg   = in_app->args[arg_id];
-                reduced_args[arg_id] = reduceExpression(state, arena, stack, in_arg);
+                reduced_args[arg_id] = normalize(state, arena, stack, in_arg);
             }
 
-            Expression *reduced_op = reduceExpression(state, arena, stack, in_app->op);
+            Expression *reduced_op = normalize(state, arena, stack, in_app->op);
             if (reduced_op->cat == EC_Procedure)
             {
                 Stack new_env = extendStack(stack, in_app->arg_count, reduced_args);
-                out = reduceExpression(state, arena, &new_env, reduced_op->Procedure.body);
+                out = normalize(state, arena, &new_env, reduced_op->Procedure.body);
             }
             else
             {
@@ -914,25 +984,47 @@ reduceExpression(ParserState *state, MemoryArena *arena, Stack *stack, Expressio
         case EC_Switch:
         {
             auto myswitch = &in->Switch;
-            Expression *reduced_subject = reduceExpression(state, arena, stack, myswitch->subject);
+            Expression *reduced_subject = normalize(state, arena, stack, myswitch->subject);
 
             auto subject_type = reduced_subject->type;
             auto switch_struct = castExpression(Struct, subject_type);
+            auto ctor_count = switch_struct->ctor_count;
             auto ctor_id = matchSwitchCase(reduced_subject);
 
             if (ctor_id.success)
-                out = reduceExpression(state, arena, stack, myswitch->case_bodies[ctor_id.value]);
+                out = normalize(state, arena, stack, myswitch->case_bodies[ctor_id.value]);
             else
             {
-                // todo: #memory don't copy too soon
-                out = newExpression(arena, EC_Switch, subject_type);
                 auto reduced_bodies = pushArray(arena, switch_struct->ctor_count, Expression*);
-                for (int ctor_id = 0; ctor_id < switch_struct->ctor_count; ctor_id++)
+                for (int ctor_id = 0; ctor_id < ctor_count; ctor_id++)
                 {
-                    reduced_bodies[ctor_id] = reduceExpression(state, arena, stack, myswitch->case_bodies[ctor_id]);
+                    reduced_bodies[ctor_id] = normalize(state, arena, stack, myswitch->case_bodies[ctor_id]);
                 }
-                out->Switch.subject     = reduced_subject;
-                out->Switch.case_bodies = reduced_bodies;
+
+                if (ctor_count > 0)
+                {
+                    b32 all_equal = true;
+                    for (int ctor_id = 1, stop = false;
+                         (ctor_id < ctor_count) & !stop;
+                         ctor_id++)
+                    {
+                        if (!expressionsIdenticalB32(reduced_bodies[0], reduced_bodies[ctor_id]))
+                        {
+                            all_equal = false;
+                            stop = true;
+                        }
+                    }
+                    if (all_equal)
+                        out = reduced_bodies[0];
+                }
+
+                if (!out)
+                {
+                    // todo: #memory don't copy too soon
+                    out = newExpression(arena, EC_Switch, subject_type);
+                    out->Switch.subject     = reduced_subject;
+                    out->Switch.case_bodies = reduced_bodies;
+                }
             }
         } break;
 
@@ -961,7 +1053,6 @@ newApplication(ParserState *state, MemoryArena *arena, Token *blame_token, Expre
             app->arg_count = signature->arg_count;
             allocateArray(arena, app->arg_count, app->args);
 
-            auto temp = beginTemporaryMemory(temp_arena);
             Stack stack = {};
             stack.arena = arena;
             allocateArray(temp_arena, app->arg_count, stack.first);
@@ -972,9 +1063,12 @@ newApplication(ParserState *state, MemoryArena *arena, Token *blame_token, Expre
             {
                 auto arg = args[arg_id];
                 stack.first[stack.count++] = arg;
-                auto expected_arg_type = reduceExpression(state, temp_arena, &stack, getArgType(op, arg_id));
+                auto expected_arg_type = normalize(state, temp_arena, &stack, getArgType(op, arg_id));
                 if (expressionsIdenticalB32(arg->type, expected_arg_type))
+                {
                     app->args[arg_id] = arg;
+                    out->type = normalize(state, arena, &stack, signature->return_type);
+                }
                 else
                 {
                     out = 0;
@@ -985,19 +1079,12 @@ newApplication(ParserState *state, MemoryArena *arena, Token *blame_token, Expre
                     stop = true;
                 }
             }
-
-            out->type = reduceExpression(state, arena, &stack, signature->return_type);
-            endTemporaryMemory(temp);
         }
         else
-        {
             parseError(blame_token, "incorrect arg count: %d (procedure expected %d)", arg_count, signature->arg_count);
-        }    
     }
     else
-    {
         tokenError(blame_token, "operator must have an arrow type");
-    }
     
     return out;
 }
@@ -1006,7 +1093,7 @@ internal Expression *
 parseExpression(ParserState *state, MemoryArena *arena, Bindings *bindings, s32 min_precedence = -9999)
 {
     unpackGlobals;
-    pushContext(tk);
+    pushContext;
 
     Expression *out = parseOperand(state, arena, bindings);
     if (parsing(tk))
@@ -1088,10 +1175,100 @@ parseExpression(ParserState *state, MemoryArena *arena, Bindings *bindings, s32 
 }
 
 internal Expression *
+parseSwitch(ParserState *state, MemoryArena *arena, Bindings *bindings)
+{
+    pushContext;
+    unpackGlobals;
+    auto token1 = peekNext(tk);
+
+    auto out = newExpression(arena, EC_Switch, 0);
+    auto myswitch = castExpression(Switch, out);
+
+    Token subject_token = peekNext(tk);
+    myswitch->subject = parseExpression(state, arena, bindings);
+    if (requireChar(tk, '{'))
+    {
+        Expression *subject_type = myswitch->subject->type;
+        if (subject_type->cat == EC_Struct)
+        {
+            auto subject_struct = &subject_type->Struct;
+            auto expected_ctor_count = subject_struct->ctor_count;
+            allocateArray(arena, expected_ctor_count, myswitch->case_bodies);
+
+            s32 actual_case_id = 0;
+            Expression *switch_type = 0;
+            for (b32 stop = false;
+                 !stop && parsing();)
+            {
+                if (optionalChar('}'))
+                    stop = true;
+                else
+                {
+                    Expression *switch_case = parseExpression(state, arena, bindings);
+                    if (requireCategory(TC_Arrow))
+                    {
+                        auto matched_case_id = matchSwitchCase(switch_case);
+
+                        if (!matched_case_id.success)
+                            tokenError("expression is not a constructor for type");
+                        else
+                        {
+                            auto body_token = peekNext(tk);
+                            auto body = parseExpression(state, arena, bindings);
+                            if (parsing())
+                            {
+                                if (!switch_type)
+                                    switch_type = body->type;
+                                else if (!expressionsIdenticalB32(body->type, switch_type))
+                                {
+                                    parseError(&body_token, "mismatched return type in input case %d", actual_case_id);
+                                    pushAttachment(tk, "got", body->type);
+                                    pushAttachment(tk, "expected", switch_type);
+                                    stop = true;
+                                }
+
+                                myswitch->case_bodies[matched_case_id.value] = body;
+                                actual_case_id++;
+                            }
+
+                            if (!optionalChar(tk, ','))
+                            {
+                                requireChar('}');
+                                stop = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!parsing())
+            {}
+            else if (actual_case_id != expected_ctor_count)
+            {
+                parseError(&token1, "wrong number of cases, expected: %d, got: %d",
+                           expected_ctor_count, actual_case_id);
+            }
+            else if (actual_case_id == 0)
+            {
+                // TODO: support empty switch later.
+                tokenError(&token1, "cannot assign type to empty switch expression");
+                out->type = 0;
+            }
+            else
+                out->type = switch_type;
+        }
+        else
+            tokenError(&subject_token, "cannot switch over a non-struct");
+    }
+    popContext();
+    return out;
+}
+
+internal Expression *
 parseOperand(ParserState *state, MemoryArena *arena, Bindings *bindings)
 {
     unpackGlobals;
-    pushContext(tk);
+    pushContext;
 
     Expression *out = 0;
     Token token1 = advance(tk);
@@ -1101,96 +1278,7 @@ parseOperand(ParserState *state, MemoryArena *arena, Bindings *bindings)
         {
             case Keyword_Switch:
             {
-                out = newExpression(arena, EC_Switch, 0);
-                auto myswitch = castExpression(Switch, out);
-
-                Token subject_token = peekNext(tk);
-                myswitch->subject = parseExpression(state, arena, bindings);
-                if (requireChar(tk, '{'))
-                {
-                    Expression *subject_type = myswitch->subject->type;
-                    if (subject_type->cat == EC_Struct)
-                    {
-                        auto subject_struct = &subject_type->Struct;
-                        auto expected_ctor_count = subject_struct->ctor_count;
-                        allocateArray(arena, expected_ctor_count, myswitch->case_bodies);
-
-                        s32 actual_case_id = 0;
-                        Expression *switch_type = 0;
-                        b32 mismatch_found = false;
-                        for (b32 stop = false; !stop;)
-                        {
-                            Token bar_or_closing_brace = advance(tk);
-                            switch (bar_or_closing_brace.text.chars[0])
-                            {
-                                case '|':
-                                {
-                                    auto temp = beginTemporaryMemory(arena);
-
-                                    Expression *switch_case = parseExpression(state, arena, bindings);
-                                    if (parsing(tk) && requireChar(tk, '{'))
-                                    {
-                                        auto matched_case_id = matchSwitchCase(switch_case);
-                                        endTemporaryMemory(temp);
-
-                                        if (matched_case_id.success)
-                                        {
-                                            auto body_token = peekNext(tk);
-                                            auto body = parseExpression(state, arena, bindings);
-                                            requireChar(tk, '}');
-
-                                            if (switch_type)
-                                            {
-                                                if (!expressionsIdenticalB32(body->type, switch_type))
-                                                {
-                                                    parseError(&body_token, "mismatched return type in input case %d", actual_case_id);
-                                                    pushAttachment(tk, "got", body->type);
-                                                    pushAttachment(tk, "expected", switch_type);
-                                                    mismatch_found = true;
-                                                    stop = true;
-                                                }
-                                            }
-                                            else
-                                                switch_type = body->type;
-
-                                            if (body)
-                                                myswitch->case_bodies[matched_case_id.value] = body;
-                                            else
-                                                tokenError("body cannot be empty");
-                                        }
-                                        else
-                                            tokenError("expression is not a constructor for type");
-                                    }
-
-                                    actual_case_id++;
-                                } break;
-
-                                case '}':
-                                    stop = true;
-                                    break;
-
-                                default:
-                                    tokenError("expect either '|' or '}'");
-                            }
-                        }
-
-                        if (actual_case_id != expected_ctor_count)
-                            parseError(&token1, "wrong number of cases, expected: %d, got: %d", expected_ctor_count, actual_case_id);
-                        else if (!mismatch_found)
-                        {
-                            if (actual_case_id != 0)
-                                out->type = switch_type;
-                            else
-                            {
-                                // TODO: support empty switch later.
-                                tokenError(&token1, "cannot assign type to empty switch expression");
-                                out->type = 0;
-                            }
-                        }
-                    }
-                    else
-                        tokenError(&subject_token, "cannot switch over a non-struct");
-                }
+                out = parseSwitch(state, arena, bindings);
             } break;
 
             default:
@@ -1280,9 +1368,9 @@ parseProof(ParserState *state, MemoryArena *arena, Bindings *bindings, Stack *st
     Expression *out = 0;
 
     unpackGlobals;
-    pushContext(tk);
+    pushContext;
 
-    goal = reduceExpression(state, temp_arena, stack, goal);
+    goal = normalize(state, temp_arena, stack, goal);
 
     Token token = advance(tk);
     switch (auto keyword = matchKeyword(&token))
@@ -1315,14 +1403,14 @@ parseProof(ParserState *state, MemoryArena *arena, Bindings *bindings, Stack *st
                                 Expression *ctor_exp = newExpression(temp_arena, EC_ConstructorRef, subject_type);
                                 ctor_exp->ConstructorRef.id = subject_var->id;
                                 stack->first[subject_var->id] = ctor_exp;
-                                Expression *subgoal = reduceExpression(state, temp_arena, stack, goal);
+                                Expression *subgoal = normalize(state, temp_arena, stack, goal);
                                 Expression *subproof = parseProof(state, temp_arena, bindings, stack, subgoal);
                                 myswitch->case_bodies[ctor_id] = subproof;
                             }
                             else if (ctor_id == 0)
                                 parseError(&tk->last_token, "%d goals remaining", ctor_count);
                             else
-                                tokenError("please begin next subproof for next switch case with '-'");
+                                tokenError("please begin to prove next switch case with '-'");
                         }
                     }
                     else
@@ -1369,7 +1457,7 @@ internal void
 parseDefine(ParserState *state, MemoryArena* arena, b32 is_theorem = false)
 {
     unpackGlobals;
-    pushContext(tk);
+    pushContext;
 
     Token define_name = advance(tk);
     if ((define_name.cat == TC_Alphanumeric)
@@ -1514,7 +1602,7 @@ internal void
 parseTopLevel(ParserState *state, MemoryArena *arena)
 {
     unpackGlobals;
-    pushContext(tk);
+    pushContext;
 
     while (parsing(tk))
     {
@@ -1547,7 +1635,7 @@ parseTopLevel(ParserState *state, MemoryArena *arena)
                 {
                     Stack empty_stack = {};
                     empty_stack.arena = arena;
-                    Expression *reduced = reduceExpression(state, arena, &empty_stack, exp);
+                    Expression *reduced = normalize(state, arena, &empty_stack, exp);
 
                     if (should_print)
                     {
@@ -1576,8 +1664,8 @@ parseTopLevel(ParserState *state, MemoryArena *arena)
                     {
                         Stack stack = {};
                         stack.arena = temp_arena;
-                        auto expected_reduced = reduceExpression(state, temp_arena, &stack, expected_type);
-                        auto actual_reduced = reduceExpression(state, temp_arena, &stack, exp->type);
+                        auto expected_reduced = normalize(state, temp_arena, &stack, expected_type);
+                        auto actual_reduced = normalize(state, temp_arena, &stack, exp->type);
                         if (!expressionsIdenticalB32(expected_reduced, actual_reduced))
                         {
                             tokenError(&token, "type check failed");

@@ -8,8 +8,8 @@ define &(a: Bool, b: Bool) : Bool
 {
  switch a
  {
-  | F { F }
-  | T { b }
+  F -> F,
+  T -> b,
   }
  }
 
@@ -17,8 +17,8 @@ define |(a: Bool, b: Bool) : Bool
 {
  switch a
  {
-  | T { T }
-  | F { b }
+  T -> T,
+  F -> b,
   }
  }
 
@@ -44,5 +44,9 @@ theorem notSoEasy(a: Bool) : (a & F = F)
 
 print notSoEasy;
 
-;; todo
-;; printRaw F = T = F;
+theorem andCommutative(a: Bool, b: Bool, c: Bool) : (a & (b & c) = (a & b) & c)
+{
+ switch a;
+ - return truth;
+ - return truth;
+ }

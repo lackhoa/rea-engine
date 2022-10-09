@@ -8,8 +8,8 @@ define &(a: Bool, b: Bool) : Bool
 {
  switch a
  {
-  | F { F }
-  | T { b }
+  F -> F,
+  T -> b,
   }
  }
 
@@ -17,14 +17,13 @@ define |(a: Bool, b: Bool) : Bool
 {
  switch a
  {
-  | T { T }
-  | F { b }
+  T -> T,
+  F -> b,
   }
  }
 
-
 printRaw &(T, |(F,T,),);
-printRaw (switch T {| T { & } | F { | } })(T, F);
+printRaw (switch T { T -> &, F -> | })(T, F);
 printRaw F & T | T;
 printRaw F & T | T & F | T;
 
@@ -39,4 +38,4 @@ print test;
 
 
 check truth : F & T | T = T;
-check truth : (switch T {| T { & } | F { | } })(T, F) = F;
+check truth : (switch T {T -> &, F -> | })(T, F) = F;

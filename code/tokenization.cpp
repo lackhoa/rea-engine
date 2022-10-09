@@ -16,6 +16,7 @@ enum TokenCategory
     TC_PairingOpen     = 257,
     TC_PairingClose    = 258,
     TC_Alphanumeric    = 259,
+    TC_Arrow           = 260,
 };
 
 enum Keyword
@@ -233,23 +234,23 @@ pushAttachment(Tokenizer *tk, char *string, Expression *exp)
 }
 
 internal void
-pushContext_(Tokenizer *tk, ParseContext *context)
+pushContext_(ParseContext *context, Tokenizer *tk = global_tokenizer)
 {
     ParseContext *old_first = tk->context;
     tk->context = context;
     context->next = old_first;
 }
 
-#define pushContext(tk) { ParseContext context = {(char*)__func__}; pushContext_(tk, &context); }
+#define pushContext { ParseContext context = {(char*)__func__}; pushContext_(&context); }
 
 internal void
-popContext(Tokenizer *tk)
+popContext(Tokenizer *tk = global_tokenizer)
 {
     tk->context = tk->context->next;
 }
 
 inline b32
-parsing(Tokenizer *tk)
+parsing(Tokenizer *tk = global_tokenizer)
 {
     return ((*tk->at != 0) && (!tk->error));
 }
@@ -321,7 +322,7 @@ matchKeyword(Token *token)
 }
 
 inline Token
-advance(Tokenizer *tk)
+advance(Tokenizer *tk = global_tokenizer)
 {
     Token out = {};
     eatAllSpaces(tk);
@@ -353,11 +354,14 @@ advance(Tokenizer *tk)
     out.text.length = (s32)(tk->at - out.text.chars);
     tk->last_token = out;
 
+    if (equals(out.text, "->"))
+        out.cat = TC_Arrow;
+
     return out;
 }
 
 inline Token
-peekNext(Tokenizer *tk)
+peekNext(Tokenizer *tk = global_tokenizer)
 {
     auto tk_copy = *tk;
     return advance(&tk_copy);
