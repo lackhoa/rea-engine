@@ -223,6 +223,8 @@ struct Tokenizer
     s32   column;
 };
 
+global_variable Tokenizer *global_tokenizer;
+
 inline void
 pushAttachment(Tokenizer *tk, char *string, Expression *exp)
 {

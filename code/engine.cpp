@@ -1,12 +1,20 @@
 #include "utils.h"
 #include "memory.h"
-#include "globals.h"
 #include "platform.h"
 #include "intrinsics.h"
 #include "tokenization.cpp"
 
 // NOTE: Eventually this will talk to the editor, but let's work in console mode for now.
 // Important: all parsing must be aborted when the tokenizer encounters error.
+
+global_variable PlatformPrint             *platformPrint;
+global_variable PlatformReadEntireFile    *platformReadEntireFile;
+global_variable PlatformFreeFileMemory    *platformFreeFileMemory;
+global_variable PlatformGetWallClock      *platformGetWallClock;
+global_variable PlatformGetSecondsElapsed *platformGetSecondsElapsed;
+
+// NOTE: Think of this like the function stack, we'll clean it every once in a while.
+global_variable MemoryArena *global_temp_arena;
 
 enum ExpressionCategory
 {
@@ -255,7 +263,7 @@ printExpression(MemoryArena *buffer, Expression *exp, b32 detailed = false)
 
         default:
         {
-            myprint(buffer, "<unimplemented category: %d>", exp->cat);
+            myprint(buffer, "<unimplemented category: %u>", exp->cat);
         } break;
     }
 }
@@ -338,14 +346,13 @@ extendBindings(MemoryArena *arena, Bindings *outer)
 
 struct ParserState
 {
-    MemoryArena *temp_arena;  // NOTE: reset after parsing each top-level form.
     Bindings     global_bindings;
     Tokenizer   *tokenizer;
 };
 
-#define unpackState \
-    auto tk         = state->tokenizer;         \
-    auto temp_arena = state->temp_arena;
+#define unpackGlobals \
+    auto tk         = global_tokenizer; \
+    auto temp_arena = global_temp_arena;
 
 struct LookupName { Binding* slot; b32 found; };
 
@@ -441,7 +448,7 @@ lookupNameRecursive(Bindings *bindings, Token *token)
 internal Constructor
 parseConstructorDef(ParserState *state, MemoryArena *arena, Expression *mystruct, s32 ctor_id)
 {
-    unpackState;
+    unpackGlobals;
     Constructor out = {};
     Token ctor_token = advance(tk);
     switch (ctor_token.cat)
@@ -475,17 +482,14 @@ parseConstructorDef(ParserState *state, MemoryArena *arena, Expression *mystruct
 }
 
 internal void
-parseError(Tokenizer *tk, Token *token, char *format, ...)
+parseErrorVA(Token *token, char *format, va_list arg_list, Tokenizer *tk = global_tokenizer)
 {
     assert(parsing(tk));
     auto arena = tk->error_arena;
     tk->error = pushStructZero(arena, ParseErrorData);
     tk->error->message = subArena(tk->error_arena, 256);
 
-    va_list arg_list;
-    __crt_va_start(arg_list, format);
     printToBufferVA(&tk->error->message, format, arg_list);
-    __crt_va_end(arg_list);
 
     tk->error->token = *token;
     tk->error->context = tk->context->first;
@@ -493,18 +497,26 @@ parseError(Tokenizer *tk, Token *token, char *format, ...)
 }
 
 internal void
-tokenError(Tokenizer *tk, Token *token, char *message)
+parseError(Token *token, char *format, ...)
 {
-    auto arena = tk->error_arena;
-    parseError(tk, token, message);
+    va_list arg_list;
+    __crt_va_start(arg_list, format);
+    parseErrorVA(token, format, arg_list);
+    __crt_va_end(arg_list);
+}
+
+internal void
+tokenError(Token *token, char *message, Tokenizer *tk = global_tokenizer)
+{
+    parseError(token, message, tk);
     myprint(&tk->error->message, ": ");
     myprint(&tk->error->message, token->text);
 }
 
 internal void
-tokenError(Tokenizer *tk, char *message)
+tokenError(char *message, Tokenizer *tk = global_tokenizer)
 {
-    tokenError(tk, &tk->last_token, message);
+    tokenError(&tk->last_token, message);
 }
 
 inline b32
@@ -517,17 +529,34 @@ requireChar(Tokenizer *tk, char c)
         if (token.text.length == 1 && token.text.chars[0] == c)
             out = true;
         else
-            parseError(tk, &token, "expected character %c", c);
+            parseError(&token, "expected character %c", c);
     }
     return out;
 }
 
-inline void
+inline b32
+requireChar(char c)
+{
+    return requireChar(global_tokenizer, c);
+}
+
+inline b32
 optionalChar(Tokenizer *tk, char c)
 {
+    b32 out = false;
     Token token = peekNext(tk);
     if (equals(&token, c))
+    {
+        out = true;
         advance(tk);
+    }
+    return out;
+}
+
+inline b32
+optionalChar(char c)
+{
+    return optionalChar(global_tokenizer, c);
 }
 
 internal b32
@@ -568,14 +597,14 @@ addBuiltinStruct(ParserState *state, MemoryArena *arena, char *name, const char 
 internal void
 parseTypedef(ParserState *state, MemoryArena *arena)
 {
-    unpackState;
+    unpackGlobals;
     Token type_name = advance(tk);
     if (type_name.cat == TC_Alphanumeric)
     {
         // NOTE: the type is in scope of its own constructor.
         LookupName lookup = lookupNameCurrentFrame(&state->global_bindings, type_name.text, true);
         if (lookup.found)
-            tokenError(tk, "redefinition of type");
+            tokenError("redefinition of type");
         else
         {
             auto *struct_exp = newExpression(arena, EC_Struct, &builtin_Set);
@@ -624,7 +653,7 @@ parseTypedef(ParserState *state, MemoryArena *arena)
                     actual_case_count++;
                 }
                 else
-                    parseError(tk, &bar_or_stop, "Expected '|' or '}'");
+                    parseError(&bar_or_stop, "Expected '|' or '}'");
             }
             assert(actual_case_count == expected_case_count);
             mystruct->ctor_count = actual_case_count;
@@ -824,19 +853,21 @@ internal Expression *
 reduceExpression(ParserState *state, MemoryArena *arena, Stack *stack, Expression *in)
 {
     Expression *out = 0;
+    unpackGlobals;
 
     switch (in->cat)
     {
         case EC_Variable:
         {
             out = resolve(stack, in->Variable);
+            if (!out)
+                out = in;
         } break;
 
         case EC_Application:
         {
-            auto temp = beginTemporaryMemory(state->temp_arena);
             auto in_app = &in->Application;
-            Expression **reduced_args = pushArray(state->temp_arena, in_app->arg_count, Expression*);
+            Expression **reduced_args = pushArray(temp_arena, in_app->arg_count, Expression*);
             for (auto arg_id = 0;
                  arg_id < in_app->arg_count;
                  arg_id++)
@@ -864,6 +895,7 @@ reduceExpression(ParserState *state, MemoryArena *arena, Stack *stack, Expressio
 
                 if (!out)
                 {
+                    // TODO: don't allocate if the out & in are identical.
                     out = newExpression(arena, EC_Application, in->type);
                     out->cat = EC_Application;
                     auto app = castExpression(Application, out);
@@ -877,22 +909,31 @@ reduceExpression(ParserState *state, MemoryArena *arena, Stack *stack, Expressio
                     }
                 }
             }
-            endTemporaryMemory(temp);
         } break;
 
         case EC_Switch:
         {
-            auto switch0 = &in->Switch;
-            Expression *reduced_subject = reduceExpression(state, arena, stack, switch0->subject);
+            auto myswitch = &in->Switch;
+            Expression *reduced_subject = reduceExpression(state, arena, stack, myswitch->subject);
 
             auto subject_type = reduced_subject->type;
-            assert(subject_type->cat == EC_Struct);
+            auto switch_struct = castExpression(Struct, subject_type);
             auto ctor_id = matchSwitchCase(reduced_subject);
 
             if (ctor_id.success)
-                out = reduceExpression(state, arena, stack, switch0->case_bodies[ctor_id.value]);
+                out = reduceExpression(state, arena, stack, myswitch->case_bodies[ctor_id.value]);
             else
-                todoIncomplete;
+            {
+                // todo: #memory don't copy too soon
+                out = newExpression(arena, EC_Switch, subject_type);
+                auto reduced_bodies = pushArray(arena, switch_struct->ctor_count, Expression*);
+                for (int ctor_id = 0; ctor_id < switch_struct->ctor_count; ctor_id++)
+                {
+                    reduced_bodies[ctor_id] = reduceExpression(state, arena, stack, myswitch->case_bodies[ctor_id]);
+                }
+                out->Switch.subject     = reduced_subject;
+                out->Switch.case_bodies = reduced_bodies;
+            }
         } break;
 
         default:
@@ -907,7 +948,7 @@ reduceExpression(ParserState *state, MemoryArena *arena, Stack *stack, Expressio
 internal Expression *
 newApplication(ParserState *state, MemoryArena *arena, Token *blame_token, Expression *op, Expression **args, s32 arg_count)
 {
-    unpackState;
+    unpackGlobals;
     Expression *out = 0;
     auto signature = castExpression(ArrowType, op->type);
     if (signature)
@@ -937,7 +978,7 @@ newApplication(ParserState *state, MemoryArena *arena, Token *blame_token, Expre
                 else
                 {
                     out = 0;
-                    parseError(tk, blame_token, "argument %d has wrong type", arg_id);
+                    parseError(blame_token, "argument %d has wrong type", arg_id);
                     auto msg = &tk->error->message;
                     pushAttachment(tk, "got", arg->type);
                     pushAttachment(tk, "expected", expected_arg_type);
@@ -950,12 +991,12 @@ newApplication(ParserState *state, MemoryArena *arena, Token *blame_token, Expre
         }
         else
         {
-            parseError(tk, blame_token, "incorrect arg count: %d (procedure expected %d)", arg_count, signature->arg_count);
+            parseError(blame_token, "incorrect arg count: %d (procedure expected %d)", arg_count, signature->arg_count);
         }    
     }
     else
     {
-        tokenError(tk, blame_token, "operator must have an arrow type");
+        tokenError(blame_token, "operator must have an arrow type");
     }
     
     return out;
@@ -964,7 +1005,7 @@ newApplication(ParserState *state, MemoryArena *arena, Token *blame_token, Expre
 internal Expression *
 parseExpression(ParserState *state, MemoryArena *arena, Bindings *bindings, s32 min_precedence = -9999)
 {
-    unpackState;
+    unpackGlobals;
     pushContext(tk);
 
     Expression *out = parseOperand(state, arena, bindings);
@@ -1026,12 +1067,12 @@ parseExpression(ParserState *state, MemoryArena *arena, Bindings *bindings, s32 
                     }
                 }
                 else
-                    tokenError(tk, &op_token, "unbound operator");
+                    tokenError(&op_token, "unbound operator");
             }
             else if (isExpressionEndMarker(&op_token))
                 stop = true;
             else
-                tokenError(tk, &op_token, "expected operator token, got");
+                tokenError(&op_token, "expected operator token, got");
         }
     }
 
@@ -1049,7 +1090,7 @@ parseExpression(ParserState *state, MemoryArena *arena, Bindings *bindings, s32 
 internal Expression *
 parseOperand(ParserState *state, MemoryArena *arena, Bindings *bindings)
 {
-    unpackState;
+    unpackGlobals;
     pushContext(tk);
 
     Expression *out = 0;
@@ -1102,7 +1143,7 @@ parseOperand(ParserState *state, MemoryArena *arena, Bindings *bindings)
                                             {
                                                 if (!expressionsIdenticalB32(body->type, switch_type))
                                                 {
-                                                    parseError(tk, &body_token, "mismatched return type in input case %d", actual_case_id);
+                                                    parseError(&body_token, "mismatched return type in input case %d", actual_case_id);
                                                     pushAttachment(tk, "got", body->type);
                                                     pushAttachment(tk, "expected", switch_type);
                                                     mismatch_found = true;
@@ -1115,10 +1156,10 @@ parseOperand(ParserState *state, MemoryArena *arena, Bindings *bindings)
                                             if (body)
                                                 myswitch->case_bodies[matched_case_id.value] = body;
                                             else
-                                                tokenError(tk, "body cannot be empty");
+                                                tokenError("body cannot be empty");
                                         }
                                         else
-                                            tokenError(tk, "expression is not a constructor for type");
+                                            tokenError("expression is not a constructor for type");
                                     }
 
                                     actual_case_id++;
@@ -1129,12 +1170,12 @@ parseOperand(ParserState *state, MemoryArena *arena, Bindings *bindings)
                                     break;
 
                                 default:
-                                    tokenError(tk, "expect either '|' or '}'");
+                                    tokenError("expect either '|' or '}'");
                             }
                         }
 
                         if (actual_case_id != expected_ctor_count)
-                            parseError(tk, &token1, "wrong number of cases, expected: %d, got: %d", expected_ctor_count, actual_case_id);
+                            parseError(&token1, "wrong number of cases, expected: %d, got: %d", expected_ctor_count, actual_case_id);
                         else if (!mismatch_found)
                         {
                             if (actual_case_id != 0)
@@ -1142,18 +1183,18 @@ parseOperand(ParserState *state, MemoryArena *arena, Bindings *bindings)
                             else
                             {
                                 // TODO: support empty switch later.
-                                tokenError(tk, &token1, "cannot assign type to empty switch expression");
+                                tokenError(&token1, "cannot assign type to empty switch expression");
                                 out->type = 0;
                             }
                         }
                     }
                     else
-                        tokenError(tk, &subject_token, "cannot switch over a non-struct");
+                        tokenError(&subject_token, "cannot switch over a non-struct");
                 }
             } break;
 
             default:
-                tokenError(tk, "keyword not part of expression");
+                tokenError("keyword not part of expression");
         }
     }
     else if (isIdentifier(&token1))
@@ -1167,7 +1208,7 @@ parseOperand(ParserState *state, MemoryArena *arena, Bindings *bindings)
                 todoIncomplete;
         }
         else
-            tokenError(tk, "unbound identifier in expression");
+            tokenError("unbound identifier in expression");
     }
     else if (equals(&token1, '('))
     {
@@ -1176,7 +1217,7 @@ parseOperand(ParserState *state, MemoryArena *arena, Bindings *bindings)
             requireChar(tk, ')');
     }
     else
-        tokenError(tk, "expected start of expression");
+        tokenError("expected start of expression");
 
     if (parsing(tk))
     {
@@ -1225,7 +1266,7 @@ parseOperand(ParserState *state, MemoryArena *arena, Bindings *bindings)
                 }
             }
             else
-                tokenError(tk, "cannot call non-procedure");
+                tokenError("cannot call non-procedure");
         }
     }
 
@@ -1238,10 +1279,10 @@ parseProof(ParserState *state, MemoryArena *arena, Bindings *bindings, Stack *st
 {
     Expression *out = 0;
 
-    unpackState;
+    unpackGlobals;
     pushContext(tk);
 
-    goal = reduceExpression(state, state->temp_arena, stack, goal);
+    goal = reduceExpression(state, temp_arena, stack, goal);
 
     Token token = advance(tk);
     switch (auto keyword = matchKeyword(&token))
@@ -1249,36 +1290,47 @@ parseProof(ParserState *state, MemoryArena *arena, Bindings *bindings, Stack *st
         case Keyword_Switch:
         {
             auto switch_subject = parseExpression(state, arena, bindings);
-            if (parsing(tk) && requireChar(tk, ';'))
+            auto subject_var = castExpression(Variable, switch_subject);
+            if (subject_var)
             {
-                out = newExpression(arena, EC_Switch, 0);
-                auto myswitch = &out->Switch;
-                myswitch->subject = switch_subject;
-                auto subject_type = switch_subject->type;
-                if (!subject_type)
-                    tokenError(tk, "cannot infer subject type");
-                else if (subject_type->cat != EC_Struct)
-                    tokenError(tk, "cannot switch on non-structs");
-                else
+                if (requireChar(tk, ';'))
                 {
-                    auto subject_struct = &subject_type->Struct;
-                    auto ctor_count = subject_struct->ctor_count;
-                    allocateArray(arena, ctor_count, myswitch->case_bodies);
-                    for (s32 ctor_id = 0;
-                         (ctor_id < ctor_count) && parsing(tk);
-                         ctor_id++)
+                    out = newExpression(arena, EC_Switch, 0);
+                    auto myswitch = &out->Switch;
+                    myswitch->subject = switch_subject;
+                    auto subject_type = myswitch->subject->type;
+                    auto subject_struct = castExpression(Struct, subject_type);
+                    if (subject_struct)
                     {
-                        if (requireChar(tk, '-'))
+                        auto ctor_count = subject_struct->ctor_count;
+                        allocateArray(arena, ctor_count, myswitch->case_bodies);
+                        for (s32 ctor_id = 0;
+                             (ctor_id < ctor_count) && parsing(tk);
+                             ctor_id++)
                         {
-                            // todo: bind variable to the stack 
-                            Expression *subgoal = reduceExpression(state, temp_arena, stack, goal);
-                            Expression *subproof = parseProof(state, temp_arena, bindings, stack, subgoal);
+                            if (optionalChar('-'))
+                            {
+                                // todo: bind variable to the stack 
+                                // bookmark: what if we switched over composite expression as subject? the stack wouldn't help at all
+                                Expression *ctor_exp = newExpression(temp_arena, EC_ConstructorRef, subject_type);
+                                ctor_exp->ConstructorRef.id = subject_var->id;
+                                stack->first[subject_var->id] = ctor_exp;
+                                Expression *subgoal = reduceExpression(state, temp_arena, stack, goal);
+                                Expression *subproof = parseProof(state, temp_arena, bindings, stack, subgoal);
+                                myswitch->case_bodies[ctor_id] = subproof;
+                            }
+                            else if (ctor_id == 0)
+                                parseError(&tk->last_token, "%d goals remaining", ctor_count);
+                            else
+                                tokenError("please begin next subproof for next switch case with '-'");
                         }
-                        else
-                            tokenError(tk, "please begin subproof with '-'");
                     }
+                    else
+                        tokenError("cannot switch on non-structs");
                 }
             }
+            else
+                tokenError("cannot switch over non-var (for now)");
         } break;
 
         case Keyword_Return:
@@ -1288,12 +1340,11 @@ parseProof(ParserState *state, MemoryArena *arena, Bindings *bindings, Stack *st
             if (parsing(tk))
             {
                 if (!returned->type)
-                    tokenError(tk, &return_token, "failed to infer type");
+                    tokenError(&return_token, "failed to infer type");
                 else if (!expressionsIdenticalB32(returned->type, goal))
                 {
-                    parseError(tk, &return_token, "returned expression doesn't have the correct type");
+                    parseError(&return_token, "returned expression doesn't have the correct type");
                     pushAttachment(tk, "returned type", returned->type);
-                    pushAttachment(tk, "actual goal", goal);
                 }
                 else
                     out = returned;
@@ -1302,7 +1353,12 @@ parseProof(ParserState *state, MemoryArena *arena, Bindings *bindings, Stack *st
         } break;
 
         default:
-            tokenError(tk, "unexpected keyword");
+            tokenError(&tk->last_token, "please input a proof command in place of token");
+    }
+
+    if (!parsing(tk))
+    {
+        pushAttachment(global_tokenizer, "proof in progress", goal);
     }
 
     popContext(tk);
@@ -1312,7 +1368,7 @@ parseProof(ParserState *state, MemoryArena *arena, Bindings *bindings, Stack *st
 internal void
 parseDefine(ParserState *state, MemoryArena* arena, b32 is_theorem = false)
 {
-    unpackState;
+    unpackGlobals;
     pushContext(tk);
 
     Token define_name = advance(tk);
@@ -1321,7 +1377,7 @@ parseDefine(ParserState *state, MemoryArena* arena, b32 is_theorem = false)
     {
         auto define_slot = lookupNameCurrentFrame(&state->global_bindings, define_name.text, true);
         if (define_slot.found)
-            tokenError(tk, "re-definition");
+            tokenError("re-definition");
         else if (requireChar(tk, '('))
         {
             auto  define_type       = newExpression(arena, EC_ArrowType, &builtin_Proc);
@@ -1368,7 +1424,6 @@ parseDefine(ParserState *state, MemoryArena* arena, b32 is_theorem = false)
             signature->arg_count = expected_arg_count;
             allocateArray(arena, expected_arg_count, signature->args);
 
-            auto temp = beginTemporaryMemory(state->temp_arena);
             Bindings *local_bindings = extendBindings(arena, &state->global_bindings);
             s32 actual_arg_count = 0;
             for (s32 arg_id = 0, stop = 0;
@@ -1383,7 +1438,7 @@ parseDefine(ParserState *state, MemoryArena* arena, b32 is_theorem = false)
                 {
                     auto arg_name_lookup = lookupNameCurrentFrame(local_bindings, arg_name_or_end.text, true);
                     if (arg_name_lookup.found)
-                        tokenError(tk, "duplicate arg name");
+                        tokenError("duplicate arg name");
                     else
                     {
                         auto arg_exp = newExpression(arena, EC_Variable, 0);
@@ -1404,13 +1459,16 @@ parseDefine(ParserState *state, MemoryArena* arena, b32 is_theorem = false)
                         if (equals(&delimiter, ')'))
                             stop = true;
                         else if (!equals(&delimiter, ','))
-                            tokenError(tk, "unexpected token after arg type");
+                            tokenError("unexpected token after arg type");
                     }
                 }
                 else
-                    tokenError(tk, "expected arg name");
+                    tokenError("expected arg name");
             }
-            assert(actual_arg_count == expected_arg_count);
+            if (parsing(tk))
+            {
+                assert(actual_arg_count == expected_arg_count);
+            }
 
             // return type
             requireChar(tk, ':');
@@ -1421,9 +1479,11 @@ parseDefine(ParserState *state, MemoryArena* arena, b32 is_theorem = false)
                 Expression *body = 0;
                 if (is_theorem)
                 {
-                    Stack empty_stack = {};
-                    empty_stack.arena = arena;
-                    body = parseProof(state, arena, local_bindings, &empty_stack, signature->return_type);
+                    Stack stack = {};
+                    stack.arena = temp_arena;
+                    stack.count = actual_arg_count;
+                    allocateArrayZero(temp_arena, actual_arg_count, stack.first);
+                    body = parseProof(state, arena, local_bindings, &stack, signature->return_type);
                 }
                 else
                 {
@@ -1437,16 +1497,14 @@ parseDefine(ParserState *state, MemoryArena* arena, b32 is_theorem = false)
                     {
                         auto body_type = proc->body->type;
                         if (body_type != signature->return_type)
-                            tokenError(tk, &body_token, "body has wrong type");
+                            tokenError(&body_token, "body has wrong type");
                     }
                 }
             }
-                
-            endTemporaryMemory(temp);
         }
     }
     else
-        tokenError(tk, "expected a name to be defined");
+        tokenError("expected a name to be defined");
 
     popContext(tk);
 }
@@ -1455,7 +1513,7 @@ parseDefine(ParserState *state, MemoryArena* arena, b32 is_theorem = false)
 internal void
 parseTopLevel(ParserState *state, MemoryArena *arena)
 {
-    unpackState;
+    unpackGlobals;
     pushContext(tk);
 
     while (parsing(tk))
@@ -1522,7 +1580,7 @@ parseTopLevel(ParserState *state, MemoryArena *arena)
                         auto actual_reduced = reduceExpression(state, temp_arena, &stack, exp->type);
                         if (!expressionsIdenticalB32(expected_reduced, actual_reduced))
                         {
-                            tokenError(tk, &token, "type check failed");
+                            tokenError(&token, "type check failed");
                             pushAttachment(tk, "expected type", expected_reduced);
                             pushAttachment(tk, "actual type", actual_reduced);
                         }
@@ -1534,7 +1592,7 @@ parseTopLevel(ParserState *state, MemoryArena *arena)
             case 0: break;
 
             default:
-                tokenError(tk, "unexpected token");
+                tokenError("unexpected token");
         }
         endTemporaryMemory(top_level_temp);
     }
@@ -1551,98 +1609,94 @@ isMatchingPair(Token *left, Token *right)
             ((l == '{') && (r == '}')));
 }
 
-struct CompileOutput { ParserState *state; b32 success; };
-internal CompileOutput
-compile(MemoryArena *arena, char *input, char *input_file)
+internal b32
+compile(MemoryArena *arena, char *input_file)
 {
-    b32 success = 0;
-
-    ParserState *state = pushStruct(arena, ParserState);
-
-    auto temp_arena  = subArena(arena, megaBytes(2));
-    auto error_arena = subArena(arena, kiloBytes(8));
-    {// mark: initialize state
-        state->temp_arena            = &temp_arena;
-        state->global_bindings.arena = arena;
-
-        state->tokenizer             = pushStruct(arena, Tokenizer);
-        state->tokenizer->error_arena = &error_arena;
-        state->tokenizer->line_number = 1;
-        state->tokenizer->column      = 1;
-        state->tokenizer->at          = input;
-
-        addBuiltinName(state, "identical", &builtin_identical);
-        addBuiltinName(state, "Set",  &builtin_Set);
-        addBuiltinName(state, "Prop", &builtin_Prop);
-        addBuiltinName(state, "Proc", &builtin_Proc);
-        addBuiltinMacro(state, "=");
-
-        const char *truth_members[] = {"truth"};
-        addBuiltinStruct(state, arena, "True", truth_members, 1);
-        builtin_True = castAst(Expression, lookupNameCurrentFrame(&state->global_bindings, toString("True"), false).slot->value);
-        builtin_truth = castAst(Expression, lookupNameCurrentFrame(&state->global_bindings, toString("truth"), false).slot->value);
-        builtin_False = castAst(Expression, lookupNameCurrentFrame(&state->global_bindings, toString("False"), false).slot->value);
-
-        addBuiltinStruct(state, arena, "False", (const char **)0, 0);
-    }
-
-    parseTopLevel(state, arena);
-    ParseError error = state->tokenizer->error;
-    if (error)
-    {
-        success = 1;
-        printf("%s:%d:%d: [%s] %s",
-               input_file,
-
-               error->token.line_number,
-               error->token.column,
-
-               error->context,
-               error->message.base);
-
-        if (error->attached_count > 0)
-        {
-            printf(" (");
-            for (int attached_id = 0;
-                 attached_id < error->attached_count;
-                 attached_id++)
-            {
-                auto attachment = error->attached[attached_id];
-                printf("%s: ", attachment.string);
-                printExpression(0, attachment.expression);
-                if (attached_id != error->attached_count-1) 
-                    printf(", ");
-            }
-            printf(")");
-        }
-        printf("\n");
-    }
-
-    checkArena(arena);
-    checkArena(state->temp_arena);
-    checkArena(state->tokenizer->error_arena);
-
-    return CompileOutput{ state, success, };
-}
-
-// todo: not sure what this function is for, remove?
-inline int
-testCaseCompile(MemoryArena *arena, char *input_file)
-{
-    int out = 0;
+    b32 success = true;
+    auto begin_time = platformGetWallClock(arena);
     ReadFileResult read = platformReadEntireFile(input_file);
     if (read.content)
     {
-        auto [state, success] = compile(arena, read.content, input_file);
-        out = success;
+        ParserState *state = pushStruct(arena, ParserState);
+
+        auto temp_arena  = subArena(arena, megaBytes(2));
+        auto error_arena = subArena(arena, kiloBytes(8));
+        {// mark: initialize state
+            global_temp_arena            = &temp_arena;
+            state->global_bindings.arena = arena;
+
+            state->tokenizer             = pushStruct(arena, Tokenizer);
+            state->tokenizer->error_arena = &error_arena;
+            state->tokenizer->line_number = 1;
+            state->tokenizer->column      = 1;
+            state->tokenizer->at          = read.content;
+
+            global_tokenizer = state->tokenizer;
+
+            addBuiltinName(state, "identical", &builtin_identical);
+            addBuiltinName(state, "Set",  &builtin_Set);
+            addBuiltinName(state, "Prop", &builtin_Prop);
+            addBuiltinName(state, "Proc", &builtin_Proc);
+            addBuiltinMacro(state, "=");
+
+            const char *truth_members[] = {"truth"};
+            addBuiltinStruct(state, arena, "True", truth_members, 1);
+            builtin_True = castAst(Expression, lookupNameCurrentFrame(&state->global_bindings, toString("True"), false).slot->value);
+            builtin_truth = castAst(Expression, lookupNameCurrentFrame(&state->global_bindings, toString("truth"), false).slot->value);
+            builtin_False = castAst(Expression, lookupNameCurrentFrame(&state->global_bindings, toString("False"), false).slot->value);
+
+            addBuiltinStruct(state, arena, "False", (const char **)0, 0);
+        }
+
+        parseTopLevel(state, arena);
+        ParseError error = state->tokenizer->error;
+        if (error)
+        {
+            success = false;
+            printf("%s:%d:%d: [%s] %s",
+                   input_file,
+
+                   error->token.line_number,
+                   error->token.column,
+
+                   error->context,
+                   error->message.base);
+
+            if (error->attached_count > 0)
+            {
+                printf(" (");
+                for (int attached_id = 0;
+                     attached_id < error->attached_count;
+                     attached_id++)
+                {
+                    auto attachment = error->attached[attached_id];
+                    printf("%s: ", attachment.string);
+                    printExpression(0, attachment.expression);
+                    if (attached_id != error->attached_count-1) 
+                        printf(", ");
+                }
+                printf(")");
+            }
+            printf("\n");
+        }
+
+        checkArena(arena);
+        checkArena(global_temp_arena);
+        checkArena(state->tokenizer->error_arena);
+
         platformFreeFileMemory(read.content);
+
+        auto compile_time = platformGetSecondsElapsed(begin_time, platformGetWallClock(arena));
+        printf("Compile time for file %s: %fs\n", input_file, compile_time);
+        printf("----------------\n");
     }
     else
     {
         printf("Failed to read input file %s", input_file);
-        out = 1;
+        success = false;
     }
-    return out;
+
+    return success;
 }
 
 int
@@ -1650,10 +1704,12 @@ engineMain(EngineMemory *memory)
 {
     assert(arrayCount(keywords) == Keywords_Count_);
 
-    int out = 0;
+    int success = true;
     platformPrint = memory->platformPrint;
     platformReadEntireFile = memory->platformReadEntireFile;
     platformFreeFileMemory = memory->platformFreeFileMemory;
+    platformGetWallClock      = memory->platformGetWallClock;
+    platformGetSecondsElapsed = memory->platformGetSecondsElapsed;
 
     auto init_arena_ = newArena(memory->storage_size, memory->storage);
     auto init_arena = &init_arena_;
@@ -1693,12 +1749,12 @@ engineMain(EngineMemory *memory)
 
     auto compile_arena_ = subArena(init_arena, init_arena->cap - init_arena->used - sizeof(MemoryArena));
     auto compile_arena = &compile_arena_;
-    if (testCaseCompile(compile_arena, "..\\data\\test\\operator.rea"))
-        out = 1;
+    if (!compile(compile_arena, "..\\data\\test\\operator.rea"))
+        success = false;
 
     resetZeroArena(compile_arena);
-    if (testCaseCompile(compile_arena, "..\\data\\test.rea"))
-        out = 1;
+    if (!compile(compile_arena, "..\\data\\test.rea"))
+        success = false;
 
-    return out;
+    return success;
 }

@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <winnt.h>
 
 #include "utils.h"
 #include "platform.h"
@@ -176,6 +177,14 @@ win32GetWallClock(void)
     return result;
 }
 
+inline void *
+platformGetWallClock(MemoryArena *arena)
+{
+    auto out = pushStruct(arena, LARGE_INTEGER);
+    *out = win32GetWallClock();
+    return (void *)out;
+}
+
 // The two inputs come from "QueryPerformanceCounter"
 inline r32
 win32GetSecondsElapsed(LARGE_INTEGER start, LARGE_INTEGER end)
@@ -183,6 +192,14 @@ win32GetSecondsElapsed(LARGE_INTEGER start, LARGE_INTEGER end)
     r32 result = ((r32)(end.QuadPart - start.QuadPart)
                   / (r32)globalPerfCountFrequency);
     return result;
+}
+
+inline r32
+platformGetSecondsElapsed(void *start_, void *end_)
+{
+    auto start = (LARGE_INTEGER *)start_;
+    auto end   = (LARGE_INTEGER *)end_;
+    return win32GetSecondsElapsed(*start, *end);
 }
 
 internal void
@@ -299,18 +316,29 @@ WinMain(HINSTANCE instance,
 }
 #endif
 
+#include <stdio.h>
 int main()
 {
-    int out = 0;
+    int code = 0;
+
+    LARGE_INTEGER perfCountFrequencyResult;
+    QueryPerformanceFrequency(&perfCountFrequencyResult);
+    globalPerfCountFrequency = perfCountFrequencyResult.QuadPart;
+
     EngineMemory engine_memory;
+    engine_memory.platformPrint = &OutputDebugStringA;
     engine_memory.platformReadEntireFile = &win32ReadEntireFile;
     engine_memory.platformFreeFileMemory = &win32FreeFileMemory;
-    engine_memory.platformPrint = &OutputDebugStringA;
-    LPVOID base_address = 0;
+    engine_memory.platformGetWallClock      = &platformGetWallClock;
+    engine_memory.platformGetSecondsElapsed = &platformGetSecondsElapsed;
     engine_memory.storage_size = megaBytes(256);
+    LPVOID base_address = (LPVOID)teraBytes(2);
     engine_memory.storage = VirtualAlloc(base_address, engine_memory.storage_size,
                                          MEM_RESERVE|MEM_COMMIT,
                                          PAGE_READWRITE);
-    out = engineMain(&engine_memory);
-    return out;
+
+    if (!engineMain(&engine_memory))
+        code = 1;
+
+    return code;
 }

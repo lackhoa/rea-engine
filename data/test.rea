@@ -26,7 +26,23 @@ theorem easyClap(a: Bool) : Bool
 {
  return a;
  }
-
 print(easyClap);
 print(easyClap(T));
 print(easyClap(F));
+
+theorem stillEasy(a: Bool) : (F & a = F)
+{
+ return truth;
+ }
+
+theorem notSoEasy(a: Bool) : (a & F = F)
+{
+ switch a;
+ - return truth;
+ - return truth;
+ }
+
+print notSoEasy;
+
+;; todo
+;; printRaw F = T = F;

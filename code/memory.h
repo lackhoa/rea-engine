@@ -46,6 +46,11 @@ pushSize(MemoryArena *arena, size_t size, b32 zero = false)
 #define pushStruct(arena, type) (type *) pushSize(arena, sizeof(type))
 #define pushStructZero(arena, type) (type *) pushSize(arena, sizeof(type), true)
 #define pushArray(arena, count, type) (type *) pushSize(arena, count*sizeof(type))
+#define pushArrayZero(arena, count, type) (type *) pushSize(arena, count*sizeof(type), true)
+#define allocate(arena, x) x = (mytypeof(x)) pushSize(arena, sizeof(*x))
+#define allocateZero(arena, x) x = (mytypeof(x)) pushSize(arena, sizeof(*x), true)
+#define allocateArray(arena, count, x) x = (mytypeof(x)) pushSize(arena, count*sizeof(*x))
+#define allocateArrayZero(arena, count, x) x = (mytypeof(x)) pushSize(arena, count*sizeof(*x), true)
 
 inline MemoryArena
 subArena(MemoryArena *parent, size_t size)
@@ -98,9 +103,6 @@ resetZeroArena(MemoryArena *arena)
 #else
 #    define mytypeof __typeof__
 #endif
-
-#define allocate(arena, x) x = (mytypeof(x)) pushSize(arena, sizeof(*x))
-#define allocateArray(arena, count, x) x = (mytypeof(x)) pushSize(arena, count*sizeof(*x))
 
 #define MEMORY_H
 #endif
