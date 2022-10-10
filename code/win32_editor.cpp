@@ -65,15 +65,15 @@ SafeTruncateUInt64(u64 Value)
     return (u32)Value;
 }
 
-inline void
-win32FreeFileMemory(void *memory)
+void
+platformFreeFileMemory(void *memory)
 {
     if (memory)
         VirtualFree(memory, 0, MEM_RELEASE);
 }
 
-inline ReadFileResult
-win32ReadEntireFile(const char *file_name)
+ReadFileResult
+platformReadEntireFile(const char *file_name)
 {
     ReadFileResult result = {};
 
@@ -95,7 +95,7 @@ win32ReadEntireFile(const char *file_name)
                     result.content_size = fileSize32;
                 }
                 else
-                    win32FreeFileMemory(result.content);
+                    platformFreeFileMemory(result.content);
             }
             else
             {
@@ -177,7 +177,7 @@ win32GetWallClock(void)
     return result;
 }
 
-inline void *
+void *
 platformGetWallClock(MemoryArena *arena)
 {
     auto out = pushStruct(arena, LARGE_INTEGER);
@@ -194,7 +194,7 @@ win32GetSecondsElapsed(LARGE_INTEGER start, LARGE_INTEGER end)
     return result;
 }
 
-inline r32
+r32
 platformGetSecondsElapsed(void *start_, void *end_)
 {
     auto start = (LARGE_INTEGER *)start_;
@@ -245,6 +245,15 @@ win32ResizeDIBSection(win32_offscreen_buffer *buffer, int width, int height)
     buffer->memory = VirtualAlloc(0, (u32)bitmapMemorySize, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
 
     buffer->pitch = width*buffer->bytes_per_pixel;
+}
+
+char *
+platformGetFileFullPath(MemoryArena* arena, char *file)
+{
+    auto out = (char *)getArenaNext(arena);
+    DWORD length = GetFullPathNameA(file, (DWORD)arena->cap, out, 0);
+    arena->used += length+1;
+    return out;
 }
 
 #if 0
@@ -325,19 +334,15 @@ int main()
     QueryPerformanceFrequency(&perfCountFrequencyResult);
     globalPerfCountFrequency = perfCountFrequencyResult.QuadPart;
 
-    EngineMemory engine_memory;
-    engine_memory.platformPrint = &OutputDebugStringA;
-    engine_memory.platformReadEntireFile = &win32ReadEntireFile;
-    engine_memory.platformFreeFileMemory = &win32FreeFileMemory;
-    engine_memory.platformGetWallClock      = &platformGetWallClock;
-    engine_memory.platformGetSecondsElapsed = &platformGetSecondsElapsed;
-    engine_memory.storage_size = megaBytes(256);
+    EngineMemory memory;
+
+    memory.storage_size = megaBytes(256);
     LPVOID base_address = (LPVOID)teraBytes(2);
-    engine_memory.storage = VirtualAlloc(base_address, engine_memory.storage_size,
+    memory.storage = VirtualAlloc(base_address, memory.storage_size,
                                          MEM_RESERVE|MEM_COMMIT,
                                          PAGE_READWRITE);
 
-    if (!engineMain(&engine_memory))
+    if (!engineMain(&memory))
         code = 1;
 
     return code;

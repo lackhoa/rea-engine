@@ -7,3 +7,4 @@ CompileFlags:
     - -Wno-switch
     - -Wno-writable-strings
     - -Wunused-parameter
+    - -Wunused-variable

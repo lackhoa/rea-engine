@@ -1,0 +1,23 @@
+typedef Bool
+{
+ | F
+ | T
+ }
+
+define &(a: Bool, b: Bool) : Bool
+{
+ switch a
+ {
+  F -> F,
+  T -> b
+  }
+ }
+
+define |(a: Bool, b: Bool) : Bool
+{
+ switch a
+ {
+  T -> T,
+  F -> b
+  }
+ }

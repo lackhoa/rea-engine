@@ -17,6 +17,7 @@ enum TokenCategory
     TC_PairingClose    = 258,
     TC_Alphanumeric    = 259,
     TC_Arrow           = 260,
+    TC_StringLiteral   = 261,
 };
 
 enum Keyword
@@ -30,13 +31,22 @@ enum Keyword
     Keyword_PrintRaw,
     Keyword_Check,
     Keyword_Theorem,
-    Keyword_Return,
+    Keyword_Return,  // todo: this is a command, not a keyword, we don't expect it at top-level.
 
     Keywords_Count_,
 };
-
-const char *keywords[] = {"_null_", "typedef", "define", "switch", "print",
+const char *keywords[] = {"", "typedef", "define", "switch", "print",
                           "printRaw", "check", "theorem", "return"};
+
+enum MetaDirective
+{
+    MetaDirective_Null_,
+
+    MetaDirective_Load,
+
+    MetaDirective_Count_,
+};
+const char *metaDirectives[] = {"", "load"};
 
 struct Token
 {
@@ -143,15 +153,17 @@ printToBufferVA(MemoryArena *buffer, char *format, va_list arg_list)
     buffer->used += printed;
 }
 
-inline void
+inline char *
 myprint(MemoryArena *buffer, char *format, ...)
 {
+    auto out = (char *)(buffer->base + buffer->used);
+
     va_list arg_list;
     __crt_va_start(arg_list, format);
 
     if (buffer)
     {
-        char *at = (char *)(buffer->base + buffer->used);
+        char *at = out;
         auto printed = vsprintf_s(at, (buffer->cap-1 - buffer->used), format, arg_list);
         buffer->used += printed;
         buffer->base[buffer->used] = 0; // nil-termination
@@ -160,28 +172,29 @@ myprint(MemoryArena *buffer, char *format, ...)
         vprintf_s(format, arg_list);
 
     __crt_va_end(arg_list);
+
+    return out;
 }
 
-inline void
+inline char *
 myprint(MemoryArena *buffer, String s)
 {
+    auto out = (char *)getArenaNext(buffer);
+
     if (buffer)
     {
-        char *at = (char *)(buffer->base + buffer->used);
-        assert((buffer->cap - buffer->used) > s.length);
-
+        char *at = out;
         const char *c = s.chars;
         for (s32 index = 0; index < s.length; index++)
             *at++ = *c++;
-        *at = 0;
-
+        *at++ = 0;
         buffer->used = at - (char *)buffer->base;
         assert(buffer->used <= buffer->cap);
     }
     else
-    {
         printf("%.*s", s.length, s.chars);
-    }
+
+    return out;
 }
 
 inline void
@@ -218,10 +231,12 @@ struct Tokenizer
     MemoryArena  *error_arena;
     ParseContext *context;
 
-    char *at;
-    Token last_token;
-    s32   line_number;
-    s32   column;
+    char  *at;
+    Token  last_token;
+    s32    line_number;
+    s32    column;
+
+    Tokenizer *next;  // for include files
 };
 
 global_variable Tokenizer *global_tokenizer;
@@ -233,6 +248,12 @@ pushAttachment(Tokenizer *tk, char *string, Expression *exp)
     tk->error->attached[tk->error->attached_count++] = {string, exp};
 }
 
+inline void
+pushAttachment(char *string, Expression *exp)
+{
+    pushAttachment(global_tokenizer, string, exp);
+}
+
 internal void
 pushContext_(ParseContext *context, Tokenizer *tk = global_tokenizer)
 {
@@ -242,6 +263,7 @@ pushContext_(ParseContext *context, Tokenizer *tk = global_tokenizer)
 }
 
 #define pushContext { ParseContext context = {(char*)__func__}; pushContext_(&context); }
+#define pushSubContext(string) { ParseContext context = {string}; pushContext_(&context); }
 
 internal void
 popContext(Tokenizer *tk = global_tokenizer)
@@ -304,6 +326,7 @@ eatAllSpaces(Tokenizer *tk)
     }
 }
 
+// todo: #speed make this a hash table
 inline Keyword
 matchKeyword(Token *token)
 {
@@ -321,6 +344,24 @@ matchKeyword(Token *token)
     return out;
 }
 
+// todo: #speed hash table
+inline MetaDirective
+matchMetaDirective(Token *token)
+{
+    auto out = (MetaDirective)0;
+    for (int i = 1;
+         i < arrayCount(metaDirectives);
+         i++)
+    {
+        if (equals(token, metaDirectives[i]))
+        {
+            out = (MetaDirective)(i);
+            break;
+        }
+    }
+    return out;
+}
+
 inline Token
 advance(Tokenizer *tk = global_tokenizer)
 {
@@ -329,22 +370,26 @@ advance(Tokenizer *tk = global_tokenizer)
     out.text.chars  = tk->at;
     out.line_number = tk->line_number;
     out.column      = tk->column;
-    b32 stop = false;
 
-    TokenCategory category = getCharacterType(*tk->at);
+    TokenCategory first_cat = getCharacterType(*tk->at);
+    out.cat = first_cat;
+
     nextChar(tk);
-    out.cat = category;
-    switch (category)
+    switch (first_cat)
     {
-        case TC_Alphanumeric:
+        case '"':
         {
-            while (getCharacterType(*tk->at) == category)
+            out.text.chars++;
+            out.cat = TC_StringLiteral;
+            while (getCharacterType(*tk->at) != '"')
                 nextChar(tk);
+            nextChar(tk);
         } break;
 
+        case TC_Alphanumeric:
         case TC_Special:
         {
-            while (getCharacterType(*tk->at) == category)
+            while (getCharacterType(*tk->at) == first_cat)
                 nextChar(tk);
         } break;
 
@@ -352,11 +397,16 @@ advance(Tokenizer *tk = global_tokenizer)
     }
 
     out.text.length = (s32)(tk->at - out.text.chars);
-    tk->last_token = out;
+    assert(out.text.length);
+    if (out.cat == TC_StringLiteral)
+    {
+        out.text.length -= 1; // minus the last '"'
+    }
 
     if (equals(out.text, "->"))
         out.cat = TC_Arrow;
 
+    tk->last_token = out;
     return out;
 }
 

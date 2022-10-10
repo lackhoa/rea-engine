@@ -9,20 +9,15 @@ struct ReadFileResult
     char *content;
 };
 
-typedef void PlatformPrint(const char *string);
-typedef ReadFileResult PlatformReadEntireFile(const char *file_name);
-typedef void PlatformFreeFileMemory(void *memory);
-typedef void *PlatformGetWallClock(MemoryArena *arena);
-typedef r32 PlatformGetSecondsElapsed(void *start, void *end);
+void platformPrint(const char *string);
+ReadFileResult platformReadEntireFile(const char *file_name);
+void platformFreeFileMemory(void *memory);
+void *platformGetWallClock(MemoryArena *arena);
+r32 platformGetSecondsElapsed(void *start, void *end);
+char *platformGetFileFullPath(MemoryArena* arena, char *file);
 
 struct EngineMemory
 {
-    PlatformPrint             *platformPrint;
-    PlatformReadEntireFile    *platformReadEntireFile;
-    PlatformFreeFileMemory    *platformFreeFileMemory;
-    PlatformGetWallClock      *platformGetWallClock;
-    PlatformGetSecondsElapsed *platformGetSecondsElapsed;
-
     void* storage;
     size_t storage_size;
 };

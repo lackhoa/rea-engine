@@ -32,6 +32,13 @@ newArena(size_t cap, void *base)
     return arena;
 }
 
+inline u8 *
+getArenaNext(MemoryArena *arena)
+{
+    u8 *out = arena->base + arena->used;
+    return out;
+}
+
 inline void *
 pushSize(MemoryArena *arena, size_t size, b32 zero = false)
 {
