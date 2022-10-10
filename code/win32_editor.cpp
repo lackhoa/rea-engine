@@ -247,10 +247,10 @@ win32ResizeDIBSection(win32_offscreen_buffer *buffer, int width, int height)
     buffer->pitch = width*buffer->bytes_per_pixel;
 }
 
-PlatformGetFilePathOutput
+FilePath
 platformGetFileFullPath(MemoryArena* arena, char *file)
 {
-    PlatformGetFilePathOutput out;
+    FilePath out;
     out.path = (char *)getArenaNext(arena);
 
     char *file_part;

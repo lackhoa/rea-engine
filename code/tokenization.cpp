@@ -181,8 +181,7 @@ myprint(MemoryArena *buffer, String s)
         const char *c = s.chars;
         for (s32 index = 0; index < s.length; index++)
             *at++ = *c++;
-        *at = 0;  // NOTE: the nil-termination character does NOT count against
-                  // buffer->used, so we can print next to it to concatenate.
+        *at = 0;
         buffer->used = at - (char *)buffer->base;
         assert(buffer->used <= buffer->cap);
     }
@@ -326,14 +325,17 @@ inline Keyword
 matchKeyword(Token *token)
 {
     auto out = (Keyword)0;
-    for (int i = 1;
-         i < arrayCount(keywords);
-         i++)
+    if (token->cat == TC_Alphanumeric)
     {
-        if (equals(token, keywords[i]))
+        for (int i = 1;
+             i < arrayCount(keywords);
+             i++)
         {
-            out = (Keyword)(i);
-            break;
+            if (equals(token, keywords[i]))
+            {
+                out = (Keyword)(i);
+                break;
+            }
         }
     }
     return out;
@@ -344,14 +346,17 @@ inline MetaDirective
 matchMetaDirective(Token *token)
 {
     auto out = (MetaDirective)0;
-    for (int i = 1;
-         i < arrayCount(metaDirectives);
-         i++)
+    if (token->cat == TC_Alphanumeric)
     {
-        if (equals(token, metaDirectives[i]))
+        for (int i = 1;
+             i < arrayCount(metaDirectives);
+             i++)
         {
-            out = (MetaDirective)(i);
-            break;
+            if (equals(token, metaDirectives[i]))
+            {
+                out = (MetaDirective)(i);
+                break;
+            }
         }
     }
     return out;
@@ -487,6 +492,34 @@ toString(const char *c)
     {
         out.length++;
         c++;
+    }
+    return out;
+}
+
+inline b32
+equals(char *s1, char *s2)
+{
+    b32 out = true;
+    char *c1 = s1;
+    char *c2 = s2;
+    b32 stop = false;
+    while (!stop)
+    {
+        if (*c1 != *c2)
+        {
+            out = false;
+            stop = true;
+        }
+        else
+        {
+            if (*c1 == 0)
+                stop = true;
+            else
+            {
+                c1++;
+                c2++;
+            }
+        }
     }
     return out;
 }

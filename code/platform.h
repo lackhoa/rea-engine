@@ -15,13 +15,13 @@ void platformFreeFileMemory(void *memory);
 void *platformGetWallClock(MemoryArena *arena);
 r32 platformGetSecondsElapsed(void *start, void *end);
 
-struct PlatformGetFilePathOutput
+struct FilePath
 {
     char   *path;
     String  directory;
     char   *file;
 };
-PlatformGetFilePathOutput platformGetFileFullPath(MemoryArena* arena, char *file);
+FilePath platformGetFileFullPath(MemoryArena* arena, char *file);
 
 struct EngineMemory
 {

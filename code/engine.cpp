@@ -483,7 +483,10 @@ parseConstructorDef(MemoryArena *arena, Expression *mystruct, s32 ctor_id)
 internal void
 parseErrorVA(Token *token, char *format, va_list arg_list, Tokenizer *tk = global_tokenizer)
 {
-    assert(parsing(tk));
+#if 0
+    assert(!tk->error);  // note: prevent parser from doing huge amount of
+                         // useless work after failure (#speed).
+#endif
     auto arena = tk->error_arena;
     tk->error = pushStructZero(arena, ParseErrorData);
     tk->error->message = subArena(tk->error_arena, 256);
@@ -492,7 +495,6 @@ parseErrorVA(Token *token, char *format, va_list arg_list, Tokenizer *tk = globa
 
     tk->error->token = *token;
     tk->error->context = tk->context->first;
-
 }
 
 internal void
@@ -1594,7 +1596,7 @@ newTokenizer(MemoryArena *arena, String directory, char *input)
 
 struct FileList
 {
-    char     *first_name;
+    char     *first_path;
     char     *first_content;
     FileList *next;
 };
@@ -1605,7 +1607,7 @@ struct EngineState
 };
 
 internal b32
-interpretFile(EngineState *state, MemoryArena *arena, char *input_file, b32 is_root_file = false);
+interpretFile(EngineState *state, MemoryArena *arena, FilePath input_path, b32 is_root_file = false);
 
 // NOTE: Main dispatch parse function
 internal void
@@ -1618,10 +1620,12 @@ parseTopLevel(EngineState *state, MemoryArena *arena)
     {
         auto top_level_temp = beginTemporaryMemory(temp_arena);
         Token token = advance(); 
-        if (equals(&token, '#'))
+        if (equals(&token, '\0'))
+        {}
+        else if (equals(&token, '#'))
         {// compile directive
             token = advance();
-            switch(MetaDirective directive = matchMetaDirective(&token))
+            switch (MetaDirective directive = matchMetaDirective(&token))
             {
                 case MetaDirective_Load:
                 {
@@ -1631,10 +1635,29 @@ parseTopLevel(EngineState *state, MemoryArena *arena)
                         tokenError("expect \"FILENAME\"");
                     else
                     {
-                        auto full_file_name = myprint(arena, global_tokenizer->directory);
-                        myprint(arena, file.text);
-                        if (!interpretFile(state, arena, full_file_name))
-                            tokenError("failed loading file");
+                        auto path_buffer = arena;
+                        char *load_path = myprint(path_buffer, global_tokenizer->directory);
+                        myprint(path_buffer, file.text);
+                        path_buffer->used++;
+
+                        // note: this could be made more efficient but we don't care.
+                        auto full_path = platformGetFileFullPath(arena, load_path);
+
+                        b32 already_loaded = false;
+                        for (auto file_list = state->file_list;
+                             file_list && !already_loaded;
+                             file_list = file_list->next)
+                        {
+                            if (equals(file_list->first_path, load_path))
+                                already_loaded = true;
+                        }
+
+                        if (!already_loaded)
+                        {
+                            auto interp_result = interpretFile(state, arena, full_path);
+                            if (!interp_result)
+                                tokenError("failed loading file");
+                        }
                     }
                     popContext();
                 } break;
@@ -1716,8 +1739,6 @@ parseTopLevel(EngineState *state, MemoryArena *arena)
                     requireChar(';');
                 } break;
 
-                case 0: break;
-
                 default:
                     tokenError("unexpected token");
             }
@@ -1761,24 +1782,23 @@ initializeEngine(MemoryArena *arena)
 }
 
 internal b32
-interpretFile(EngineState *state, MemoryArena *arena, char *input_file, b32 is_root_file)
+interpretFile(EngineState *state, MemoryArena *arena, FilePath input_path, b32 is_root_file)
 {
     b32 success = true;
 #if 0
     auto begin_time = platformGetWallClock(arena);
 #endif
 
-    ReadFileResult read = platformReadEntireFile(input_file);
-    auto [file_path, directory, file_part] = platformGetFileFullPath(arena, input_file);
+    ReadFileResult read = platformReadEntireFile(input_path.path);
     if (read.content)
     {
         auto new_file_list           = pushStruct(arena, FileList);
-        new_file_list->first_name    = input_file;
+        new_file_list->first_path    = input_path.path;
         new_file_list->first_content = read.content;
         new_file_list->next          = state->file_list;
         state->file_list             = new_file_list;
 
-        auto tk = newTokenizer(arena, directory, read.content);
+        auto tk = newTokenizer(arena, input_path.directory, read.content);
         auto old_tokenizer = global_tokenizer;
         global_tokenizer   = tk;
 
@@ -1788,7 +1808,7 @@ interpretFile(EngineState *state, MemoryArena *arena, char *input_file, b32 is_r
         {
             success = false;
             printf("%s:%d:%d: [%s] %s",
-                   file_path,
+                   input_path.path,
 
                    error->token.line_number,
                    error->token.column,
@@ -1824,7 +1844,7 @@ interpretFile(EngineState *state, MemoryArena *arena, char *input_file, b32 is_r
     }
     else
     {
-        printf("Failed to read input file %s\n", input_file);
+        printf("Failed to read input file %s\n", input_path.file);
         success = false;
     }
 
@@ -1839,7 +1859,8 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
 {
     initializeEngine(arena);
     auto state = pushStruct(arena, EngineState);
-    b32 success = interpretFile(state, arena, initial_file, true);
+    auto input_path = platformGetFileFullPath(arena, initial_file);
+    b32 success = interpretFile(state, arena, input_path, true);
 
     for (FileList *file_list = state->file_list;
          file_list;
