@@ -247,11 +247,18 @@ win32ResizeDIBSection(win32_offscreen_buffer *buffer, int width, int height)
     buffer->pitch = width*buffer->bytes_per_pixel;
 }
 
-char *
+PlatformGetFilePathOutput
 platformGetFileFullPath(MemoryArena* arena, char *file)
 {
-    auto out = (char *)getArenaNext(arena);
-    DWORD length = GetFullPathNameA(file, (DWORD)arena->cap, out, 0);
+    PlatformGetFilePathOutput out;
+    out.path = (char *)getArenaNext(arena);
+
+    char *file_part;
+    DWORD length = GetFullPathNameA(file, (DWORD)getArenaFree(arena), out.path, &file_part);
+    out.directory.chars  = out.path;
+    out.directory.length = file_part - out.path;
+    out.file             = file_part;
+
     arena->used += length+1;
     return out;
 }

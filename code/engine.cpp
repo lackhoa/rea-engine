@@ -11,8 +11,6 @@
 global_variable MemoryArena  global_temp_arena_;
 global_variable MemoryArena *global_temp_arena = &global_temp_arena_;
 
-global_variable b32 global_initialized = false;
-
 #define unpackGlobals                           \
     Tokenizer   *tk         = global_tokenizer; \
     MemoryArena *temp_arena = global_temp_arena; \
@@ -1382,7 +1380,7 @@ parseProof(MemoryArena *arena, Bindings *bindings, Stack *stack, Expression *goa
                             if (optionalChar('-'))
                             {
                                 // todo: bind variable to the stack 
-                                // bookmark: what if we switched over composite expression as subject? the stack wouldn't help at all
+                                // todo: what if we switched over composite expression as subject? the stack wouldn't help at all
                                 Expression *ctor_exp = newExpression(temp_arena, EC_ConstructorRef, subject_type);
                                 ctor_exp->ConstructorRef.id = subject_var->id;
                                 stack->first[subject_var->id] = ctor_exp;
@@ -1582,26 +1580,36 @@ parseDefine(MemoryArena* arena, b32 is_theorem = false)
 }
 
 inline Tokenizer *
-newTokenizer(MemoryArena *arena, char *input)
+newTokenizer(MemoryArena *arena, String directory, char *input)
 {
     Tokenizer *out = pushStruct(arena, Tokenizer);
+    out->directory   = directory;
     out->at          = input;
     out->line_number = 1;
     out->column      = 1;
-
-    auto error_arena = pushStruct(arena, MemoryArena);
-    *error_arena = subArena(arena, kiloBytes(8));
-    out->error_arena = error_arena;
+    out->error_arena = arena;
     
     return out;
 }
 
+struct FileList
+{
+    char     *first_name;
+    char     *first_content;
+    FileList *next;
+};
+
+struct EngineState
+{
+    FileList *file_list;
+};
+
 internal b32
-interpretFile(MemoryArena *arena, char *input_file);
+interpretFile(EngineState *state, MemoryArena *arena, char *input_file, b32 is_root_file = false);
 
 // NOTE: Main dispatch parse function
 internal void
-parseTopLevel(MemoryArena *arena)
+parseTopLevel(EngineState *state, MemoryArena *arena)
 {
     pushContext;
     auto temp_arena = global_temp_arena;
@@ -1623,10 +1631,10 @@ parseTopLevel(MemoryArena *arena)
                         tokenError("expect \"FILENAME\"");
                     else
                     {
-                        // bookmark: implement the free list
-                        // also handle failure, parse error, all that good stuff.
-                        auto file_name = myprint(arena, file.text);
-                        interpretFile(arena, file_name);
+                        auto full_file_name = myprint(arena, global_tokenizer->directory);
+                        myprint(arena, file.text);
+                        if (!interpretFile(state, arena, full_file_name))
+                            tokenError("failed loading file");
                     }
                     popContext();
                 } break;
@@ -1730,59 +1738,57 @@ isMatchingPair(Token *left, Token *right)
 }
 
 internal void
-initializeState(MemoryArena *arena)
+initializeEngine(MemoryArena *arena)
 {
-    global_temp_arena_  = subArena(arena, megaBytes(2));
-    {// mark: initialize state
-        global_temp_arena     = &global_temp_arena_;
-        allocate(arena, global_bindings);
-        global_bindings->arena = arena;
+    global_temp_arena_ = subArena(arena, megaBytes(2));
+    global_temp_arena  = &global_temp_arena_;
+    allocate(arena, global_bindings);
+    global_bindings->arena = arena;
 
-        addBuiltinName("identical", &builtin_identical);
-        addBuiltinName("Set",  &builtin_Set);
-        addBuiltinName("Prop", &builtin_Prop);
-        addBuiltinName("Proc", &builtin_Proc);
-        addBuiltinMacro("=");
+    addBuiltinName("identical", &builtin_identical);
+    addBuiltinName("Set",  &builtin_Set);
+    addBuiltinName("Prop", &builtin_Prop);
+    addBuiltinName("Proc", &builtin_Proc);
+    addBuiltinMacro("=");
 
-        const char *truth_members[] = {"truth"};
-        addBuiltinStruct(arena, "True", truth_members, 1);
-        builtin_True = castAst(Expression, lookupNameCurrentFrame(global_bindings, toString("True"), false).slot->value);
-        builtin_truth = castAst(Expression, lookupNameCurrentFrame(global_bindings, toString("truth"), false).slot->value);
-        builtin_False = castAst(Expression, lookupNameCurrentFrame(global_bindings, toString("False"), false).slot->value);
+    const char *true_members[] = {"truth"};
+    addBuiltinStruct(arena, "True", true_members, 1);
+    builtin_True = castAst(Expression, lookupNameCurrentFrame(global_bindings, toString("True"), false).slot->value);
+    builtin_truth = castAst(Expression, lookupNameCurrentFrame(global_bindings, toString("truth"), false).slot->value);
 
-        addBuiltinStruct(arena, "False", (const char **)0, 0);
-    }
+    addBuiltinStruct(arena, "False", (const char **)0, 0);
+    builtin_False = castAst(Expression, lookupNameCurrentFrame(global_bindings, toString("False"), false).slot->value);
 }
 
 internal b32
-interpretFile(MemoryArena *arena, char *input_file)
+interpretFile(EngineState *state, MemoryArena *arena, char *input_file, b32 is_root_file)
 {
     b32 success = true;
+#if 0
     auto begin_time = platformGetWallClock(arena);
+#endif
+
     ReadFileResult read = platformReadEntireFile(input_file);
-    char *full_path = platformGetFileFullPath(arena, input_file);
+    auto [file_path, directory, file_part] = platformGetFileFullPath(arena, input_file);
     if (read.content)
     {
-        auto tk = newTokenizer(arena, read.content);
-        if (!global_initialized)
-        {
-            initializeState(arena);
-            global_tokenizer = tk;
-            global_initialized = true;
-        }
-        else
-        {
-            tk->next = global_tokenizer;
-            global_tokenizer = tk;
-        }
+        auto new_file_list           = pushStruct(arena, FileList);
+        new_file_list->first_name    = input_file;
+        new_file_list->first_content = read.content;
+        new_file_list->next          = state->file_list;
+        state->file_list             = new_file_list;
 
-        parseTopLevel(arena);
+        auto tk = newTokenizer(arena, directory, read.content);
+        auto old_tokenizer = global_tokenizer;
+        global_tokenizer   = tk;
+
+        parseTopLevel(state, arena);
         ParseError error = tk->error;
         if (error)
         {
             success = false;
             printf("%s:%d:%d: [%s] %s",
-                   full_path,
+                   file_path,
 
                    error->token.line_number,
                    error->token.column,
@@ -1808,15 +1814,13 @@ interpretFile(MemoryArena *arena, char *input_file)
             printf("\n");
         }
 
-        checkArena(arena);
-        checkArena(global_temp_arena);
-        checkArena(tk->error_arena);
-
-        platformFreeFileMemory(read.content);
-
+#if 0
         auto compile_time = platformGetSecondsElapsed(begin_time, platformGetWallClock(arena));
-        printf("Compile time for file %s: %fs\n", full_path, compile_time);
+        printf("Compile time for file %s: %fs\n", file_path, compile_time);
         printf("----------------\n");
+#endif
+
+        global_tokenizer = old_tokenizer;
     }
     else
     {
@@ -1824,13 +1828,34 @@ interpretFile(MemoryArena *arena, char *input_file)
         success = false;
     }
 
+    if (is_root_file)
+        checkArena(global_temp_arena);
+
+    return success;
+}
+
+internal b32
+beginInterpreterSession(MemoryArena *arena, char *initial_file)
+{
+    initializeEngine(arena);
+    auto state = pushStruct(arena, EngineState);
+    b32 success = interpretFile(state, arena, initial_file, true);
+
+    for (FileList *file_list = state->file_list;
+         file_list;
+         file_list = file_list->next)
+    {
+        platformFreeFileMemory(file_list->first_content);
+    }
+    
+    checkArena(arena);
     return success;
 }
 
 int
 engineMain(EngineMemory *memory)
 {
-    assert(arrayCount(keywords) == Keywords_Count_);
+    assert(arrayCount(keywords)       == Keywords_Count_);
     assert(arrayCount(metaDirectives) == MetaDirective_Count_);
 
     int success = true;
@@ -1871,13 +1896,13 @@ engineMain(EngineMemory *memory)
         args[2]->Variable.name        = toString("b");
     }
 
-    auto interp_arena_ = subArena(init_arena, init_arena->cap - init_arena->used - sizeof(MemoryArena));
+    auto interp_arena_ = subArena(init_arena, getArenaFree(init_arena));
     auto interp_arena = &interp_arena_;
-    if (!interpretFile(interp_arena, "..\\data\\operator.rea"))
+    if (!beginInterpreterSession(interp_arena, "..\\data\\operator.rea"))
         success = false;
 
     resetZeroArena(interp_arena);
-    if (!interpretFile(interp_arena, "..\\data\\test.rea"))
+    if (!beginInterpreterSession(interp_arena, "..\\data\\test.rea"))
         success = false;
 
     return success;

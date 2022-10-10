@@ -39,6 +39,13 @@ getArenaNext(MemoryArena *arena)
     return out;
 }
 
+inline size_t
+getArenaFree(MemoryArena *arena)
+{
+    size_t out = arena->cap - arena->used;
+    return out;
+}
+
 inline void *
 pushSize(MemoryArena *arena, size_t size, b32 zero = false)
 {

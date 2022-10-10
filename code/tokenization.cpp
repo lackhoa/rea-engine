@@ -3,12 +3,6 @@
 
 #include <stdio.h>
 
-struct String
-{
-    const char *chars;
-    s32         length;         // note: does not include the nil terminator
-};
-
 enum TokenCategory
 {
     // 0-255 reserved for single-char ASCII types.
@@ -187,7 +181,8 @@ myprint(MemoryArena *buffer, String s)
         const char *c = s.chars;
         for (s32 index = 0; index < s.length; index++)
             *at++ = *c++;
-        *at++ = 0;
+        *at = 0;  // NOTE: the nil-termination character does NOT count against
+                  // buffer->used, so we can print next to it to concatenate.
         buffer->used = at - (char *)buffer->base;
         assert(buffer->used <= buffer->cap);
     }
@@ -236,7 +231,7 @@ struct Tokenizer
     s32    line_number;
     s32    column;
 
-    Tokenizer *next;  // for include files
+    String     directory;
 };
 
 global_variable Tokenizer *global_tokenizer;

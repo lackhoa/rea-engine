@@ -8,13 +8,20 @@ struct ReadFileResult
     u32 content_size;
     char *content;
 };
+ReadFileResult platformReadEntireFile(const char *file_name);
 
 void platformPrint(const char *string);
-ReadFileResult platformReadEntireFile(const char *file_name);
 void platformFreeFileMemory(void *memory);
 void *platformGetWallClock(MemoryArena *arena);
 r32 platformGetSecondsElapsed(void *start, void *end);
-char *platformGetFileFullPath(MemoryArena* arena, char *file);
+
+struct PlatformGetFilePathOutput
+{
+    char   *path;
+    String  directory;
+    char   *file;
+};
+PlatformGetFilePathOutput platformGetFileFullPath(MemoryArena* arena, char *file);
 
 struct EngineMemory
 {

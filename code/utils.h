@@ -52,5 +52,11 @@ inRange(s32 min, s32 val, s32 max)
     return (min <= val) && (val <= max);
 }
 
+struct String
+{
+    const char *chars;
+    s32         length;         // note: does not include the nil terminator
+};
+
 #define UTILS_H
 #endif
