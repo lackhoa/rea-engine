@@ -106,14 +106,15 @@ struct Expression
     };
 };
 
-global_variable Expression  builtin_identical;
+global_variable Expression *builtin_identical;
+global_variable Expression *builtin_identical_macro;
 global_variable Expression *builtin_True;
 global_variable Expression *builtin_truth;
 global_variable Expression *builtin_False;
-global_variable Expression  builtin_Set;
-global_variable Expression  builtin_Prop;
-global_variable Expression  builtin_Proc;
-global_variable Expression  builtin_Type;
+global_variable Expression *builtin_Set;
+global_variable Expression *builtin_Prop;
+global_variable Expression *builtin_Proc;
+global_variable Expression *builtin_Type;
 global_variable Expression *hole_expression;
 
 inline s32
@@ -548,7 +549,7 @@ addGlobalNameBinding(String key, Expression *value)
 internal void
 addBuiltinStruct(MemoryArena *arena, char *name, const char **ctor_names, s32 ctor_count)
 {
-    auto *struct_exp = newExpression(arena, EC_Struct, &builtin_Set);
+    auto struct_exp = newExpression(arena, EC_Struct, builtin_Set);
     auto struct_name = toString(name);
     assert(addGlobalNameBinding(struct_name, struct_exp));
 
@@ -748,19 +749,30 @@ precedenceOf(Expression *op)
 {
     int out = 0;
     // TODO: implement for real
-    if (op->cat == EC_Procedure)
+    switch (op->cat)
     {
-        if (equals(op->Procedure.name, "&"))
-            out = 20;
-        else if (equals(op->Procedure.name, "|"))
-            out = 10;
-        else
+        case EC_Procedure:
+        {
+            if (equals(op->Procedure.name, "&"))
+                out = 20;
+            else if (equals(op->Procedure.name, "|"))
+                out = 10;
+            else
+                out = 100;
+        } break;
+
+        case EC_Constructor:
+        {
             out = 100;
+        } break;
+
+        case EC_Macro:
+        {
+            out = 0;
+        } break;
+
+        invalidDefaultCase;
     }
-    else if (op->cat == EC_Constructor)
-        out = 100;
-    else
-        invalidCodePath;
 
     return out;
 }
@@ -899,6 +911,7 @@ newApplication(MemoryArena *arena, Token *blame_token, Expression *op, Expressio
 {
     unpackGlobals;
     Expression *out = 0;
+
     auto signature = castExpression(ArrowType, op->type);
     if (signature)
     {
@@ -964,6 +977,29 @@ newApplication(MemoryArena *arena, Token *blame_token, Expression *op, Expressio
         tokenError(blame_token, "operator must have an arrow type");
     
     return out;
+}
+
+// NOTE: People who use it (like the expression parser) only know that they have
+// an operator and some operands (all of which are expressions), and it's up to
+// this function to make combine them however it can (including macro expansion,
+// typecheck, unification...).
+internal Expression *
+combineExpressions(MemoryArena *arena, Token *blame_token, Expression *op, Expression **args, s32 arg_count)
+{
+    if (op->cat == EC_Macro)
+    {
+        // macro overlay. todo only support builtin equality for now
+        op = builtin_identical;
+        assert(arg_count == 2);
+        arg_count = 3;
+        Expression *new_args[3];
+        new_args[0] = hole_expression;
+        new_args[1] = args[0];
+        new_args[2] = args[1];
+        args = new_args;
+    }
+
+    return newApplication(arena, blame_token, op, args, arg_count);
 }
 
 internal Expression *
@@ -1035,7 +1071,7 @@ parseSwitchPattern(MemoryArena *arena, Bindings *bindings)
                 assert(actual_arg_count == signature->param_count);
 
                 if (parsing(tk) && requireChar(tk, ')'))
-                    out = newApplication(arena, &funcall, op, app->args, signature->param_count);
+                    out = combineExpressions(arena, &funcall, op, app->args, signature->param_count);
                 else
                     tokenError(&ctor_token, "cannot call non-procedure");
             }
@@ -1083,7 +1119,7 @@ parseExpression(MemoryArena *arena, Bindings *bindings, s32 min_precedence = -99
                             Expression *args[2];
                             args[0] = out;
                             args[1] = recurse;
-                            out = newApplication(arena, &op_token, op, args, 2);
+                            out = combineExpressions(arena, &op_token, op, args, 2);
                         }
                     }
                     else
@@ -1142,7 +1178,7 @@ parseConstructorDef(MemoryArena *arena, Expression *mystruct, s32 ctor_id, Expre
                 auto expected_arg_count = getCommaSeparatedListLength();
 
                 // note: not really a "proc", but ikd what's the harm
-                auto type = newExpression(arena, EC_ArrowType, &builtin_Proc);
+                auto type = newExpression(arena, EC_ArrowType, builtin_Proc);
                 out->type = type;
                 auto signature = castExpression(ArrowType, type);
                 signature->return_type = mystruct;
@@ -1199,7 +1235,7 @@ parseTypedef(MemoryArena *arena)
             tokenError("redefinition of type");
         else
         {
-            auto *struct_exp = newExpression(arena, EC_Struct, &builtin_Set);
+            auto *struct_exp = newExpression(arena, EC_Struct, builtin_Set);
             lookup.slot->value = struct_exp;
 
             Struct *mystruct = &struct_exp->Struct;
@@ -1442,7 +1478,7 @@ parseOperand(MemoryArena *arena, Bindings *bindings)
                 }
                 if (parsing(tk) && requireChar(tk, ')'))
                 {
-                    out = newApplication(arena, &funcall, op, args, actual_arg_count);
+                    out = combineExpressions(arena, &funcall, op, args, actual_arg_count);
                 }
             }
             else
@@ -1559,7 +1595,7 @@ parseDefine(MemoryArena* arena, b32 is_theorem = false)
             tokenError("re-definition");
         else if (requireChar(tk, '('))
         {
-            auto  define_type       = newExpression(arena, EC_ArrowType, &builtin_Proc);
+            auto  define_type       = newExpression(arena, EC_ArrowType, builtin_Proc);
             auto *define_exp        = newExpression(arena, EC_Procedure, define_type);
             define_slot.slot->value = define_exp;
             auto proc  = &define_exp->Procedure;
@@ -1842,13 +1878,11 @@ initializeEngine(MemoryArena *arena)
     allocate(arena, global_bindings);
     global_bindings->arena = arena;
 
-    addBuiltinName("identical", &builtin_identical);
-    addBuiltinName("Set",  &builtin_Set);
-    addBuiltinName("Prop", &builtin_Prop);
-    addBuiltinName("Proc", &builtin_Proc);
-#if 0
-    addBuiltinMacro("=");
-#endif
+    addBuiltinName("identical", builtin_identical);
+    addBuiltinName("Set"      , builtin_Set);
+    addBuiltinName("Prop"     , builtin_Prop);
+    addBuiltinName("Proc"     , builtin_Proc);
+    addBuiltinName("="        , builtin_identical_macro);
 
     const char *true_members[] = {"truth"};
     addBuiltinStruct(arena, "True", true_members, 1);
@@ -1962,30 +1996,42 @@ engineMain(EngineMemory *memory)
     auto init_arena_ = newArena(memory->storage_size, memory->storage);
     auto init_arena = &init_arena_;
 
-    builtin_identical.cat = EC_Builtin_identical;
-    builtin_Set.cat       = EC_Builtin_Set;
-    builtin_Prop.cat      = EC_Builtin_Prop;
-    builtin_Proc.cat      = EC_Builtin_Proc;
-    builtin_Type.cat      = EC_Builtin_Type;
-
-    builtin_Set.type  = &builtin_Type;
-    builtin_Prop.type = &builtin_Type;
-    builtin_Proc.type = &builtin_Type;
-
+    allocate(init_arena, builtin_identical);
+    allocate(init_arena, builtin_identical_macro);
+    allocate(init_arena, builtin_True);
+    allocate(init_arena, builtin_truth);
+    allocate(init_arena, builtin_False);
+    allocate(init_arena, builtin_Set);
+    allocate(init_arena, builtin_Prop);
+    allocate(init_arena, builtin_Proc);
+    allocate(init_arena, builtin_Type);
     allocate(init_arena, hole_expression);
+
+    builtin_identical->cat       = EC_Builtin_identical;
+    builtin_identical_macro->cat = EC_Macro;
+
+    builtin_Set->cat  = EC_Builtin_Set;
+    builtin_Prop->cat = EC_Builtin_Prop;
+    builtin_Proc->cat = EC_Builtin_Proc;
+    builtin_Type->cat = EC_Builtin_Type;
+
+    builtin_Set->type  = builtin_Type;
+    builtin_Prop->type = builtin_Type;
+    builtin_Proc->type = builtin_Type;
+
     hole_expression->cat = EC_Hole;
 
     {
         // Here we give 'identical' a type (A: Set, a:A, b:A) -> Prop
         // TODO: so we can't prove equality between props.
-        builtin_identical.type = newExpression(init_arena, EC_ArrowType, 0);
-        auto signature = castExpression(ArrowType, builtin_identical.type);
+        builtin_identical->type = newExpression(init_arena, EC_ArrowType, 0);
+        auto signature = castExpression(ArrowType, builtin_identical->type);
         signature->param_count   = 3;
-        signature->return_type = &builtin_Prop;
+        signature->return_type = builtin_Prop;
 
         allocateArray(init_arena, 3, signature->params);
         auto args = signature->params;
-        args[0]                       = newExpression(init_arena, EC_Variable, &builtin_Set);
+        args[0]                       = newExpression(init_arena, EC_Variable, builtin_Set);
         args[0]->Variable.stack_delta = 0;
         args[0]->Variable.name        = toString("A");
         args[1]                       = newExpression(init_arena, EC_Variable, args[0]);

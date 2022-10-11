@@ -8,14 +8,12 @@ printRaw F & T | T & F | T;
 printRaw identical(Bool, T, F);
 printRaw identical(_, T, F);
 printRaw F & T | T = F & (T | T);
-;; printRaw F & T | T = F & (T | T);
 
-;; theorem test() : (F & T | T = T)
-;; {
-;;  return truth;
-;;  }
-;; print test;
+theorem test() : (F & T | T = T)
+{
+ return truth;
+ }
+print test;
 
-
-;; check truth : F & T | T = T;
-;; check truth : (switch T {T -> &, F -> | })(T, F) = F;
+check truth : F & T | T = T;
+check truth : (switch T {T -> &, F -> | })(T, F) = F;

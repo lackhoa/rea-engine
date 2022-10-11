@@ -12,7 +12,8 @@ theorem notSoEasy(a: Bool) : (a & F = F)
  - return truth;
  }
 
-theorem andCommutative(a: Bool, b: Bool, c: Bool) : (a & (b & c) = (a & b) & c)
+theorem andCommutative(a: Bool, b: Bool, c: Bool) :
+a & (b & c) = (a & b) & c
 {
  switch a;
  - return truth;
