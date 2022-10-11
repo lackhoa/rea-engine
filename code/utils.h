@@ -36,9 +36,9 @@ typedef long     s64;
 
 global_variable b32 global_engine_failed = false;
 #if COMPILER_MSVC
-#    define assert(claim) { if (!(claim)) { __debugbreak(); } }
+#    define assert(claim) if (!(claim)) { __debugbreak(); }
 #else
-#    define assert(claim) { if (!(claim)) { __builtin_trap(); } }
+#    define assert(claim) if (!(claim)) { __builtin_trap(); }
 #endif
 #define invalidCodePath assert(false)
 #define todoErrorReport assert(false)

@@ -91,7 +91,9 @@ getCharacterType(char c)
 {
     if ((('a' <= c) && (c <= 'z'))
         || (('A' <= c) && (c <= 'Z'))
-        || (('0' <= c) && (c <= '9')))
+        || (('0' <= c) && (c <= '9'))
+        || (c == '\'')
+        || (c == '_'))
     {
         return TC_Alphanumeric;
     }
@@ -150,13 +152,14 @@ printToBufferVA(MemoryArena *buffer, char *format, va_list arg_list)
 inline char *
 myprint(MemoryArena *buffer, char *format, ...)
 {
-    auto out = (char *)(buffer->base + buffer->used);
+    char *out = 0;;
 
     va_list arg_list;
     __crt_va_start(arg_list, format);
 
     if (buffer)
     {
+        out = (char *)buffer->base + buffer->used;
         char *at = out;
         auto printed = vsprintf_s(at, (buffer->cap-1 - buffer->used), format, arg_list);
         buffer->used += printed;
@@ -173,10 +176,10 @@ myprint(MemoryArena *buffer, char *format, ...)
 inline char *
 myprint(MemoryArena *buffer, String s)
 {
-    auto out = (char *)getArenaNext(buffer);
-
+    char *out = 0;
     if (buffer)
     {
+        out = (char *)getArenaNext(buffer);
         char *at = out;
         const char *c = s.chars;
         for (s32 index = 0; index < s.length; index++)
@@ -320,6 +323,17 @@ eatAllSpaces(Tokenizer *tk)
     }
 }
 
+inline void
+eatUntil(char c, Tokenizer *tk = global_tokenizer)
+{
+    b32 stop = false;
+    while ((*tk->at) && (!stop))
+    {
+        if (*tk->at++ == c)
+            stop = true;
+    }
+}
+
 // todo: #speed make this a hash table
 inline Keyword
 matchKeyword(Token *token)
@@ -363,7 +377,7 @@ matchMetaDirective(Token *token)
 }
 
 inline Token
-advance(Tokenizer *tk = global_tokenizer)
+nextToken(Tokenizer *tk = global_tokenizer)
 {
     Token out = {};
     eatAllSpaces(tk);
@@ -414,7 +428,7 @@ inline Token
 peekNext(Tokenizer *tk = global_tokenizer)
 {
     auto tk_copy = *tk;
-    return advance(&tk_copy);
+    return nextToken(&tk_copy);
 }
 
 inline b32
@@ -437,7 +451,7 @@ debugPrintTokens(Tokenizer tk)
 {
     while (*tk.at)
     {
-        Token token = advance(&tk);
+        Token token = nextToken(&tk);
         printf("%.*s ", token.text.length, token.text.chars);
     }
     printf("\n");
