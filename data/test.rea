@@ -1,25 +1,27 @@
 typedef Nat
 {
  | 0
- | plus1(Nat)
+ | s(Nat)
  }
 
 define +(n: Nat, m: Nat): Nat
 {
  switch n
  {
-  0         -> m,
-  plus1(n') -> plus1(n' + m),
+  0     -> m,
+  s(n') -> s(n' + m),
   }
  }
 
-define 1 = s(0)
-define 2 = s(1)
-define 3 = s(2)
-print(1 + 2);
+print s(0) + s(s(0));
 
-propdef even(Nat)
-{
- | even0: even(0)
- | even_plus2(n' : Nat, even(n')): even(n' + 2)
- }
+;; define 1 = s(0)
+;; define 2 = s(1)
+;; define 3 = s(2)
+;; print(1 + 2);
+
+;; propdef even(Nat)
+;; {
+;;  | even0: even(0)
+;;  | even_plus2(n' : Nat, even(n')): even(n' + 2)
+;;  }
