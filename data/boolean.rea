@@ -1,7 +1,7 @@
-typedef Bool
+typedef Bool : Set
 {
- | F
- | T
+ F,
+ T,
  }
 
 define &(a: Bool, b: Bool) : Bool

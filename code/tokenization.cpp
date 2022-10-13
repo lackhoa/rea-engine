@@ -323,15 +323,16 @@ eatAllSpaces(Tokenizer *tk)
     }
 }
 
-inline void
-eatUntil(char c, Tokenizer *tk = global_tokenizer)
+inline b32
+eatUntil(char c, Tokenizer *tk)
 {
-    b32 stop = false;
-    while ((*tk->at) && (!stop))
+    b32 found = false;
+    while ((*tk->at) && (!found))
     {
         if (*tk->at++ == c)
-            stop = true;
+            found = true;
     }
+    return found;
 }
 
 // todo: #speed make this a hash table
@@ -536,4 +537,20 @@ equals(char *s1, char *s2)
         }
     }
     return out;
+}
+
+inline char
+getMatchingPair(char opening)
+{
+    switch (opening)
+    {
+        case '(':
+            return ')';
+        case '[':
+            return ']';
+        case '{':
+            return '}';
+        default:
+            return 0;
+    }
 }

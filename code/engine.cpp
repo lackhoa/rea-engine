@@ -13,7 +13,7 @@ global_variable MemoryArena *global_temp_arena = &global_temp_arena_;
 
 #define unpackGlobals                           \
     Tokenizer   *tk         = global_tokenizer;  (void) tk; \
-    MemoryArena *temp_arena = global_temp_arena; (void ) temp_arena; \
+    MemoryArena *temp_arena = global_temp_arena; (void) temp_arena; \
 
 enum ExpressionCategory
 {
@@ -322,6 +322,9 @@ struct Bindings
 
 global_variable Bindings *global_bindings;
 
+internal Expression *
+parseExpression(MemoryArena *arena, Bindings *bindings, s32 min_precedence = -9999);
+
 struct Stack
 {
     MemoryArena  *arena;
@@ -470,6 +473,15 @@ parseError(Token *token, char *format, ...)
 }
 
 internal void
+parseError(Tokenizer *tk, Token *token, char *format, ...)
+{
+    va_list arg_list;
+    __crt_va_start(arg_list, format);
+    parseErrorVA(token, format, arg_list, tk);
+    __crt_va_end(arg_list);
+}
+
+internal void
 tokenError(Token *token, char *message, Tokenizer *tk = global_tokenizer)
 {
     parseError(token, message, tk);
@@ -538,26 +550,39 @@ optionalChar(char c)
 }
 
 internal s32
-getCommaSeparatedListLength(Tokenizer *tk0 = global_tokenizer)
+getCommaSeparatedListLength(Token opening_token, Tokenizer *tk)
 {
+    char opening = opening_token.text.chars[0];
+    char closing = getMatchingPair(opening);
+    assert(closing);
+    char previous = opening;
     s32 out = 0;
-    Tokenizer tk_ = *tk0;
-    Tokenizer *tk = &tk_;
-    char previous = '(';
     for (b32 stop = false; !stop;)
     {
         Token token = nextToken(tk);
-        if (equals(&token, '('))
-            eatUntil(')');
-        else if (equals(&token, ')'))
+        if (!parsing(tk))
         {
-            if ((previous != ',') && (previous != '('))
-                out++;
             stop = true;
+            parseError(tk, &opening_token, "could not find matching pair for");
         }
-        else if (equals(&token, ','))
-            out++;
-        previous = *tk->at;
+        else
+        {
+            char matching_pair = getMatchingPair(token.text.chars[0]);
+            if (matching_pair)
+            {
+                if (!eatUntil(matching_pair, tk))
+                    parseError(tk, &token, "could not find matching pair for");
+            }
+            else if (equals(&token, closing))
+            {
+                if ((previous != ',') && (previous != opening))
+                    out++;
+                stop = true;
+            }
+            else if (equals(&token, ','))
+                out++;
+            previous = tk->last_token.text.chars[0];
+        }
     }
     return out;
 }
@@ -811,9 +836,6 @@ precedenceOf(Expression *op)
 
     return out;
 }
-
-internal Expression *
-parseOperand(MemoryArena *arena, Bindings *bindings);
 
 internal Expression *
 getArgType(Expression *op, s32 arg_id)
@@ -1141,224 +1163,6 @@ parseSwitchPattern(MemoryArena *arena, Bindings *bindings, Expression *expected_
 }
 
 internal Expression *
-parseExpression(MemoryArena *arena, Bindings *bindings, s32 min_precedence = -9999)
-{
-    unpackGlobals;
-    pushContext;
-
-    Expression *out = parseOperand(arena, bindings);
-    if (parsing(tk))
-    {
-        // (a+b) * c
-        //     ^
-        for (b32 stop = false; !stop && parsing(tk);)
-        {
-            Token op_token = peekNext(tk);
-            if (isIdentifier(&op_token))
-            {// infix operator syntax
-                // (a+b) * c
-                //        ^
-                auto op_lookup = lookupNameRecursive(bindings, &op_token);
-                if (op_lookup.found)
-                {
-                    Expression *op = op_lookup.value;
-                    auto precedence = precedenceOf(op);
-                    if (precedence >= min_precedence)
-                    {
-                        // recurse
-                        nextToken(tk);
-                        // a + b * c
-                        //      ^
-                        Expression *recurse = parseExpression(arena, bindings, precedence);
-                        if (parsing(tk))
-                        {
-                            Expression *args[2];
-                            args[0] = out;
-                            args[1] = recurse;
-                            out = combineExpressions(arena, &op_token, op, args, 2);
-                        }
-                    }
-                    else
-                    {
-                        // we are pulled to the left
-                        // a * b + c
-                        //      ^
-                        stop = true;
-                    }
-                }
-                else
-                    tokenError(&op_token, "unbound operator");
-            }
-            else if (isExpressionEndMarker(&op_token))
-                stop = true;
-            else
-                tokenError(&op_token, "expected operator token, got");
-        }
-    }
-
-    if (parsing(tk))
-    {
-        assert(out);
-    }
-    else
-        out = 0;
-
-    popContext(tk);
-    return out;
-}
-
-internal void
-parseConstructorDef(MemoryArena *arena, Expression *mystruct, s32 ctor_id, Expression *out)
-{
-    unpackGlobals;
-    pushContext;
-    initExpression(out, EC_Constructor, 0);
-    auto ctor = &out->Constructor;
-
-    Token ctor_token = nextToken(tk);
-    if (isIdentifier(&ctor_token))
-    {
-        LookupName ctor_lookup = lookupNameCurrentFrame(global_bindings, ctor_token.text, true);
-        if (ctor_lookup.found)
-            tokenError("redefinition of constructor name");
-        else
-        {
-            ctor->id   = ctor_id;
-            ctor->name  = ctor_token.text;
-
-            ctor_lookup.slot->value = out;
-
-            // bookmark: verify that this works
-            if (optionalChar('('))
-            {
-                Scope *scope = newScope(arena, tk->last_token);
-
-                auto expected_arg_count = getCommaSeparatedListLength();
-
-                // note: not really a "proc", but ikd what's the harm
-                auto type = newExpression(arena, EC_ArrowType, builtin_Proc);
-                out->type = type;
-                auto signature = castExpression(ArrowType, type);
-                signature->return_type = mystruct;
-                signature->scope       = scope;
-                allocateArray(arena, expected_arg_count, signature->params);
-                for (s32 stop = false; !stop && parsing(); )
-                {
-                    if (optionalChar(')'))
-                        stop = true;
-                    else
-                    {
-                        auto param_type = parseExpression(arena, global_bindings);
-                        if (parsing())
-                        {
-                            auto param_id = signature->param_count++;
-                            auto param    = newExpression(arena, EC_Variable, param_type);
-
-                            auto var   = &param->Variable;
-                            var->name  = {};
-                            var->id    = param_id;
-                            var->scope = scope;
-
-                            signature->params[param_id] = param;
-                            if (!optionalChar(','))
-                            {
-                                requireChar(')');
-                                stop = true;
-                            }
-                        }
-                    }
-                }
-                if (parsing())
-                    assert(signature->param_count == expected_arg_count);
-            }
-            else
-                out->type = mystruct;
-        }
-    }
-    else
-        tokenError("expected an identifier as constructor name");
-
-    popContext();
-}
-
-internal void
-parseTypedef(MemoryArena *arena)
-{
-    unpackGlobals;
-    pushContext;
-
-    Token type_name = nextToken(tk);
-    if (type_name.cat == TC_Alphanumeric)
-    {
-        // NOTE: the type is in scope of its own constructor.
-        LookupName lookup = lookupNameCurrentFrame(global_bindings, type_name.text, true);
-        if (lookup.found)
-            tokenError("redefinition of type");
-        else
-        {
-            auto *struct_exp = newExpression(arena, EC_Struct, builtin_Set);
-            lookup.slot->value = struct_exp;
-
-            Struct *mystruct = &struct_exp->Struct;
-            mystruct->name = type_name.text;
-
-            requireChar(tk, '{');
-
-            s32 expected_case_count = 0;
-            {// peek ahead to get the case count. this code can be crappy since
-             // the real error checking is done later.
-                Tokenizer tk1 = *tk;
-                s32 nesting_depth = 0;
-                for (b32 stop = false; !stop;)
-                {
-                    Token token = nextToken(&tk1);
-                    if (token.cat == TC_PairingOpen)
-                        nesting_depth++;
-                    else if (token.cat == TC_PairingClose)
-                    {
-                        if (nesting_depth > 0)
-                            nesting_depth--;
-                        else
-                            stop = true;
-                    }
-                    else if ((nesting_depth == 0) && (equals(&token, '|')))
-                        expected_case_count++;
-                }
-            }
-
-            allocateArray(arena, expected_case_count, mystruct->ctors);
-
-            s32 actual_case_count = 0;
-            for (s32 stop = 0, ctor_id = 0;
-                 !stop && parsing();
-                 ctor_id++)
-            {
-                Token bar_or_stop = nextToken(tk);
-                if (equals(&bar_or_stop, '}'))
-                    stop = true;
-                else if (equals(&bar_or_stop, '|'))
-                {
-                    parseConstructorDef(arena, struct_exp, ctor_id, mystruct->ctors + ctor_id);
-                    actual_case_count++;
-                }
-                else
-                    parseError(&bar_or_stop, "Expected '|' or '}'");
-            }
-
-            if (parsing())
-            {
-                assert(actual_case_count == expected_case_count);
-                mystruct->ctor_count = actual_case_count;
-
-                assert(lookupNameCurrentFrame(global_bindings, type_name.text).found);
-            }
-        }
-    }
-
-    popContext();
-}
-
-internal Expression *
 parseSwitch(MemoryArena *arena, Bindings *bindings)
 {
     pushContext;
@@ -1547,6 +1351,209 @@ parseOperand(MemoryArena *arena, Bindings *bindings)
 }
 
 internal Expression *
+parseExpression(MemoryArena *arena, Bindings *bindings, s32 min_precedence)
+{
+    unpackGlobals;
+    pushContext;
+
+    Expression *out = parseOperand(arena, bindings);
+    if (parsing(tk))
+    {
+        // (a+b) * c
+        //     ^
+        for (b32 stop = false; !stop && parsing(tk);)
+        {
+            Token op_token = peekNext(tk);
+            if (isIdentifier(&op_token))
+            {// infix operator syntax
+                // (a+b) * c
+                //        ^
+                auto op_lookup = lookupNameRecursive(bindings, &op_token);
+                if (op_lookup.found)
+                {
+                    Expression *op = op_lookup.value;
+                    auto precedence = precedenceOf(op);
+                    if (precedence >= min_precedence)
+                    {
+                        // recurse
+                        nextToken(tk);
+                        // a + b * c
+                        //      ^
+                        Expression *recurse = parseExpression(arena, bindings, precedence);
+                        if (parsing(tk))
+                        {
+                            Expression *args[2];
+                            args[0] = out;
+                            args[1] = recurse;
+                            out = combineExpressions(arena, &op_token, op, args, 2);
+                        }
+                    }
+                    else
+                    {
+                        // we are pulled to the left
+                        // a * b + c
+                        //      ^
+                        stop = true;
+                    }
+                }
+                else
+                    tokenError(&op_token, "unbound operator");
+            }
+            else if (isExpressionEndMarker(&op_token))
+                stop = true;
+            else
+                tokenError(&op_token, "expected operator token, got");
+        }
+    }
+
+    if (parsing(tk))
+    {
+        assert(out);
+    }
+    else
+        out = 0;
+
+    popContext(tk);
+    return out;
+}
+
+internal void
+parseConstructorDef(MemoryArena *arena, Expression *mystruct, s32 ctor_id, Expression *out)
+{
+    unpackGlobals;
+    pushContext;
+    initExpression(out, EC_Constructor, 0);
+    auto ctor = &out->Constructor;
+
+    Token ctor_token = nextToken(tk);
+    if (isIdentifier(&ctor_token))
+    {
+        LookupName ctor_lookup = lookupNameCurrentFrame(global_bindings, ctor_token.text, true);
+        if (ctor_lookup.found)
+            tokenError("redefinition of constructor name");
+        else
+        {
+            ctor->id   = ctor_id;
+            ctor->name  = ctor_token.text;
+
+            ctor_lookup.slot->value = out;
+
+            // bookmark: verify that this works
+            if (optionalChar('('))
+            {
+                Scope *scope = newScope(arena, tk->last_token);
+
+                Tokenizer tk_save = *tk;
+                auto expected_arg_count = getCommaSeparatedListLength(tk->last_token, tk);
+                *tk = tk_save;
+
+                // note: not really a "proc", but ikd what's the harm
+                auto type = newExpression(arena, EC_ArrowType, builtin_Proc);
+                out->type = type;
+                auto signature = castExpression(ArrowType, type);
+                signature->return_type = mystruct;
+                signature->scope       = scope;
+                allocateArray(arena, expected_arg_count, signature->params);
+                for (s32 stop = false; !stop && parsing(); )
+                {
+                    if (optionalChar(')'))
+                        stop = true;
+                    else
+                    {
+                        auto param_type = parseExpression(arena, global_bindings);
+                        if (parsing())
+                        {
+                            auto param_id = signature->param_count++;
+                            auto param    = newExpression(arena, EC_Variable, param_type);
+
+                            auto var   = &param->Variable;
+                            var->name  = {};
+                            var->id    = param_id;
+                            var->scope = scope;
+
+                            signature->params[param_id] = param;
+                            if (!optionalChar(','))
+                            {
+                                requireChar(')');
+                                stop = true;
+                            }
+                        }
+                    }
+                }
+                if (parsing())
+                    assert(signature->param_count == expected_arg_count);
+            }
+            else
+                out->type = mystruct;
+        }
+    }
+    else
+        tokenError("expected an identifier as constructor name");
+
+    popContext();
+}
+
+internal void
+parseTypedef(MemoryArena *arena)
+{
+    unpackGlobals;
+    pushContext;
+
+    Token type_name = nextToken(tk);
+    if (isIdentifier(&type_name))
+    {
+        // NOTE: the type is in scope of its own constructor.
+        LookupName lookup = lookupNameCurrentFrame(global_bindings, type_name.text, true);
+        if (lookup.found)
+            tokenError("redefinition of type");
+        else if (requireChar(':'))
+        {
+            Expression *type_of_type = parseExpression(arena, global_bindings);
+            if (parsing())
+            {
+                auto *struct_exp = newExpression(arena, EC_Struct, type_of_type);
+                lookup.slot->value = struct_exp;
+
+                Struct *mystruct = &struct_exp->Struct;
+                mystruct->name = type_name.text;
+
+                requireChar(tk, '{');
+
+                Tokenizer tk_save = *tk;
+                s32 expected_case_count = getCommaSeparatedListLength(tk->last_token, tk);
+                *tk = tk_save;
+                allocateArray(arena, expected_case_count, mystruct->ctors);
+
+                for (s32 stop = 0;
+                     !stop && parsing();)
+                {
+                    if (optionalChar('}'))
+                        stop = true;
+                    else
+                    {
+                        auto ctor_id = mystruct->ctor_count++;
+                        parseConstructorDef(arena, struct_exp, ctor_id, mystruct->ctors + ctor_id);
+                        if (!optionalChar(','))
+                        {
+                            requireChar('}');
+                            stop = true;
+                        }
+                    }
+                }
+
+                if (parsing())
+                {
+                    assert(mystruct->ctor_count == expected_case_count);
+                    assert(lookupNameCurrentFrame(global_bindings, type_name.text).found);
+                }
+            }
+        }
+    }
+
+    popContext();
+}
+
+internal Expression *
 parseProof(MemoryArena *arena, Bindings *bindings, Stack *stack, Expression *goal)
 {
     Expression *out = 0;
@@ -1664,7 +1671,9 @@ parseDefine(MemoryArena* arena, b32 is_theorem = false)
             auto signature = &define_type->ArrowType;
             signature->scope = scope;
 
-            s32 expected_arg_count = getCommaSeparatedListLength();
+            Tokenizer tk_save = *tk;
+            s32 expected_arg_count = getCommaSeparatedListLength(tk->last_token, tk);
+            *tk = tk_save;
             signature->param_count = expected_arg_count;
             allocateArray(arena, expected_arg_count, signature->params);
 
@@ -1917,15 +1926,6 @@ parseTopLevel(EngineState *state, MemoryArena *arena)
     }
 
     popContext();
-}
-
-inline b32
-isMatchingPair(Token *left, Token *right)
-{
-    char l = left->text.chars[0];
-    char r = right->text.chars[0];
-    return (((l == '(') && (r == ')')) ||
-            ((l == '{') && (r == '}')));
 }
 
 internal void
