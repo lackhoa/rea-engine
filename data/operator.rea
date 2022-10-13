@@ -9,7 +9,7 @@ printRaw identical(Bool, T, F);
 printRaw identical(_, T, F);
 printRaw F & T | T = F & (T | T);
 
-theorem test() : (F & T | T = T)
+theorem test() : F & T | T = T
 {
  return truth;
  }

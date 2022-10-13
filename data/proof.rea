@@ -1,16 +1,16 @@
 #load "boolean.rea"
 
-;; theorem stillEasy(a: Bool) : (F & a = F)
-;; {
-;;  return truth;
-;;  }
+theorem stillEasy(a: Bool) : (F & a = F)
+{
+ return truth;
+ }
 
-;; theorem notSoEasy(a: Bool) : (a & F = F)
-;; {
-;;  switch a;
-;;  - return truth;
-;;  - return truth;
-;;  }
+theorem notSoEasy(a: Bool) : (a & F = F)
+{
+ switch a;
+ - return truth;
+ - return truth;
+ }
 
 theorem andCommutative(a: Bool, b: Bool, c: Bool) :
 a & (b & c) = (a & b) & c

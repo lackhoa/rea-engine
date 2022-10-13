@@ -2,7 +2,7 @@
 
 cd /D "%~dp0"
 mkdir build 2> nul
-cd build
+pushd build
 
 rem set Optimization="-Ofast -march=native"
 set Optimization=-O0
@@ -21,6 +21,4 @@ clang -c "..\code\win32_editor.cpp" -o win32_editor.o %CommonCompilerFlags%
 set LinkedLibs=-l user32.lib -l Gdi32.lib -l winmm.lib
 clang engine.o win32_editor.o -o win32_editor.exe %CommonCompilerFlags% %LinkedLibs%
 
-pushd ..\code
-..\build\win32_editor.exe || exit 1
 popd

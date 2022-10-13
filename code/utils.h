@@ -58,5 +58,18 @@ struct String
     s32         length;         // note: does not include the nil terminator
 };
 
+inline s32
+stringLength(char *string)
+{
+    s32 out = 0;
+    char *c = string;
+    while (*c)
+    {
+        out++;
+        c++;
+    }
+    return out;
+}
+
 #define UTILS_H
 #endif
