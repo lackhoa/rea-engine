@@ -66,7 +66,8 @@ struct Variable
     s32         stack_delta;
     u32         id;
 
-    Scope  *scope;
+    Scope *scope;
+    Stack *stack;
 };
 
 inline void
@@ -76,6 +77,7 @@ initVariable(Variable *var, String name, u32 id, Scope *scope)
     var->stack_delta = 0;
     var->id          = id;
     var->scope       = scope;
+    var->stack       = 0;
 }
 
 struct Application
@@ -167,7 +169,15 @@ printExpression(MemoryArena *buffer, Expression *exp, b32 detailed = false)
         case EC_Variable:
         {
             auto var = castExpression(Variable, exp);
+#if 0
             myprint(buffer, "%.*s", var->name.length, var->name.chars);
+#else
+            // print stack delta
+            if (var->stack)
+                myprint(buffer, "%.*s<stack>", var->name.length, var->name.chars);
+            else
+                myprint(buffer, "%.*s<%d>", var->name.length, var->name.chars, var->stack_delta);
+#endif
         } break;
 
         case EC_Application:
@@ -930,15 +940,25 @@ normalize(MemoryArena *arena, Stack *stack, s32 stack_offset, Expression *in)
     {
         case EC_Variable:
         {
-            s32 stack_delta = in->Variable.stack_delta - stack_offset;
-            if (stack_delta >= 0)
-            {
-                for (s32 id = 0; id < stack_delta; id++)
-                    stack = stack->next;
-                assert(in->Variable.scope == stack->scope);
-                Expression *resolved = stack->args[in->Variable.id];
+            Variable *in_var = castExpression(Variable, in);
+            if (in_var->stack)
+            {// stack variable
+                Expression *resolved = in_var->stack->args[in_var->id];
                 if (resolved)
                     out = resolved;
+            }
+            else
+            {// lexical variable
+                s32 stack_delta = in_var->stack_delta - stack_offset;
+                if (stack_delta >= 0)
+                {
+                    for (s32 id = 0; id < stack_delta; id++)
+                        stack = stack->next;
+                    assert(in_var->scope == stack->scope);
+                    Expression *resolved = stack->args[in_var->id];
+                    if (resolved)
+                        out = resolved;
+                }
             }
         } break;
 
@@ -1048,7 +1068,11 @@ normalize(MemoryArena *arena, Stack *stack, s32 stack_offset, Expression *in)
                     {
                         out = newExpression(arena, EC_Switch, subject_type);
                         out->Switch.subject     = subject_norm;
+#if 1
                         out->Switch.case_bodies = norm_bodies;
+#else
+                        out->Switch.case_bodies = in->Switch.case_bodies;
+#endif
                         out->Switch.case_count  = in->Switch.case_count;
                     }
                 }
@@ -1636,10 +1660,13 @@ internal Expression *
 parseProof(MemoryArena *arena, Bindings *bindings, Stack *stack, Expression *goal)
 {
     Expression *out = 0;
-
     unpackGlobals;
     pushContext;
 
+#if 0
+    printExpression(0, goal);
+    myprint(0, "\n");
+#endif
     goal = normalize(temp_arena, stack, 0, goal);
 
     Token token = nextToken(tk);
@@ -1670,13 +1697,9 @@ parseProof(MemoryArena *arena, Bindings *bindings, Stack *stack, Expression *goa
                             if (optionalChar('-'))
                             {
                                 // todo: what if we switched over composite expression as subject? the stack wouldn't help at all.
-                                Expression *ctor_exp           = subject_struct->ctors + ctor_id;
-                                stack->args[subject_var->id]  = ctor_exp;
-#if 0
-                                Expression *subgoal            = normalize(temp_arena, stack, goal);
-#endif
-
-                                Expression *subproof           = parseProof(temp_arena, bindings, stack, goal);
+                                Expression *ctor_exp         = subject_struct->ctors + ctor_id;
+                                stack->args[subject_var->id] = ctor_exp;
+                                Expression *subproof         = parseProof(temp_arena, bindings, stack, goal);
                                 myswitch->case_bodies[ctor_id] = subproof;
                             }
                             else if (ctor_id == 0)
@@ -1834,7 +1857,14 @@ parseDefine(MemoryArena* arena, b32 is_theorem = false)
                         stack.arena = temp_arena;
                         stack.scope = scope;
                         stack.count = parsed_param_count;
-                        allocateArrayZero(temp_arena, parsed_param_count, stack.args);
+                        allocateArray(temp_arena, parsed_param_count, stack.args);
+                        for (s32 arg_id = 0; arg_id < stack.count; arg_id++)
+                        {
+                            stack.args[arg_id] = newExpression(temp_arena, EC_Variable, signature->params[arg_id]->type);
+                            Variable *var = &stack.args[arg_id]->Variable;
+                            *var = signature->params[arg_id]->Variable;
+                            var->stack = &stack;
+                        }
                         body = parseProof(arena, local_bindings, &stack, signature->return_type);
                     }
                     else
@@ -2220,13 +2250,13 @@ engineMain(EngineMemory *memory)
     auto interp_arena_ = subArena(init_arena, getArenaFree(init_arena));
     auto interp_arena = &interp_arena_;
 
-#if 0
+#if 1
     if (!beginInterpreterSession(interp_arena, "../data/operator.rea"))
         success = false;
     resetZeroArena(interp_arena);
 #endif
 
-#if 0
+#if 1
     if (!beginInterpreterSession(interp_arena, "../data/proof.rea"))
         success = false;
     resetZeroArena(interp_arena);

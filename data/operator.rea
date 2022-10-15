@@ -1,10 +1,9 @@
 #load "boolean.rea"
 
-printRaw &(true, |(false,true,),);
-printRaw false & true | true & false | true;
+print_raw &(true, |(false,true,),);
+print_raw false & true | true & false | true;
 
-printRaw identical(Bool, true, false);
-printRaw identical(_, true, false);
+print_raw identical(_, true, false);
 
 check truth : false & true | true = true;
 check truth : (switch true {true -> &, false -> | })(true, false) = false;

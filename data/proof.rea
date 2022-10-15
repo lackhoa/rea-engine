@@ -12,7 +12,5 @@ a & (b & c) = (a & b) & c
 {
  switch a;
  - return truth;
- - switch b;
- - return truth;
- - return truth;
+ - switch b; - return truth; - return truth;
  }

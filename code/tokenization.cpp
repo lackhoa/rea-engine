@@ -30,7 +30,7 @@ enum Keyword
     Keywords_Count_,
 };
 const char *keywords[] = {"", "typedef", "define", "switch", "print",
-                          "printRaw", "check", "theorem", "return"};
+                          "print_raw", "check", "theorem", "return"};
 
 enum MetaDirective
 {
