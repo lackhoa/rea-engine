@@ -3,6 +3,7 @@ CompileFlags:
   Add:
     - -xc++
     - -DReaWindows
+    - -DREA_INTERNAL
     - -Wall
     - -Wno-c++17-extensions
     - -Wno-switch
