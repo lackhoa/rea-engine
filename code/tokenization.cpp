@@ -260,7 +260,7 @@ pushContext_(ParseContext *context, Tokenizer *tk = global_tokenizer)
 }
 
 #define pushContext { ParseContext context = {(char*)__func__}; pushContext_(&context); }
-#define pushSubContext(string) { ParseContext context = {string}; pushContext_(&context); }
+#define pushContextName(string) { ParseContext context = {string}; pushContext_(&context); }
 
 internal void
 popContext(Tokenizer *tk = global_tokenizer)
@@ -498,7 +498,7 @@ isIdentifier(Token *token)
 }
 
 inline String
-toString(const char *c)
+toString(char *c)
 {
     String out;
     out.chars = c;

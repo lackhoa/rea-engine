@@ -1,27 +1,70 @@
-typedef Nat
+#load "boolean.rea"
+
+typedef Nat : Set
 {
- | 0
- | s(Nat)
+ 0,
+ s(Nat),
  }
 
-define +(n: Nat, m: Nat): Nat
+define +(n, m: Nat) : Nat
 {
  switch n
  {
   0     -> m,
-  s(n') -> s(n' + m),
+  s(n1) -> s(n1 + m),
   }
  }
 
-print s(0) + s(s(0));
+1 := s(0);
+2 := s(1);
+3 := s(2);
+4 := s(3);
+5 := s(4);
+6 := s(5);
+check truth: 1 + 2 = 3;
 
-;; define 1 = s(0)
-;; define 2 = s(1)
-;; define 3 = s(2)
-;; print(1 + 2);
+define pred(n : Nat) : Nat
+{
+ switch n
+ {
+  0 -> 0,
+  s(n) -> n
+  }
+ }
 
-;; propdef even(Nat)
-;; {
-;;  | even0: even(0)
-;;  | even_plus2(n' : Nat, even(n')): even(n' + 2)
-;;  }
+define even(n : Nat) : Bool
+{
+ switch n
+ {
+  0 -> true,
+  s(n1) -> (switch n1 {0 -> false,
+                       s(n2) -> even(n2)}),
+  }
+ }
+
+define *(n, m: Nat) : Nat
+{
+ switch n
+ {
+  0 -> 0,
+  s(n1) -> m + n1 * m,
+  }
+ }
+
+check truth: 2*3 = 6;
+check truth: False = (2*3 = 5);
+
+define -(n, m: Nat) : Nat
+{
+ switch n
+ {
+  0 -> 0,
+  s(n1) -> switch(m) {
+                      0 -> n,
+                      s(m1) -> n1 - m1,
+                      },
+  }
+ }
+
+check truth: 3 - 2 = 1;
+check truth: 4 - 1 = 3;

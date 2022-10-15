@@ -1,19 +1,10 @@
 #load "boolean.rea"
 
-printRaw &(T, |(F,T,),);
-printRaw (switch T { T -> &, F -> | })(T, F);
-printRaw F & T | T;
-printRaw F & T | T & F | T;
+printRaw &(true, |(false,true,),);
+printRaw false & true | true & false | true;
 
-printRaw identical(Bool, T, F);
-printRaw identical(_, T, F);
-printRaw F & T | T = F & (T | T);
+printRaw identical(Bool, true, false);
+printRaw identical(_, true, false);
 
-theorem test() : F & T | T = T
-{
- return truth;
- }
-print test;
-
-check truth : F & T | T = T;
-check truth : (switch T {T -> &, F -> | })(T, F) = F;
+check truth : false & true | true = true;
+check truth : (switch true {true -> &, false -> | })(true, false) = false;

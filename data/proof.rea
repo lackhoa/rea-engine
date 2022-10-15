@@ -1,11 +1,6 @@
 #load "boolean.rea"
 
-theorem stillEasy(a: Bool) : (F & a = F)
-{
- return truth;
- }
-
-theorem notSoEasy(a: Bool) : (a & F = F)
+theorem notSoEasy(a: Bool) : (a & false = false)
 {
  switch a;
  - return truth;
@@ -17,7 +12,7 @@ a & (b & c) = (a & b) & c
 {
  switch a;
  - return truth;
+ - switch b;
+ - return truth;
  - return truth;
  }
-
-print andCommutative;

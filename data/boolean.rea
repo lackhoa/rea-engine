@@ -1,23 +1,23 @@
 typedef Bool : Set
 {
- F,
- T,
+ false,
+ true,
  }
 
-define &(a: Bool, b: Bool) : Bool
+define &(a, b: Bool) : Bool
 {
  switch a
  {
-  F -> F,
-  T -> b
+  false -> false,
+  true -> b
   }
  }
 
-define |(a: Bool, b: Bool) : Bool
+define |(a, b: Bool) : Bool
 {
  switch a
  {
-  T -> T,
-  F -> b
+  true -> true,
+  false -> b
   }
  }

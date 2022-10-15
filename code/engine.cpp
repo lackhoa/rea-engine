@@ -21,7 +21,7 @@ enum ExpressionCategory
     EC_Variable,                // reference to some unknown on "the stack"
     EC_Application,             // operator application
     EC_Switch,                  // switch statement
-    EC_Struct,                  // struct information
+    EC_Form,                    // like Coq inductive types
     EC_Constructor,             // canonical members of structs
     EC_Procedure,               // holds actual computation (ie body that can be executed)
     EC_ArrowType,               // type of procedure and built-in objects
@@ -39,34 +39,44 @@ enum ExpressionCategory
 
 struct Expression;
 
-struct Scope
+// NOTE: this is just a dummy struct for us to debug scopes.
+struct Scope { char *at; };
+
+inline Scope *
+newScope(MemoryArena *arena, char* at)
 {
-    Token location;
+    auto scope = pushStruct(arena, Scope);
+    scope->at = at;
+    return scope;
+}
+
+struct Stack
+{
+    MemoryArena  *arena;
+    Scope        *scope;
+    s32           count;
+    Expression  **args;
+    Stack        *next;
 };
-
-inline Scope *
-newScope(MemoryArena *arena, Token location)
-{
-    auto scope = pushStruct(arena, Scope);
-    scope->location = location;
-    return scope;
-}
-
-inline Scope *
-newScope(MemoryArena *arena, char *name)
-{
-    auto scope = pushStruct(arena, Scope);
-    scope->location.text.chars  = name;
-    scope->location.text.length = stringLength(name);
-    return scope;
-}
 
 struct Variable
 {
-    String  name;
+    String      name;
+    Expression **value;  // pointer to a stack location
+    s32         stack_delta;
+    u32         id;
+
     Scope  *scope;
-    u32     id;
 };
+
+inline void
+initVariable(Variable *var, String name, u32 id, Scope *scope)
+{
+    var->name        = name;
+    var->stack_delta = 0;
+    var->id          = id;
+    var->scope       = scope;
+}
 
 struct Application
 {
@@ -77,8 +87,9 @@ struct Application
 
 struct Switch
 {
-    Expression *subject;
+    Expression  *subject;
     Expression **case_bodies;
+    s32          case_count;
 };
 
 struct Constructor
@@ -87,7 +98,7 @@ struct Constructor
     String  name;
 };
 
-struct Struct
+struct Form
 {
     String      name;
     s32         ctor_count;
@@ -113,6 +124,7 @@ struct ArrowType
     Scope       *scope;
 };
 
+// IMPORTANT: All expressions are well-typed (except in parsing phase).
 struct Expression
 {
     ExpressionCategory  cat;
@@ -122,7 +134,7 @@ struct Expression
         Variable       Variable;
         Application    Application;
         Switch         Switch;
-        Struct         Struct;
+        Form           Form;
         Constructor    Constructor;
         Procedure      Procedure;
         ArrowType      ArrowType;
@@ -143,27 +155,19 @@ global_variable Expression *hole_expression;
 inline s32
 switchCtorCount(Switch *myswitch)
 {
-    return myswitch->subject->type->Struct.ctor_count;
+    return myswitch->subject->type->Form.ctor_count;
 }
 
 internal void
 printExpression(MemoryArena *buffer, Expression *exp, b32 detailed = false)
 {
+    b32 print_type = detailed ? true : false;
     switch (exp->cat)
     {
         case EC_Variable:
         {
             auto var = castExpression(Variable, exp);
-#if 1
             myprint(buffer, "%.*s", var->name.length, var->name.chars);
-            if (detailed)
-            {
-                myprint(buffer, " : ");
-                printExpression(buffer, exp->type);
-            }
-#else
-            myprint(buffer, "<%.*s, %d, %d>", var->name.length, var->name.chars, var->stack_delta, var->id);
-#endif
         } break;
 
         case EC_Application:
@@ -188,7 +192,7 @@ printExpression(MemoryArena *buffer, Expression *exp, b32 detailed = false)
             myprint(buffer, "switch ");
             printExpression(buffer, myswitch->subject);
             myprint(buffer, " {");
-            auto subject_struct = castExpression(Struct, myswitch->subject->type);
+            auto subject_struct = castExpression(Form, myswitch->subject->type);
             for (s32 ctor_id = 0;
                  ctor_id < subject_struct->ctor_count;
                  ctor_id++)
@@ -202,14 +206,15 @@ printExpression(MemoryArena *buffer, Expression *exp, b32 detailed = false)
             myprint(buffer, "}");
         } break;
 
-        case EC_Struct:
+        case EC_Form:
         {
-            auto mystruct = &exp->Struct;
+            auto mystruct = &exp->Form;
             myprint(buffer, mystruct->name);
         } break;
 
         case EC_Procedure:
         {
+            print_type = false; // we print type in the following code
             auto proc = castExpression(Procedure, exp);
             auto signature = castExpression(ArrowType, exp->type);
             myprint(buffer, proc->name);
@@ -289,6 +294,12 @@ printExpression(MemoryArena *buffer, Expression *exp, b32 detailed = false)
             myprint(buffer, "<unimplemented category: %u>", exp->cat);
         } break;
     }
+
+    if (print_type)
+    {
+        myprint(buffer, " : ");
+        printExpression(buffer, exp->type);
+    }
 }
 
 inline void
@@ -325,24 +336,16 @@ global_variable Bindings *global_bindings;
 internal Expression *
 parseExpression(MemoryArena *arena, Bindings *bindings, s32 min_precedence = -9999);
 
-struct Stack
-{
-    MemoryArena  *arena;
-    Scope        *scope;
-    s32           count;
-    Expression  **first;
-    Stack        *next;
-};
-
+// todo why not allow the stack frame to alter the arena here?
 internal Stack
-extendStack(Stack *outer, Scope *scope, u32 arg_count, Expression **args)
+extendStack(Stack *outer, Scope *scope, u32 arg_count, Expression **in_args)
 {    
     Stack out = {};
 
     out.arena = outer->arena;
     out.scope = scope;
     out.count = arg_count;
-    out.first = args;
+    out.args  = in_args;
     out.next  = outer;
 
     return out;
@@ -407,24 +410,35 @@ lookupNameCurrentFrame(Bindings *bindings, String key, b32 add_if_missing = fals
     return out;
 }
 
-inline void
-addBuiltinName(char *key, Expression *value)
+inline b32
+addGlobalName(String key, Expression *value)
 {
-    auto lookup = lookupNameCurrentFrame(global_bindings, toString(key), true);
-    lookup.slot->value = value;
+    auto lookup = lookupNameCurrentFrame(global_bindings, key, true);
+    b32 succeed = true;
+    if (lookup.found)
+        succeed = false;
+    else
+        lookup.slot->value = value;
+    return succeed;
+}
+
+inline b32
+addGlobalName(char *key, Expression *value)
+{
+    return addGlobalName(toString(key), value);
 }
 
 struct LookupNameRecursive { Expression *value; b32 found; };
 
 inline LookupNameRecursive
-lookupNameRecursive(Bindings *bindings, Token *token)
+lookupNameRecursive(MemoryArena *arena, Bindings *bindings, Token *token)
 {
     Expression *value = {};
     b32 found = false;
 
-    for (b32 stop = false;
+    for (b32 stop = false, stack_delta = 0;
          !stop;
-         )
+         stack_delta++)
     {
         LookupName lookup = lookupNameCurrentFrame(bindings, token->text, false);
         if (lookup.found)
@@ -432,11 +446,21 @@ lookupNameRecursive(Bindings *bindings, Token *token)
             found = true;
             stop = true;
             value = lookup.slot->value;
+            if ((value->cat == EC_Variable) && (stack_delta != 0))
+            {
+                assert(value->Variable.stack_delta == 0);
+                // todo: we're copying variable, which is kinda bad.
+                allocate(arena, value);
+                *value = *lookup.slot->value;
+                value->Variable.stack_delta = stack_delta;
+            }
         }
         else
         {
             if (bindings->next)
+            {
                 bindings = bindings->next;
+            }
             else
                 stop = true;
         }
@@ -496,24 +520,26 @@ tokenError(char *message, Tokenizer *tk = global_tokenizer)
 }
 
 inline b32
-requireChar(Tokenizer *tk, char c)
+requireChar(Tokenizer *tk, char c, char *reason = 0)
 {
     auto out = false;
+    if (!reason)
+        reason = "<no reason provided>";
     if (parsing(tk))
     {
         Token token = nextToken(tk);
         if (token.text.length == 1 && token.text.chars[0] == c)
             out = true;
         else
-            parseError(&token, "expected character %c", c);
+            parseError(&token, "expected character '%c' (%s)", c, reason);
     }
     return out;
 }
 
 inline b32
-requireChar(char c)
+requireChar(char c, char *reason = 0)
 {
-    return requireChar(global_tokenizer, c);
+    return requireChar(global_tokenizer, c, reason);
 }
 
 inline b32
@@ -550,8 +576,9 @@ optionalChar(char c)
 }
 
 internal s32
-getCommaSeparatedListLength(Token opening_token, Tokenizer *tk)
+getCommaSeparatedListLength(Tokenizer *tk)
 {
+    Token opening_token = tk->last_token;
     char opening = opening_token.text.chars[0];
     char closing = getMatchingPair(opening);
     assert(closing);
@@ -601,23 +628,23 @@ addGlobalNameBinding(String key, Expression *value)
 }
 
 internal void
-addBuiltinStruct(MemoryArena *arena, char *name, const char **ctor_names, s32 ctor_count)
+addBuiltinForm(MemoryArena *arena, char *name, const char **ctor_names, s32 ctor_count, Expression *type)
 {
-    auto struct_exp = newExpression(arena, EC_Struct, builtin_Set);
-    auto struct_name = toString(name);
-    assert(addGlobalNameBinding(struct_name, struct_exp));
+    auto exp = newExpression(arena, EC_Form, type);
+    auto form_name = toString(name);
+    assert(addGlobalNameBinding(form_name, exp));
 
-    Struct *mystruct = &struct_exp->Struct;
-    mystruct->name = struct_name;
-    mystruct->ctor_count = ctor_count;
-    allocateArray(arena, mystruct->ctor_count, mystruct->ctors);
+    Form *form = &exp->Form;
+    form->name = form_name;
+    form->ctor_count = ctor_count;
+    allocateArray(arena, form->ctor_count, form->ctors);
 
     for (auto ctor_id = 0; ctor_id < ctor_count; ctor_id++)
     {
-        auto ctor_exp = mystruct->ctors + ctor_id;
-        initExpression(ctor_exp, EC_Constructor, struct_exp);
-        auto ctor = &ctor_exp->Constructor;
-        ctor->name  = toString(ctor_names[ctor_id]);
+        auto ctor_exp = form->ctors + ctor_id;
+        initExpression(ctor_exp, EC_Constructor, exp);
+        auto ctor  = &ctor_exp->Constructor;
+        ctor->name = toString((char*)ctor_names[ctor_id]);
         ctor->id   = ctor_id;
         assert(addGlobalNameBinding(ctor->name, ctor_exp));
     }
@@ -625,68 +652,50 @@ addBuiltinStruct(MemoryArena *arena, char *name, const char **ctor_names, s32 ct
 
 struct OptionalU32 { b32 success; u32 value; };
 
-internal Expression *
-resolve(Stack *stack, Variable variable)
-{
-    for (s32 stop = false; !stop;)
-    {
-        if (stack->scope == variable.scope)
-            stop = true;
-        else
-            stack = stack->next;
-    }
-    assert(variable.id < stack->count);
-    Expression *out = stack->first[variable.id];
-    if (out)
-    {
-        auto var = castExpression(Variable, out);
-        if (var)
-        {
-            out = newExpression(stack->arena, EC_Variable, out->type);
-            out->Variable = *var;
-        }
-    }
-    return out;
-}
-
-// NOTE: input expression must be in normal form
-internal Expression *
-matchSwitchCase(Expression *matched, Bindings *bindings)
-{
-    Expression *out = {};
-
-    (void) bindings;
-    switch (matched->cat)
-    {
-        case EC_Constructor:
-        {
-            out = matched;
-        } break;
-
-        // bookmark: make this work
-#if 0
-        case EC_Application:
-        {
-            auto app = castExpression(Application, matched);
-            auto ctor_ref = castExpression(ConstructorRef, app->op);
-            Constructor *ctor = constructorFromRef(ctor_ref);
-            if (ctor_ref)
-            {
-                if (app->arg_count == ctor->name)
-                out.value = ctor_ref->id;
-            }
-        } break;
-#endif
-    }
-    
-    return out;
-}
-
 enum Trinary
 {
     Trinary_Unknown, Trinary_False, Trinary_True,
 };
 
+internal Trinary
+compareExpressions(Expression *lhs, Expression *rhs);
+
+internal Trinary
+compareExpressionList(Expression **lhs_list, Expression **rhs_list, s32 count)
+{
+    Trinary out = Trinary_Unknown;
+    b32 mismatch_found = false;
+    b32 unknown_found  = false;
+    for (s32 id = 0;
+         (id < count) && !mismatch_found;
+         id++)
+    {
+        auto lhs = lhs_list[id];
+        auto rhs = rhs_list[id];
+        auto compare = compareExpressions(lhs, rhs);
+        if (compare == Trinary_Unknown)
+            unknown_found = true;
+        if (compare == Trinary_False)
+            mismatch_found = true;
+    }
+    if (mismatch_found)
+        out = Trinary_False;
+    else if (unknown_found)
+        out = Trinary_Unknown;   
+    else
+        out = Trinary_True;
+
+    return out;
+}
+
+inline b32
+isCompositeConstructor(Expression *expression)
+{
+    return ((expression->cat == EC_Application)
+            && (expression->Application.op->cat == EC_Constructor));
+}
+
+// NOTE: values going in must be normalized
 // NOTE: we need a trinary return value to detect if the comparison is false.
 internal Trinary
 compareExpressions(Expression *lhs, Expression *rhs)
@@ -701,8 +710,7 @@ compareExpressions(Expression *lhs, Expression *rhs)
         {
             case EC_Variable:
             {
-                if ((lhs->Variable.scope == rhs->Variable.scope)
-                    && (lhs->Variable.id == rhs->Variable.id))
+                if (lhs->Variable.value == rhs->Variable.value)
                 {
                     out = Trinary_True;
                 }
@@ -710,76 +718,86 @@ compareExpressions(Expression *lhs, Expression *rhs)
 
             case EC_Constructor:
             {
-                assert(lhs->Constructor.id != rhs->Constructor.id);
-                out = Trinary_False;
+                if (lhs->Constructor.id == rhs->Constructor.id)
+                    out = Trinary_True;
+                else
+                    out = Trinary_False;
             } break;
 
             case EC_ArrowType:
             {
-                auto arg_count = lhs->ArrowType.param_count;
-                if (rhs->ArrowType.param_count == arg_count)
+                // todo: important: comparison of dependent types wouldn't work
+                // if we compare the scopes. we can fix it by comparing
+                // stack_delta (which we're not storing right now)
+                auto larrow = castExpression(ArrowType, lhs);
+                auto rarrow = castExpression(ArrowType, rhs);
+                Trinary return_type_compare = compareExpressions(larrow->return_type, rarrow->return_type);
+                if (return_type_compare == Trinary_False)
+                    out = Trinary_False;
+                else if (return_type_compare == Trinary_True)
                 {
-                    b32 mismatch_found = false;
-                    b32 unknown_found = false;
-                    for (auto arg_id = 0;
-                         (arg_id < arg_count) && (!mismatch_found) && (!unknown_found);
-                         arg_id++)
+                    auto param_count = larrow->param_count;
+                    if (rarrow->param_count == param_count)
                     {
-                        auto lhs_arg = lhs->ArrowType.params[arg_id];
-                        auto rhs_arg = rhs->ArrowType.params[arg_id];
-                        auto compare = compareExpressions(lhs_arg->type, rhs_arg->type);
-                        if (compare == Trinary_Unknown)
+                        auto lparam_types = pushArray(global_temp_arena, param_count, Expression*);
+                        auto rparam_types = pushArray(global_temp_arena, param_count, Expression*);
+
+                        for (s32 param_id = 0;
+                             param_id < param_count;
+                             param_id++)
                         {
-                            unknown_found = true;
+                            lparam_types[param_id] = larrow->params[param_id]->type;
+                            rparam_types[param_id] = rarrow->params[param_id]->type;
                         }
-                        if (compare == Trinary_False)
-                        {
-                            mismatch_found = true;
-                        }
+
+                        out = compareExpressionList(lparam_types, rparam_types, param_count);
                     }
-                    if (mismatch_found)
-                        out = Trinary_False;
-                    else if (unknown_found)
-                        out = Trinary_Unknown;   
                     else
-                        out = Trinary_True;
+                        out = Trinary_False;
                 }
             } break;
 
             case EC_Switch:
             {
-                b32 unknown_found = false;
-                b32 false_found   = false;
-                auto lhs_switch = castExpression(Switch, lhs);
-                auto rhs_switch = castExpression(Switch, rhs);
-                auto ctor_count = switchCtorCount(lhs_switch);
-                for (int ctor_id = 0, stop = false;
-                     ctor_id < ctor_count && !stop;
-                     ctor_id++)
+                out = Trinary_Unknown;
+            } break;
+
+            case EC_Application:
+            {
+                auto lapp = castExpression(Application, lhs);
+                auto rapp = castExpression(Application, rhs);
+                if ((lapp->op->cat == EC_Constructor)
+                    && (rapp->op->cat == EC_Constructor))
                 {
-                    auto compare = compareExpressions(lhs_switch->case_bodies[ctor_id],
-                                                      rhs_switch->case_bodies[ctor_id]);
-                    if (compare == Trinary_Unknown)
+                    Trinary op_compare = compareExpressions(lapp->op, rapp->op);
+                    if (op_compare == Trinary_False)
+                        out = Trinary_False;
+                    else
                     {
-                        unknown_found = true;
-                    }
-                    else if (compare == Trinary_False)
-                    {
-                        stop = true;
-                        false_found = true;
+                        assert(op_compare == Trinary_True);
+                        assert(lapp->arg_count == rapp->arg_count);
+                        out = compareExpressionList(lapp->args, rapp->args, lapp->arg_count);
                     }
                 }
-                if (false_found)
-                    out = Trinary_False;
-                else if (unknown_found)
-                    out = Trinary_Unknown;
-                else
-                    out = Trinary_True;
+                Trinary op_compare = compareExpressions(lapp->op, rapp->op);
+                if (op_compare == Trinary_False)
+                {
+                }
+            } break;
+
+            case EC_Form:
+            {
+                out = Trinary_False;
             } break;
 
             default:
                 todoIncomplete;
         }
+    }
+    else if (((lhs->cat == EC_Constructor) && isCompositeConstructor(rhs)) ||
+             ((rhs->cat == EC_Constructor) && isCompositeConstructor(lhs)))
+    {
+        out = Trinary_False;
     }
 
     return out;
@@ -813,9 +831,13 @@ precedenceOf(Expression *op)
     {
         case EC_Procedure:
         {
-            if (equals(op->Procedure.name, "&"))
+            String name = op->Procedure.name;
+            if (equals(name, "&")
+                || equals(name, "*"))
                 out = 20;
-            else if (equals(op->Procedure.name, "|"))
+            else if (equals(name, "|")
+                     || equals(name, "+")
+                     || equals(name, "-"))
                 out = 10;
             else
                 out = 100;
@@ -845,140 +867,197 @@ getArgType(Expression *op, s32 arg_id)
     return signature->params[arg_id]->type;
 }
 
+#if 0
+inline Expression *
+transformVariables(MemoryArena *arena, Stack *stack, s32 stack_delta, Expression *in)
+{
+    Expression *out = in;
+    switch(in->cat)
+    {
+        case EC_Variable:
+        {
+            if(in->Variable.stack_delta == stack_delta)
+            {
+                allocate(arena, out);
+                *out = *in;
+                assert(out->Variable.id < stack->count);
+                out->Variable.value = stack->args + out->Variable.id;
+            }
+        } break;
+
+        case EC_Application:
+        {
+            allocate(arena, out);
+            *out = *in;
+            out->Application.op = transformVariables(arena, stack, stack_delta, in->Application.op);
+            for (s32 arg_id = 0; arg_id < in->Application.arg_count; arg_id++)
+            {
+                out->Application.args[arg_id] = transformVariables(arena, stack, stack_delta, in->Application.args[arg_id]);
+            }
+        } break;
+
+        case EC_Switch:
+        {
+            allocate(arena, out);
+            *out = *in;
+            out->Switch.subject = transformVariables(arena, stack, stack_delta, in->Switch.subject);
+            for (s32 case_id = 0;
+                 case_id < in->Switch.case_count;
+                 case_id++)
+            {
+                out->Switch.case_bodies[case_id] = transformVariables(arena, stack, stack_delta+1, in->Switch.case_bodies[case_id]);
+            }
+        } break;
+
+        case EC_Procedure:
+        {
+            allocate(arena, out);
+            *out = *in;
+            out->Procedure.body = transformVariables(arena, stack, stack_delta+1, in->Procedure.body);
+        } break;
+    }
+    return out;
+}
+#endif
+
 internal Expression *
-normalize(MemoryArena *arena, Stack *stack, Expression *in)
+normalize(MemoryArena *arena, Stack *stack, s32 stack_offset, Expression *in)
 {
     Expression *out = 0;
     unpackGlobals;
 
-#if 0
-    if (depth==0)
-        out = in;
-#endif
+    switch (in->cat)
     {
-        switch (in->cat)
+        case EC_Variable:
         {
-            case EC_Variable:
+            s32 stack_delta = in->Variable.stack_delta - stack_offset;
+            if (stack_delta >= 0)
             {
-                out = resolve(stack, in->Variable);
+                for (s32 id = 0; id < stack_delta; id++)
+                    stack = stack->next;
+                assert(in->Variable.scope == stack->scope);
+                Expression *resolved = stack->args[in->Variable.id];
+                if (resolved)
+                    out = resolved;
+            }
+        } break;
+
+        case EC_Application:
+        {
+            auto in_app = &in->Application;
+            Expression **norm_args = pushArray(temp_arena, in_app->arg_count, Expression*);
+            for (auto arg_id = 0;
+                 arg_id < in_app->arg_count;
+                 arg_id++)
+            {
+                Expression *in_arg = in_app->args[arg_id];
+                norm_args[arg_id]  = normalize(arena, stack, stack_offset, in_arg);
+            }
+
+            Expression *norm_op = normalize(arena, stack, stack_offset, in_app->op);
+            if (norm_op->cat == EC_Procedure)
+            {
+                ArrowType *signature = &norm_op->type->ArrowType;
+                Stack new_env = extendStack(stack, signature->scope, in_app->arg_count, norm_args);
+                out = normalize(arena, &new_env, stack_offset, norm_op->Procedure.body);
+            }
+            else
+            {
+                if (norm_op->cat == EC_Builtin_identical)
+                {// special case for equality
+                    auto compare = compareExpressions(norm_args[1], norm_args[2]);
+                    if (compare == Trinary_True)
+                        out = builtin_True;
+                    else if (compare == Trinary_False)
+                        out = builtin_False;
+                }
+
                 if (!out)
-                    out = in;
-            } break;
+                {
+                    // TODO: don't allocate if the out & in are identical.
+                    assert(in->type);
+                    out = newExpression(arena, EC_Application, in->type);
+                    auto app = castExpression(Application, out);
 
-            case EC_Application:
+                    app->op        = norm_op;
+                    app->arg_count = in_app->arg_count;
+                    allocateArray(arena, app->arg_count, app->args);
+                    for (int arg_id = 0; arg_id < app->arg_count; arg_id++)
+                        app->args[arg_id] = norm_args[arg_id];
+                }
+            }
+        } break;
+
+        case EC_Switch:
+        {
+            auto myswitch = &in->Switch;
+            Expression *subject_norm = normalize(arena, stack, stack_offset, myswitch->subject);
+
+            auto subject_type   = subject_norm->type;
+
+            Stack case_stack;
+            Constructor *ctor = 0;
+            switch (subject_norm->cat)
             {
-                auto in_app = &in->Application;
-                Expression **norm_args = pushArray(temp_arena, in_app->arg_count, Expression*);
-                for (auto arg_id = 0;
-                     arg_id < in_app->arg_count;
-                     arg_id++)
+                case EC_Constructor:
                 {
-                    Expression *in_arg = in_app->args[arg_id];
-                    norm_args[arg_id]  = normalize(arena, stack, in_arg);
-                }
+                    ctor = &subject_norm->Constructor;
+                    case_stack = extendStack(stack, 0, 0, 0);
+                } break;
 
-                Expression *norm_op = normalize(arena, stack, in_app->op);
-                if (norm_op->cat == EC_Procedure)
+                case EC_Application:
                 {
-                    ArrowType *signature = &norm_op->type->ArrowType;
-                    Stack new_env = extendStack(stack, signature->scope, in_app->arg_count, norm_args);
-                    out = normalize(arena, &new_env, norm_op->Procedure.body);
-                }
-                else
-                {
-                    if (norm_op->cat == EC_Builtin_identical)
-                    {// special case for equality
-                        auto compare = compareExpressions(norm_args[1], norm_args[2]);
-                        if (compare == Trinary_True)
-                            out = builtin_True;
-                        else if (compare == Trinary_False)
-                            out = builtin_False;
-                    }
-
-                    if (!out)
+                    auto app = castExpression(Application, subject_norm);
+                    ctor = castExpression(Constructor, app->op);
+                    if (ctor)
                     {
-                        // TODO: don't allocate if the out & in are identical.
-                        out = newExpression(arena, EC_Application, in->type);
-                        out->cat = EC_Application;
-                        auto app = castExpression(Application, out);
-
-                        app->op        = norm_op;
-                        app->arg_count = in_app->arg_count;
-                        allocateArray(arena, app->arg_count, app->args);
-                        for (int arg_id = 0; arg_id < app->arg_count; arg_id++)
-                        {
-                            app->args[arg_id] = norm_args[arg_id];
-                        }
+                        auto signature = castExpression(ArrowType, app->op->type);
+                        case_stack = extendStack(stack, signature->scope, signature->param_count, app->args);
                     }
-                }
-            } break;
+                } break;
+            }
 
-            case EC_Switch:
+            if (ctor)
+                out = normalize(arena, &case_stack, stack_offset, myswitch->case_bodies[ctor->id]);
+            else
             {
-                auto myswitch = &in->Switch;
-                Expression *norm_subject = normalize(arena, stack, myswitch->subject);
-
-                auto subject_type   = norm_subject->type;
-                // bookmark: this needs to modify the stack
-                auto ctor_exp       = matchSwitchCase(norm_subject, 0);
-
-                if (ctor_exp)
-                {
-                    // NOTE: even if the constructor is just a constant, it'd still
-                    // need its scope, because parsing... not sure if it's an issue.
-                    Scope *scope = 0;  // todo
-                    auto param_count = 0;
-                    auto signature = castExpression(ArrowType, ctor_exp->type);
-                    if (signature)
-                        param_count = signature->param_count;
-
-                    Stack case_stack = extendStack(stack, scope, param_count, 0);
-                    out = normalize(arena, &case_stack, myswitch->case_bodies[ctor_exp->Constructor.id]);
-                }
-                else
-                {
-                    // important: we can't normalize the bodies since they can recurse infinitely.
+                // important: we can't normalize the bodies since they can recurse infinitely.
 #if 1
-                    auto switch_struct = castExpression(Struct, subject_type);
-                    auto ctor_count    = switch_struct->ctor_count;
-                    auto norm_bodies   = pushArray(arena, switch_struct->ctor_count, Expression*);
-                    for (int ctor_id = 0; ctor_id < ctor_count; ctor_id++)
+                auto switch_struct = castExpression(Form, subject_type);
+                auto ctor_count    = switch_struct->ctor_count;
+                auto norm_bodies   = pushArray(arena, switch_struct->ctor_count, Expression*);
+                for (int ctor_id = 0; ctor_id < ctor_count; ctor_id++)
+                {
+                    Expression *ctor_exp = switch_struct->ctors + ctor_id;
+                    auto   param_count = 0;
+                    auto   signature   = castExpression(ArrowType, ctor_exp->type);
+                    Scope *scope       = 0;
+                    if (signature)
                     {
-                        Expression *ctor_exp = switch_struct->ctors + ctor_id;
-                        auto param_count = 0;
-                        auto signature = castExpression(ArrowType, ctor_exp->type);
-                        if (signature)
-                            param_count = signature->param_count;
-                        Scope *scope = 0; // todo:
-                        auto case_stack = extendStack(stack, scope, param_count, 0);
-                        norm_bodies[ctor_id] = normalize(arena, &case_stack, myswitch->case_bodies[ctor_id]);
+                        param_count = signature->param_count;
+                        scope       = signature->scope;
                     }
+                    auto case_stack = extendStack(stack, scope, param_count, 0);
+                    norm_bodies[ctor_id] = normalize(arena, &case_stack, stack_offset, myswitch->case_bodies[ctor_id]);
+                }
 #endif
 
-                    if (!out)
+                if (!out)
+                {
+                    if (subject_norm != myswitch->subject)
                     {
-                        if (norm_subject == myswitch->subject)
-                            out = in;
-                        else
-                        {
-                            out = newExpression(arena, EC_Switch, subject_type);
-                            out->Switch.subject     = norm_subject;
-#if 0
-                            out->Switch.case_bodies = myswitch->case_bodies;
-#else
-                            out->Switch.case_bodies = norm_bodies;
-#endif
-                        }
+                        out = newExpression(arena, EC_Switch, subject_type);
+                        out->Switch.subject     = subject_norm;
+                        out->Switch.case_bodies = norm_bodies;
+                        out->Switch.case_count  = in->Switch.case_count;
                     }
                 }
-            } break;
+            }
+        } break;
+    }    
 
-            default:
-            {
-                out = in;
-            } break;
-        }    
-    }
+    if (!out)
+        out = in;
 
     return out;
 }
@@ -1004,7 +1083,7 @@ newApplication(MemoryArena *arena, Token *blame_token,
             Stack stack = {};
             stack.arena = arena;
             stack.scope = signature->scope;
-            allocateArrayZero(temp_arena, arg_count, stack.first);
+            allocateArrayZero(temp_arena, arg_count, stack.args);
             stack.count = arg_count;
 
             for (int arg_id = 0, stop = 0;
@@ -1012,14 +1091,15 @@ newApplication(MemoryArena *arena, Token *blame_token,
                  arg_id++)
             {
                 auto arg = args[arg_id];
-                stack.first[arg_id] = args[arg_id];
+                stack.args[arg_id] = args[arg_id];
                 Expression *param = signature->params[arg_id];
-                auto param_type = normalize(temp_arena, &stack, param->type);
+                auto param_type = normalize(temp_arena, &stack, 0, param->type);
                 if (arg->cat == EC_Hole)
                 {
                     // NOTE: this expression is still free, it can be anything.
                     // todo: we don't check afterward if the hole has been filled.
-                    stack.first[arg_id] = 0;
+                    // just put a variable here
+                    stack.args[arg_id] = signature->params[arg_id];
                 }
                 else if (param_type->cat == EC_Variable)
                 {
@@ -1029,13 +1109,12 @@ newApplication(MemoryArena *arena, Token *blame_token,
                     // write back the new value to the original variable
                     auto var = &param_type->Variable;
                     assert(var->scope == stack.scope);
-                    stack.first[var->id] = arg->type;
+                    stack.args[var->id] = arg->type;
                     app->args[var->id]   = arg->type;
                 }
                 else if (expressionsIdenticalB32(arg->type, param_type))
                 {
                     app->args[arg_id] = arg;
-                    out->type = normalize(arena, &stack, signature->return_type);
                 }
                 else
                 {
@@ -1046,6 +1125,9 @@ newApplication(MemoryArena *arena, Token *blame_token,
                     stop = true;
                 }
             }
+
+            if (parsing())
+                out->type = normalize(arena, &stack, 0, signature->return_type);
         }
         else
             parseError(blame_token, "incorrect arg count: %d (procedure expected %d)", arg_count, signature->param_count);
@@ -1053,6 +1135,7 @@ newApplication(MemoryArena *arena, Token *blame_token,
     else
         tokenError(blame_token, "operator must have an arrow type");
     
+    assert(out->type);
     return out;
 }
 
@@ -1080,7 +1163,6 @@ combineExpressions(MemoryArena *arena, Token *blame_token, Expression *op, Expre
 }
 
 // note: this modifies the bindings, returns the matched id
-// bookmark: what should this function do?
 internal Constructor *
 parseSwitchPattern(MemoryArena *arena, Bindings *bindings, Expression *expected_struct)
 {
@@ -1092,7 +1174,7 @@ parseSwitchPattern(MemoryArena *arena, Bindings *bindings, Expression *expected_
     Token ctor_token = nextToken(tk);
     if (isIdentifier(&ctor_token))
     {
-        auto lookup = lookupNameRecursive(bindings, &ctor_token);
+        auto lookup = lookupNameRecursive(arena, bindings, &ctor_token);
         if (!lookup.found)
             tokenError("unbound identifier in expression");
         {
@@ -1174,16 +1256,16 @@ parseSwitch(MemoryArena *arena, Bindings *bindings)
 
     Token subject_token = peekNext(tk);
     myswitch->subject = parseExpression(arena, bindings);
-    if (requireChar(tk, '{'))
+    if (requireChar(tk, '{', "to open the typedef body"))
     {
         Expression *subject_type = myswitch->subject->type;
-        if (subject_type->cat == EC_Struct)
+        if (subject_type->cat == EC_Form)
         {
-            auto subject_struct = &subject_type->Struct;
+            auto subject_struct = &subject_type->Form;
             auto expected_ctor_count = subject_struct->ctor_count;
             allocateArray(arena, expected_ctor_count, myswitch->case_bodies);
 
-            s32 actual_case_id = 0;
+            s32 actual_case_count = 0;
             Expression *switch_type = 0;
             for (b32 stop = false;
                  !stop && parsing();)
@@ -1208,18 +1290,18 @@ parseSwitch(MemoryArena *arena, Bindings *bindings)
                                         switch_type = body->type;
                                     else if (!expressionsIdenticalB32(body->type, switch_type))
                                     {
-                                        parseError(&body_token, "mismatched return type in input case %d", actual_case_id);
+                                        parseError(&body_token, "mismatched return type in input case %d", actual_case_count);
                                         pushAttachment("got", body->type);
                                         pushAttachment("expected", switch_type);
                                         stop = true;
                                     }
 
                                     myswitch->case_bodies[ctor->id] = body;
-                                    actual_case_id++;
+                                    actual_case_count++;
 
                                     if (!optionalChar(tk, ','))
                                     {
-                                        requireChar('}');
+                                        requireChar('}', "to end switch expression; or you might need ',' to end the switch case");
                                         stop = true;
                                     }
                                 }
@@ -1231,12 +1313,13 @@ parseSwitch(MemoryArena *arena, Bindings *bindings)
 
             if (parsing())
             {
-                if (actual_case_id != expected_ctor_count)
+                myswitch->case_count = actual_case_count;
+                if (actual_case_count != expected_ctor_count)
                 {
                     parseError(&token1, "wrong number of cases, expected: %d, got: %d",
-                               expected_ctor_count, actual_case_id);
+                               expected_ctor_count, actual_case_count);
                 }
-                else if (actual_case_id == 0)
+                else if (actual_case_count == 0)
                 {
                     // TODO: support empty switch later.
                     tokenError(&token1, "cannot assign type to empty switch expression");
@@ -1281,7 +1364,7 @@ parseOperand(MemoryArena *arena, Bindings *bindings)
     }
     else if (isIdentifier(&token1))
     {
-        auto lookup = lookupNameRecursive(bindings, &token1);
+        auto lookup = lookupNameRecursive(arena, bindings, &token1);
         if (lookup.found)
             out = lookup.value;
         else
@@ -1368,7 +1451,7 @@ parseExpression(MemoryArena *arena, Bindings *bindings, s32 min_precedence)
             {// infix operator syntax
                 // (a+b) * c
                 //        ^
-                auto op_lookup = lookupNameRecursive(bindings, &op_token);
+                auto op_lookup = lookupNameRecursive(arena, bindings, &op_token);
                 if (op_lookup.found)
                 {
                     Expression *op = op_lookup.value;
@@ -1438,13 +1521,12 @@ parseConstructorDef(MemoryArena *arena, Expression *mystruct, s32 ctor_id, Expre
 
             ctor_lookup.slot->value = out;
 
-            // bookmark: verify that this works
             if (optionalChar('('))
             {
-                Scope *scope = newScope(arena, tk->last_token);
+                Scope *scope = newScope(arena, tk->last_token.text.chars);
 
                 Tokenizer tk_save = *tk;
-                auto expected_arg_count = getCommaSeparatedListLength(tk->last_token, tk);
+                auto expected_arg_count = getCommaSeparatedListLength(tk);
                 *tk = tk_save;
 
                 // note: not really a "proc", but ikd what's the harm
@@ -1466,10 +1548,7 @@ parseConstructorDef(MemoryArena *arena, Expression *mystruct, s32 ctor_id, Expre
                             auto param_id = signature->param_count++;
                             auto param    = newExpression(arena, EC_Variable, param_type);
 
-                            auto var   = &param->Variable;
-                            var->name  = {};
-                            var->id    = param_id;
-                            var->scope = scope;
+                            initVariable(&param->Variable, toString("no_name"), param_id, scope);
 
                             signature->params[param_id] = param;
                             if (!optionalChar(','))
@@ -1511,16 +1590,16 @@ parseTypedef(MemoryArena *arena)
             Expression *type_of_type = parseExpression(arena, global_bindings);
             if (parsing())
             {
-                auto *struct_exp = newExpression(arena, EC_Struct, type_of_type);
+                auto *struct_exp = newExpression(arena, EC_Form, type_of_type);
                 lookup.slot->value = struct_exp;
 
-                Struct *mystruct = &struct_exp->Struct;
+                Form *mystruct = &struct_exp->Form;
                 mystruct->name = type_name.text;
 
                 requireChar(tk, '{');
 
                 Tokenizer tk_save = *tk;
-                s32 expected_case_count = getCommaSeparatedListLength(tk->last_token, tk);
+                s32 expected_case_count = getCommaSeparatedListLength(tk);
                 *tk = tk_save;
                 allocateArray(arena, expected_case_count, mystruct->ctors);
 
@@ -1535,7 +1614,7 @@ parseTypedef(MemoryArena *arena)
                         parseConstructorDef(arena, struct_exp, ctor_id, mystruct->ctors + ctor_id);
                         if (!optionalChar(','))
                         {
-                            requireChar('}');
+                            requireChar(tk, '}', "to end the typedef; or you might want a comma ',' to delimit constructors");
                             stop = true;
                         }
                     }
@@ -1561,7 +1640,7 @@ parseProof(MemoryArena *arena, Bindings *bindings, Stack *stack, Expression *goa
     unpackGlobals;
     pushContext;
 
-    goal = normalize(temp_arena, stack, goal);
+    goal = normalize(temp_arena, stack, 0, goal);
 
     Token token = nextToken(tk);
     switch (auto keyword = matchKeyword(&token))
@@ -1578,11 +1657,12 @@ parseProof(MemoryArena *arena, Bindings *bindings, Stack *stack, Expression *goa
                     auto myswitch = &out->Switch;
                     myswitch->subject = switch_subject;
                     auto subject_type = myswitch->subject->type;
-                    auto subject_struct = castExpression(Struct, subject_type);
+                    auto subject_struct = castExpression(Form, subject_type);
                     if (subject_struct)
                     {
                         auto ctor_count = subject_struct->ctor_count;
                         allocateArray(arena, ctor_count, myswitch->case_bodies);
+                        myswitch->case_count = ctor_count;
                         for (s32 ctor_id = 0;
                              (ctor_id < ctor_count) && parsing(tk);
                              ctor_id++)
@@ -1591,7 +1671,7 @@ parseProof(MemoryArena *arena, Bindings *bindings, Stack *stack, Expression *goa
                             {
                                 // todo: what if we switched over composite expression as subject? the stack wouldn't help at all.
                                 Expression *ctor_exp           = subject_struct->ctors + ctor_id;
-                                stack->first[subject_var->id]  = ctor_exp;
+                                stack->args[subject_var->id]  = ctor_exp;
 #if 0
                                 Expression *subgoal            = normalize(temp_arena, stack, goal);
 #endif
@@ -1658,72 +1738,90 @@ parseDefine(MemoryArena* arena, b32 is_theorem = false)
         auto define_slot = lookupNameCurrentFrame(global_bindings, define_name.text, true);
         if (define_slot.found)
             tokenError("re-definition");
-        else if (requireChar(tk, '('))
+        else if (requireChar(tk, '(', "to begin argument list"))
         {
-            auto scope = newScope(arena, tk->last_token);
+            Token param_list_token = tk->last_token;
+            Scope *scope = newScope(arena, param_list_token.text.chars);
 
-            auto  define_type       = newExpression(arena, EC_ArrowType, builtin_Proc);
-            auto *define_exp        = newExpression(arena, EC_Procedure, define_type);
+            auto  define_type = newExpression(arena, EC_ArrowType, builtin_Proc);
+            auto *define_exp  = newExpression(arena, EC_Procedure, define_type);
             define_slot.slot->value = define_exp;
             auto proc  = &define_exp->Procedure;
-            proc->name  = define_name.text;
+            proc->name = define_name.text;
 
             auto signature = &define_type->ArrowType;
             signature->scope = scope;
 
             Tokenizer tk_save = *tk;
-            s32 expected_arg_count = getCommaSeparatedListLength(tk->last_token, tk);
+            s32 expected_arg_count = getCommaSeparatedListLength(tk);
             *tk = tk_save;
             signature->param_count = expected_arg_count;
             allocateArray(arena, expected_arg_count, signature->params);
 
             Bindings *local_bindings = extendBindings(arena, global_bindings);
-            s32 actual_arg_count = 0;
-            for (s32 arg_id = 0, stop = 0;
+            s32 parsed_param_count = 0;
+            s32 typeless_run = 0;
+            Token typeless_token;
+            for (b32 stop = false;
                  !stop && parsing(tk);
-                 arg_id++)
-            {// parsing arguments
-                Token arg_name_or_end = nextToken(tk);
-                if (equals(&arg_name_or_end, ')'))
+                 )
+            {// parsing parameters
+                Token param_name_token = nextToken(tk);
+                if (equals(&param_name_token, ')'))
                     stop = true;
 
-                else if (arg_name_or_end.cat == TC_Alphanumeric)
+                else if (isIdentifier(&param_name_token))
                 {
-                    auto arg_name_lookup = lookupNameCurrentFrame(local_bindings, arg_name_or_end.text, true);
-                    if (arg_name_lookup.found)
-                        tokenError("duplicate arg name");
-                    else if (requireChar(tk, ':'))
-                    {
-                        auto arg_exp = newExpression(arena, EC_Variable, 0);
-                        arg_name_lookup.slot->value = arg_exp;
+                    s32 param_id = parsed_param_count++;
+                    auto param_lookup = lookupNameCurrentFrame(local_bindings, param_name_token.text, true);
+                    auto param = newExpression(arena, EC_Variable, 0);
+                    signature->params[param_id] = param;
+                    param_lookup.slot->value = param;
 
-                        arg_exp->Variable.name  = arg_name_or_end.text;
-                        arg_exp->Variable.id    = arg_id;
-                        arg_exp->Variable.scope = scope;
-                        
-                        Expression *arg_type    = parseExpression(arena, local_bindings);
-                        arg_exp->type           = arg_type;
-                        signature->params[arg_id] = arg_exp;
-                        actual_arg_count++;
+                    initVariable(&param->Variable, param_name_token.text, param_id, scope);
+
+                    if (param_lookup.found)
+                        tokenError("duplicate parameter name");
+                    else if (optionalChar(tk, ':'))
+                    {
+                        Expression *param_type = parseExpression(arena, local_bindings);
+                        param->type            = param_type;
+                        if (typeless_run)
+                        {
+                            for (s32 offset = 1; offset <= typeless_run; offset++)
+                                signature->params[param_id - offset]->type = param_type;
+                            typeless_run = 0;
+                        }
 
                         Token delimiter = nextToken(tk);
                         if (equals(&delimiter, ')'))
                             stop = true;
                         else if (!equals(&delimiter, ','))
-                            tokenError("unexpected token after arg type");
-
+                            tokenError("unexpected token after parameter type");
                     }
+                    else if (requireChar(',', "delimit after typeless parameter name"))
+                    {
+                        typeless_run++;
+                        typeless_token = param_name_token;
+                    }
+                    else
+                        stop = true;
                 }
                 else
-                    tokenError("expected arg name");
+                    tokenError("expected parameter name");
             }
             if (parsing(tk))
             {
-                assert(actual_arg_count == expected_arg_count);
+                assert(parsed_param_count == expected_arg_count);
+                if (typeless_run)
+                {
+                    parseError(&typeless_token, "please provide types for all parameters");
+                    // TODO: print out "typeless_token"
+                }
             }
 
             // return type
-            if (requireChar(tk, ':'))
+            if (requireChar(tk, ':', "delimit arg list and return type"))
             {
                 signature->return_type = parseExpression(arena, local_bindings);
                 if (requireChar(tk, '{'))
@@ -1735,8 +1833,8 @@ parseDefine(MemoryArena* arena, b32 is_theorem = false)
                         Stack stack = {};
                         stack.arena = temp_arena;
                         stack.scope = scope;
-                        stack.count = actual_arg_count;
-                        allocateArrayZero(temp_arena, actual_arg_count, stack.first);
+                        stack.count = parsed_param_count;
+                        allocateArrayZero(temp_arena, parsed_param_count, stack.args);
                         body = parseProof(arena, local_bindings, &stack, signature->return_type);
                     }
                     else
@@ -1802,6 +1900,11 @@ parseTopLevel(EngineState *state, MemoryArena *arena)
     while (parsing())
     {
         auto top_level_temp = beginTemporaryMemory(temp_arena);
+
+        Stack empty_stack = {};
+        empty_stack.arena = temp_arena;
+        empty_stack.scope = newScope(temp_arena, "empty_scope");
+        
         Token token = nextToken(); 
         if (equals(&token, '\0'))
         {}
@@ -1812,7 +1915,7 @@ parseTopLevel(EngineState *state, MemoryArena *arena)
             {
                 case MetaDirective_Load:
                 {
-                    pushSubContext("#load");
+                    pushContextName("#load");
                     auto file = nextToken();
                     if (file.cat != TC_StringLiteral)
                         tokenError("expect \"FILENAME\"");
@@ -1853,74 +1956,87 @@ parseTopLevel(EngineState *state, MemoryArena *arena)
         }
         else
         {
-            switch (Keyword keyword = matchKeyword(&token))
+            Keyword keyword = matchKeyword(&token);
+            if (keyword)
             {
-                case Keyword_Typedef:
-                    parseTypedef(arena);
-                    break;
-
-                case Keyword_Define:
-                    parseDefine(arena);
-                    break;
-
-                case Keyword_Theorem:
-                    parseDefine(arena, true);
-                    break;
-
-                case Keyword_Print:
-                case Keyword_PrintRaw:
+                switch (keyword)
                 {
-                    auto exp = parseExpression(arena, global_bindings);
+                    case Keyword_Typedef:
+                        parseTypedef(arena);
+                        break;
 
-                    if (parsing())
+                    case Keyword_Define:
+                        parseDefine(arena);
+                        break;
+
+                    case Keyword_Theorem:
+                        parseDefine(arena, true);
+                        break;
+
+                    case Keyword_Print:
+                    case Keyword_PrintRaw:
                     {
-                        Stack empty_stack = {};
-                        empty_stack.arena = arena;
-                        empty_stack.scope = newScope(temp_arena, "empty scope");
+                        auto exp = parseExpression(arena, global_bindings);
 
-                        auto buffer = subArena(arena, 256);
-                        {
-                            if (keyword == Keyword_Print)
-                            {
-                                Expression *reduced = normalize(arena, &empty_stack, exp);
-                                printExpression(&buffer, reduced, true);
-                            }
-                            else
-                                printExpression(&buffer, exp, true);
-                        }
-                        printf("%s\n", buffer.base);
-                    }
-                    requireChar(';');
-                } break;
-
-                case Keyword_Check:
-                {
-                    auto exp = parseExpression(temp_arena, global_bindings);
-                    if (parsing())
-                    {
-                        requireChar(':');
-                        auto expected_type = parseExpression(temp_arena, global_bindings);
                         if (parsing())
                         {
-                            Stack empty_stack = {};
-                            empty_stack.arena = temp_arena;
-                            empty_stack.scope = newScope(temp_arena, "empty scope");
-                            auto expected_reduced = normalize(temp_arena, &empty_stack, expected_type);
-                            auto actual_reduced = normalize(temp_arena, &empty_stack, exp->type);
-                            if (!expressionsIdenticalB32(expected_reduced, actual_reduced))
+                            auto buffer = subArena(arena, 256);
                             {
-                                tokenError(&token, "type check failed");
-                                pushAttachment("expected type", expected_reduced);
-                                pushAttachment("actual type", actual_reduced);
+                                if (keyword == Keyword_Print)
+                                {
+                                    Expression *reduced = normalize(arena, &empty_stack, 0, exp);
+                                    printExpression(&buffer, reduced, true);
+                                }
+                                else
+                                    printExpression(&buffer, exp, true);
+                            }
+                            printf("%s\n", buffer.base);
+                        }
+                        requireChar(';');
+                    } break;
+
+                    case Keyword_Check:
+                    {
+                        pushContextName("typecheck");
+                        auto exp = parseExpression(temp_arena, global_bindings);
+                        if (requireChar(':', "delimit expression and type"))
+                        {
+                            Expression *expected_type = parseExpression(temp_arena, global_bindings);
+                            if (parsing())
+                            {
+                                auto expected_norm = normalize(temp_arena, &empty_stack, 0, expected_type);
+                                auto actual_norm = normalize(temp_arena, &empty_stack, 0, exp->type);
+                                if (!expressionsIdenticalB32(expected_norm, actual_norm))
+                                {
+                                    tokenError(&token, "typecheck failed");
+                                    pushAttachment("expected type", expected_norm);
+                                    pushAttachment("actual type", actual_norm);
+                                }
                             }
                         }
-                    }
-                    requireChar(';');
-                } break;
-
-                default:
-                    tokenError("unexpected token");
+                        requireChar(';');
+                        popContext();
+                    } break;
+                }
             }
+            else if (isIdentifier(&token))
+            {
+                pushContextName("global constant definition");
+                Token *constant = &token;
+                requireChar(':', "syntax: CONSTANT := VALUE;");
+                requireChar('=', "syntax: CONSTANT := VALUE;");
+                Expression *value = parseExpression(arena, global_bindings);
+                Expression *norm = normalize(arena, &empty_stack, 0, value);
+                if (parsing())
+                {
+                    if (!addGlobalName(constant->text, norm))
+                        tokenError(constant, "redefinition of global name");
+                }
+                requireChar(';');
+                popContext();
+            }
+            else
+                tokenError("unexpected token to begin top-level form");
         }
         endTemporaryMemory(top_level_temp);
     }
@@ -1936,18 +2052,18 @@ initializeEngine(MemoryArena *arena)
     allocate(arena, global_bindings);
     global_bindings->arena = arena;
 
-    addBuiltinName("identical", builtin_identical);
-    addBuiltinName("Set"      , builtin_Set);
-    addBuiltinName("Prop"     , builtin_Prop);
-    addBuiltinName("Proc"     , builtin_Proc);
-    addBuiltinName("="        , builtin_identical_macro);
+    addGlobalName("identical", builtin_identical);
+    addGlobalName("Set"      , builtin_Set);
+    addGlobalName("Prop"     , builtin_Prop);
+    addGlobalName("Proc"     , builtin_Proc);
+    addGlobalName("="        , builtin_identical_macro);
 
     const char *true_members[] = {"truth"};
-    addBuiltinStruct(arena, "True", true_members, 1);
+    addBuiltinForm(arena, "True", true_members, 1, builtin_Prop);
     builtin_True = lookupNameCurrentFrame(global_bindings, toString("True"), false).slot->value;
     builtin_truth = lookupNameCurrentFrame(global_bindings, toString("truth"), false).slot->value;
 
-    addBuiltinStruct(arena, "False", (const char **)0, 0);
+    addBuiltinForm(arena, "False", (const char **)0, 0, builtin_Prop);
     builtin_False = lookupNameCurrentFrame(global_bindings, toString("False"), false).slot->value;
 }
 
@@ -2090,36 +2206,34 @@ engineMain(EngineMemory *memory)
 
         allocateArray(init_arena, 3, signature->params);
         auto args = signature->params;
-        args[0]                 = newExpression(init_arena, EC_Variable, builtin_Set);
-        args[0]->Variable.scope = signature->scope;
-        args[0]->Variable.name  = toString("A");
-        args[1]                 = newExpression(init_arena, EC_Variable, args[0]);
-        args[1]->Variable.id    = 1;
-        args[1]->Variable.scope = signature->scope;
-        args[1]->Variable.name  = toString("a");
-        args[2]                 = newExpression(init_arena, EC_Variable, args[0]);
-        args[2]->Variable.id    = 2;
-        args[2]->Variable.scope = signature->scope;
-        args[2]->Variable.name  = toString("b");
+
+        args[0] = newExpression(init_arena, EC_Variable, builtin_Set);
+        initVariable(&args[0]->Variable, toString("A"), 0, signature->scope);
+
+        args[1] = newExpression(init_arena, EC_Variable, args[0]);
+        initVariable(&args[1]->Variable, toString("a"), 1, signature->scope);
+
+        args[2] = newExpression(init_arena, EC_Variable, args[0]);
+        initVariable(&args[2]->Variable, toString("b"), 2, signature->scope);
     }
 
     auto interp_arena_ = subArena(init_arena, getArenaFree(init_arena));
     auto interp_arena = &interp_arena_;
 
-#if 1
-    if (!beginInterpreterSession(interp_arena, "..\\data\\operator.rea"))
-        success = false;
-    resetZeroArena(interp_arena);
-#endif
-
-#if 1
-    if (!beginInterpreterSession(interp_arena, "..\\data\\proof.rea"))
+#if 0
+    if (!beginInterpreterSession(interp_arena, "../data/operator.rea"))
         success = false;
     resetZeroArena(interp_arena);
 #endif
 
 #if 0
-    if (!beginInterpreterSession(interp_arena, "..\\data\\test.rea"))
+    if (!beginInterpreterSession(interp_arena, "../data/proof.rea"))
+        success = false;
+    resetZeroArena(interp_arena);
+#endif
+
+#if 1
+    if (!beginInterpreterSession(interp_arena, "../data/test.rea"))
         success = false;
     resetZeroArena(interp_arena);
 #endif

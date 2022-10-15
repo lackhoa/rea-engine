@@ -54,8 +54,8 @@ inRange(s32 min, s32 val, s32 max)
 
 struct String
 {
-    const char *chars;
-    s32         length;         // note: does not include the nil terminator
+    char *chars;
+    s32   length;               // note: does not include the nil terminator
 };
 
 inline s32
