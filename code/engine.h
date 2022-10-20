@@ -123,19 +123,22 @@ struct Fork
 
   Expression  *subject;
   s32          case_count;
-  Procedure  **cases;
+  Expression **bodies;
+  Variable   **params;
 };
 
 inline void
-initFork(Fork *out, Expression *subject, Procedure **cases, s32 case_count)
+initFork(Fork *out, Expression *subject, s32 case_count, Expression **bodies, Variable **params)
 {
   out->subject    = subject;
-  out->cases      = cases;
   out->case_count = case_count;
+  out->bodies     = bodies;
+  out->params     = params;
 
   for (s32 case_id = 0; case_id < case_count; case_id++)
   {
-    assert(out->cases[case_id]);
+    assert(out->bodies[case_id]);
+    assert(out->params[case_id]);
   }
 }
 
@@ -193,8 +196,7 @@ struct Ast;
 
 struct ParseExpressionOptions
 {
-  s32         min_precedence;
-  Expression *expected_type;
+  s32 min_precedence;
 };
 
 inline ParseExpressionOptions
