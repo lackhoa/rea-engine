@@ -1,5 +1,6 @@
 #include "utils.h"
 #include "memory.h"
+#include "engine.h"
 
 #include <stdio.h>
 
@@ -20,17 +21,16 @@ enum Keyword
 
     Keyword_Typedef,
     Keyword_Define,
-    Keyword_Switch,
+    Keyword_Fork,
     Keyword_Print,
     Keyword_PrintRaw,
     Keyword_Check,
-    Keyword_Theorem,
     Keyword_Return,  // todo: this is a command, not a keyword, we don't expect it at top-level.
 
     Keywords_Count_,
 };
-const char *keywords[] = {"", "typedef", "define", "switch", "print",
-                          "print_raw", "check", "theorem", "return"};
+const char *keywords[] = {"", "typedef", "define", "fork", "print",
+                          "print_raw", "check", "return"};
 
 enum MetaDirective
 {
@@ -44,10 +44,10 @@ const char *metaDirectives[] = {"", "load"};
 
 struct Token
 {
-    String        text;
-    TokenCategory cat;
-    s32           line_number;
-    s32           column;
+  String        text;
+  s32           line;
+  s32           column;
+  TokenCategory cat;
 };
 
 inline b32
@@ -212,7 +212,8 @@ struct ErrorAttachment { char *string; Expression *expression;};
 struct ParseErrorData
 {
     MemoryArena  message;
-    Token        token;
+    s32          line;
+    s32          column;
     char        *context;
 
     s32             attached_count;
@@ -222,6 +223,8 @@ typedef ParseErrorData* ParseError;
 
 struct ParseContext { char *first; ParseContext *next; };
 
+// note: the tokenizer also doubles as our error tracker, which may sound weird
+// but in reality it doesn't pose any problem, that said it could be better.
 struct Tokenizer
 {
     ParseError    error;
@@ -230,7 +233,7 @@ struct Tokenizer
 
     char  *at;
     Token  last_token;
-    s32    line_number;
+    s32    line;
     s32    column;
 
     String     directory;
@@ -280,7 +283,7 @@ nextChar(Tokenizer *tk)
     char previous = *tk->at++;
     if (previous == '\n')
     {
-        tk->line_number++;
+        tk->line++;
         tk->column = 1;
     }
     else
@@ -383,8 +386,8 @@ nextToken(Tokenizer *tk = global_tokenizer)
     Token out = {};
     eatAllSpaces(tk);
     out.text.chars  = tk->at;
-    out.line_number = tk->line_number;
-    out.column      = tk->column;
+    out.line = tk->line;
+    out.column = tk->column;
 
     TokenCategory first_cat = getCharacterType(*tk->at);
     out.cat = first_cat;
@@ -456,6 +459,12 @@ debugPrintTokens(Tokenizer tk)
         printf("%.*s ", token.text.length, token.text.chars);
     }
     printf("\n");
+}
+
+inline void
+printNewline()
+{
+  myprint(0, "\n");
 }
 
 inline b32
@@ -553,4 +562,98 @@ getMatchingPair(char opening)
         default:
             return 0;
     }
+}
+
+enum AstCategory {AC_AstLeaf, AC_AstBranch, AC_AstFork,};
+
+struct Ast
+{
+  AstCategory cat;
+  // For error reporting
+  s32         line;
+  s32         column;
+};
+
+struct AstLeaf
+{
+  Ast   header;
+  Token token;
+};
+
+struct AstBranch
+{
+  Ast   header;
+  Ast  *op;
+  s32   arg_count;
+  Ast **args;
+};
+
+struct AstFork
+{
+  Ast   header;
+  Ast  *subject;
+  s32   case_count;
+  Ast **patterns;
+  Ast **bodies;
+};
+
+#define castAst(ast, type) (type*)((ast->cat == AC_##type) ? ast : 0)
+
+internal void
+parseErrorVA(s32 line, s32 column, char *format, va_list arg_list, Tokenizer *tk = global_tokenizer)
+{
+
+  assert(!tk->error);  // note: prevent parser from doing huge amount of
+  // useless work after failure (#speed).
+
+  auto arena = tk->error_arena;
+  tk->error = pushStructZero(arena, ParseErrorData);
+  tk->error->message = subArena(tk->error_arena, 256);
+
+  printToBufferVA(&tk->error->message, format, arg_list);
+
+  tk->error->line   = line;
+  tk->error->column = column;
+  tk->error->context = tk->context->first;
+}
+
+internal void
+parseError(Token *token, char *format, ...)
+{
+  va_list arg_list;
+  __crt_va_start(arg_list, format);
+  parseErrorVA(token->line, token->column, format, arg_list);
+  __crt_va_end(arg_list);
+}
+
+internal void
+parseError(Ast *ast, char *format, ...)
+{
+  va_list arg_list;
+  __crt_va_start(arg_list, format);
+  parseErrorVA(ast->line, ast->column, format, arg_list);
+  __crt_va_end(arg_list);
+}
+
+internal void
+parseError(Tokenizer *tk, Token *token, char *format, ...)
+{
+  va_list arg_list;
+  __crt_va_start(arg_list, format);
+  parseErrorVA(token->line, token->column, format, arg_list, tk);
+  __crt_va_end(arg_list);
+}
+
+internal void
+tokenError(Token *token, char *message, Tokenizer *tk = global_tokenizer)
+{
+  parseError(token, message, tk);
+  myprint(&tk->error->message, ": ");
+  myprint(&tk->error->message, token->text);
+}
+
+internal void
+tokenError(char *message, Tokenizer *tk = global_tokenizer)
+{
+  tokenError(&tk->last_token, message);
 }

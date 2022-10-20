@@ -6,16 +6,17 @@ typedef Bool : Set
 
 define &(a, b: Bool) : Bool
 {
- switch a
+ fork a
  {
   false -> false,
   true -> b
   }
  }
+print &;
 
 define |(a, b: Bool) : Bool
 {
- switch a
+ fork a
  {
   true -> true,
   false -> b

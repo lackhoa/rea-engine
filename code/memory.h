@@ -112,11 +112,21 @@ resetZeroArena(MemoryArena *arena)
     zeroMemory(arena->base, arena->cap);
 }
 
+inline void *
+copySize(MemoryArena *arena, void *src, size_t size)
+{
+  void *dst = pushSize(arena, size);
+  copyMemory(dst, src, size);
+  return dst;
+}
+
 #if COMPILER_MSVC
 #    define mytypeof decltype
 #else
 #    define mytypeof __typeof__
 #endif
+
+#define copyStruct(arena, src) (mytypeof(src)) copySize(arena, src, sizeof(*src))
 
 #define MEMORY_H
 #endif

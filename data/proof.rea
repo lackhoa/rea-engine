@@ -1,16 +1,11 @@
 #load "boolean.rea"
 
-theorem notSoEasy(a: Bool) : (a & false = false)
-{
- switch a;
- - return truth;
- - return truth;
- }
-
-theorem andCommutative(a: Bool, b: Bool, c: Bool) :
+define andCommutative(a, b, c: Bool) :
 a & (b & c) = (a & b) & c
 {
- switch a;
- - return truth;
- - switch b; - return truth; - return truth;
+ fork a
+ {
+  false -> truth,
+  true -> truth,
+  }
  }

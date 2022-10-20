@@ -34,26 +34,21 @@ typedef long     s64;
 
 #define arrayCount(array) (sizeof(array) / sizeof((array)[0]))
 
-global_variable b32 global_engine_failed = false;
 #if REA_INTERNAL
 #  if COMPILER_MSVC
 #    define assert(claim) if (!(claim)) { __debugbreak(); }
 #  else
 #    define assert(claim) if (!(claim)) { __builtin_trap(); }
 #  endif
-#  define invalidCodePath assert(false)
-#  define todoErrorReport assert(false)
-#  define todoIncomplete  assert(false)
-#  define invalidDefaultCase default: { assert(false) };
-#  define breakhere  { int x = 5; (void)x; }
 #else
 #  define assert(claim)
-#  define invalidCodePath
-#  define todoErrorReport
-#  define todoIncomplete
-#  define invalidDefaultCase
-#  define breakhere
 #endif
+
+#define invalidCodePath assert(false)
+#define todoErrorReport assert(false)
+#define todoIncomplete  assert(false)
+#define invalidDefaultCase default: { assert(false) };
+#define breakhere  { int x = 5; (void)x; }
 
 inline b32
 inRange(s32 min, s32 val, s32 max)

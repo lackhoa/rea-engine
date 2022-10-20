@@ -4,6 +4,7 @@ CompileFlags:
     - -xc++
     - -DReaWindows
     - -DREA_INTERNAL
+    - -DREA_DIAGNOSTICS
     - -Wall
     - -Wno-c++17-extensions
     - -Wno-switch
