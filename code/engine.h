@@ -18,7 +18,6 @@ enum ExpressionCategory
 
   // strictly non-values
   EC_Hole,                    // hole left in for type-checking
-  EC_Macro,
 
   EC_Builtin_identical,
   EC_Builtin_Set,
@@ -99,6 +98,10 @@ initVariable(Variable *var, String name, u32 id, ArrowType *signature)
   var->id          = id;
   var->atom        = 0;
   var->signature   = signature;
+  if ((long long)signature == 0x0000020000201458)  // &
+    breakhere;
+  if ((long long)signature == 0x0000020000202818)  // |
+    breakhere;
 }
 
 struct Application
@@ -109,37 +112,44 @@ struct Application
   Expression **args;
 };
 
-void initApplication(Application *app, Expression *op, s32 arg_count, Expression **args)
+inline void
+initApplication(Application *app, Expression *op, s32 arg_count, Expression **args)
 {
   app->op = op;
   app->arg_count = arg_count;
   app->args = args;
 }
 
-struct Procedure;
+struct ForkCase
+{
+  Expression  *body;
+  Variable   **params;
+};
+inline void
+initForkCase(ForkCase *fork_case, Expression *body, Variable **params)
+{
+  fork_case->body   = body;
+  fork_case->params = params;
+}
+
 struct Fork
 {
   Expression header;
 
-  Expression  *subject;
-  s32          case_count;
-  Expression **bodies;
-  Variable   **params;
+  Expression *subject;
+  s32         case_count;
+  ForkCase   *cases;
 };
 
 inline void
-initFork(Fork *out, Expression *subject, s32 case_count, Expression **bodies, Variable **params)
+initFork(Fork *out, Expression *subject, s32 case_count, ForkCase *cases)
 {
   out->subject    = subject;
   out->case_count = case_count;
-  out->bodies     = bodies;
-  out->params     = params;
+  out->cases      = cases;
 
   for (s32 case_id = 0; case_id < case_count; case_id++)
-  {
-    assert(out->bodies[case_id]);
-    assert(out->params[case_id]);
-  }
+    assert(out->cases[case_id].body);
 }
 
 struct Constructor

@@ -12,7 +12,6 @@ define &(a, b: Bool) : Bool
   true -> b
   }
  }
-print &;
 
 define |(a, b: Bool) : Bool
 {

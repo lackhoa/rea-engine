@@ -50,8 +50,19 @@ struct Token
   TokenCategory cat;
 };
 
+inline Token
+newToken(String text, s32 line, s32 column, TokenCategory cat)
+{
+  Token out;
+  out.text   = text;
+  out.line   = line;
+  out.column = column;
+  out.cat    = cat;
+  return out;
+}
+
 inline b32
-equals(String s, const char *cstring)
+equal(String s, const char *cstring)
 {
     if (!s.chars)
     {
@@ -74,13 +85,13 @@ equals(String s, const char *cstring)
 }
 
 inline b32
-equals(Token *token, const char *string)
+equal(Token *token, const char *string)
 {
-    return equals(token->text, string);
+    return equal(token->text, string);
 }
 
 inline b32
-equals(Token *token, char c)
+equal(Token *token, char c)
 {
     return ((token->text.length == 1)
             &&  (token->text.chars[0] == c));
@@ -349,7 +360,7 @@ matchKeyword(Token *token)
              i < arrayCount(keywords);
              i++)
         {
-            if (equals(token, keywords[i]))
+            if (equal(token, keywords[i]))
             {
                 out = (Keyword)(i);
                 break;
@@ -370,7 +381,7 @@ matchMetaDirective(Token *token)
              i < arrayCount(metaDirectives);
              i++)
         {
-            if (equals(token, metaDirectives[i]))
+            if (equal(token, metaDirectives[i]))
             {
                 out = (MetaDirective)(i);
                 break;
@@ -421,7 +432,7 @@ nextToken(Tokenizer *tk = global_tokenizer)
         out.text.length -= 1; // minus the last '"'
     }
 
-    if (equals(out.text, "->"))
+    if (equal(out.text, "->"))
         out.cat = TC_Arrow;
 
     tk->last_token = out;
@@ -468,7 +479,7 @@ printNewline()
 }
 
 inline b32
-equals(String a, String b)
+equal(String a, String b)
 {
     b32 out = true;
     if (a.length != b.length)
@@ -521,7 +532,7 @@ toString(char *c)
 }
 
 inline b32
-equals(char *s1, char *s2)
+equal(char *s1, char *s2)
 {
     b32 out = true;
     char *c1 = s1;
