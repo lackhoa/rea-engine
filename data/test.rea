@@ -1,6 +1,16 @@
 #load "boolean.rea"
 #load "nat.rea"
 
+define plusIdRight(n: hat)
+: n + 0 = n
+{
+ fork n
+ {
+  0    -> truth
+  s(n) -> plusIdRight(n)
+  }
+ }
+
 define plusCommutative(n, m: Nat)
 : n + m = m + n
 {

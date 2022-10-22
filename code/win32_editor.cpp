@@ -17,7 +17,7 @@ struct win32_offscreen_buffer
 
 global_variable win32_offscreen_buffer globalBackBuffer;
 global_variable b32 globalRunning;
-global_variable s64 globalPerfCountFrequency;
+global_variable LONGLONG globalPerfCountFrequency;
 
 struct win32_window_dimension
 {
@@ -256,7 +256,7 @@ platformGetFileFullPath(MemoryArena* arena, char *file)
     char *file_part;
     DWORD length = GetFullPathNameA(file, (DWORD)getArenaFree(arena), out.path, &file_part);
     out.directory.chars  = out.path;
-    out.directory.length = file_part - out.path;
+    out.directory.length = (s32)(file_part - out.path);
     out.file             = file_part;
 
     arena->used += length+1;

@@ -19,8 +19,8 @@ clang -c "..\code\engine.cpp" -o engine.o %CommonCompilerFlags%
 clang -c "..\code\win32_editor.cpp" -o win32_editor.o %CommonCompilerFlags%
 
 set LinkedLibs=-l user32.lib -l Gdi32.lib -l winmm.lib
-clang engine.o win32_editor.o -o win32_editor.exe %CommonCompilerFlags% %LinkedLibs%
+clang engine.o win32_editor.o -o win32_editor.exe %CommonCompilerFlags% %LinkedLibs% || exit 1
 
 popd
 
-echo "build-clang complete"
+echo build-clang.bat complete!

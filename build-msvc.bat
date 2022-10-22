@@ -7,8 +7,8 @@ mkdir build 2> nul
 cd build
 
 set Optimization=-Od
-set Constants=-DReaWindows
-set Warnings=-MTd -Gm- -GR- -EHsc -EHa- -FC -nologo -Z7 -WX -W4 -wd4100 -wd4101 -wd4189 -wd4201 -wd4459 -wd4456 -wd4457 -wd4505 -wd4068 -wd4702 -wd4127
+set Constants=-DReaWindows -DREA_INTERNAL -DREA_DIAGNOSTICS
+set Warnings=-MTd -Gm- -GR- -EHsc -EHa- -FC -nologo -Z7 -WX -W4 -wd4100 -wd4101 -wd4189 -wd4201 -wd4459 -wd4456 -wd4457 -wd4505 -wd4068 -wd4702 -wd4127 -wd4063 -wd4390
 set CommonCompilerFlags=-arch:AVX2 -std:c++17 %Optimization% %Constants% %Warnings%
 
 cl ..\code\generator.cpp %CommonCompilerFlags%
@@ -25,3 +25,5 @@ cl win32_editor.obj engine.obj %CommonCompilerFlags% %LinkerFlags%
 pushd ..\code
 ..\build\win32_editor.exe || exit 1
 popd
+
+echo build-msvc complete

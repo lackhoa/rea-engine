@@ -1,52 +1,31 @@
-theorem andCommutative(a: Bool, b: Bool, c: Bool)
-: (a & b) & c = a & (b & c)
+define andCommutative(a, b: Bool)
+: a<1> & b<1> = b<1> & a<1>
 {
- switch a.
- -
- ;; program should print b & c = b & c
- ;; expression state: switch a { | T { !:(b & c = b & c) } | F { ? }}
- reflexivity. ;; expression state: switch a { | T { reflexive(b & c) } | F { ? }}
- -
- ;; program should print F = F
- ;; expression state: switch a { | T { reflexive(b & c) } | F { ! }}
- reflexivity.
- ;; expression state: switch a { | T { reflexivity(b & c) } | F { reflexivity(F) }}
- }
-
-print(andCommutative)
-
-
-
-
-
-
-
-typedef Nat
-{
- | 0
- | +1(Nat)
- }
-
-define +(a: Nat, b: Nat) : Nat
-{
- switch a
+ fork a
  {
-  | 0
-  { return b }
-
-  | succ a'
-  { return succ(a' + b) }
+  false -> fork b {
+                   false -> ? : 
+                   true  -> 
+                   }
+  true  -> fork b {
+                   false ->
+                   true  ->
+                   }
   }
  }
 
-define 1: Nat { succ(0) }
-define 2: Nat { succ(1) }
-define 3: Nat { succ(2) }
-define 1plus2 : (1 + 2 = 3)
-{ return reduce(+) }
-
-typedef <= (a: Bool, b: Bool)
+define plusCommutative(n, m: Nat)
+: n + m = m + n
 {
- | leq0: a = 0
- | leq1: exists b' { b = S b' && a <= b' }
+ fork n
+ {
+  0    -> plusIdRight(m<1>) : m<1> = m<1> + 0
+  s(n) -> plusCommutative(n<2> + m<1>) : [
+                                          n<1> + m<1> = m<1> + n<1>
+                                          => s(n<2>) + m<1> = m<1> + s(n<2>)
+                                          => s(n<2> + m<1>) = m<1> + s(n<2>)
+
+                                          s(m<1> + n<2>) = m<1> + s(n<2>)
+                                          ],
+  }
  }

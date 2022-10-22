@@ -3,6 +3,10 @@
 #include "utils.h"
 #include "memory.h"
 
+// NOTE: Think of this like the function stack, we'll clean it every once in a while.
+global_variable MemoryArena  global_temp_arena_;
+global_variable MemoryArena *global_temp_arena = &global_temp_arena_;
+
 enum ExpressionCategory
 {
   // might be free or bound
@@ -79,13 +83,12 @@ typedef s32 Atom;
 struct ArrowType;
 struct Variable
 {
-  Expression header;
-  operator Expression() { return header; }
+  Expression h;
 
-  String     name;
-  s32        stack_delta;
-  s32        id;
-  Atom       atom;
+  String name;
+  s32    id;
+  s32    stack_delta;  // relative
+  s32    stack_depth;  // absolute
 
   ArrowType *signature;  // signature of the stack.
 };
@@ -96,17 +99,13 @@ initVariable(Variable *var, String name, u32 id, ArrowType *signature)
   var->name        = name;
   var->stack_delta = 0;
   var->id          = id;
-  var->atom        = 0;
+  var->stack_depth = 0;
   var->signature   = signature;
-  if ((long long)signature == 0x0000020000201458)  // &
-    breakhere;
-  if ((long long)signature == 0x0000020000202818)  // |
-    breakhere;
 }
 
 struct Application
 {
-  Expression  header;
+  Expression  h;
   Expression  *op;
   s32          arg_count;
   Expression **args;
@@ -134,7 +133,7 @@ initForkCase(ForkCase *fork_case, Expression *body, Variable **params)
 
 struct Fork
 {
-  Expression header;
+  Expression h;
 
   Expression *subject;
   s32         case_count;
@@ -154,14 +153,14 @@ initFork(Fork *out, Expression *subject, s32 case_count, ForkCase *cases)
 
 struct Constructor
 {
-  Expression header;
+  Expression h;
   s32        id;
   String     name;
 };
 
 struct Form
 {
-  Expression    header;
+  Expression    h;
   String        name;
   s32           ctor_count;
   Constructor **ctors;          // note: We don't hold arbitrary expressions here, only
@@ -174,7 +173,7 @@ struct Form
 // NOTE: most of the information is in the (arrow) type;
 struct Procedure
 {
-  Expression  header;
+  Expression  h;
   String      name;
   Expression *body;
 };
@@ -188,7 +187,7 @@ initProcedure(Procedure *proc, String name, Expression *body)
 
 struct ArrowType
 {
-  Expression   header;
+  Expression   h;
   s32          param_count;
   Variable   **params;
   Expression  *return_type;
@@ -212,12 +211,14 @@ struct ParseExpressionOptions
 inline ParseExpressionOptions
 parseExpressionOptions()
 {
-  return { .min_precedence=-9999 };
+  ParseExpressionOptions out = {};
+  out.min_precedence = -9999;
+  return out;
 }
 
 internal Ast *
 parseExpressionAst(MemoryArena *arena,
-                ParseExpressionOptions opt = parseExpressionOptions());
+                   ParseExpressionOptions opt = parseExpressionOptions());
 
 enum Trinary
 {
@@ -242,20 +243,22 @@ struct Stack
   Stack        *next;
 };
 
-// might also be called the "Typechecker"
+// used in normalization, typechecking, etc.
 struct Environment
 {
   MemoryArena *arena;
+  MemoryArena *temp_arena;
 
-  Stack   *stack;
+  s32 stack_depth;              // 0 is reserved
+  s32 stack_offset;            // todo #speed pass this separately
+
   Rewrite *rewrite;
-  Atom     next_atom;
 };
 
 inline Rewrite *
 newRewrite(Environment *env, Expression *lhs, Expression *rhs)
 {
-  Rewrite *out = pushStruct(env->arena, Rewrite);
+  Rewrite *out = pushStruct(env->temp_arena, Rewrite);
   out->lhs  = lhs;
   out->rhs  = rhs;
   out->next = env->rewrite;
@@ -265,12 +268,9 @@ newRewrite(Environment *env, Expression *lhs, Expression *rhs)
 inline Environment
 newEnvironment(MemoryArena *arena)
 {
-  Environment out;
-  out.arena      = arena;
-  out.rewrite = 0;
-  out.next_atom  = 1;
-
-  out.stack = 0;
-
+  Environment out = {};
+  out.arena       = arena;
+  out.temp_arena  = global_temp_arena;
+  out.stack_depth = 1;
   return out;
 }
