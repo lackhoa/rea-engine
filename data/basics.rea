@@ -1,5 +1,6 @@
 #load "boolean.rea"
 
+print_raw (x: False) -> (x = x);
 print_raw false & true | true & false | true;
 
 print_raw &(true, |(false,true,),);
@@ -8,24 +9,33 @@ print_raw false & true | true & false | true;
 print_raw identical(_, true, false);
 
 check truth : false & true | true = true;
-print (fork true {true -- &, false -- |})(true, false);
-check truth : (fork true {true -- &, false -- |})(true, false) = false;
+print (fork true {true: &, false: |})(true, false);
+check truth : (fork true {true: &, false: |})(true, false) = false;
 
 testAbstraction :: (a, b: Bool) -> Bool
 {
  fork a
  {
-  false -- fork b {false -- a, true -- b},
-  true  -- b
+  false: fork b {false: a, true: b},
+  true : b
   }
  }
 print testAbstraction;
+
+andWithFalse :: (a: Bool) -> (a & false = false)
+{
+ fork a
+ {
+  false: truth,
+  true: truth,
+  }
+ }
 
 andCommutative :: (a, b, c: Bool) -> (a & (b & c) = (a & b) & c)
 {
  fork a
  {
-  false -- truth,
-  true  -- truth,
+  false: truth,
+  true : truth,
   }
  }

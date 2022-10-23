@@ -12,3 +12,4 @@ CompileFlags:
     - -Wunused-parameter
     - -Wunused-variable
     - -Wno-unused-function
+    - -Wno-pointer-to-int-cast

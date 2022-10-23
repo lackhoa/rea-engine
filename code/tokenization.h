@@ -1,5 +1,8 @@
 #pragma once
 
+#include "memory.h"
+#include "utils.h"
+
 enum TokenCategory
 {
     // 0-255 reserved for single-char ASCII types.
@@ -60,3 +63,51 @@ newToken(String text, s32 line, s32 column, TokenCategory cat)
   return out;
 }
 
+struct Expression;
+struct ErrorAttachment { char *string; Expression *expression;};
+
+struct ParseErrorData
+{
+    MemoryArena  message;
+    s32          line;
+    s32          column;
+    char        *context;
+
+    s32             attached_count;
+    ErrorAttachment attached[8];
+};
+typedef ParseErrorData* ParseError;
+
+struct ParseContext { char *first; ParseContext *next; };
+
+// note: the tokenizer also doubles as our error tracker, which may sound weird
+// but in reality it doesn't pose any problem, that said it could be better.
+struct Tokenizer
+{
+    ParseError    error;
+    MemoryArena  *error_arena;
+    ParseContext *context;
+
+    char  *at;
+    Token  last_token;
+    s32    line;
+    s32    column;
+
+    String     directory;
+};
+
+void eatAllSpaces(Tokenizer *tk);
+
+// todo: check tokenizer size
+inline Tokenizer
+newTokenizer(MemoryArena *error_arena, String directory, char *input)
+{
+  Tokenizer out = {};
+  out.line        = 1;
+  out.column      = 1;
+  out.directory   = directory;
+  out.at          = input;
+  out.error_arena = error_arena;
+  eatAllSpaces(&out);
+  return out;
+}

@@ -96,7 +96,7 @@ printToBufferVA(MemoryArena *buffer, char *format, va_list arg_list)
 }
 
 inline char *
-myprint(MemoryArena *buffer, char *format, ...)
+printToBuffer(MemoryArena *buffer, char *format, ...)
 {
     char *out = 0;;
 
@@ -151,39 +151,6 @@ printCharToBufferRepeat(char *buffer, char c, s32 repeat)
     }
     buffer[repeat] = 0;
 }
-
-struct Expression;
-struct ErrorAttachment { char *string; Expression *expression;};
-
-struct ParseErrorData
-{
-    MemoryArena  message;
-    s32          line;
-    s32          column;
-    char        *context;
-
-    s32             attached_count;
-    ErrorAttachment attached[8];
-};
-typedef ParseErrorData* ParseError;
-
-struct ParseContext { char *first; ParseContext *next; };
-
-// note: the tokenizer also doubles as our error tracker, which may sound weird
-// but in reality it doesn't pose any problem, that said it could be better.
-struct Tokenizer
-{
-    ParseError    error;
-    MemoryArena  *error_arena;
-    ParseContext *context;
-
-    char  *at;
-    Token  last_token;
-    s32    line;
-    s32    column;
-
-    String     directory;
-};
 
 global_variable Tokenizer *global_tokenizer;
 
@@ -252,37 +219,37 @@ nextChar(Tokenizer *tk)
 internal void
 eatAllSpaces(Tokenizer *tk)
 {
-    b32 stop = false;
-    while ((*tk->at) && (!stop))
+  b32 stop = false;
+  while ((*tk->at) && (!stop))
+  {
+    switch (*tk->at)
     {
-        switch (*tk->at)
+      case '\n':
+      case '\t':
+      case ' ':
+      {
+        nextChar(tk);
+      } break;
+
+      case ';':
+      {
+        if (*(tk->at+1) == ';')
         {
-            case '\n':
-            case '\t':
-            case ' ':
-            {
-                nextChar(tk);
-            } break;
-
-            case ';':
-            {
-                if (*(tk->at+1) == ';')
-                {
-                    nextChar(tk);
-                    nextChar(tk);
-                    while ((*tk->at) && (*tk->at != '\n'))
-                        nextChar(tk);
-                }
-                else
-                {
-                    stop = true;
-                }
-            } break;
-
-            default:
-                stop = true;
+          nextChar(tk);
+          nextChar(tk);
+          while ((*tk->at) && (*tk->at != '\n'))
+            nextChar(tk);
         }
+        else
+        {
+          stop = true;
+        }
+      } break;
+
+      default:
+          stop = true;
     }
+  }
 }
 
 // todo: #speed make this a hash table
@@ -331,7 +298,6 @@ inline Token
 nextToken(Tokenizer *tk = global_tokenizer)
 {
   Token out = {};
-  eatAllSpaces(tk);
   out.text.chars = tk->at;
   out.line       = tk->line;
   out.column     = tk->column;
@@ -436,6 +402,9 @@ nextToken(Tokenizer *tk = global_tokenizer)
   }
 
   tk->last_token = out;
+  // note: we eat spaces afterward, so that we can always check *tk->at to see
+  // if there's anything left to parse.
+  eatAllSpaces(tk);
   return out;
 }
 
@@ -488,7 +457,7 @@ debugPrintTokens(Tokenizer tk)
 inline void
 printNewline()
 {
-  myprint(0, "\n");
+  printToBuffer(0, "\n");
 }
 
 // TODO: Better hash function!
@@ -559,7 +528,7 @@ internal void
 tokenError(Token *token, char *message, Tokenizer *tk = global_tokenizer)
 {
   parseError(token, message, tk);
-  myprint(&tk->error->message, ": ");
+  printToBuffer(&tk->error->message, ": ");
   myprint(&tk->error->message, token->text);
 }
 

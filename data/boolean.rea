@@ -1,5 +1,3 @@
-print_raw (x: False) -> False;
-
 typedef Bool : Set
 {
  false,
@@ -10,8 +8,8 @@ typedef Bool : Set
 {
  fork a
  {
-  false -- false,
-  true  -- b
+  false: false,
+  true:  b
   }
  }
 
@@ -19,7 +17,7 @@ typedef Bool : Set
 {
  fork a
  {
-  true  -- true,
-  false -- b
+  true:  true,
+  false: b,
   }
  }

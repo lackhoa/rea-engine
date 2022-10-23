@@ -8,6 +8,10 @@
 global_variable MemoryArena  global_temp_arena_;
 global_variable MemoryArena *global_temp_arena = &global_temp_arena_;
 
+#define unpackGlobals                                               \
+  Tokenizer   *tk         = global_tokenizer;  (void) tk;           \
+  MemoryArena *temp_arena = global_temp_arena; (void) temp_arena;
+
 enum ExpressionCategory
 {
   // might be free or bound
@@ -39,6 +43,17 @@ struct Expression
   ExpressionCategory  cat;
   Expression         *type;     // IMPORTANT: always in normal form
 };
+
+global_variable Expression *builtin_identical;
+global_variable Expression *builtin_identical_macro;
+global_variable Expression *builtin_True;
+global_variable Expression *builtin_truth;
+global_variable Expression *builtin_False;
+global_variable Expression *builtin_Set;
+global_variable Expression *builtin_Prop;
+global_variable Expression *builtin_Fun;
+global_variable Expression *builtin_Type;
+global_variable Expression *hole_expression;
 
 inline void
 initExpression(Expression *in, ExpressionCategory cat, Expression *type)
@@ -182,6 +197,7 @@ struct Function
 inline void
 initFunction(Function *fun, String name, Expression *body)
 {
+  assert(body);
   fun->name = name;
   fun->body = body;
 }
@@ -206,20 +222,8 @@ struct Ast;
 
 struct ParseExpressionOptions
 {
-  s32 min_precedence;
+  s32 min_precedence = -9999;
 };
-
-inline ParseExpressionOptions
-parseExpressionOptions()
-{
-  ParseExpressionOptions out = {};
-  out.min_precedence = -9999;
-  return out;
-}
-
-internal Ast *
-parseExpressionAst(MemoryArena *arena,
-                   ParseExpressionOptions opt = parseExpressionOptions());
 
 enum Trinary
 {
@@ -272,7 +276,6 @@ newEnvironment(MemoryArena *arena)
   Environment out = {};
   out.arena       = arena;
   out.temp_arena  = global_temp_arena;
-  out.stack_depth = 1;
   return out;
 }
 
@@ -387,3 +390,6 @@ initAstArrowType(AstArrowType *out, s32 param_count, Parameter *params, Ast *ret
   out->return_type = return_type;
   return out;
 }
+
+inline Ast *
+parseExpressionToAst(MemoryArena *arena);
