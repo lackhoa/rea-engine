@@ -141,8 +141,10 @@ struct ForkCase
   Variable   **params;
 };
 inline void
-initForkCase(ForkCase *fork_case, Expression *body, Variable **params)
+initForkCase(ForkCase *fork_case, Expression *body, Variable **params, s32 param_count)
 {
+  if (param_count)
+    assert(params);
   fork_case->body   = body;
   fork_case->params = params;
 }
@@ -240,12 +242,10 @@ struct Rewrite
   Rewrite    *next;
 };
 
-struct Stack
+struct TypeDebt
 {
-  ArrowType    *signature;
-  s32           count;
-  Expression  **args;
-  Stack        *next;
+  Function *first;
+  TypeDebt *next;
 };
 
 // used in normalization, typechecking, etc.
@@ -254,8 +254,9 @@ struct Environment
   MemoryArena *arena;
   MemoryArena *temp_arena;
 
+  TypeDebt *debt;
   s32 stack_depth;              // 0 is reserved
-  s32 stack_offset;            // todo #speed pass this separately
+  s32 stack_offset;             // todo #speed pass this separately
 
   Rewrite *rewrite;
 };

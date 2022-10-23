@@ -39,3 +39,5 @@ andCommutative :: (a, b, c: Bool) -> (a & (b & c) = (a & b) & c)
   true : truth,
   }
  }
+
+print andCommutative(true, false, true);

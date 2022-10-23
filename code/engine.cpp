@@ -335,165 +335,180 @@ switchCtorCount(Fork *myswitch)
   return castExpression(myswitch->subject->type, Form)->ctor_count;
 }
 
+struct PrintExpressionOptions{b32 detailed; b32 print_all_types;};
+
 internal void
-printExpression(MemoryArena *buffer, Expression *exp, b32 detailed = false)
+printExpression(MemoryArena *buffer, Expression *exp, PrintExpressionOptions opt)
 {
   unpackGlobals;
 
-  b32 print_type = detailed ? true : false;
-  switch (exp->cat)
+  b32 print_type = (opt.detailed || opt.print_all_types) ? true : false;
+  PrintExpressionOptions new_opt = opt;
+  new_opt.detailed = false;
+
+  if (exp)
   {
-    case EC_Variable:
+    switch (exp->cat)
     {
-      auto var = castExpression(exp, Variable);
-      if (var->stack_depth)
-        printToBuffer(buffer, "%.*s<%d>", var->name.length, var->name.chars, var->stack_depth);
-      else
-        printToBuffer(buffer, "%.*s[%d]", var->name.length, var->name.chars, var->stack_delta);
-    } break;
-
-    case EC_Application:
-    {
-      auto app = castExpression(exp, Application);
-
-      printExpression(buffer, app->op);
-
-      printToBuffer(buffer, "(");
-      for (s32 arg_id = 0; arg_id < app->arg_count; arg_id++)
+      case EC_Variable:
       {
-        printExpression(buffer, app->args[arg_id]);
-        if (arg_id < app->arg_count-1)
-          printToBuffer(buffer, ", ");
-      }
-      printToBuffer(buffer, ")");
-    } break;
+        auto var = castExpression(exp, Variable);
+        if (var->stack_depth)
+          printToBuffer(buffer, "%.*s<%d>", var->name.length, var->name.chars, var->stack_depth);
+        else
+          printToBuffer(buffer, "%.*s[%d]", var->name.length, var->name.chars, var->stack_delta);
+      } break;
 
-    case EC_Fork:
-    {
-      Fork *fork = castExpression(exp, Fork);
-      printToBuffer(buffer, "fork ");
-      printExpression(buffer, fork->subject);
-      printToBuffer(buffer, " {");
-      auto form = castExpression(fork->subject->type, Form);
-      for (s32 ctor_id = 0;
-           ctor_id < form->ctor_count;
-           ctor_id++)
+      case EC_Application:
       {
-        ForkCase *casev = fork->cases + ctor_id;
-        Constructor *ctor = form->ctors[ctor_id];
-        switch (ctor->h.type->cat)
-        {// print pattern
-          case EC_Form:
-          {
-            printExpression(buffer, (Expression*)ctor);
-          } break;
+        auto app = castExpression(exp, Application);
 
-          case EC_ArrowType:
-          {
-            printExpression(buffer, (Expression*)ctor);
-            printToBuffer(buffer, " ");
-            ArrowType *signature = castExpression(ctor->h.type, ArrowType);
-            for (s32 param_id = 0; param_id < signature->param_count; param_id++)
-            {
-              myprint(buffer, casev->params[param_id]->name);
-              printToBuffer(buffer, " ");
-            }
-          } break;
+        printExpression(buffer, app->op, new_opt);
 
-          invalidCodePath;
+        printToBuffer(buffer, "(");
+        for (s32 arg_id = 0; arg_id < app->arg_count; arg_id++)
+        {
+          printExpression(buffer, app->args[arg_id], new_opt);
+          if (arg_id < app->arg_count-1)
+            printToBuffer(buffer, ", ");
         }
+        printToBuffer(buffer, ")");
+      } break;
 
-        printToBuffer(buffer, ": ");
-        printExpression(buffer, casev->body);
-        if (ctor_id != form->ctor_count-1)
-          printToBuffer(buffer, ", ");
-      }
-      printToBuffer(buffer, "}");
-    } break;
-
-    case EC_Form:
-    {
-      auto mystruct = castExpression(exp, Form);
-      myprint(buffer, mystruct->name);
-    } break;
-
-    case EC_Function:
-    {
-      print_type = false; // we print type in the following code
-      auto proc = castExpression(exp, Function);
-      myprint(buffer, proc->name);
-      if (detailed)
+      case EC_Fork:
       {
-        printExpression(buffer, proc->h.type);
-        printToBuffer(buffer, " { ");
-        printExpression(buffer, proc->body);
-        printToBuffer(buffer, " }");
-      }
-    } break;
+        Fork *fork = castExpression(exp, Fork);
+        printToBuffer(buffer, "fork ");
+        printExpression(buffer, fork->subject, new_opt);
+        printToBuffer(buffer, " {");
+        auto form = castExpression(fork->subject->type, Form);
+        for (s32 ctor_id = 0;
+             ctor_id < form->ctor_count;
+             ctor_id++)
+        {
+          ForkCase *casev = fork->cases + ctor_id;
+          Constructor *ctor = form->ctors[ctor_id];
+          switch (ctor->h.type->cat)
+          {// print pattern
+            case EC_Form:
+            {
+              printExpression(buffer, (Expression*)ctor, new_opt);
+            } break;
 
-    case EC_Constructor:
-    {
-      auto ctor = castExpression(exp, Constructor);
-      myprint(buffer, ctor->name);
-    } break;
+            case EC_ArrowType:
+            {
+              printExpression(buffer, (Expression*)ctor, new_opt);
+              printToBuffer(buffer, " ");
+              ArrowType *signature = castExpression(ctor->h.type, ArrowType);
+              for (s32 param_id = 0; param_id < signature->param_count; param_id++)
+              {
+                myprint(buffer, casev->params[param_id]->name);
+                printToBuffer(buffer, " ");
+              }
+            } break;
 
-    case EC_ArrowType:
-    {
-      auto arrow = castExpression(exp,  ArrowType);
-      printToBuffer(buffer, "(");
-      for (int param_id = 0;
-           param_id < arrow->param_count;
-           param_id++)
+            invalidCodePath;
+          }
+
+          printToBuffer(buffer, ": ");
+          printExpression(buffer, casev->body, new_opt);
+          if (ctor_id != form->ctor_count-1)
+            printToBuffer(buffer, ", ");
+        }
+        printToBuffer(buffer, "}");
+      } break;
+
+      case EC_Form:
       {
-        printExpression(buffer, (Expression*)arrow->params[param_id], true);
-        if (param_id < arrow->param_count-1)
-          printToBuffer(buffer, ", ");
-      }
-      printToBuffer(buffer, ") -> ");
+        auto mystruct = castExpression(exp, Form);
+        myprint(buffer, mystruct->name);
+      } break;
 
-      printExpression(buffer, arrow->return_type);
-    } break;
+      case EC_Function:
+      {
+        print_type = false; // we print type in the following code
+        auto proc = castExpression(exp, Function);
+        myprint(buffer, proc->name);
+        if (opt.detailed)
+        {
+          printExpression(buffer, proc->h.type, new_opt);
+          printToBuffer(buffer, " { ");
+          printExpression(buffer, proc->body, new_opt);
+          printToBuffer(buffer, " }");
+        }
+      } break;
 
-    case EC_Builtin_identical:
+      case EC_Constructor:
+      {
+        auto ctor = castExpression(exp, Constructor);
+        myprint(buffer, ctor->name);
+      } break;
+
+      case EC_ArrowType:
+      {
+        auto arrow = castExpression(exp,  ArrowType);
+        printToBuffer(buffer, "(");
+        for (int param_id = 0;
+             param_id < arrow->param_count;
+             param_id++)
+        {
+          new_opt.detailed = true;
+          printExpression(buffer, (Expression*)arrow->params[param_id], new_opt);
+          if (param_id < arrow->param_count-1)
+            printToBuffer(buffer, ", ");
+        }
+        printToBuffer(buffer, ") -> ");
+
+        new_opt.detailed = false;
+        printExpression(buffer, arrow->return_type, new_opt);
+      } break;
+
+      case EC_Builtin_identical:
+      {
+        printToBuffer(buffer, "identical");
+      } break;
+
+      case EC_Builtin_Set:
+      {
+        printToBuffer(buffer, "Set");
+      } break;
+
+      case EC_Builtin_Proc:
+      {
+        printToBuffer(buffer, "Proc");
+      } break;
+
+      case EC_Builtin_Prop:
+      {
+        printToBuffer(buffer, "Prop");
+      } break;
+
+      case EC_Builtin_Type:
+      {
+        printToBuffer(buffer, "Type");
+      } break;
+
+      case EC_Hole:
+      {
+        printToBuffer(buffer, "_");
+      } break;
+
+      default:
+      {
+        printToBuffer(buffer, "<unimplemented category: %u>", exp->cat);
+      } break;
+    }
+
+    if (print_type)
     {
-      printToBuffer(buffer, "identical");
-    } break;
-
-    case EC_Builtin_Set:
-    {
-      printToBuffer(buffer, "Set");
-    } break;
-
-    case EC_Builtin_Proc:
-    {
-      printToBuffer(buffer, "Proc");
-    } break;
-
-    case EC_Builtin_Prop:
-    {
-      printToBuffer(buffer, "Prop");
-    } break;
-
-    case EC_Builtin_Type:
-    {
-      printToBuffer(buffer, "Type");
-    } break;
-
-    case EC_Hole:
-    {
-      printToBuffer(buffer, "_");
-    } break;
-
-    default:
-    {
-      printToBuffer(buffer, "<unimplemented category: %u>", exp->cat);
-    } break;
+      printToBuffer(buffer, " : ");
+      new_opt.print_all_types = false;
+      printExpression(buffer, exp->type, new_opt);
+    }
   }
-
-  if (print_type)
+  else
   {
-    printToBuffer(buffer, " : ");
-    printExpression(buffer, exp->type);
+    printToBuffer(buffer, "<null>");
   }
 }
 
@@ -801,6 +816,7 @@ typedef VARIABLE_TRANSFORMER(variable_transformer);
 TRANSFORM_VARIABLES;
 
 // note: this makes a copy (todo: #mem don't copy if not necessary)
+// todo cheesing out on functions right now
 inline Expression *
 transformVariablesHalf(Environment env, Expression *in, variable_transformer *transformer, void *opt)
 {
@@ -833,15 +849,17 @@ transformVariablesHalf(Environment env, Expression *in, variable_transformer *tr
       out = (Expression*)out_fork;
       out_fork->subject = transformVariables(env, in_fork->subject, transformer, opt);
       allocateArray(env.arena, out_fork->case_count, out_fork->cases);
-      Environment *outer_env = &env;
-      for (s32 case_id = 0; case_id < out_fork->case_count; case_id++)
+      env.stack_offset++;
+      for (s32 case_id = 0;
+           case_id < out_fork->case_count;
+           case_id++)
       {
-        Environment env = *outer_env;
-        env.stack_offset++;
+        out_fork->cases[case_id] = in_fork->cases[case_id];
         out_fork->cases[case_id].body = transformVariables(env, in_fork->cases[case_id].body, transformer, opt);
       }
     } break;
 
+#if 0
     case EC_Function:
     {
       Function *in_proc = castExpression(in, Function);
@@ -850,6 +868,7 @@ transformVariablesHalf(Environment env, Expression *in, variable_transformer *tr
       env.stack_offset++;
       out_proc->body = transformVariables(env, in_proc->body, transformer, opt);
     } break;
+#endif
 
     default:
         out = in;
@@ -868,8 +887,6 @@ TRANSFORM_VARIABLES
   return out;
 }
 
-// todo #speed top-level functions don't need to be abstracted, since they
-// don't contain any free variables.
 VARIABLE_TRANSFORMER(abstractInstantiated)
 {
   (void) opt;
@@ -910,7 +927,7 @@ internal Expression *
 replaceCurrentLevel(Environment env, Expression *in, Expression **args)
 {
   Expression *out = transformVariables(env, in, replaceCurrentLevelVariable, args);
-  assert(identicalB32(in->type, out->type));
+  // assert(identicalB32(in->type, out->type));
   return out;
 }
 
@@ -1016,28 +1033,29 @@ hasType(Expression *in)
 
 // todo #speed don't pass the Environment in wholesale?
 internal Expression *
-normalize(Environment env, Expression *in)
+normalize(Environment env, Expression *in0)
 {
-  assert(!hasFreeVariable(in));
-  assert(hasType(in));
+  assert(!hasFreeVariable(in0));
+  assert(hasType(in0));
+
   Expression *out = 0;
   unpackGlobals;
 
-  switch (in->cat)
+  switch (in0->cat)
   {
     case EC_Application:
     {
-      auto in_app = castExpression(in, Application);
-      Expression **norm_args = pushArray(temp_arena, in_app->arg_count, Expression*);
+      Application *in = castExpression(in0, Application);
+      Expression **norm_args = pushArray(temp_arena, in->arg_count, Expression*);
       for (auto arg_id = 0;
-           arg_id < in_app->arg_count;
+           arg_id < in->arg_count;
            arg_id++)
       {
-        Expression *in_arg = in_app->args[arg_id];
+        Expression *in_arg = in->args[arg_id];
         norm_args[arg_id]  = normalize(env, in_arg);
       }
 
-      Expression *norm_op = normalize(env, in_app->op);
+      Expression *norm_op = normalize(env, in->op);
       if (norm_op->cat == EC_Function)
       {// Function application
         Function  *proc     = castExpression(norm_op, Function);
@@ -1056,7 +1074,7 @@ normalize(Environment env, Expression *in)
 
       if (!out)
       {
-        Application *out_app = copyStruct(env.arena, in_app);
+        Application *out_app = copyStruct(env.arena, in);
         out = &out_app->h;
 
         out_app->op = norm_op;
@@ -1068,8 +1086,8 @@ normalize(Environment env, Expression *in)
 
     case EC_Fork:
     {
-      Fork *in_fork = castExpression(in, Fork);
-      Expression *subject_norm = normalize(env, in_fork->subject);
+      Fork *in = castExpression(in0, Fork);
+      Expression *subject_norm = normalize(env, in->subject);
 
       b32 subject_matched = false;
       switch (subject_norm->cat)
@@ -1078,8 +1096,7 @@ normalize(Environment env, Expression *in)
         {
           subject_matched = true;
           Constructor *ctor = castExpression(subject_norm, Constructor);
-          out = normalize(env, in_fork->cases[ctor->id].body);
-          assert(identicalB32(out->type, in->type));
+          out = normalize(env, in->cases[ctor->id].body);
         } break;
 
         case EC_Application:
@@ -1088,66 +1105,24 @@ normalize(Environment env, Expression *in)
           if (Constructor *ctor = castExpression(subject->op, Constructor))
           {
             subject_matched = true;
-            Expression *body = in_fork->cases[ctor->id].body;
+            Expression *body = in->cases[ctor->id].body;
             out = normalize(env, body);
-            assert(identicalB32(out->type, in->type));
-
-#if 0
-            // note: since the fork case doesn't have its own signature, we
-            // borrow the signature of the constructor.
-            ArrowType *signature = castExpression(ctor->header.type, ArrowType);
-            extendStack(&env, signature, subject->args);
-#endif
+            assert(identicalB32(out->type, in0->type));
           }
         } break;
       }
 
       if (!subject_matched)
-        out = in;
+        out = in0;
     } break;
-
-#if 0
-    case EC_Function:
-    {
-      Procedure *in_proc  = castExpression(in, Procedure);
-      Procedure *out_proc = copyStruct(arena, in_proc);
-      out = (Expression*)out_proc;
-      Environment new_env = env;
-      new_env.stack_offset++;
-      out_proc->body = normalize(arena, new_env, in_proc->body);
-    } break;
-
-    case EC_Variable:
-    {
-      Variable *in_var = castExpression(in, Variable);
-      s32 stack_delta = in_var->stack_delta - env.stack_offset;
-      if (in_var->atom)
-        out = in;
-      else if (stack_delta >= 0)
-      {
-        for (s32 id = 0; id < stack_delta; id++)
-          stack = stack->next;
-        assert(in_var->signature == stack->signature);
-        out = stack->args[in_var->id];
-        if (auto var = castExpression(out, Variable))
-          assert(var->atom);
-      }
-      else
-        out = in;
-    } break;
-#endif
 
     default:
     {
-      out = in;
+      out = in0;
     } break;
   }
 
-  auto out_before_rewritten = out; (void)out_before_rewritten;
-  out = rewriteExpression(&env, out);
-  assert(identicalB32(out->type, in->type));
-
-  return out;
+  return rewriteExpression(&env, out);
 }
 
 // todo: so what does the arena do exactly?
@@ -1202,33 +1177,61 @@ normalized(Environment env, Expression *in)
 }
 #endif
 
-// Expression accompanied by a stack, so that when you eval the expression in that stack it makes sense.
-struct ExpressionWithStack
+internal void
+assertExpressionFullyTyped(Expression *in0)
 {
-  Expression *expression;
-  Stack      *stack;
-};
+  assert(hasType(in0));
+  switch (in0->cat)
+  {
+    case EC_Fork:
+    {
+      Fork *in = castExpression(in0, Fork);
+      assertExpressionFullyTyped(in->subject);
+      for (s32 case_id = 0; case_id < in->case_count; case_id++)
+        assertExpressionFullyTyped(in->cases[case_id].body);
+    } break;
 
-internal b32
-typecheck(Environment env, Expression *in0, Ast *ast0, Expression *instantiated_expected_type)
+    case EC_Function:
+    {
+      Function *in = castExpression(in0, Function);
+      assertExpressionFullyTyped(in->body);
+    } break;
+
+    case EC_Application:
+    {
+      Application *in = castExpression(in0, Application);
+      assertExpressionFullyTyped(in->op);
+      for (s32 arg_id = 0; arg_id < in->arg_count; arg_id++)
+        assertExpressionFullyTyped(in->args[arg_id]);
+    } break;
+
+    case EC_ArrowType:
+    {
+      ArrowType *in = castExpression(in0, ArrowType);
+      assertExpressionFullyTyped(in->return_type);
+    }
+  }
+}
+
+internal Expression *
+typecheck(Environment env, Expression *in0, Ast *ast0, Expression *instantiated_expected_type, b32 forced=false)
 {
   unpackGlobals;
-  b32 success = false;
 
   assert(!hasFreeVariable(instantiated_expected_type));
-  if (in0->type)
+  if (in0->type && !forced)
   {
     if (instantiated_expected_type)
     {
       Expression *norm_expected_type = normalize(env, instantiated_expected_type);
-      Expression *in_type = normalize(env, in0->type);
-      if (!identicalB32(norm_expected_type, in_type))
+      Expression *out_type = normalize(env, in0->type);
+      if (!identicalB32(norm_expected_type, out_type))
       {
         parseError(ast0, "expression has wrong type");
         Expression *abstract_expected_type = abstractExpression(env, norm_expected_type);
         pushAttachment("expected", abstract_expected_type);
-        Expression *abstract_in_type = abstractExpression(env, in_type);
-        pushAttachment("got", abstract_in_type);
+        Expression *abstract_out_type = abstractExpression(env, out_type);
+        pushAttachment("got", abstract_out_type);
       }
     }
   }
@@ -1238,40 +1241,39 @@ typecheck(Environment env, Expression *in0, Ast *ast0, Expression *instantiated_
     {
       case EC_Fork:
       {
-        Fork        *fork      = castExpression(in0, Fork);
-        AstFork     *ast_fork  = castAst(ast0, AstFork);
+        Fork    *in  = castExpression(in0, Fork);
+        AstFork *ast = castAst(ast0, AstFork);
         Environment *outer_env = &env;
 
-        Form *form = castExpression(fork->subject->type, Form);
+        Form *form = castExpression(in->subject->type, Form);
 
         Expression *instantiated_common_type = instantiated_expected_type;
         for (s32 case_id = 0;
-             case_id < fork->case_count && noError();
+             case_id < in->case_count && noError();
              case_id++)
         {
           Environment  env  = *outer_env;
 
-          ForkCase *casev    = fork->cases + case_id;
-          Ast      *ast_body = ast_fork->bodies[case_id];
+          ForkCase *casev    = in->cases + case_id;
+          Ast      *ast_body = ast->bodies[case_id];
 
           Constructor *ctor     = form->ctors[case_id];
           Expression  *ctor_exp = (Expression*)ctor;
-          switch (ctor->h.cat)
+          switch (ctor->h.type->cat)
           {
-            case EC_Constructor:
-            {
-              addRewrite(&env, fork->subject, ctor_exp);
+            case EC_Form:
+            {// member
+              addRewrite(&env, in->subject, ctor_exp);
               introduceVariables(&env, 0, 0);
             } break;
 
-            case EC_Application:
-            {
+            case EC_ArrowType:
+            {// composite
               ArrowType    *signature = castExpression(ctor->h.type, ArrowType);
               Expression  **params    = (Expression**)introduceVariables(&env, signature->param_count, casev->params);
               Application  *pattern   = newExpression(env.temp_arena, Application, signature->return_type);
               initApplication(pattern, ctor_exp, signature->param_count, params);
-
-              addRewrite(&env, fork->subject, (Expression*)pattern);
+              addRewrite(&env, in->subject, (Expression*)pattern);
             } break;
 
             default:
@@ -1279,12 +1281,14 @@ typecheck(Environment env, Expression *in0, Ast *ast0, Expression *instantiated_
           }
 
           // "expected_type" might normalize to different things in different forks.
-          typecheck(env, casev->body, ast_body, instantiated_common_type);
-          if (!instantiated_common_type)
+          if (Expression *body_type = typecheck(env, casev->body, ast_body, instantiated_common_type))
           {
-            // fork body has more specific type than outer scope???
-            assert(!hasDeeperVariable(*outer_env, instantiated_common_type));
-            instantiated_common_type = normalize(env, casev->body->type);
+            if (!instantiated_common_type)
+            {
+              // fork body has more specific type than outer scope???
+              assert(!hasDeeperVariable(*outer_env, instantiated_common_type));
+              instantiated_common_type = normalize(env, body_type);
+            }
           }
         }
 
@@ -1293,35 +1297,45 @@ typecheck(Environment env, Expression *in0, Ast *ast0, Expression *instantiated_
           in0->type = abstractExpression(env, instantiated_common_type);
           assert(in0->type);
         }
+        assertExpressionFullyTyped(in0);
       } break;
 
       case EC_Function:
       {
         // You probably always want to have type annotations for procedures.
-        assert(instantiated_expected_type);
+        Function *in = castExpression(in0, Function);
 
-        Function  *in        = castExpression(in0, Function);
-        ArrowType *signature = castExpression(instantiated_expected_type, ArrowType);
-
-        Expression **new_vars    = introduceVariables(&env, signature);
-        Expression  *return_type = replaceCurrentLevel(env, signature->return_type, new_vars);
-        Expression  *body        = replaceCurrentLevel(env, in->body, new_vars);
-        if (typecheck(env, body, ast0, return_type))
+        if (instantiated_expected_type)
         {
-          in0->type      = abstractExpression(env, instantiated_expected_type);
-          in->body->type = body->type;
+          ArrowType *signature = castExpression(instantiated_expected_type, ArrowType);
+
+          Expression **new_vars    = introduceVariables(&env, signature);
+          Expression  *return_type = replaceCurrentLevel(env, signature->return_type, new_vars);
+          Expression  *body        = replaceCurrentLevel(env, in->body, new_vars);
+
+          // Set the type first, since the function body may call itself, and we
+          // want to grant it the type.
+          in0->type = abstractExpression(env, instantiated_expected_type);
+          if (Expression *body_type = typecheck(env, body, ast0, return_type, true))
+          {
+            in0->type      = abstractExpression(env, instantiated_expected_type);
+            in->body->type = body_type;
+            assertExpressionFullyTyped(in0);
+          }
         }
+        else
+          parseError(ast0, "#bug this function should have type annotation");
       } break;
 
       case EC_Application:
       {
-        Application *app       = castExpression(in0, Application);
-        AstBranch   *branch    = castAst(ast0, AstBranch);
-        s32          arg_count = app->arg_count;
+        Application *in        = castExpression(in0, Application);
+        AstBranch   *ast       = castAst(ast0, AstBranch);
+        s32          arg_count = in->arg_count;
 
-        if (typecheck(env, app->op, branch->op, 0))
+        if (Expression *op_type = typecheck(env, in->op, ast->op, 0))
         {
-          if (ArrowType *signature = castExpression(app->op->type, ArrowType))
+          if (ArrowType *signature = castExpression(op_type, ArrowType))
           {
             if (signature->param_count == arg_count)
             {
@@ -1329,8 +1343,8 @@ typecheck(Environment env, Expression *in0, Ast *ast0, Expression *instantiated_
                    (arg_id < signature->param_count) && noError();
                    arg_id++)
               {
-                Expression *arg     = app->args[arg_id];
-                Ast        *arg_ast = branch->args[arg_id];
+                Expression *arg     = in->args[arg_id];
+                Ast        *arg_ast = ast->args[arg_id];
                 Variable   *param   = signature->params[arg_id];
 
                 if (arg->cat == EC_Hole)
@@ -1338,24 +1352,26 @@ typecheck(Environment env, Expression *in0, Ast *ast0, Expression *instantiated_
                 else if (param->h.type->cat == EC_Variable)
                 {
                   Variable *param_type = castExpression(param->h.type, Variable);
-                  Expression *lookup = app->args[param_type->id];
+                  Expression *lookup = in->args[param_type->id];
                   if (param_type->stack_delta != 0)
                     todoIncomplete;  // don't know what happens here.
 
                   if (lookup->cat == EC_Hole)
                   {
-                    typecheck(env, arg, arg_ast, 0);
-                    if (identicalB32(param_type->h.type, arg->type->type))
+                    if (Expression *arg_type = typecheck(env, arg, arg_ast, 0))
                     {
-                      // NOTE: here we mutate the expression by writing back to
-                      // the arg list.
-                      app->args[param_type->id] = arg->type;
-                    }
-                    else
-                    {
-                      parseError(ast0, "the type of argument %d has wrong type", arg_id);
-                      pushAttachment("got", arg->type->type);
-                      pushAttachment("expected", param_type->h.type);
+                      if (identicalB32(param_type->h.type, arg_type->type))
+                      {
+                        // NOTE: here we mutate the expression by writing back to
+                        // the arg list.
+                        in->args[param_type->id] = arg_type;
+                      }
+                      else
+                      {
+                        parseError(ast0, "the type of argument %d has wrong type", arg_id);
+                        pushAttachment("got", arg_type->type);
+                        pushAttachment("expected", param_type->h.type);
+                      }
                     }
                   }
                   else
@@ -1377,43 +1393,44 @@ typecheck(Environment env, Expression *in0, Ast *ast0, Expression *instantiated_
           }
           else
           {
-            parseError(branch->op, "operator must have an arrow type");
-            pushAttachment("got type", app->op->type);
+            parseError(ast->op, "operator must have an arrow type");
+            pushAttachment("got type", in->op->type);
           }
         }
       } break;
 
       case EC_ArrowType:
       {
-        ArrowType    *in  = castExpression(in0, ArrowType);
+        ArrowType    *out  = castExpression(in0, ArrowType);
         AstArrowType *ast = castAst(ast0, AstArrowType);
-        introduceVariables(&env, in);
-        if (typecheck(env, in->return_type, ast->return_type, 0))
-        {
+        introduceVariables(&env, out);
+        if (typecheck(env, out->return_type, ast->return_type, 0))
           in0->type = builtin_Fun;
-        }
       } break;
 
       default:
       {
-        parseError(ast0, "#internal this expression should already have type");
+        parseError(ast0, "#bug this expression should already have type");
       } break;
     }
   }
 
-  if (noError())
-  {
-    assert(in0->type);
-    assert(!hasInstantiated(in0->type));
-    success = true;
-  }
-  return success;
+  NULL_WHEN_ERROR(in0->type);
+  assertExpressionFullyTyped(in0);
+
+  return in0->type;
 }
 
-internal b32
+internal Expression *
 typecheck(MemoryArena *arena, Expression *in, Ast *ast, Expression *expected_type)
 {
-  return typecheck(newEnvironment(arena), in, ast, expected_type);
+  Expression *out = typecheck(newEnvironment(arena), in, ast, expected_type);
+  if (out)
+  {
+    // nocheckin
+    assertExpressionFullyTyped(in);
+  }
+  return out;
 }
 
 // todo: check that every case has been filled in
@@ -1449,18 +1466,18 @@ buildFork(MemoryArena *arena, Bindings *outer_bindings, AstFork *ast)
 
               Ast *ast_pattern = ast->patterns[input_case_id];
               Constructor *ctor = 0;
-              Variable **params = 0;
+              Variable **params;
+              s32 param_count;
               pushContextName("transform switch case pattern");
               switch (ast_pattern->cat)
               {
                 case AC_AstLeaf:
                 {
                   params = 0;
-                  Expression *pattern = buildExpression(temp_arena, outer_bindings, ast_pattern);
-                  if (parsing())
+                  param_count = 0;
+                  if (Expression *pattern = buildExpression(temp_arena, outer_bindings, ast_pattern))
                   {
-                    ctor = castExpression(pattern, Constructor);
-                    if (ctor)
+                    if ((ctor = castExpression(pattern, Constructor)))
                     {
                       if (!identicalB32(pattern->type, subject->type))
                       {
@@ -1481,14 +1498,13 @@ buildFork(MemoryArena *arena, Bindings *outer_bindings, AstFork *ast)
 
                   if (parsing())
                   {
-                    ctor = castExpression(op, Constructor);
-                    if (ctor)
+                    if ((ctor = castExpression(op, Constructor)))
                     {
                       if (ArrowType *ctor_sig = castExpression(op->type, ArrowType))
                       {
                         if (identicalB32(ctor_sig->return_type, subject->type))
                         {
-                          s32 param_count = branch->arg_count;
+                          param_count = branch->arg_count;
                           if (param_count == ctor_sig->param_count)
                           {
                             allocateArrayZero(arena, param_count, params);
@@ -1536,11 +1552,13 @@ buildFork(MemoryArena *arena, Bindings *outer_bindings, AstFork *ast)
                       parseError(ast_pattern, "expected a constructor");
                   }
                 } break;
+
+                invalidDefaultCase;
               }
               popContext();
 
               Expression *body = 0;
-              if (parsing())
+              if (noError())
               {
                 pushContextName("fork case body building");
                 Ast *ast_body = ast->bodies[input_case_id];
@@ -1548,11 +1566,20 @@ buildFork(MemoryArena *arena, Bindings *outer_bindings, AstFork *ast)
                 popContext();
               }
 
-              if (parsing())
-                initForkCase(cases + ctor->id, body, params);
+              if (noError())
+              {
+                // we could error out sooner but whatevs.
+                if (cases[ctor->id].body)
+                {
+                  parseError(ast->bodies[input_case_id], "fork case handled twice");
+                  pushAttachment("constructor", (Expression*)ctor);
+                }
+                else
+                  initForkCase(cases + ctor->id, body, params, param_count);
+              }
             }
 
-            if (parsing())
+            if (noError())
             {
               out = newExpression(arena, Fork, 0);
               initFork(out, subject, case_count, cases);
@@ -2135,7 +2162,7 @@ parseConstructorDef(MemoryArena *arena, Form *form, s32 ctor_id)
 
                 initVariable(param, toString("no_name"), param_id, signature);
 
-                signature->params[param_id] = param;
+                params[param_id] = param;
                 if (!optionalChar(','))
                 {
                   requireChar(')', "expected ')' or ','");
@@ -2236,10 +2263,6 @@ parseFunctionDefinition(MemoryArena *arena, Token *name)
   pushContext;
 
   assert(isIdentifier(name));
-  if (equal(name, "andWithFalse"))
-  {
-    breakhere;
-  }
   auto define_slot = lookupNameCurrentFrame(global_bindings, name->text, true);
   if (define_slot.found)
     tokenError("re-definition");
@@ -2271,8 +2294,12 @@ parseFunctionDefinition(MemoryArena *arena, Token *name)
           if (requireChar('}'))
           {
             initFunction(fun, name->text, body);
+            if (equal(name->text, "+"))
+              breakhere;
             if (typecheck(arena, (Expression*)fun, body_ast, (Expression*)signature))
             {
+              printExpression(0, (Expression*)fun, {true, true});
+              printNewline();
               assert(fun->body->type);
             }
           }
@@ -2310,7 +2337,7 @@ parseTopLevel(EngineState *state, MemoryArena *arena)
 
   while (parsing())
   {
-#define CLEAN_TEMPORARY_MEMORY 1
+#define CLEAN_TEMPORARY_MEMORY 0
 #if CLEAN_TEMPORARY_MEMORY
     TemporaryMemory top_level_temp = beginTemporaryMemory(temp_arena);
 #endif
@@ -2378,11 +2405,11 @@ parseTopLevel(EngineState *state, MemoryArena *arena)
           case Keyword_Print:
           {
             Expression *exp = parseExpression(temp_arena);
-            if (parsing())
+            if (noError())
             {
               auto buffer = subArena(temp_arena, 256);
               Expression *reduced = normalizeStart(temp_arena, exp);
-              printExpression(&buffer, reduced, true);
+              printExpression(&buffer, reduced, {});
               printf("%s\n", buffer.base);
             }
             requireChar(';');
@@ -2394,7 +2421,7 @@ parseTopLevel(EngineState *state, MemoryArena *arena)
             if (parsing())
             {
               auto buffer = subArena(temp_arena, 256);
-              printExpression(&buffer, exp, true);
+              printExpression(&buffer, exp, {.detailed=true});
               printf("%s\n", buffer.base);
             }
             requireChar(';');
@@ -2531,7 +2558,7 @@ interpretFile(EngineState *state, MemoryArena *arena, FilePath input_path, b32 i
         {
           auto attachment = error->attached[attached_id];
           printf("%s: ", attachment.string);
-          printExpression(0, attachment.expression);
+          printExpression(0, attachment.expression, {});
           if (attached_id != error->attached_count-1) 
             printf(", ");
         }
