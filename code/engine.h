@@ -2,6 +2,7 @@
 
 #include "utils.h"
 #include "memory.h"
+#include "tokenization.h"
 
 // NOTE: Think of this like the function stack, we'll clean it every once in a while.
 global_variable MemoryArena  global_temp_arena_;
@@ -17,7 +18,7 @@ enum ExpressionCategory
   EC_Fork,                  // switch statement
   EC_Form,                    // like Coq inductive types
   EC_Constructor,             // canonical members of forms
-  EC_Procedure,               // holds actual computation (ie body that can be executed)
+  EC_Function,               // holds actual computation (ie body that can be executed)
   EC_ArrowType,               // type of procedure and built-in objects
 
   // strictly non-values
@@ -171,7 +172,7 @@ struct Form
 };
 
 // NOTE: most of the information is in the (arrow) type;
-struct Procedure
+struct Function
 {
   Expression  h;
   String      name;
@@ -179,10 +180,10 @@ struct Procedure
 };
 
 inline void
-initProcedure(Procedure *proc, String name, Expression *body)
+initFunction(Function *fun, String name, Expression *body)
 {
-  proc->name = name;
-  proc->body = body;
+  fun->name = name;
+  fun->body = body;
 }
 
 struct ArrowType
@@ -272,5 +273,117 @@ newEnvironment(MemoryArena *arena)
   out.arena       = arena;
   out.temp_arena  = global_temp_arena;
   out.stack_depth = 1;
+  return out;
+}
+
+enum AstCategory
+{
+  AC_AstLeaf,
+  AC_AstBranch,
+  AC_AstFork,
+  AC_AstArrowType,
+};
+
+struct Ast
+{
+  AstCategory cat;
+  // info error reports & debug.  TODO: token is not quite what we want for the
+  // ast since one ast might span multiple tokens, but it'll do for now.
+  Token token;
+};
+
+#define castAst(ast, type) (type*)((ast->cat == AC_##type) ? ast : 0)
+
+inline void
+initAst(Ast *out, AstCategory cat, Token *token)
+{
+  out->cat   = cat;
+  out->token = *token;
+}
+
+inline Ast *
+newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
+{
+  Ast *out = (Ast*)pushSize(arena, size);
+  initAst(out, cat, token);
+  return out;
+}
+#define newAst(arena, cat, token)                \
+  (cat *) newAst_(arena, AC_##cat, token, sizeof(cat))
+
+struct AstLeaf
+{
+  Ast h;
+};
+
+inline AstLeaf *
+newAstLeaf(MemoryArena *arena, Token *token)
+{
+  AstLeaf *out = newAst(arena, AstLeaf, token);
+  return out;
+}
+
+// todo: we can just store the args inline?
+struct AstBranch
+{
+  Ast   h;
+  Ast  *op;
+  s32   arg_count;
+  Ast **args;
+};
+
+struct AstFork
+{
+  Ast   h;
+  Ast  *subject;
+  s32   case_count;
+  Ast **patterns;
+  Ast **bodies;
+};
+
+inline AstFork *
+newAstFork(MemoryArena *arena, Token *token,
+             Ast *subject, s32 case_count, Ast **patterns, Ast **bodies)
+{
+  AstFork * out = newAst(arena, AstFork, token);
+
+  out->subject    = subject;
+  out->case_count = case_count;
+  out->patterns   = patterns;
+  out->bodies     = bodies;
+
+  return out;
+}
+
+struct Parameter
+{
+  String  name;
+  Ast    *type;
+};
+
+inline Parameter *
+initParameter(Parameter *out, Token *token, Ast *type)
+{
+  out->name = token->text;
+  out->type = type;
+  return out;
+}
+
+struct ParameterList{s32 count; Parameter *items;};
+
+struct AstArrowType
+{
+  Ast        h;
+  s32        param_count;
+  Parameter *params;
+  Ast       *return_type;
+};
+
+inline AstArrowType *
+initAstArrowType(AstArrowType *out, s32 param_count, Parameter *params, Ast *return_type)
+{
+  out->param_count = param_count;
+  out->params      = params;
+  out->return_type = return_type;
   return out;
 }

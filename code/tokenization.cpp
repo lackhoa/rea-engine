@@ -1,87 +1,24 @@
 #include "utils.h"
 #include "memory.h"
 #include "engine.h"
+#include "tokenization.h"
 
 #include <stdio.h>
 
-enum TokenCategory
+inline char
+getMatchingPair(Token *opening)
 {
-    // 0-255 reserved for single-char ASCII types.
-    TC_Special         = 256,
-    TC_PairingOpen     = 257,
-    TC_PairingClose    = 258,
-    TC_Alphanumeric    = 259,
-    TC_Arrow           = 260,
-    TC_StringLiteral   = 261,
-};
-
-enum Keyword
-{
-    Keyword_Null_,
-
-    Keyword_Typedef,
-    Keyword_Define,
-    Keyword_Fork,
-    Keyword_Print,
-    Keyword_PrintRaw,
-    Keyword_Check,
-    Keyword_Return,  // todo: this is a command, not a keyword, we don't expect it at top-level.
-
-    Keywords_Count_,
-};
-const char *keywords[] = {"", "typedef", "define", "fork", "print",
-                          "print_raw", "check", "return"};
-
-enum MetaDirective
-{
-    MetaDirective_Null_,
-
-    MetaDirective_Load,
-
-    MetaDirective_Count_,
-};
-const char *metaDirectives[] = {"", "load"};
-
-struct Token
-{
-  String        text;
-  s32           line;
-  s32           column;
-  TokenCategory cat;
-};
-
-inline Token
-newToken(String text, s32 line, s32 column, TokenCategory cat)
-{
-  Token out;
-  out.text   = text;
-  out.line   = line;
-  out.column = column;
-  out.cat    = cat;
-  return out;
-}
-
-inline b32
-equal(String s, const char *cstring)
-{
-    if (!s.chars)
-    {
-        return false;
-    }
-    else
-    {
-        s32 at = 0;
-        for (;
-             (at < s.length);
-             at++)
-        {
-            if ((cstring[at] == 0) || (s.chars[at] != cstring[at]))
-            {
-                return false;
-            }
-        }
-        return (cstring[at] == 0);
-    }
+  switch (opening->text.chars[0])
+  {
+    case '(':
+        return ')';
+    case '[':
+        return ']';
+    case '{':
+        return '}';
+    default:
+        return 0;
+  }
 }
 
 inline b32
@@ -97,59 +34,57 @@ equal(Token *token, char c)
             &&  (token->text.chars[0] == c));
 }
 
+inline b32
+isAlphaNumeric(char c)
+{
+  return ((('a' <= c) && (c <= 'z'))
+          || (('A' <= c) && (c <= 'Z'))
+          || (('0' <= c) && (c <= '9'))
+          || (c == '\'')
+          || (c == '_'));
+}
+
+inline b32
+isSpecial(char c)
+{
+  switch (c)
+  {
+    case '`':
+    case '/':
+    case '?':
+    case '<':
+    case '>':
+    case '!':
+    case '~':
+    case '@':
+    case '#':
+    case '$':
+    case '^':
+    case '&':
+    case '|':
+    case '*':
+    case '-':
+    case '+':
+    case '=':
+        return true;
+
+    default:
+        return false;
+  }
+}
+
+// todo: this is only called in "nextToken" and the fact that it returns
+// TokenCategory is confusing so let's remove it.
 internal TokenCategory
 getCharacterType(char c)
 {
-    if ((('a' <= c) && (c <= 'z'))
-        || (('A' <= c) && (c <= 'Z'))
-        || (('0' <= c) && (c <= '9'))
-        || (c == '\'')
-        || (c == '_'))
-    {
-        return TC_Alphanumeric;
-    }
-    else
-    {
-        switch (c)
-        {
-            case '`':
-            case '/':
-            case '?':
-            case '<':
-            case '>':
-            case '!':
-            case '~':
-            case '@':
-            case '#':
-            case '$':
-            case '^':
-            case '&':
-            case '|':
-            case '*':
-            case '-':
-            case '+':
-            case '=':
-            {
-                return TC_Special;
-            } break;
+  switch (c)
+  {
+    default:
+        // NOTE: Self-describing category
+        return (TokenCategory)c;
+  }
 
-            case '(':
-            case '{':
-            {
-                return TC_PairingOpen;
-            } break;
-
-            case ')':
-            case '}':
-            {
-                return TC_PairingClose;
-            }
-        
-            default:
-                // NOTE: Self-describing category
-                return (TokenCategory)c;
-        }
-    }
 }
 
 inline void
@@ -288,17 +223,30 @@ parsing(Tokenizer *tk = global_tokenizer)
     return ((*tk->at != 0) && (!tk->error));
 }
 
-inline void
+inline b32
+noError(Tokenizer *tk = global_tokenizer)
+{
+  return !tk->error;
+}
+
+inline char
 nextChar(Tokenizer *tk)
 {
-    char previous = *tk->at++;
-    if (previous == '\n')
+  char out;
+  if (*tk->at)
+  {
+    out = *tk->at++;
+    if (out == '\n')
     {
-        tk->line++;
-        tk->column = 1;
+      tk->line++;
+      tk->column = 1;
     }
     else
-        tk->column++;
+      tk->column++;
+  }
+  else
+    out = 0;
+  return out;
 }
 
 internal void
@@ -335,18 +283,6 @@ eatAllSpaces(Tokenizer *tk)
                 stop = true;
         }
     }
-}
-
-inline b32
-eatUntil(char c, Tokenizer *tk)
-{
-    b32 found = false;
-    while ((*tk->at) && (!found))
-    {
-        if (*tk->at++ == c)
-            found = true;
-    }
-    return found;
 }
 
 // todo: #speed make this a hash table
@@ -394,49 +330,113 @@ matchMetaDirective(Token *token)
 inline Token
 nextToken(Tokenizer *tk = global_tokenizer)
 {
-    Token out = {};
-    eatAllSpaces(tk);
-    out.text.chars  = tk->at;
-    out.line = tk->line;
-    out.column = tk->column;
+  Token out = {};
+  eatAllSpaces(tk);
+  out.text.chars = tk->at;
+  out.line       = tk->line;
+  out.column     = tk->column;
 
-    TokenCategory first_cat = getCharacterType(*tk->at);
-    out.cat = first_cat;
-
-    nextChar(tk);
-    switch (first_cat)
+  switch (char first_char = nextChar(tk))
+  {
+    case '"':
     {
-        case '"':
+      out.text.chars++; // advance past the opening double quote
+      out.cat = TC_StringLiteral;
+      while (getCharacterType(*tk->at) != '"')
+        nextChar(tk);
+      // handle the closing double quote
+      nextChar(tk);
+      out.text.length = (s32)(tk->at - out.text.chars - 1);
+    } break;
+
+    case '-':
+    {
+      switch (*tk->at)
+      {
+        case '-':
         {
-            out.text.chars++;
-            out.cat = TC_StringLiteral;
-            while (getCharacterType(*tk->at) != '"')
-                nextChar(tk);
+          out.cat = TC_DoubleDash;
+          nextChar(tk);
+        } break;
+
+        case '>':
+        {
+          out.cat = TC_Arrow;
+          nextChar(tk);
+        } break;
+
+        default:
+        {
+          out.cat = TC_Special;
+          while (isSpecial(*tk->at))
             nextChar(tk);
         } break;
+      }
+    } break;
 
-        case TC_Alphanumeric:
-        case TC_Special:
+    case ':':
+    {
+      switch (*tk->at)
+      {
+        case ':':
         {
-            while (getCharacterType(*tk->at) == first_cat)
-                nextChar(tk);
+          out.cat = TC_DoubleColon;
+          nextChar(tk);
         } break;
 
-        default: {}
-    }
+        case '=':
+        {
+          out.cat = TC_ColonEqual;
+          nextChar(tk);
+        } break;
 
-    out.text.length = (s32)(tk->at - out.text.chars);
-    assert(out.text.length);
-    if (out.cat == TC_StringLiteral)
+        default:
+        {
+          out.cat = (TokenCategory)':';
+        } break;
+      }
+    } break;
+
+    case '(':
+    case '{':
     {
-        out.text.length -= 1; // minus the last '"'
+      out.cat = TC_PairingOpen;
+    } break;
+
+    case ')':
+    case '}':
+    {
+      out.cat = TC_PairingClose;
     }
 
-    if (equal(out.text, "->"))
-        out.cat = TC_Arrow;
+    default:
+    {
+      if (isAlphaNumeric(first_char))
+      {
+        out.cat = TC_Alphanumeric;
+        while (isAlphaNumeric(*tk->at))
+          nextChar(tk);
+      }
+      else if (isSpecial(first_char))
+      {
+        out.cat = TC_Special;
+        while (isSpecial(*tk->at))
+          nextChar(tk);
+      }
+      else
+        out.cat = (TokenCategory)first_char;
+    } break;
+  }
 
-    tk->last_token = out;
-    return out;
+  if (out.cat)
+  {
+    if (!out.text.length)
+      out.text.length = (s32)(tk->at - out.text.chars);
+    assert(out.text.length);
+  }
+
+  tk->last_token = out;
+  return out;
 }
 
 inline Token
@@ -444,6 +444,19 @@ peekNext(Tokenizer *tk = global_tokenizer)
 {
     auto tk_copy = *tk;
     return nextToken(&tk_copy);
+}
+
+inline b32
+eatUntil(char c, Tokenizer *tk)
+{
+  b32 found = false;
+  while (*tk->at && !found)
+  {
+    if (*tk->at == c)
+      found = true;
+    nextToken(tk);
+  }
+  return found;
 }
 
 inline b32
@@ -478,26 +491,6 @@ printNewline()
   myprint(0, "\n");
 }
 
-inline b32
-equal(String a, String b)
-{
-    b32 out = true;
-    if (a.length != b.length)
-        out = false;
-    else
-    {
-        for (int i = 0; i < a.length; i++)
-        {
-            if (a.chars[i] != b.chars[i])
-            {
-                out = false;
-                break;
-            }
-        }
-    }
-    return out;
-}
-
 // TODO: Better hash function!
 internal u32
 stringHash(String string)
@@ -516,99 +509,6 @@ isIdentifier(Token *token)
     return ((token->cat == TC_Alphanumeric)
             || (token->cat == TC_Special));
 }
-
-inline String
-toString(char *c)
-{
-    String out;
-    out.chars = c;
-    out.length = 0;
-    while (*c)
-    {
-        out.length++;
-        c++;
-    }
-    return out;
-}
-
-inline b32
-equal(char *s1, char *s2)
-{
-    b32 out = true;
-    char *c1 = s1;
-    char *c2 = s2;
-    b32 stop = false;
-    while (!stop)
-    {
-        if (*c1 != *c2)
-        {
-            out = false;
-            stop = true;
-        }
-        else
-        {
-            if (*c1 == 0)
-                stop = true;
-            else
-            {
-                c1++;
-                c2++;
-            }
-        }
-    }
-    return out;
-}
-
-inline char
-getMatchingPair(char opening)
-{
-    switch (opening)
-    {
-        case '(':
-            return ')';
-        case '[':
-            return ']';
-        case '{':
-            return '}';
-        default:
-            return 0;
-    }
-}
-
-enum AstCategory {AC_AstLeaf, AC_AstBranch, AC_AstFork,};
-
-struct Ast
-{
-  AstCategory cat;
-  // For error reporting
-  s32         line;
-  s32         column;
-};
-
-struct AstLeaf
-{
-  Ast   header;
-  Token token;
-};
-
-struct AstBranch
-{
-  Ast   header;
-  Ast  *op;
-  s32   arg_count;
-  Ast **args;
-};
-
-struct AstFork
-{
-  Ast   header;
-  Ast  *subject;
-  s32   case_count;
-  Ast **patterns;
-  Ast **bodies;
-};
-
-#define castAst(ast, type) (type*)((ast->cat == AC_##type) ? ast : 0)
 
 internal void
 parseErrorVA(s32 line, s32 column, char *format, va_list arg_list, Tokenizer *tk = global_tokenizer)
@@ -642,7 +542,7 @@ parseError(Ast *ast, char *format, ...)
 {
   va_list arg_list;
   __crt_va_start(arg_list, format);
-  parseErrorVA(ast->line, ast->column, format, arg_list);
+  parseErrorVA(ast->token.line, ast->token.column, format, arg_list);
   __crt_va_end(arg_list);
 }
 
@@ -667,4 +567,66 @@ internal void
 tokenError(char *message, Tokenizer *tk = global_tokenizer)
 {
   tokenError(&tk->last_token, message);
+}
+
+inline b32
+eatUntilMatchingPair(Tokenizer *tk)
+{
+  b32 found = false;
+  Token opening = tk->last_token;
+  char  closing = getMatchingPair(&opening);
+  assert(closing);
+  for (; !found && parsing(tk);)
+  {
+    Token token = nextToken(tk);
+    if (getMatchingPair(&token))
+      eatUntilMatchingPair(tk);
+
+    else if (equal(&token, closing))
+      found = true;
+  }
+
+  if (noError(tk) && !found)
+    parseError(tk, &opening, "could not find matching pair for");
+
+  return found;
+}
+
+internal s32
+getCommaSeparatedListLength(Tokenizer *tk)
+{
+  Token opening = tk->last_token;
+  char closing = getMatchingPair(&opening);
+  assert(closing);
+  char opening_char = opening.text.chars[0];
+  char previous = opening_char;
+  s32 out = 0;
+  for (b32 stop = false; !stop;)
+  {
+    Token token = nextToken(tk);
+    if (!parsing(tk))
+    {
+      stop = true;
+      parseError(tk, &opening, "could not find matching pair for");
+    }
+    else
+    {
+      if (char matching_pair = getMatchingPair(&token))
+      {
+        eatUntilMatchingPair(tk);
+      }
+      else if (equal(&token, closing))
+      {
+        if ((previous != ',') && (previous != opening_char))
+          out++;
+        stop = true;
+      }
+      else if (equal(&token, ','))
+      {
+        out++;
+      }
+      previous = tk->last_token.text.chars[0];
+    }
+  }
+  return out;
 }

@@ -1,23 +1,25 @@
+print_raw (x: False) -> False;
+
 typedef Bool : Set
 {
  false,
  true,
  }
 
-define &(a, b: Bool) : Bool
+& :: (a, b: Bool) -> Bool
 {
  fork a
  {
-  false -> false,
-  true -> b
+  false -- false,
+  true  -- b
   }
  }
 
-define |(a, b: Bool) : Bool
+| :: (a, b: Bool) -> Bool
 {
  fork a
  {
-  true -> true,
-  false -> b
+  true  -- true,
+  false -- b
   }
  }

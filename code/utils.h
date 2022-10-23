@@ -75,5 +75,90 @@ stringLength(char *string)
     return out;
 }
 
+inline b32
+equal(String s, const char *cstring)
+{
+    if (!s.chars)
+    {
+        return false;
+    }
+    else
+    {
+        s32 at = 0;
+        for (;
+             (at < s.length);
+             at++)
+        {
+            if ((cstring[at] == 0) || (s.chars[at] != cstring[at]))
+            {
+                return false;
+            }
+        }
+        return (cstring[at] == 0);
+    }
+}
+
+inline b32
+equal(String a, String b)
+{
+    b32 out = true;
+    if (a.length != b.length)
+        out = false;
+    else
+    {
+        for (int i = 0; i < a.length; i++)
+        {
+            if (a.chars[i] != b.chars[i])
+            {
+                out = false;
+                break;
+            }
+        }
+    }
+    return out;
+}
+
+inline String
+toString(char *c)
+{
+    String out;
+    out.chars = c;
+    out.length = 0;
+    while (*c)
+    {
+        out.length++;
+        c++;
+    }
+    return out;
+}
+
+inline b32
+equal(char *s1, char *s2)
+{
+    b32 out = true;
+    char *c1 = s1;
+    char *c2 = s2;
+    b32 stop = false;
+    while (!stop)
+    {
+        if (*c1 != *c2)
+        {
+            out = false;
+            stop = true;
+        }
+        else
+        {
+            if (*c1 == 0)
+                stop = true;
+            else
+            {
+                c1++;
+                c2++;
+            }
+        }
+    }
+    return out;
+}
+
 #define UTILS_H
 #endif

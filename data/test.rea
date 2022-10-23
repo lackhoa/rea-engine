@@ -6,8 +6,8 @@ define plusIdRight(n: hat)
 {
  fork n
  {
-  0    -> truth
-  s(n) -> plusIdRight(n)
+  0    => truth
+  s(n) => plusIdRight(n)
   }
  }
 
@@ -16,8 +16,8 @@ define plusCommutative(n, m: Nat)
 {
  fork n
  {
-  0     -> _,
-  s(n') -> 1,
+  0     => _,
+  s(n') => 1,
   }
  }
 
