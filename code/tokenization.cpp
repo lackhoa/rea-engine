@@ -3,8 +3,6 @@
 #include "engine.h"
 #include "tokenization.h"
 
-#include <stdio.h>
-
 inline char
 getMatchingPair(Token *opening)
 {
@@ -73,24 +71,10 @@ isSpecial(char c)
   }
 }
 
-// todo: this is only called in "nextToken" and the fact that it returns
-// TokenCategory is confusing so let's remove it.
-internal TokenCategory
-getCharacterType(char c)
-{
-  switch (c)
-  {
-    default:
-        // NOTE: Self-describing category
-        return (TokenCategory)c;
-  }
-
-}
-
 inline void
 printToBufferVA(MemoryArena *buffer, char *format, va_list arg_list)
 {
-    char *at = (char *)(buffer->base + buffer->used);
+    char *at = (char *)getArenaNext(buffer);
     auto printed = vsprintf_s(at, (buffer->cap - buffer->used), format, arg_list);
     buffer->used += printed;
 }
@@ -98,46 +82,46 @@ printToBufferVA(MemoryArena *buffer, char *format, va_list arg_list)
 inline char *
 printToBuffer(MemoryArena *buffer, char *format, ...)
 {
-    char *out = 0;;
+  char *out = 0;
 
-    va_list arg_list;
-    __crt_va_start(arg_list, format);
+   va_list arg_list;
+  __crt_va_start(arg_list, format);
 
-    if (buffer)
-    {
-        out = (char *)buffer->base + buffer->used;
-        char *at = out;
-        auto printed = vsprintf_s(at, (buffer->cap-1 - buffer->used), format, arg_list);
-        buffer->used += printed;
-        buffer->base[buffer->used] = 0; // nil-termination
-    }
-    else
-        vprintf_s(format, arg_list);
+  if (buffer)
+  {
+    out = (char *)getArenaNext(buffer);
+    char *at = out;
+    auto printed = vsprintf_s(at, (buffer->cap-1 - buffer->used), format, arg_list);
+    buffer->used += printed;
+    buffer->base[buffer->used] = 0; // nil-termination
+  }
+  else
+    vprintf_s(format, arg_list);
 
-    __crt_va_end(arg_list);
+  __crt_va_end(arg_list);
 
-    return out;
+  return out;
 }
 
 inline char *
-myprint(MemoryArena *buffer, String s)
+printToBuffer(MemoryArena *buffer, String s)
 {
-    char *out = 0;
-    if (buffer)
-    {
-        out = (char *)getArenaNext(buffer);
-        char *at = out;
-        const char *c = s.chars;
-        for (s32 index = 0; index < s.length; index++)
-            *at++ = *c++;
-        *at = 0;
-        buffer->used = at - (char *)buffer->base;
-        assert(buffer->used <= buffer->cap);
-    }
-    else
-        printf("%.*s", s.length, s.chars);
+  char *out = 0;
+  if (buffer)
+  {
+    out = (char *)getArenaNext(buffer);
+    char *at = out;
+    const char *c = s.chars;
+    for (s32 index = 0; index < s.length; index++)
+      *at++ = *c++;
+    *at = 0;
+    buffer->used = at - (char *)buffer->base;
+    assert(buffer->used <= buffer->cap);
+  }
+  else
+    printf("%.*s", s.length, s.chars);
 
-    return out;
+  return out;
 }
 
 inline void
@@ -256,21 +240,21 @@ eatAllSpaces(Tokenizer *tk)
 inline Keyword
 matchKeyword(Token *token)
 {
-    auto out = (Keyword)0;
-    if (token->cat == TC_Alphanumeric)
+  auto out = (Keyword)0;
+  if (token->cat == TC_Alphanumeric)
+  {
+    for (int i = 1;
+         i < arrayCount(keywords);
+         i++)
     {
-        for (int i = 1;
-             i < arrayCount(keywords);
-             i++)
-        {
-            if (equal(token, keywords[i]))
-            {
-                out = (Keyword)(i);
-                break;
-            }
-        }
+      if (equal(token, keywords[i]))
+      {
+        out = (Keyword)(i);
+        break;
+      }
     }
-    return out;
+  }
+  return out;
 }
 
 // todo: #speed hash table
@@ -308,7 +292,7 @@ nextToken(Tokenizer *tk = global_tokenizer)
     {
       out.text.chars++; // advance past the opening double quote
       out.cat = TC_StringLiteral;
-      while (getCharacterType(*tk->at) != '"')
+      while (*tk->at != '"')
         nextChar(tk);
       // handle the closing double quote
       nextChar(tk);
@@ -529,7 +513,7 @@ tokenError(Token *token, char *message, Tokenizer *tk = global_tokenizer)
 {
   parseError(token, message, tk);
   printToBuffer(&tk->error->message, ": ");
-  myprint(&tk->error->message, token->text);
+  printToBuffer(&tk->error->message, token->text);
 }
 
 internal void

@@ -24,15 +24,16 @@ enum Keyword
     Keyword_Typedef,
     Keyword_Define,
     Keyword_Fork,
+
     Keyword_Print,
     Keyword_PrintRaw,
+    Keyword_PrintDebug,
     Keyword_Check,
-    Keyword_Return,  // todo: this is a command, not a keyword, we don't expect it at top-level.
 
     Keywords_Count_,
 };
-const char *keywords[] = {"", "typedef", "define", "fork", "print",
-                          "print_raw", "check", "return"};
+const char *keywords[] = {"", "typedef", "define", "fork",
+                          "print", "print_raw", "print_debug", "check"};
 
 enum MetaDirective
 {

@@ -33,16 +33,19 @@ pred :: (n : Nat) -> Nat
   s(n) : n
   }
  }
+print pred;
 
 even :: (n : Nat) -> Bool
 {
  fork n
  {
-  0 : true,
-  s(n1) : (fork n1 {0 : false,
-                    s(n2) : even(n2)}),
+  0     : true,
+  s(n69) : fork n69 {0 : false, s(n70) : even(n70)},
   }
  }
+
+check truth: even(4) = true;
+check truth: even(3) = false;
 
 * :: (n, m: Nat) -> Nat
 {
@@ -54,7 +57,8 @@ even :: (n : Nat) -> Bool
  }
 
 check truth: 2*3 = 6;
-- :: (n, : Nat) -> Nat
+
+- :: (n, m : Nat) -> Nat
 {
  fork n
  {

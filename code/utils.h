@@ -1,5 +1,6 @@
 #if !defined(UTILS_H)
 #include <cstdint>
+#include <stdio.h>
 
 //
 // Compilers
@@ -36,9 +37,9 @@ typedef long     s64;
 
 #if REA_INTERNAL
 #  if COMPILER_MSVC
-#    define assert(claim) if (!(claim)) { __debugbreak(); }
+#    define assert(claim) if (!(claim)) { fflush(stdout); __debugbreak(); }
 #  else
-#    define assert(claim) if (!(claim)) { __builtin_trap(); }
+#    define assert(claim) if (!(claim)) { fflush(stdout); __builtin_trap(); }
 #  endif
 #else
 #  define assert(claim)

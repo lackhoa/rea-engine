@@ -35,9 +35,13 @@ enum ExpressionCategory
   EC_Builtin_Type,
 };
 
-// IMPORTANT: All expressions are well-typed (except in parsing phase, wherein
-// an expression will have two states: a. it has type and has been typechecked,
-// b. its type is null).
+// IMPORTANT: All expressions are well-typed.
+//
+// except in typechecking, wherein an expression will have two states:
+//
+// a. it has type and has been / is being typechecked,
+//
+// b. its type is null.
 struct Expression
 {
   ExpressionCategory  cat;
@@ -242,10 +246,11 @@ struct Rewrite
   Rewrite    *next;
 };
 
-struct TypeDebt
+struct Stack
 {
-  Function *first;
-  TypeDebt *next;
+  Stack       *outer;
+  s32          arg_count;
+  Expression **args;
 };
 
 // used in normalization, typechecking, etc.
@@ -254,12 +259,24 @@ struct Environment
   MemoryArena *arena;
   MemoryArena *temp_arena;
 
-  TypeDebt *debt;
+  Stack *stack;
   s32 stack_depth;              // 0 is reserved
   s32 stack_offset;             // todo #speed pass this separately
 
   Rewrite *rewrite;
 };
+
+inline void
+extendStack(Environment *env, s32 arg_count, Expression **args)
+{
+  Stack *stack = pushStruct(env->temp_arena, Stack);
+  stack->outer     = env->stack;
+  stack->arg_count = arg_count;
+  stack->args      = args;
+
+  env->stack = stack;
+  env->stack_depth++;
+}
 
 inline Rewrite *
 newRewrite(Environment *env, Expression *lhs, Expression *rhs)

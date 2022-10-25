@@ -1,25 +1,23 @@
 #load "boolean.rea"
 #load "nat.rea"
 
-define plusIdRight(n: hat)
-: n + 0 = n
+plusIdRight :: (n: Nat) -> n + 0 = n
 {
  fork n
  {
-  0    => truth
-  s(n) => plusIdRight(n)
+  0    : truth,
+  s(n69) : fork n69 {0: truth, s(n70): truth},
   }
  }
 
-define plusCommutative(n, m: Nat)
-: n + m = m + n
-{
- fork n
- {
-  0     => _,
-  s(n') => 1,
-  }
- }
+;; define plusCommutative(n, m: Nat)
+;; : n + m = m + n
+;; {
+;;  fork n
+;;  {
+;;   0     => _,
+;;   s(n') => 1,
+;;   }
+;;  }
 
 ;; check truth: False = (2*3 = 5);  ;; todo: this doesn't work due to typing of "=".
-
