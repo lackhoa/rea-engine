@@ -1,6 +1,7 @@
 #load "boolean.rea"
 
-check True: Type;
+check True: Set;
+print identical;
 print_raw (x: False) -> (x = x);
 print_raw false & true | true & false | true;
 
@@ -31,13 +32,13 @@ andWithFalse :: (a: Bool) -> (a & false = false)
   }
  }
 
-;; andCommutative :: (a, b, c: Bool) -> (a & (b & c) = (a & b) & c)
-;; {
-;;  fork a
-;;  {
-;;   false: truth,
-;;   true : fork b {false: truth, true: truth},
-;;   }
-;;  }
-
-;; print andCommutative(true, false, true);
+andCommutative :: (a, b, c: Bool) -> (a & (b & c) = (a & b) & c)
+{
+ fork a
+ {
+  false: truth,
+  true : truth,
+  }
+ }
+print andCommutative;
+check andCommutative(true, false, true) : (true & (false & true) = (true & false) & true);

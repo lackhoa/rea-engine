@@ -175,7 +175,7 @@ getFormOf(Expression *in0)
 }
 
 inline void
-initForm(Form *in, String name, Expression *type0, s32 ctor_count, Form *ctors)
+initForm(Form *in, String name, Expression *type0, s32 ctor_count, Form *ctors, s32 ctor_id)
 {
   *in = {};
   in->h.cat = EC_Form;
@@ -183,6 +183,7 @@ initForm(Form *in, String name, Expression *type0, s32 ctor_count, Form *ctors)
   in->type  = type0;
   in->ctor_count = ctor_count;
   in->ctors      = ctors;
+  in->ctor_id    = ctor_id;
 }
 
 inline void

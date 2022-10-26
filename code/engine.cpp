@@ -694,7 +694,7 @@ addBuiltinForm(MemoryArena *arena, char *name, Expression *type, const char **ct
       invalidCodePath;
   }
 
-  initForm(form, form_name, type, ctor_count, ctors);
+  initForm(form, form_name, type, ctor_count, ctors, getNextFormId());
   if (!addGlobalNameBinding(form_name, (Expression*)form))
     invalidCodePath;
 
@@ -1018,6 +1018,7 @@ normalize(Environment env, Expression *in0)
       // note: we only expand when stack offset is 0, so that recursion won't
       // screw us.
       Application *in = castExpression(in0, Application);
+
       Expression **norm_args = pushArray(temp_arena, in->arg_count, Expression*);
       for (auto arg_id = 0;
            arg_id < in->arg_count;
@@ -1485,8 +1486,8 @@ typecheck(Environment env, Expression *in0, Ast *ast0, Expression *expected_type
 
             if (noError())
             {
-              // now we have the type, recurse to avoid the cut&paste
-              type = signature->return_type;
+              extendStack(&env, arg_count, in->args);
+              type = normalize(env, signature->return_type);
             }
           }
           else
@@ -2347,7 +2348,7 @@ parseTypedef(MemoryArena *arena)
 
             if (noError())
             {
-              initForm(form, form_name.text, (Expression*)builtin_Set, ctor_count, ctors);
+              initForm(form, form_name.text, (Expression*)builtin_Set, ctor_count, ctors, getNextFormId());
               assert(form->ctor_count == expected_case_count);
               assert (lookupNameCurrentFrame(global_bindings, form_name.text, false).found);
             }
@@ -2620,7 +2621,6 @@ initializeEngine(MemoryArena *arena)
     addGlobalName("identical", (Expression*)builtin_identical);
 
     ArrowType *identical_type = newExpression(arena, ArrowType);
-    builtin_identical->type = (Expression*)identical_type;
     // Here we give 'identical' a type (A: Set, a:A, b:A) -> Prop.
     // TODO: so we can't prove equality between Sets.
     identical_type->param_count = 3;
@@ -2637,6 +2637,9 @@ initializeEngine(MemoryArena *arena)
 
     args[2] = newExpression(arena, Variable);
     initVariable(args[2], toString("b"), 2, (Expression*)args[0]);
+
+    // todo: give 'identical' constructors too
+    initForm(builtin_identical, toString("identical"), (Expression*)identical_type, 0, 0, getNextFormId());
   }
 
   const char *true_members[] = {"truth"};
