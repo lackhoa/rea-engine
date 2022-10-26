@@ -1,5 +1,6 @@
 #load "boolean.rea"
 
+check True: Type;
 print_raw (x: False) -> (x = x);
 print_raw false & true | true & false | true;
 

@@ -159,11 +159,10 @@ lessGrounded(Expression *a, Expression *b)
 #endif
 
 inline b32
-isCompositeConstructor(Expression *expression)
+isCompositeForm(Expression *expression)
 {
-  auto app = castExpression(expression, Application);
-  if (app)
-    return app->op->cat == EC_Constructor;
+  if (auto app = castExpression(expression, Application))
+    return app->op->cat == EC_Form;
   else
     return false;
 }
@@ -228,9 +227,11 @@ identicalTrinary(Expression *lhs0, Expression *rhs0)
           out = Trinary_True;
       } break;
 
-      case EC_Constructor:
+      case EC_Form:
       {
-        if ((castExpression(lhs0, Constructor))->id == (castExpression(rhs0, Constructor))->id)
+        // bookmark: this is the hard part: how would we handle types?
+        if ((castExpression(lhs0, Form))->ctor_id ==
+            (castExpression(rhs0, Form))->ctor_id)
           out = Trinary_True;
         else
           out = Trinary_False;
@@ -273,8 +274,8 @@ identicalTrinary(Expression *lhs0, Expression *rhs0)
       {
         auto lapp = castExpression(lhs0,  Application);
         auto rapp = castExpression(rhs0,  Application);
-        if ((lapp->op->cat == EC_Constructor) &&
-            (rapp->op->cat == EC_Constructor))
+        if ((lapp->op->cat == EC_Form) &&
+            (rapp->op->cat == EC_Form))
         {
           Trinary op_compare = identicalTrinary(lapp->op, rapp->op);
           if (op_compare == Trinary_False)
@@ -286,11 +287,6 @@ identicalTrinary(Expression *lhs0, Expression *rhs0)
             out = compareExpressionList(lapp->args, rapp->args, lapp->arg_count);
           }
         }
-      } break;
-
-      case EC_Form:
-      {
-        out = Trinary_False;
       } break;
 
       case EC_Fork:
@@ -314,8 +310,8 @@ identicalTrinary(Expression *lhs0, Expression *rhs0)
           todoIncomplete;
     }
   }
-  else if (((lhs0->cat == EC_Constructor) && isCompositeConstructor(rhs0)) ||
-           ((rhs0->cat == EC_Constructor) && isCompositeConstructor(lhs0)))
+  else if (((lhs0->cat == EC_Form) && isCompositeForm(rhs0)) ||
+           ((rhs0->cat == EC_Form) && isCompositeForm(lhs0)))
   {
     out = Trinary_False;
   }
@@ -323,23 +319,23 @@ identicalTrinary(Expression *lhs0, Expression *rhs0)
   return out;
 }
 
-struct PrintExpressionOptions{b32 detailed; b32 print_type;};
+struct PrintExpressionOptions{b32 detailed;};
 
 internal char*
-printExpression(MemoryArena *buffer, Expression *in, PrintExpressionOptions opt)
+printExpression(MemoryArena *buffer, Expression *in0, PrintExpressionOptions opt)
 {
   unpackGlobals;
   char *out = buffer ? (char*)getArenaNext(buffer) : 0;
   PrintExpressionOptions new_opt = opt;
   new_opt.detailed = false;
 
-  if (in)
+  if (in0)
   {
-    switch (in->cat)
+    switch (in0->cat)
     {
       case EC_Variable:
       {
-        auto var = castExpression(in, Variable);
+        auto var = castExpression(in0, Variable);
         if (var->stack_depth)
           printToBuffer(buffer, "%.*s<%d>", var->name.length, var->name.chars, var->stack_depth);
         else
@@ -354,7 +350,7 @@ printExpression(MemoryArena *buffer, Expression *in, PrintExpressionOptions opt)
 
       case EC_Application:
       {
-        auto app = castExpression(in, Application);
+        auto app = castExpression(in0, Application);
 
         printExpression(buffer, app->op, new_opt);
 
@@ -370,7 +366,7 @@ printExpression(MemoryArena *buffer, Expression *in, PrintExpressionOptions opt)
 
       case EC_Fork:
       {
-        Fork *fork = castExpression(in, Fork);
+        Fork *fork = castExpression(in0, Fork);
         printToBuffer(buffer, "fork ");
         printExpression(buffer, fork->subject, new_opt);
         printToBuffer(buffer, " {");
@@ -380,7 +376,7 @@ printExpression(MemoryArena *buffer, Expression *in, PrintExpressionOptions opt)
              ctor_id++)
         {
           ForkCase *casev = fork->cases + ctor_id;
-          Constructor *ctor = form->ctors[ctor_id];
+          Form *ctor = form->ctors + ctor_id;
           switch (ctor->type->cat)
           {// print pattern
             case EC_Form:
@@ -413,13 +409,13 @@ printExpression(MemoryArena *buffer, Expression *in, PrintExpressionOptions opt)
 
       case EC_Form:
       {
-        auto mystruct = castExpression(in, Form);
-        printToBuffer(buffer, mystruct->name);
+        Form *in = castExpression(in0, Form);
+        printToBuffer(buffer, in->name);
       } break;
 
       case EC_Function:
       {
-        Function *fun = castExpression(in, Function);
+        Function *fun = castExpression(in0, Function);
         printToBuffer(buffer, fun->name);
         if (opt.detailed)
         {
@@ -430,15 +426,9 @@ printExpression(MemoryArena *buffer, Expression *in, PrintExpressionOptions opt)
         }
       } break;
 
-      case EC_Constructor:
-      {
-        auto ctor = castExpression(in, Constructor);
-        printToBuffer(buffer, ctor->name);
-      } break;
-
       case EC_ArrowType:
       {
-        auto arrow = castExpression(in,  ArrowType);
+        auto arrow = castExpression(in0,  ArrowType);
         printToBuffer(buffer, "(");
         for (int param_id = 0;
              param_id < arrow->param_count;
@@ -455,31 +445,6 @@ printExpression(MemoryArena *buffer, Expression *in, PrintExpressionOptions opt)
         printExpression(buffer, arrow->return_type, new_opt);
       } break;
 
-      case EC_Builtin_identical:
-      {
-        printToBuffer(buffer, "identical");
-      } break;
-
-      case EC_Builtin_Set:
-      {
-        printToBuffer(buffer, "Set");
-      } break;
-
-      case EC_Builtin_Proc:
-      {
-        printToBuffer(buffer, "Proc");
-      } break;
-
-      case EC_Builtin_Prop:
-      {
-        printToBuffer(buffer, "Prop");
-      } break;
-
-      case EC_Builtin_Type:
-      {
-        printToBuffer(buffer, "Type");
-      } break;
-
       case EC_Hole:
       {
         printToBuffer(buffer, "_");
@@ -487,7 +452,7 @@ printExpression(MemoryArena *buffer, Expression *in, PrintExpressionOptions opt)
 
       default:
       {
-        printToBuffer(buffer, "<unimplemented category: %u>", in->cat);
+        printToBuffer(buffer, "<unimplemented category: %u>", in0->cat);
       } break;
     }
   }
@@ -713,24 +678,27 @@ addGlobalNameBinding(String key, Expression *value)
   return succeed;
 }
 
-internal void
-addBuiltinForm(MemoryArena *arena, char *name, const char **ctor_names, s32 ctor_count)
+internal Form *
+addBuiltinForm(MemoryArena *arena, char *name, Expression *type, const char **ctor_names, s32 ctor_count)
 {
   String form_name = toString(name);
   Form *form = newExpression(arena, Form);
 
-  Constructor **ctors = pushArray(arena, ctor_count, Constructor*);
+  Form *ctors = pushArray(arena, ctor_count, Form);
   for (s32 ctor_id = 0; ctor_id < ctor_count; ctor_id++)
   {
-    ctors[ctor_id] = newExpression(arena, Constructor);
-    Constructor *ctor = ctors[ctor_id];
-    initConstructor(ctor, form, (Expression*)form, ctor_id, toString((char*)ctor_names[ctor_id]));
+    Form *ctor = ctors + ctor_id;
+    String ctor_name = toString((char*)ctor_names[ctor_id]);
+    initForm(ctor, ctor_name, (Expression*)form, ctor_id);
     if (!addGlobalNameBinding(ctor->name, (Expression *)ctor))
       invalidCodePath;
   }
-  initForm(form, form_name, ctor_count, ctors);
+
+  initForm(form, form_name, type, ctor_count, ctors);
   if (!addGlobalNameBinding(form_name, (Expression*)form))
     invalidCodePath;
+
+  return form;
 }
 
 struct OptionalU32 { b32 success; u32 value; };
@@ -1067,7 +1035,7 @@ normalize(Environment env, Expression *in0)
         extendStack(&env, in->arg_count, norm_args);
         out0 = normalize(env, fun->body);
       }
-      else if (norm_op->cat == EC_Builtin_identical)
+      else if (norm_op == (Expression*)builtin_identical)
       {// special case for equality
         Expression *lhs = norm_args[1];
         Expression *rhs = norm_args[2];
@@ -1076,8 +1044,8 @@ normalize(Environment env, Expression *in0)
           out0 = builtin_True;
         else if (compare == Trinary_False)
           out0 = builtin_False;
-        else if (isCompositeConstructor(lhs)
-                 && isCompositeConstructor(rhs))
+        else if (isCompositeForm(lhs)
+                 && isCompositeForm(rhs))
         {// Leibniz' principle
           Application *lapp = castExpression(lhs, Application);
           Application *rapp = castExpression(rhs, Application);
@@ -1118,21 +1086,21 @@ normalize(Environment env, Expression *in0)
       b32 subject_matched = false;
       switch (norm_subject->cat)
       {
-        case EC_Constructor:
+        case EC_Form:
         {
           subject_matched = true;
-          Constructor *ctor = castExpression(norm_subject, Constructor);
+          Form *ctor = castExpression(norm_subject, Form);
           extendStack(&env, 0, 0);
-          out0 = normalize(env, in->cases[ctor->id].body);
+          out0 = normalize(env, in->cases[ctor->ctor_id].body);
         } break;
 
         case EC_Application:
         {
           Application *subject = castExpression(norm_subject, Application);
-          if (Constructor *ctor = castExpression(subject->op, Constructor))
+          if (Form *ctor = castExpression(subject->op, Form))
           {
             subject_matched = true;
-            Expression *body = in->cases[ctor->id].body;
+            Expression *body = in->cases[ctor->ctor_id].body;
             extendStack(&env, subject->arg_count, subject->args);
             out0 = normalize(env, body);
           }
@@ -1181,29 +1149,29 @@ normalized(Environment env, Expression *in)
 }
 
 inline void
-addRewrite(Environment *env, Expression *lhs, Expression *rhs)
+addRewrite(Environment *env, Expression *lhs0, Expression *rhs0)
 {
-  assert(normalized(*env, lhs));
-  assert(normalized(*env, rhs));
+  assert(normalized(*env, lhs0));
+  assert(normalized(*env, rhs0));
 
-  if (!identicalB32(lhs, rhs))
+  if (!identicalB32(lhs0, rhs0))
   {
-    if ((lhs->cat == EC_Application)
-        && (rhs->cat == EC_Application))
+    if ((lhs0->cat == EC_Application) &&
+        (rhs0->cat == EC_Application))
     {
-      Application *lapp = castExpression(lhs, Application);
-      Application *rapp = castExpression(rhs, Application);
-      if ((lapp->op->cat == EC_Constructor)
-          && (rapp->op->cat == EC_Constructor))
+      Application *lhs = castExpression(lhs0, Application);
+      Application *rhs = castExpression(rhs0, Application);
+      if ((lhs->op->cat == EC_Form) &&
+          (rhs->op->cat == EC_Form))
       {
-        assert(identicalB32(lapp->op, rapp->op));
-        for (s32 arg_id = 0; lapp->arg_count; arg_id++)
-          addRewrite(env, lapp->args[arg_id], rapp->args[arg_id]);
+        assert(identicalB32(lhs->op, rhs->op));
+        for (s32 arg_id = 0; lhs->arg_count; arg_id++)
+          addRewrite(env, lhs->args[arg_id], rhs->args[arg_id]);
       }
     }
     else
     {
-      Rewrite *rewrite = newRewrite(env, lhs, rhs);
+      Rewrite *rewrite = newRewrite(env, lhs0, rhs0);
       env->rewrite = rewrite;
     }
 
@@ -1359,30 +1327,9 @@ typecheck(Environment env, Expression *in0, Ast *ast0, Expression *expected_type
 
   switch (in0->cat)
   {
-    case EC_Builtin_Type:
-    {
-      todoIncomplete;
-    } break;
-
-    case EC_Builtin_Proc:
-    case EC_Builtin_Prop:
-    case EC_Builtin_Set:
-    {
-      type = builtin_Type;
-    } break;
-    case EC_Builtin_identical:
-    {
-      type = (Expression*)builtin_equal;
-    } break;
-
     case EC_Form:
     {
-      type = builtin_Set;
-    } break;
-
-    case EC_Constructor:
-    {
-      Constructor *in = castExpression(in0, Constructor);
+      Form *in = castExpression(in0, Form);
       type = in->type;
     } break;
 
@@ -1412,10 +1359,10 @@ typecheck(Environment env, Expression *in0, Ast *ast0, Expression *expected_type
         ForkCase *casev    = in->cases + case_id;
         Ast      *ast_body = ast->bodies[case_id];
 
-        Constructor *ctor     = form->ctors[case_id];
-        Expression  *ctor_exp = (Expression*)ctor;
+        Form       *ctor     = form->ctors + case_id;
+        Expression *ctor_exp = (Expression*)ctor;
 
-        switch (ctor->form->h.cat)
+        switch (ctor->type->cat)
         {
           case EC_Form:
           {// member
@@ -1555,21 +1502,16 @@ typecheck(Environment env, Expression *in0, Ast *ast0, Expression *expected_type
 
     case EC_ArrowType:
     {
-      if (expected_type && !identicalB32(expected_type, builtin_Fun))
-        parseError(ast0, "arrow type must have type Fun");
-      else
-      {
-        ArrowType    *in = castExpression(in0, ArrowType);
-        AstArrowType *ast = castAst(ast0, AstArrowType);
-        introduceVariables(&env, in);
-        if (typecheck(env, in->return_type, ast->return_type, 0))
-          type = builtin_Fun;
-      }
+      ArrowType    *in = castExpression(in0, ArrowType);
+      AstArrowType *ast = castAst(ast0, AstArrowType);
+      introduceVariables(&env, in);
+      if (typecheck(env, in->return_type, ast->return_type, 0))
+        type = (Expression*)builtin_Type;  // todo: it's not a form but somehow is a type?
+
     } break;
 
     invalidDefaultCase;
   }
-
 
   Expression *out = 0;
   if (noError())
@@ -1625,7 +1567,7 @@ buildFork(MemoryArena *arena, Bindings *outer_bindings, AstFork *ast)
               Bindings *bindings = extendBindings(global_temp_arena, outer_bindings);
 
               Ast *ast_pattern = ast->patterns[input_case_id];
-              Constructor *ctor = 0;
+              Form *ctor = 0;
               Variable **params;
               s32 param_count;
               pushContextName("transform switch case pattern");
@@ -1637,7 +1579,7 @@ buildFork(MemoryArena *arena, Bindings *outer_bindings, AstFork *ast)
                   param_count = 0;
                   if (Expression *pattern = buildExpression(temp_arena, outer_bindings, ast_pattern))
                   {
-                    if ((ctor = castExpression(pattern, Constructor)))
+                    if ((ctor = castExpression(pattern, Form)))
                     {
                       if (!identicalB32(ctor->type, subject_type))
                       {
@@ -1656,7 +1598,7 @@ buildFork(MemoryArena *arena, Bindings *outer_bindings, AstFork *ast)
                   AstBranch *branch = castAst(ast_pattern, AstBranch);
                   if (Expression *op = buildExpression(arena, outer_bindings, branch->op))
                   {
-                    if ((ctor = castExpression(op, Constructor)))
+                    if ((ctor = castExpression(op, Form)))
                     {
                       if (ArrowType *ctor_sig = castExpression(ctor->type, ArrowType))
                       {
@@ -1727,13 +1669,13 @@ buildFork(MemoryArena *arena, Bindings *outer_bindings, AstFork *ast)
               if (noError())
               {
                 // we could error out sooner but whatevs.
-                if (cases[ctor->id].body)
+                if (cases[ctor->ctor_id].body)
                 {
                   parseError(ast->bodies[input_case_id], "fork case handled twice");
                   pushAttachment("constructor", (Expression*)ctor);
                 }
                 else
-                  initForkCase(cases + ctor->id, body, params, param_count);
+                  initForkCase(cases + ctor->ctor_id, body, params, param_count);
               }
             }
 
@@ -1757,36 +1699,37 @@ buildFork(MemoryArena *arena, Bindings *outer_bindings, AstFork *ast)
   return out;
 }
 
-struct ExpressionAndAst
+struct ExpressionParsing
 {
   Expression *expression;
-  Ast *ast;
+  Ast        *ast;
+  Expression *type;
   operator bool() { return (bool)ast; }
 };
 
-inline ExpressionAndAst
+inline ExpressionParsing
 parseExpressionAndTypecheck(MemoryArena *arena, Bindings *bindings, Expression *expected_type)
 {
   unpackGlobals;
-  ExpressionAndAst out = {};
+  ExpressionParsing out = {};
   if (Ast *ast = parseExpressionToAst(global_temp_arena))
   {
     if (Expression *expression = buildExpression(arena, bindings, ast))
     {
-      if (typecheck(newEnvironment(arena), expression, ast, expected_type))
+      if (Expression *type = typecheck(newEnvironment(arena), expression, ast, expected_type))
       {
         out.expression = expression;
         out.ast        = ast;
+        out.type       = type;
       }
     }
   }
 
   NULL_WHEN_ERROR(out);
-
   return out;
 }
 
-inline ExpressionAndAst
+inline ExpressionParsing
 parseExpressionInferType(MemoryArena *arena, Bindings *bindings)
 {
   return parseExpressionAndTypecheck(arena, bindings, 0);
@@ -1798,7 +1741,13 @@ parseExpression(MemoryArena *arena)
   return parseExpressionInferType(arena, global_bindings).expression;
 }
 
-inline ExpressionAndAst
+inline ExpressionParsing
+parseExpressionFull(MemoryArena *arena)
+{
+  return parseExpressionInferType(arena, global_bindings);
+}
+
+inline ExpressionParsing
 parseExpressionReturnAst(MemoryArena *arena)
 {
   return parseExpressionInferType(arena, global_bindings);
@@ -2278,12 +2227,11 @@ parseExpressionToAst(MemoryArena *arena)
   return parseExpressionToAstMain(arena, ParseExpressionOptions{});
 }
 
-internal Constructor *
-parseConstructorDef(MemoryArena *arena, Form *form, s32 ctor_id)
+internal Form *
+parseConstructorDef(MemoryArena *arena, Form *out, Form *form, s32 fork_id)
 {
   unpackGlobals;
   pushContext;
-  Constructor *out = newExpression(arena, Constructor);
 
   Token ctor_token = nextToken(tk);
   if (isIdentifier(&ctor_token))
@@ -2335,12 +2283,12 @@ parseConstructorDef(MemoryArena *arena, Form *form, s32 ctor_id)
             // Right now all constructors return mystruct, but in future they
             // can return whatever.
             initArrowType(signature, param_count, params, (Expression*)form);
-            initConstructor(out, form, (Expression*)signature, ctor_id, name);
+            initForm(out, name, (Expression*)signature, fork_id);
           }
         }
       }
       else
-        initConstructor(out, form, (Expression*)form, ctor_id, name);
+        initForm(out, name, (Expression*)form, fork_id);
     }
   }
   else
@@ -2377,7 +2325,7 @@ parseTypedef(MemoryArena *arena)
           s32 expected_case_count = getCommaSeparatedListLength(&tk_copy);
           if (noError(&tk_copy))
           {
-            Constructor **ctors = pushArray(arena, expected_case_count, Constructor*);
+            Form *ctors = pushArray(arena, expected_case_count, Form);
 
             s32 ctor_count = 0;
             for (s32 stop = 0;
@@ -2388,7 +2336,7 @@ parseTypedef(MemoryArena *arena)
               else
               {
                 s32 ctor_id = ctor_count++;
-                ctors[ctor_id] = parseConstructorDef(arena, form, ctor_id);
+                parseConstructorDef(arena, (ctors + ctor_id), form, ctor_id);
                 if (!optionalChar(','))
                 {
                   requireChar('}', "to end the typedef; or you might want a comma ',' to delimit constructors");
@@ -2399,7 +2347,7 @@ parseTypedef(MemoryArena *arena)
 
             if (noError())
             {
-              initForm(form, form_name.text, ctor_count, ctors);
+              initForm(form, form_name.text, (Expression*)builtin_Set, ctor_count, ctors);
               assert(form->ctor_count == expected_case_count);
               assert (lookupNameCurrentFrame(global_bindings, form_name.text, false).found);
             }
@@ -2423,7 +2371,7 @@ parseFunctionDefinition(MemoryArena *arena, Token *name)
   auto define_slot = lookupNameCurrentFrame(global_bindings, name->text, true);
   if (define_slot.found)
     tokenError("re-definition");
-  else if (auto [signature0, signature_ast] = parseExpressionReturnAst(arena))
+  else if (auto [signature0, signature_ast, _] = parseExpressionReturnAst(arena))
   {
     if (ArrowType *signature = castExpression(signature0, ArrowType))
     {
@@ -2486,7 +2434,7 @@ parseTopLevel(EngineState *state, MemoryArena *arena)
 
   while (parsing())
   {
-#define CLEAN_TEMPORARY_MEMORY 0
+#define CLEAN_TEMPORARY_MEMORY 1
 #if CLEAN_TEMPORARY_MEMORY
     TemporaryMemory top_level_temp = beginTemporaryMemory(temp_arena);
 #endif
@@ -2553,25 +2501,25 @@ parseTopLevel(EngineState *state, MemoryArena *arena)
 
           case Keyword_Print:
           {
-            Expression *exp = parseExpression(temp_arena);
-            if (noError())
+            if (auto parsing = parseExpressionFull(temp_arena))
             {
-              auto buffer = subArena(temp_arena, 256);
-              Expression *reduced = normalizeStart(temp_arena, exp);
-              printExpression(&buffer, reduced, {.detailed=true});
-              printf("%s\n", buffer.base);
+              Expression *reduced = normalizeStart(temp_arena, parsing.expression);
+              printExpression(0, reduced, {.detailed=true});
+              printToBuffer(0, ": ");
+              printExpression(0, parsing.type, {});
+              printNewline();
             }
             requireChar(';');
           } break;
 
           case Keyword_PrintRaw:
           {
-            Expression *exp = parseExpression(temp_arena);
-            if (parsing())
+            if (auto parsing = parseExpressionFull(temp_arena))
             {
-              auto buffer = subArena(temp_arena, 256);
-              printExpression(&buffer, exp, {.detailed=true});
-              printf("%s\n", buffer.base);
+              printExpression(0, parsing.expression, {.detailed=true});
+              printToBuffer(0, ": ");
+              printExpression(0, parsing.type, {});
+              printNewline();
             }
             requireChar(';');
           } break;
@@ -2581,7 +2529,7 @@ parseTopLevel(EngineState *state, MemoryArena *arena)
             Expression *exp = parseExpression(temp_arena);
             if (parsing())
             {
-              char *output = printExpression(temp_arena, exp, {.detailed=true, .print_type=true});
+              char *output = printExpression(temp_arena, exp, {.detailed=true});
               printf("%s\n", output);
             }
             requireChar(';');
@@ -2659,17 +2607,45 @@ initializeEngine(MemoryArena *arena)
   allocate(arena, global_bindings);
   global_bindings->arena = arena;
 
-  addGlobalName("identical", builtin_identical);
-  addGlobalName("Set"      , builtin_Set);
-  addGlobalName("Prop"     , builtin_Prop);
-  addGlobalName("Proc"     , builtin_Fun);
+  const char *builtin_Type_members[] = {"Set"};
+  builtin_Type = addBuiltinForm(arena, "Type", 0, builtin_Type_members, 1);
+  builtin_Set  = castExpression(lookupNameCurrentFrame(global_bindings, toString("Set"), false).slot->value, Form);
+  builtin_Type->type = (Expression*)builtin_Type; // todo: circular types are gonna bite us
+
+  allocate(arena, hole_expression);
+  hole_expression->cat = EC_Hole;
+
+  {// Equality
+    builtin_identical = newExpression(arena, Form);
+    addGlobalName("identical", (Expression*)builtin_identical);
+
+    ArrowType *identical_type = newExpression(arena, ArrowType);
+    builtin_identical->type = (Expression*)identical_type;
+    // Here we give 'identical' a type (A: Set, a:A, b:A) -> Prop.
+    // TODO: so we can't prove equality between Sets.
+    identical_type->param_count = 3;
+    identical_type->return_type = (Expression*)builtin_Set;
+
+    allocateArray(arena, 3, identical_type->params);
+    auto args = identical_type->params;
+
+    args[0] = newExpression(arena, Variable);
+    initVariable(args[0], toString("A"), 0, (Expression*)builtin_Set);
+
+    args[1] = newExpression(arena, Variable);
+    initVariable(args[1], toString("a"), 1, (Expression*)args[0]);
+
+    args[2] = newExpression(arena, Variable);
+    initVariable(args[2], toString("b"), 2, (Expression*)args[0]);
+  }
 
   const char *true_members[] = {"truth"};
-  addBuiltinForm(arena, "True", true_members, 1);
+  addBuiltinForm(arena, "True", (Expression*)builtin_Set, true_members, 1);
+  // bookmark: not happy about this
   builtin_True  = lookupNameCurrentFrame(global_bindings, toString("True"), false).slot->value;
   builtin_truth = lookupNameCurrentFrame(global_bindings, toString("truth"), false).slot->value;
 
-  addBuiltinForm(arena, "False", (const char **)0, 0);
+  addBuiltinForm(arena, "False", (Expression*)builtin_Set, (const char **)0, 0);
   builtin_False = lookupNameCurrentFrame(global_bindings, toString("False"), false).slot->value;
 }
 
@@ -2769,7 +2745,7 @@ int
 engineMain(EngineMemory *memory)
 {
 #if REA_INTERNAL
-  // for printf debugging
+  // for printf debugging: when it crashes you can still see the prints
   setvbuf(stdout, NULL, _IONBF, 0);
 #endif
 
@@ -2780,44 +2756,6 @@ engineMain(EngineMemory *memory)
 
   auto init_arena_ = newArena(memory->storage_size, memory->storage);
   auto init_arena = &init_arena_;
-
-  allocate(init_arena, builtin_identical);
-  builtin_equal = newExpression(init_arena, ArrowType);
-  allocate(init_arena, builtin_True);
-  allocate(init_arena, builtin_truth);
-  allocate(init_arena, builtin_False);
-  allocate(init_arena, builtin_Set);
-  allocate(init_arena, builtin_Prop);
-  allocate(init_arena, builtin_Fun);
-  allocate(init_arena, builtin_Type);
-  allocate(init_arena, hole_expression);
-
-  builtin_identical->cat = EC_Builtin_identical;
-
-  builtin_Set->cat  = EC_Builtin_Set;
-  builtin_Fun->cat  = EC_Builtin_Proc;
-  builtin_Type->cat = EC_Builtin_Type;
-
-  hole_expression->cat = EC_Hole;
-
-  {
-    // Here we give 'identical' a type (A: Set, a:A, b:A) -> Prop.
-    // TODO: so we can't prove equality between props.
-    builtin_equal->param_count = 3;
-    builtin_equal->return_type = builtin_Set;
-
-    allocateArray(init_arena, 3, builtin_equal->params);
-    auto args = builtin_equal->params;
-
-    args[0] = newExpression(init_arena, Variable);
-    initVariable(args[0], toString("A"), 0, builtin_Set);
-
-    args[1] = newExpression(init_arena, Variable);
-    initVariable(args[1], toString("a"), 1, (Expression*)args[0]);
-
-    args[2] = newExpression(init_arena, Variable);
-    initVariable(args[2], toString("b"), 2, (Expression*)args[0]);
-  }
 
   MemoryArena interp_arena_ = subArena(init_arena, getArenaFree(init_arena));
   MemoryArena *interp_arena = &interp_arena_;

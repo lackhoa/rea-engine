@@ -3,6 +3,7 @@
 #include "utils.h"
 #include "memory.h"
 #include "tokenization.h"
+#include "rea_builtins.h"
 
 // NOTE: Think of this like the function stack, we'll clean it every once in a while.
 global_variable MemoryArena  global_temp_arena_;
@@ -21,18 +22,11 @@ enum ExpressionCategory
   EC_Application,             // operator application
   EC_Fork,                  // switch statement
   EC_Form,                    // like Coq inductive types
-  EC_Constructor,             // canonical members of forms
   EC_Function,               // holds actual computation (ie body that can be executed)
   EC_ArrowType,               // type of procedure and built-in objects
 
   // strictly non-values
   EC_Hole,                    // hole left in for type-checking
-
-  EC_Builtin_identical,
-  EC_Builtin_Set,
-  EC_Builtin_Prop,
-  EC_Builtin_Proc,
-  EC_Builtin_Type,
 };
 
 struct Expression
@@ -43,7 +37,7 @@ struct Expression
 inline void
 initExpression(Expression *in, ExpressionCategory cat)
 {
-  in->cat  = cat;
+  in->cat = cat;
 }
 
 inline Expression *
@@ -129,43 +123,76 @@ initForkCase(ForkCase *fork_case, Expression *body, Variable **params, s32 param
   fork_case->params = params;
 }
 
-struct Form;
-struct Constructor
+struct ArrowType
 {
-  Expression  h;
-
-  Form       *form;
-  Expression *type;
-  s32         id;
-  String      name;
+  Expression   h;
+  s32          param_count;
+  Variable   **params;
+  Expression  *return_type;
 };
 
 inline void
-initConstructor(Constructor *in, Form *form, Expression *type, s32 id, String name)
+initArrowType(ArrowType *signature, s32 param_count, Variable **params, Expression *return_type)
 {
-  in->type = type;
-  in->form = form;
-  in->id   = id;
-  in->name = name;
+  signature->param_count = param_count;
+  signature->params      = params;
+  signature->return_type = return_type;
 }
 
 struct Form
 {
-  Expression    h;
+  Expression  h;
 
-  String        name;
-  s32           ctor_count;
-  Constructor **ctors;  // todo: WHAT ARE YOU DOING?
+  String      name;
+  Expression *type;
+
+  s32 ctor_id;
+
+  s32   ctor_count;
+  Form *ctors;
 };
 
-inline void
-initForm(Form *in, String name, s32 ctor_count, Constructor **ctors)
+inline Form *
+getFormOf(Expression *in0)
 {
-  in->name       = name;
+  Form *out = 0;
+  switch (in0->cat)
+  {
+    case EC_Application:
+    {
+      Application *in = castExpression(in0, Application);
+      out = castExpression(in->op, Form);
+    } break;
+
+    case EC_Form:
+    {
+      out = castExpression(in0, Form);
+    } break;
+
+    invalidDefaultCase;
+  }
+  return out;
+}
+
+inline void
+initForm(Form *in, String name, Expression *type0, s32 ctor_count, Form *ctors)
+{
+  *in = {};
+  in->h.cat = EC_Form;
+  in->name  = name;
+  in->type  = type0;
   in->ctor_count = ctor_count;
   in->ctors      = ctors;
-  for (s32 ctor_id = 0; ctor_id < ctor_count; ctor_id++)
-    ctors[ctor_id]->form = in;
+}
+
+inline void
+initForm(Form *in, String name, Expression *type0, s32 ctor_id)
+{
+  *in = {};
+  in->h.cat = EC_Form;
+  in->name  = name;
+  in->type  = type0;
+  in->ctor_id = ctor_id;
 }
 
 struct Fork
@@ -188,24 +215,6 @@ initFork(Fork *out, Form *form, Expression *subject, s32 case_count, ForkCase *c
 
   for (s32 case_id = 0; case_id < case_count; case_id++)
     assert(out->cases[case_id].body);
-}
-
-
-
-struct ArrowType
-{
-  Expression   h;
-  s32          param_count;
-  Variable   **params;
-  Expression  *return_type;
-};
-
-inline void
-initArrowType(ArrowType *signature, s32 param_count, Variable **params, Expression *return_type)
-{
-  signature->param_count = param_count;
-  signature->params      = params;
-  signature->return_type = return_type;
 }
 
 struct Function
