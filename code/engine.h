@@ -35,50 +35,30 @@ enum ExpressionCategory
   EC_Builtin_Type,
 };
 
-// IMPORTANT: All expressions are well-typed.
-//
-// except in typechecking, wherein an expression will have two states:
-//
-// a. it has type and has been / is being typechecked,
-//
-// b. its type is null.
 struct Expression
 {
   ExpressionCategory  cat;
-  Expression         *type;     // IMPORTANT: always in normal form
 };
 
-global_variable Expression *builtin_identical;
-global_variable Expression *builtin_identical_macro;
-global_variable Expression *builtin_True;
-global_variable Expression *builtin_truth;
-global_variable Expression *builtin_False;
-global_variable Expression *builtin_Set;
-global_variable Expression *builtin_Prop;
-global_variable Expression *builtin_Fun;
-global_variable Expression *builtin_Type;
-global_variable Expression *hole_expression;
-
 inline void
-initExpression(Expression *in, ExpressionCategory cat, Expression *type)
+initExpression(Expression *in, ExpressionCategory cat)
 {
   in->cat  = cat;
-  in->type = type;
 }
 
 inline Expression *
-newExpression_(MemoryArena *arena, ExpressionCategory cat, Expression *type, size_t size)
+newExpression_(MemoryArena *arena, ExpressionCategory cat, size_t size)
 {
   Expression *out = (Expression *)pushSize(arena, size);
-  initExpression(out, cat, type);
+  initExpression(out, cat);
   return out;
 }
 
-#define newExpressionNoCast(arena, cat, type)                \
-  newExpression_(arena, EC_##cat, type, sizeof(cat))
+#define newExpressionNoCast(arena, cat)                \
+  newExpression_(arena, EC_##cat, sizeof(cat))
 
-#define newExpression(arena, cat, type)                \
-  (cat *) newExpression_(arena, EC_##cat, type, sizeof(cat))
+#define newExpression(arena, cat)                \
+  (cat *) newExpression_(arena, EC_##cat, sizeof(cat))
 
 b32 identicalB32(Expression *lhs, Expression *rhs);
 
@@ -98,29 +78,25 @@ struct Bindings
     Bindings    *next;
 };
 
-typedef s32 Atom;
-
-struct ArrowType;
 struct Variable
 {
-  Expression h;
+  Expression  h;
 
   String name;
   s32    id;
   s32    stack_delta;  // relative
   s32    stack_depth;  // absolute
-
-  ArrowType *signature;  // signature of the stack.
+  Expression *type;
 };
 
 inline void
-initVariable(Variable *var, String name, u32 id, ArrowType *signature)
+initVariable(Variable *var, String name, u32 id, Expression *type)
 {
   var->name        = name;
   var->stack_delta = 0;
   var->id          = id;
   var->stack_depth = 0;
-  var->signature   = signature;
+  var->type        = type;
 }
 
 struct Application
@@ -153,18 +129,59 @@ initForkCase(ForkCase *fork_case, Expression *body, Variable **params, s32 param
   fork_case->params = params;
 }
 
+struct Form;
+struct Constructor
+{
+  Expression  h;
+
+  Form       *form;
+  Expression *type;
+  s32         id;
+  String      name;
+};
+
+inline void
+initConstructor(Constructor *in, Form *form, Expression *type, s32 id, String name)
+{
+  in->type = type;
+  in->form = form;
+  in->id   = id;
+  in->name = name;
+}
+
+struct Form
+{
+  Expression    h;
+
+  String        name;
+  s32           ctor_count;
+  Constructor **ctors;  // todo: WHAT ARE YOU DOING?
+};
+
+inline void
+initForm(Form *in, String name, s32 ctor_count, Constructor **ctors)
+{
+  in->name       = name;
+  in->ctor_count = ctor_count;
+  in->ctors      = ctors;
+  for (s32 ctor_id = 0; ctor_id < ctor_count; ctor_id++)
+    ctors[ctor_id]->form = in;
+}
+
 struct Fork
 {
   Expression h;
 
+  Form       *form;
   Expression *subject;
   s32         case_count;
   ForkCase   *cases;
 };
 
 inline void
-initFork(Fork *out, Expression *subject, s32 case_count, ForkCase *cases)
+initFork(Fork *out, Form *form, Expression *subject, s32 case_count, ForkCase *cases)
 {
+  out->form       = form;
   out->subject    = subject;
   out->case_count = case_count;
   out->cases      = cases;
@@ -173,40 +190,7 @@ initFork(Fork *out, Expression *subject, s32 case_count, ForkCase *cases)
     assert(out->cases[case_id].body);
 }
 
-struct Constructor
-{
-  Expression h;
-  s32        id;
-  String     name;
-};
 
-struct Form
-{
-  Expression    h;
-  String        name;
-  s32           ctor_count;
-  Constructor **ctors;          // note: We don't hold arbitrary expressions here, only
-  // constructors. But storing full expressions here is
-  // more convenient since then you don't need a separate
-  // type with constructor id and then jump through hoops
-  // to get back the constructor info.
-};
-
-// NOTE: most of the information is in the (arrow) type;
-struct Function
-{
-  Expression  h;
-  String      name;
-  Expression *body;
-};
-
-inline void
-initFunction(Function *fun, String name, Expression *body)
-{
-  assert(body);
-  fun->name = name;
-  fun->body = body;
-}
 
 struct ArrowType
 {
@@ -224,7 +208,21 @@ initArrowType(ArrowType *signature, s32 param_count, Variable **params, Expressi
   signature->return_type = return_type;
 }
 
-struct Ast;
+struct Function
+{
+  Expression  h;
+  String      name;
+  Expression *body;
+  ArrowType  *signature;
+};
+
+inline void
+initFunction(Function *fun, String name, Expression *body)
+{
+  assert(body);
+  fun->name      = name;
+  fun->body      = body;
+}
 
 struct ParseExpressionOptions
 {

@@ -1,4 +1,4 @@
-typedef Bool : Set
+typedef Bool
 {
  false,
  true,
