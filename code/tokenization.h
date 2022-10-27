@@ -112,3 +112,9 @@ newTokenizer(MemoryArena *error_arena, String directory, char *input)
   eatAllSpaces(&out);
   return out;
 }
+
+inline Tokenizer
+newTokenizerFromString(MemoryArena *error_arena, char *string)
+{
+  return newTokenizer(error_arena, toString("NONE"), string);
+}

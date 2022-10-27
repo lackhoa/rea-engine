@@ -1,6 +1,6 @@
 #load "boolean.rea"
 
-typedef Nat : Set
+typedef Nat
 {
  0,
  s(Nat),
@@ -33,7 +33,6 @@ pred :: (n : Nat) -> Nat
   s(n) : n
   }
  }
-print pred;
 
 even :: (n : Nat) -> Bool
 {

@@ -5,8 +5,9 @@ plusIdRight :: (n: Nat) -> n + 0 = n
 {
  fork n
  {
-  0    : truth,
-  s(n69) : fork n69 {0: truth, s(n70): truth},
+  0      : truth,
+  ;; s(n69) : fork n69 {0: truth, s(n70): truth},
+  s(n69) : plusIdRight(n69),
   }
  }
 

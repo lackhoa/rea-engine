@@ -478,7 +478,8 @@ parseErrorVA(s32 line, s32 column, char *format, va_list arg_list, Tokenizer *tk
 
   tk->error->line   = line;
   tk->error->column = column;
-  tk->error->context = tk->context->first;
+  if (tk->context)
+    tk->error->context = tk->context->first;
 }
 
 internal void
@@ -554,32 +555,25 @@ getCommaSeparatedListLength(Tokenizer *tk)
   char opening_char = opening.text.chars[0];
   char previous = opening_char;
   s32 out = 0;
-  for (b32 stop = false; !stop;)
+  for (b32 stop = false; !stop && parsing(tk);)
   {
     Token token = nextToken(tk);
-    if (!parsing(tk))
+    if (getMatchingPair(&token))
     {
-      stop = true;
-      parseError(tk, &opening, "could not find matching pair for");
+      eatUntilMatchingPair(tk);
     }
-    else
+    else if (equal(&token, closing))
     {
-      if (char matching_pair = getMatchingPair(&token))
-      {
-        eatUntilMatchingPair(tk);
-      }
-      else if (equal(&token, closing))
-      {
-        if ((previous != ',') && (previous != opening_char))
-          out++;
-        stop = true;
-      }
-      else if (equal(&token, ','))
-      {
+      if ((previous != ',') && (previous != opening_char))
         out++;
-      }
-      previous = tk->last_token.text.chars[0];
+      stop = true;
     }
+    else if (equal(&token, ','))
+    {
+      out++;
+    }
+    previous = tk->last_token.text.chars[0];
+
   }
   return out;
 }

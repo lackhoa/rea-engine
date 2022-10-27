@@ -95,7 +95,8 @@ initVariable(Variable *var, String name, u32 id, Expression *type)
 
 struct Application
 {
-  Expression  h;
+  Expression   h;
+  Expression  *type; // for caching
   Expression  *op;
   s32          arg_count;
   Expression **args;
@@ -104,9 +105,10 @@ struct Application
 inline void
 initApplication(Application *app, Expression *op, s32 arg_count, Expression **args)
 {
-  app->op = op;
+  app->type      = 0;
+  app->op        = op;
   app->arg_count = arg_count;
-  app->args = args;
+  app->args      = args;
 }
 
 struct ForkCase
@@ -270,6 +272,7 @@ struct Environment
   Stack *stack;
   s32 stack_depth;              // 0 is reserved
   s32 stack_offset;             // todo #speed pass this separately
+  b32 no_expand;
 
   Rewrite *rewrite;
 };
@@ -281,6 +284,14 @@ extendStack(Environment *env, s32 arg_count, Expression **args)
   stack->outer     = env->stack;
   stack->arg_count = arg_count;
   stack->args      = args;
+
+  for (s32 arg_id = 0; arg_id < arg_count; arg_id++)
+  {
+    if (Variable *var = castExpression(stack->args[arg_id], Variable))
+    {
+      assert(var->stack_depth != 0);
+    }
+  }
 
   env->stack = stack;
   env->stack_depth++;
