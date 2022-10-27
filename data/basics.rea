@@ -36,8 +36,8 @@ andCommutative :: (a, b, c: Bool) -> (a & (b & c) = (a & b) & c)
 {
  fork a
  {
-  false: truth,
-  true : truth,
+  false: refl(false),
+  true : refl(b & c),
   }
  }
 print andCommutative;

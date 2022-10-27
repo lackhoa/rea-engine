@@ -3,7 +3,7 @@
 typedef Nat
 {
  0,
- s(Nat),
+ s: (n1: Nat) -> Nat,
  }
 
 + :: (n, m: Nat) -> Nat

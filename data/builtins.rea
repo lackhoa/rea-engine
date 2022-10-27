@@ -1,0 +1,6 @@
+typedef identical : (A: Set, a, b: A) -> Set
+{
+ refl: (A: Set, x: A) -> identical(A, x, x)
+ }
+
+;; print identical;

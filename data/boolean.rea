@@ -1,7 +1,7 @@
 typedef Bool
 {
- false,
- true,
+ false: Bool,
+ true: Bool,
  }
 
 & :: (a, b: Bool) -> Bool

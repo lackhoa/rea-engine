@@ -6,6 +6,7 @@ struct Expression;
 struct Form;
 struct ArrowType;
 
+global_variable Form       *builtin_refl;
 global_variable Form       *builtin_identical;
 global_variable Expression *builtin_True;
 global_variable Expression *builtin_truth;

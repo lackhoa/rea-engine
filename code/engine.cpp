@@ -93,6 +93,19 @@ searchVariable(Environment env, Expression *in, variable_matcher *matcher, void 
   return found;
 }
 
+VARIABLE_MATCHER(isAnyVariable)
+{
+  (void) opt; (void) in; (void) env;
+  return true;
+}
+
+inline b32
+hasAnyVariable(Expression *in)
+{
+  Environment env = newEnvironment(global_temp_arena);
+  return searchVariable(env, in, isAnyVariable, 0);
+}
+
 VARIABLE_MATCHER(isFreeVariable)
 {
   (void) opt;
@@ -210,7 +223,9 @@ identicalTrinary(Expression *lhs0, Expression *rhs0)
 {
   Trinary out = Trinary_Unknown;
 
-  if (lhs0 == rhs0)
+  if (!lhs0 | !rhs0)
+    out = Trinary_False;
+  else if (lhs0 == rhs0)
     out = Trinary_True;
   else if (lhs0->cat == rhs0->cat)
   {
@@ -270,19 +285,20 @@ identicalTrinary(Expression *lhs0, Expression *rhs0)
 
       case EC_Application:
       {
-        auto lapp = castExpression(lhs0,  Application);
-        auto rapp = castExpression(rhs0,  Application);
-        if ((lapp->op->cat == EC_Form) &&
-            (rapp->op->cat == EC_Form))
+        Application *lhs = castExpression(lhs0,  Application);
+        Application *rhs = castExpression(rhs0,  Application);
         {
-          Trinary op_compare = identicalTrinary(lapp->op, rapp->op);
-          if (op_compare == Trinary_False)
-            out = Trinary_False;
-          else
+          Trinary op_compare = identicalTrinary(lhs->op, rhs->op);
+          if ((op_compare == Trinary_False) &&
+              (lhs->op->cat == EC_Form) &&
+              (rhs->op->cat == EC_Form))
           {
-            assert(op_compare == Trinary_True);
-            assert(lapp->arg_count == rapp->arg_count);
-            out = compareExpressionList(lapp->args, rapp->args, lapp->arg_count);
+            out = Trinary_False;
+          }
+          else if (op_compare == Trinary_True)
+          {
+            assert(lhs->arg_count == rhs->arg_count);
+            out = compareExpressionList(lhs->args, rhs->args, lhs->arg_count);
           }
         }
       } break;
@@ -451,17 +467,33 @@ printExpression(MemoryArena *buffer, Expression *in0, PrintExpressionOptions opt
       case EC_Form:
       {
         Form *in = castExpression(in0, Form);
-        printToBuffer(buffer, in->name);
+        if (opt.detailed)
+        {
+          printToBuffer(buffer, in->name);
+          printToBuffer(buffer, ": ");
+          printExpression(buffer, in->type, new_opt);
+          printToBuffer(buffer, " {");
+          for (s32 ctor_id = 0; ctor_id < in->ctor_count; ctor_id++)
+          {
+            Form *ctor = in->ctors + ctor_id;
+            printToBuffer(buffer, ctor->name);
+            printToBuffer(buffer, ": ");
+            printExpression(buffer, (Expression*)ctor->type, new_opt);
+          }
+          printToBuffer(buffer, " }");
+        }
+        else
+          printToBuffer(buffer, in->name);
       } break;
 
       case EC_Function:
       {
-        Function *fun = castExpression(in0, Function);
-        printToBuffer(buffer, fun->name);
+        Function *in = castExpression(in0, Function);
+        printToBuffer(buffer, in->name);
         if (opt.detailed)
         {
           printToBuffer(buffer, " { ");
-          printExpression(buffer, fun->body, new_opt);
+          printExpression(buffer, in->body, new_opt);
           printToBuffer(buffer, " }");
         }
       } break;
@@ -474,8 +506,10 @@ printExpression(MemoryArena *buffer, Expression *in0, PrintExpressionOptions opt
              param_id < arrow->param_count;
              param_id++)
         {
-          new_opt.detailed = true;
-          printExpression(buffer, (Expression*)arrow->params[param_id], new_opt);
+          Variable *param = arrow->params[param_id];
+          printToBuffer(buffer, param->name);
+          printToBuffer(buffer, ": ");
+          printExpression(buffer, param->type, new_opt);
           if (param_id < arrow->param_count-1)
             printToBuffer(buffer, ", ");
         }
@@ -497,9 +531,7 @@ printExpression(MemoryArena *buffer, Expression *in0, PrintExpressionOptions opt
     }
   }
   else
-  {
     printToBuffer(buffer, "<null>");
-  }
   return out;
 }
 
@@ -1071,10 +1103,21 @@ normalize(Environment env, Expression *in0)
       if (norm_op->cat == EC_Function &&
           !env.no_expand)
       {// Function application
-        Function *fun = castExpression(norm_op, Function);
-        Environment new_env = env;
-        extendStack(&new_env, in->arg_count, norm_args);
-        out0 = normalize(new_env, fun->body);
+        b32 has_any_variable = false;
+        for (s32 arg_id = 0;
+             arg_id < in->arg_count && !has_any_variable;
+             arg_id++)
+        {
+          if (hasAnyVariable(norm_args[arg_id]))
+            has_any_variable = true;
+        }
+        if (!has_any_variable)
+        {
+          Function *fun = castExpression(norm_op, Function);
+          Environment new_env = env;
+          extendStack(&new_env, in->arg_count, norm_args);
+          out0 = normalize(new_env, fun->body);
+        }
       }
       else if (norm_op == (Expression*)builtin_identical)
       {// special case for equality
@@ -2296,7 +2339,7 @@ parseExpressionToAst(MemoryArena *arena)
 }
 
 internal Form *
-parseConstructorDef(MemoryArena *arena, Form *out, Form *form, s32 fork_id)
+parseConstructorDef(MemoryArena *arena, Form *out, Form *form, s32 ctor_id)
 {
   unpackGlobals;
   pushContext;
@@ -2310,59 +2353,42 @@ parseConstructorDef(MemoryArena *arena, Form *out, Form *form, s32 fork_id)
     else
     {
       String name = ctor_token.text;
-
       ctor_lookup.slot->value = (Expression*)out;
-
-      if (optionalChar('('))
+      if (optionalChar(':'))
       {
-        Tokenizer tk_copy = *tk;
-        auto expected_arg_count = getCommaSeparatedListLength(&tk_copy);
-        if (parsing(&tk_copy))
+        if (auto [type0, type_ast, _] = parseExpressionFull(arena))
         {
-          ArrowType *signature = newExpression(arena, ArrowType);
-          Variable **params = pushArray(arena, expected_arg_count, Variable*);
-          s32 param_count = 0;
-          for (s32 stop = false; !stop && parsing(); )
+          b32 valid_type = false;
+          if (Form *type = castExpression(type0, Form))
           {
-            if (optionalChar(')'))
-              stop = true;
-            else
-            {
-              Expression *param_type = parseExpression(arena);
-              if (parsing())
-              {
-                s32       param_id = param_count++;
-                Variable *param    = newExpression(arena, Variable);
-                initVariable(param, toString("NO_NAME"), param_id, param_type);
+            if (type == form)
+              valid_type = true;
+          }
+          else if (ArrowType *type = castExpression(type0, ArrowType))
+          {
+            if (getFormOf(type->return_type) == form)
+              valid_type = true;
+          }
 
-                params[param_id] = param;
-                if (!optionalChar(','))
-                {
-                  requireChar(')', "expected ')' or ','");
-                  stop = true;
-                }
-              }
-            }
-          }
-          if (noError())
-          {
-            assert(param_count == expected_arg_count);
-            // NOTE: we assume that "form" is a well-typed expression.
-            // Right now all constructors return mystruct, but in future they
-            // can return whatever.
-            initArrowType(signature, param_count, params, (Expression*)form);
-            initForm(out, name, (Expression*)signature, fork_id);
-          }
+          if (valid_type)
+            initForm(out, name, type0, ctor_id);
+          else
+            parseError(type_ast, "invalid type for constructor");
         }
       }
       else
-        initForm(out, name, (Expression*)form, fork_id);
+      {
+        // default type is the form itself
+        if (form->type == (Expression*)builtin_Set)
+          initForm(out, name, (Expression*)form, ctor_id);
+        else
+          parseError(&ctor_token, "constructors must construct a set member");
+      }
     }
   }
   else
     tokenError("expected an identifier as constructor name");
 
-  NULL_WHEN_ERROR(out);
   popContext();
   return out;
 }
@@ -2385,6 +2411,25 @@ parseTypedef(MemoryArena *arena)
       Form *form = newExpression(arena, Form);
       lookup.slot->value = (Expression*)form;
 
+      Expression *type = (Expression*)builtin_Set;
+      if (optionalChar(':'))
+      {// type override
+        b32 valid_type = false;
+        auto parsing = parseExpressionFull(arena);
+        if (ArrowType *parsed_type = castExpression(parsing.expression, ArrowType))
+        {
+          if (parsed_type->return_type == (Expression*)builtin_Set)
+            valid_type = true;
+        }
+        else if (parsing.expression == (Expression*)builtin_Set)
+          valid_type = true;
+
+        if (valid_type)
+          type = parsing.expression;
+        else
+          parseError(parsing.ast, "form has invalid type");
+      }
+
       if (requireChar('{', "open typedef body"))
       {
         Tokenizer tk_copy = *tk;
@@ -2393,7 +2438,7 @@ parseTypedef(MemoryArena *arena)
         if (noError(&tk_copy))
         {
           Form *ctors = pushArray(arena, expected_ctor_count, Form);
-          initForm(form, form_name.text, (Expression*)builtin_Set, expected_ctor_count, ctors, getNextFormId());
+          initForm(form, form_name.text, type, expected_ctor_count, ctors, getNextFormId());
           s32 parsed_ctor_count = 0;
           for (s32 stop = 0;
                !stop && noError();)
@@ -2484,18 +2529,20 @@ struct FileList
 
 struct EngineState
 {
-  FileList *file_list;
+  MemoryArena *arena;
+  FileList    *file_list;
 };
 
 internal b32
-interpretFile(EngineState *state, MemoryArena *arena, FilePath input_path, b32 is_root_file = false);
+interpretFile(EngineState *state, FilePath input_path, b32 is_root_file = false);
 
 // NOTE: Main dispatch parse function
 internal void
-parseTopLevel(EngineState *state, MemoryArena *arena)
+parseTopLevel(EngineState *state)
 {
   pushContext;
-  auto temp_arena = global_temp_arena;
+  MemoryArena *arena = state->arena;
+  MemoryArena *temp_arena = global_temp_arena;
 
   while (parsing())
   {
@@ -2539,7 +2586,7 @@ parseTopLevel(EngineState *state, MemoryArena *arena)
 
             if (!already_loaded)
             {
-              auto interp_result = interpretFile(state, arena, full_path);
+              auto interp_result = interpretFile(state, full_path);
               if (!interp_result)
                 tokenError("failed loading file");
             }
@@ -2671,8 +2718,9 @@ lookupGlobalName(char *name)
 }
 
 internal void
-initializeEngine(MemoryArena *arena)
+initializeEngine(EngineState *state)
 {
+  MemoryArena *arena = state->arena;
   global_temp_arena_ = subArena(arena, megaBytes(2));
   global_temp_arena  = &global_temp_arena_;
   allocate(arena, global_bindings);
@@ -2687,9 +2735,12 @@ initializeEngine(MemoryArena *arena)
   hole_expression->cat = EC_Hole;
 
   {// Equality
-    builtin_identical = newExpression(arena, Form);
-    addGlobalName("identical", (Expression*)builtin_identical);
+    b32 success = interpretFile(state, platformGetFileFullPath(arena, "../data/builtins.rea"), true);
+    assert(success);
 
+    builtin_identical = castExpression(lookupGlobalName("identical"), Form);
+
+#if 0
     ArrowType *identical_type = newExpression(arena, ArrowType);
     // Here we give 'identical' a type (A: Set, a:A, b:A) -> Prop.
     // TODO: so we can't prove equality between Sets.
@@ -2708,8 +2759,10 @@ initializeEngine(MemoryArena *arena)
     args[2] = newExpression(arena, Variable);
     initVariable(args[2], toString("b"), 2, (Expression*)args[0]);
 
-    // todo: give 'identical' constructors too
+    Form *identical_members = pushArray(arena, 1, Form);
+    initForm(builtin_refl, "refl", type);
     initForm(builtin_identical, toString("identical"), (Expression*)identical_type, 0, 0, getNextFormId());
+#endif
   }
 
   const char *true_members[] = {"truth"};
@@ -2722,8 +2775,9 @@ initializeEngine(MemoryArena *arena)
 }
 
 internal b32
-interpretFile(EngineState *state, MemoryArena *arena, FilePath input_path, b32 is_root_file)
+interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
 {
+  MemoryArena *arena = state->arena;
   b32 success = true;
 #if 0
   auto begin_time = platformGetWallClock(arena);
@@ -2744,7 +2798,7 @@ interpretFile(EngineState *state, MemoryArena *arena, FilePath input_path, b32 i
     Tokenizer *old_tokenizer = global_tokenizer;
     global_tokenizer         = tk;
 
-    parseTopLevel(state, arena);
+    parseTopLevel(state);
     if (ParseError error = tk->error)
     {
       success = false;
@@ -2797,10 +2851,12 @@ interpretFile(EngineState *state, MemoryArena *arena, FilePath input_path, b32 i
 internal b32
 beginInterpreterSession(MemoryArena *arena, char *initial_file)
 {
-  initializeEngine(arena);
-  auto state = pushStruct(arena, EngineState);
-  auto input_path = platformGetFileFullPath(arena, initial_file);
-  b32 success = interpretFile(state, arena, input_path, true);
+  EngineState *state = pushStruct(arena, EngineState);
+  state->arena = arena;
+
+  initializeEngine(state);
+  FilePath input_path = platformGetFileFullPath(arena, initial_file);
+  b32 success = interpretFile(state, input_path, true);
 
   for (FileList *file_list = state->file_list;
        file_list;
