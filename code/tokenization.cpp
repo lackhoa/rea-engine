@@ -299,6 +299,25 @@ nextToken(Tokenizer *tk = global_tokenizer)
       out.text.length = (s32)(tk->at - out.text.chars - 1);
     } break;
 
+    case '=':
+    {
+      switch (*tk->at)
+      {
+        case '>':
+        {
+          out.cat = TC_StrongArrow;
+          nextChar(tk);
+        } break;
+
+        default:
+        {
+          out.cat = TC_Special;
+          while (isSpecial(*tk->at))
+            nextChar(tk);
+        } break;
+      }
+    } break;
+
     case '-':
     {
       switch (*tk->at)
@@ -357,7 +376,7 @@ nextToken(Tokenizer *tk = global_tokenizer)
     case '}':
     {
       out.cat = TC_PairingClose;
-    }
+    } break;
 
     default:
     {

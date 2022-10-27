@@ -3,6 +3,7 @@
 #include "memory.h"
 #include "utils.h"
 
+// todo: does enum automatically increment???
 enum TokenCategory
 {
     // 0-255 reserved for single-char ASCII types.
@@ -15,6 +16,7 @@ enum TokenCategory
     TC_DoubleColon   = 262,
     TC_ColonEqual    = 263,
     TC_Arrow         = 264,
+    TC_StrongArrow   = 265,
 };
 
 enum Keyword
@@ -24,6 +26,7 @@ enum Keyword
     Keyword_Typedef,
     Keyword_Define,
     Keyword_Fork,
+    Keyword_Rewrite,
 
     Keyword_Print,
     Keyword_PrintRaw,
@@ -32,7 +35,7 @@ enum Keyword
 
     Keywords_Count_,
 };
-const char *keywords[] = {"", "typedef", "define", "fork",
+const char *keywords[] = {"", "typedef", "define", "fork", "rewrite",
                           "print", "print_raw", "print_debug", "check"};
 
 enum MetaDirective

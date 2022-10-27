@@ -16,14 +16,18 @@ global_variable MemoryArena *global_temp_arena = &global_temp_arena_;
 enum ExpressionCategory
 {
   // might be free or bound
-  EC_Variable,                // reference to some unknown on "the stack"
+  EC_Variable,
 
   // ground values
-  EC_Application,             // operator application
-  EC_Fork,                  // switch statement
-  EC_Form,                    // like Coq inductive types
-  EC_Function,               // holds actual computation (ie body that can be executed)
-  EC_ArrowType,               // type of procedure and built-in objects
+  EC_Application,               // operator application
+  EC_Fork,                      // switch statement
+  EC_Form,                      // like Coq inductive types
+  EC_Function,                  // holds actual computation (ie body that can be executed)
+  EC_ArrowType,                 // type of procedure and built-in objects
+
+  // typechecker commands
+  EC_Sequence,                  // like scheme's "begin" keyword
+  EC_RewriteCommand,
 
   // strictly non-values
   EC_Hole,                    // hole left in for type-checking
@@ -140,6 +144,31 @@ initArrowType(ArrowType *signature, s32 param_count, Variable **params, Expressi
   signature->params      = params;
   signature->return_type = return_type;
 }
+
+struct Sequence
+{
+  Expression   h;
+  s32          count;
+  Expression **items;
+};
+
+inline void
+initSequence(Sequence *in, s32 count, Expression **items)
+{
+  assert(count);
+  in->count = count;
+  in->items = items;
+}
+
+struct RewriteCommand
+{
+  Expression h;
+
+  Expression *lhs;
+  Expression *rhs;
+
+  Expression *proof;
+};
 
 struct Form
 {
@@ -272,7 +301,6 @@ struct Environment
   Stack *stack;
   s32 stack_depth;              // 0 is reserved
   s32 stack_offset;             // todo #speed pass this separately
-  b32 no_expand;
 
   Rewrite *rewrite;
 };
@@ -322,6 +350,8 @@ enum AstCategory
   AC_AstBranch,
   AC_AstFork,
   AC_AstArrowType,
+  AC_AstSequence,
+  AC_AstRewriteCommand,
 };
 
 struct Ast
@@ -377,7 +407,7 @@ struct AstFork
   Ast   h;
   Ast  *subject;
   s32   case_count;
-  Ast **patterns;
+  Ast **patterns; // todo omg so many pointers
   Ast **bodies;
 };
 
@@ -393,6 +423,49 @@ newAstFork(MemoryArena *arena, Token *token,
   out->bodies     = bodies;
 
   return out;
+}
+
+struct AstSequence
+{
+  Ast   h;
+  s32   count;
+  Ast **items;
+};
+
+inline AstSequence *
+newAstSequence(MemoryArena *arena, Token *token, s32 count, Ast **items)
+{
+  AstSequence *out = newAst(arena, AstSequence, token);
+  out->count = count;
+  out->items = items;
+  return out;
+}
+
+struct AstRewriteCommand
+{
+  Ast  h;
+
+  // note: lean on computation
+  Ast *lhs;
+  Ast *rhs;
+  // note: based on a proof object (mutually exclusive with lhs => rhs)
+  Ast *proof;
+};
+
+inline void
+initAstRewriteCommand(AstRewriteCommand *in, Ast *lhs, Ast *rhs)
+{
+  in->lhs = lhs;
+  in->rhs = rhs;
+  in->proof = 0;
+}
+
+inline void
+initAstRewriteCommand(AstRewriteCommand *in, Ast *expression)
+{
+  in->lhs = 0;
+  in->rhs = 0;
+  in->proof = expression;
 }
 
 struct Parameter
@@ -430,3 +503,10 @@ initAstArrowType(AstArrowType *out, s32 param_count, Parameter *params, Ast *ret
 
 inline Ast *
 parseExpressionToAst(MemoryArena *arena);
+
+struct AstList
+{
+  Ast     *first;
+  AstList *next;
+};
+
