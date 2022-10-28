@@ -32,7 +32,7 @@ andWithFalse :: (a: Bool) -> (a & false = false)
   }
  }
 
-andCommutative :: (a, b, c: Bool) -> (True & (b & c) = (a & b) & c)
+andCommutative :: (a, b, c: Bool) -> (a & (b & c) = (a & b) & c)
 {
  fork a
  {

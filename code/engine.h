@@ -8,7 +8,7 @@
 // NOTE: Think of this like the function stack, we'll clean it every once in a while.
 global_variable MemoryArena  global_temp_arena_;
 global_variable MemoryArena *global_temp_arena = &global_temp_arena_;
-
+ 
 #define unpackGlobals                                               \
   Tokenizer   *tk         = global_tokenizer;  (void) tk;           \
   MemoryArena *temp_arena = global_temp_arena; (void) temp_arena;
@@ -62,35 +62,21 @@ b32 identicalB32(Expression *lhs, Expression *rhs);
 #define castExpression(exp, Cat) (((exp)->cat == EC_##Cat) ? (Cat*)(exp) : 0)
 #define caste(exp, Cat) castExpression(exp, Cat)
 
-struct Binding
-{
-    String      key;
-    Expression *value;
-    Binding    *next;
-};
-
-struct Bindings
-{
-    MemoryArena *arena;
-    Binding      table[128];    // NOTE: this is hash table
-    Bindings    *next;
-};
-
 struct Variable
 {
   Expression  h;
 
   Token  name; // todo this information might be duplicated
   s32    id;
-  s32    stack_delta;  // relative
-  s32    stack_depth;  // absolute
+  s32    stack_delta;
+  s32    stack_depth;
   Expression *type;
 };
 
 inline void
-initVariable(Variable *var, Token name, u32 id, Expression *type)
+initVariable(Variable *var, Token *name, u32 id, Expression *type)
 {
-  var->name        = name;
+  var->name        = *name;
   var->stack_delta = 0;
   var->id          = id;
   var->stack_depth = 0;
@@ -510,3 +496,114 @@ struct AstList
   AstList *next;
 };
 
+#define castValue(value, category) ((value->cat == VC_##category) ? (category*)value : 0)
+
+enum ValueCategory
+{
+  VC_ParameterV,
+  VC_StackValue,
+  VC_ApplicationV,
+  VC_FormV,
+  VC_FunctionV,
+  VC_ArrowTypeV,
+};
+
+struct Value
+{
+  ValueCategory cat;
+};
+
+struct StackValue
+{
+  Value h;
+
+  String name;
+  s32    stack_depth;
+};
+
+struct ParameterV
+{
+  Value h;
+
+  String name;
+  Value *type;
+};
+
+struct ApplicationV
+{
+  Value h;
+
+  Value  *op;
+  s32     arg_count;
+  Value **args;
+};
+
+struct FormV
+{
+  Value h;
+
+  Token  name;
+  Value *type;
+
+  s32 ctor_id;
+
+  s32   ctor_count;
+  Form *ctors;
+};
+
+struct FunctionV
+{
+  Value h;
+  Token name;
+  Expression *body;
+};
+
+struct ArrowTypeV
+{
+  Value        h;
+
+  s32          param_count;
+  Variable   **params;
+  Expression  *return_type;
+};
+
+struct Binding
+{
+    String      key;
+    Expression *value;
+    Binding    *next;
+};
+
+struct Bindings
+{
+    MemoryArena *arena;
+    Binding      table[128];    // NOTE: this is a hash table
+    Bindings    *next;
+};
+
+inline Bindings *
+newBindings(MemoryArena *arena, Bindings *outer)
+{
+  Bindings *out = pushStruct(arena, Bindings);
+  for (int i = 0; i < arrayCount(out->table); i++)
+  {// invalidate these slots
+    Binding *slot = &out->table[i];
+    slot->key.length = 0;
+  }
+  out->next    = outer;
+  out->arena   = arena;
+  return out;
+}
+
+struct ValueBinding
+{
+  String        key;
+  Value        *value;
+  ValueBinding *next;
+};
+
+struct ValueBindings
+{
+  MemoryArena  *arena;
+  ValueBinding  table[2048];
+};

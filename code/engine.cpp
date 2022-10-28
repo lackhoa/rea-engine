@@ -574,20 +574,6 @@ myprint(char *str)
 
 global_variable Bindings *global_bindings;
 
-inline Bindings *
-extendBindings(MemoryArena *arena, Bindings *outer)
-{
-  Bindings *out = pushStruct(arena, Bindings);
-  for (int i = 0; i < arrayCount(out->table); i++)
-  {// invalidate these slots
-    Binding *slot = &out->table[i];
-    slot->key.length = 0;
-  }
-  out->next    = outer;
-  out->arena   = arena;
-  return out;
-}
-
 struct LookupName { Binding* slot; b32 found; };
 
 internal LookupName
@@ -647,7 +633,7 @@ addBinding(Bindings *bindings, String key, Expression *value)
 }
 
 inline b32
-addGlobalName(String key, Expression *value)
+addGlobalBinding(String key, Expression *value)
 {
   auto lookup = lookupNameCurrentFrame(global_bindings, key, true);
   b32 succeed = true;
@@ -659,17 +645,17 @@ addGlobalName(String key, Expression *value)
 }
 
 inline b32
-addGlobalName(char *key, Expression *value)
+addGlobalBinding(char *key, Expression *value)
 {
-  return addGlobalName(toString(key), value);
+  return addGlobalBinding(toString(key), value);
 }
 
-struct LookupNameRecursive { Expression *value; b32 found; };
+struct LookupNameRecursive { Expression *expr; b32 found; };
 
 inline LookupNameRecursive
-lookupNameRecursive(MemoryArena *arena, Bindings *bindings, Token *token)
+lookupLocalName(MemoryArena *arena, Bindings *bindings, Token *token)
 {
-  Expression *value = {};
+  Expression *expr = {};
   b32 found = false;
 
   for (b32 stop = false, stack_delta = 0;
@@ -680,22 +666,17 @@ lookupNameRecursive(MemoryArena *arena, Bindings *bindings, Token *token)
     if (lookup.found)
     {
       found = true;
-      stop = true;
-      value = lookup.slot->value;
-      if ((value->cat == EC_Variable) && (stack_delta != 0))
+      stop  = true;
+      Expression *value = lookup.slot->value;
+      if (Variable *original_var = castExpression(value, Variable))
       {
-        Variable *original_var = castExpression(value, Variable);
-        assert(original_var->stack_delta == 0);
-
-        // todo: we literally don't get anything from the copying
-        Variable *var = pushStruct(arena, Variable);
-        var->name = *token;
-        value = (Expression*) var;
-
-        // todo: can we avoid this copying?
-        *var = *original_var;
+        Variable *var = newExpression(arena, Variable, token);
+        initVariable(var, token, original_var->id, original_var->type);
         var->stack_delta = stack_delta;
+        expr = (Expression*)var;
       }
+      else
+        expr = value;
     }
     else
     {
@@ -706,7 +687,18 @@ lookupNameRecursive(MemoryArena *arena, Bindings *bindings, Token *token)
     }
   }
 
-  LookupNameRecursive out = { value, found };
+  LookupNameRecursive out = { expr, found };
+  if (found) {assert(expr);}
+  return out;
+}
+
+inline Expression *
+lookupGlobalName(Token *token)
+{
+  Expression *out = 0;
+  auto lookup = lookupNameCurrentFrame(global_bindings, token->text, false);
+  if (lookup.found)
+    out = lookup.slot->value;
   return out;
 }
 
@@ -780,6 +772,7 @@ optionalChar(char c)
   return optionalChar(global_tokenizer, c);
 }
 
+#if 0
 internal b32
 addGlobalNameBinding(String key, Expression *value)
 {
@@ -792,6 +785,7 @@ addGlobalNameBinding(String key, Expression *value)
   }
   return succeed;
 }
+#endif
 
 internal Form *
 addBuiltinForm(MemoryArena *arena, char *name, Expression *type, const char **ctor_names, s32 ctor_count)
@@ -805,12 +799,12 @@ addBuiltinForm(MemoryArena *arena, char *name, Expression *type, const char **ct
     Form *ctor = ctors + ctor_id;
     Token ctor_name = newToken(ctor_names[ctor_id]);
     initForm(ctor, &ctor_name, (Expression*)form, ctor_id);
-    if (!addGlobalNameBinding(ctor->name.text, (Expression *)ctor))
+    if (!addGlobalBinding(ctor->name.text, (Expression *)ctor))
       invalidCodePath;
   }
 
   initForm(form, &form_name, type, ctor_count, ctors, getNextFormId());
-  if (!addGlobalNameBinding(form_name.text, (Expression*)form))
+  if (!addGlobalBinding(form_name.text, (Expression*)form))
     invalidCodePath;
 
   return form;
@@ -1244,6 +1238,14 @@ normalize(Environment env, Expression *in0, b32 force_expand=false)
       if (!subject_matched)
       {
         Fork *out = copyStruct(env.arena, in);
+        out->subject = norm_subject;
+        out0 = (Expression*)out;
+      }
+
+#if 0
+      if (!subject_matched)
+      {
+        Fork *out = copyStruct(env.arena, in);
         out0 = (Expression*)out;
         out->subject = norm_subject;
         allocateArray(env.arena, out->case_count, out->cases);
@@ -1272,6 +1274,7 @@ normalize(Environment env, Expression *in0, b32 force_expand=false)
           out->cases[case_id].body = normalize(env, in->cases[case_id].body);
         }
       }
+#endif
     } break;
 
     default:
@@ -1783,7 +1786,7 @@ buildFork(MemoryArena *arena, Bindings *outer_bindings, AstFork *ast)
                  (input_case_id < case_count) && parsing();
                  input_case_id++)
             {
-              Bindings *bindings = extendBindings(global_temp_arena, outer_bindings);
+              Bindings *bindings = newBindings(global_temp_arena, outer_bindings);
 
               Ast *ast_pattern = ast->patterns[input_case_id];
               Form *ctor = 0;
@@ -1973,11 +1976,16 @@ BUILD_EXPRESSION
         out0 = hole_expression;
       else
       {
-        auto lookup = lookupNameRecursive(arena, bindings, &ast->h.token);
+        auto lookup = lookupLocalName(arena, bindings, &ast0->token);
         if (lookup.found)
-          out0 = lookup.value;
+          out0 = lookup.expr;
         else
-          parseError(ast0, "unbound identifier in expression");
+        {
+          if (Expression *constant = lookupGlobalName(&ast0->token))
+            out0 = constant;
+          else
+            parseError(ast0, "unbound identifier in expression");
+        }
       }
     } break;
 
@@ -2027,7 +2035,7 @@ BUILD_EXPRESSION
 
       // introduce own bindings
       Bindings *outer_bindings = bindings;
-      Bindings *bindings       = extendBindings(arena, outer_bindings);
+      Bindings *bindings       = newBindings(arena, outer_bindings);
 
       // build parameters
       Variable **params = pushArray(arena, ast->param_count, Variable*);
@@ -2039,7 +2047,7 @@ BUILD_EXPRESSION
         if (Expression *param_type = buildExpression(arena, bindings, ast_param->type))
         {
           Variable *param = params[param_id] = newExpression(arena, Variable, &ast_param->name);
-          initVariable(param, ast_param->name, param_id, param_type);
+          initVariable(param, &ast_param->name, param_id, param_type);
           addBinding(bindings, param->name.text, (Expression*)param);
         }
       }
@@ -2714,13 +2722,13 @@ parseFunction(MemoryArena *arena, Token *name)
 
       // note: we have to rebuild the function's local bindings (todo: parse
       // signature+body together?)
-      Bindings *local_bindings = extendBindings(arena, global_bindings);
+      Bindings *fun_bindings = newBindings(arena, 0);
       for (s32 param_id = 0;
            param_id < signature->param_count;
            param_id++)
       {
         Variable *param = signature->params[param_id];
-        b32 add = addBinding(local_bindings, param->name.text, (Expression*)param);
+        b32 add = addBinding(fun_bindings, param->name.text, (Expression*)param);
         assert(add);
       }
 
@@ -2728,7 +2736,7 @@ parseFunction(MemoryArena *arena, Token *name)
       {
         if (Ast *body_ast = parseSequence(arena))
         {
-          Expression *body = buildExpression(arena, local_bindings, body_ast);
+          Expression *body = buildExpression(arena, fun_bindings, body_ast);
           if (requireChar('}'))
           {
             initFunction(fun, name, body);
@@ -2905,7 +2913,7 @@ parseTopLevel(EngineState *state)
             Expression *norm  = normalizeStart(arena, value);
             if (parsing())
             {
-              if (!addGlobalName(name->text, norm))
+              if (!addGlobalBinding(name->text, norm))
                 tokenError(name, "redefinition of global name");
             }
             requireChar(';');
