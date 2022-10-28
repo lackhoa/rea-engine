@@ -6,7 +6,7 @@ plusIdRight :: (n: Nat) -> n + 0 = n
  fork n
  {
   0      : truth,
-  s(n69) : rewrite s(n69) + 0 => s(n69 + 0); plusIdRight(n69),
+  s(n69) : rewrite s(n69) + 0 => s(n69 + 0); rewrite plusIdRight(n69); truth,
   }
  }
 
