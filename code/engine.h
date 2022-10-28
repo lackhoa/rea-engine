@@ -35,32 +35,32 @@ enum ExpressionCategory
 
 struct Expression
 {
-  ExpressionCategory  cat;
+  ExpressionCategory cat;
+  Token              token;
 };
 
 inline void
-initExpression(Expression *in, ExpressionCategory cat)
+initExpression(Expression *in, ExpressionCategory cat, Token *token)
 {
-  in->cat = cat;
+  in->cat   = cat;
+  in->token = *token;
 }
 
 inline Expression *
-newExpression_(MemoryArena *arena, ExpressionCategory cat, size_t size)
+newExpression_(MemoryArena *arena, ExpressionCategory cat, Token *token, size_t size)
 {
   Expression *out = (Expression *)pushSize(arena, size);
-  initExpression(out, cat);
+  initExpression(out, cat, token);
   return out;
 }
 
-#define newExpressionNoCast(arena, cat)                \
-  newExpression_(arena, EC_##cat, sizeof(cat))
-
-#define newExpression(arena, cat)                \
-  (cat *) newExpression_(arena, EC_##cat, sizeof(cat))
+#define newExpression(arena, cat, token)        \
+  (cat *) newExpression_(arena, EC_##cat, token, sizeof(cat))
 
 b32 identicalB32(Expression *lhs, Expression *rhs);
 
 #define castExpression(exp, Cat) (((exp)->cat == EC_##Cat) ? (Cat*)(exp) : 0)
+#define caste(exp, Cat) castExpression(exp, Cat)
 
 struct Binding
 {
@@ -80,7 +80,7 @@ struct Variable
 {
   Expression  h;
 
-  String name;
+  Token  name; // todo this information might be duplicated
   s32    id;
   s32    stack_delta;  // relative
   s32    stack_depth;  // absolute
@@ -88,7 +88,7 @@ struct Variable
 };
 
 inline void
-initVariable(Variable *var, String name, u32 id, Expression *type)
+initVariable(Variable *var, Token name, u32 id, Expression *type)
 {
   var->name        = name;
   var->stack_delta = 0;
@@ -138,11 +138,11 @@ struct ArrowType
 };
 
 inline void
-initArrowType(ArrowType *signature, s32 param_count, Variable **params, Expression *return_type)
+initArrowType(ArrowType *in, s32 param_count, Variable **params, Expression *return_type)
 {
-  signature->param_count = param_count;
-  signature->params      = params;
-  signature->return_type = return_type;
+  in->param_count = param_count;
+  in->params      = params;
+  in->return_type = return_type;
 }
 
 struct Sequence
@@ -174,7 +174,7 @@ struct Form
 {
   Expression  h;
 
-  String      name;
+  Token       name;
   Expression *type;
 
   s32 ctor_id;
@@ -206,23 +206,23 @@ getFormOf(Expression *in0)
 }
 
 inline void
-initForm(Form *in, String name, Expression *type0, s32 ctor_count, Form *ctors, s32 ctor_id)
+initForm(Form *in, Token *name, Expression *type0, s32 ctor_count, Form *ctors, s32 ctor_id)
 {
   *in = {};
-  in->h.cat = EC_Form;
-  in->name  = name;
-  in->type  = type0;
+  in->h.cat      = EC_Form;
+  in->name       = *name;
+  in->type       = type0;
   in->ctor_count = ctor_count;
   in->ctors      = ctors;
   in->ctor_id    = ctor_id;
 }
 
 inline void
-initForm(Form *in, String name, Expression *type0, s32 ctor_id)
+initForm(Form *in, Token *name, Expression *type0, s32 ctor_id)
 {
   *in = {};
   in->h.cat = EC_Form;
-  in->name  = name;
+  in->name  = *name;
   in->type  = type0;
   in->ctor_id = ctor_id;
 }
@@ -252,17 +252,17 @@ initFork(Fork *out, Form *form, Expression *subject, s32 case_count, ForkCase *c
 struct Function
 {
   Expression  h;
-  String      name;
+  Token       name;
   Expression *body;
   ArrowType  *signature;
 };
 
 inline void
-initFunction(Function *fun, String name, Expression *body)
+initFunction(Function *fun, Token *name, Expression *body)
 {
   assert(body);
-  fun->name      = name;
-  fun->body      = body;
+  fun->name = *name;
+  fun->body = body;
 }
 
 struct ParseExpressionOptions
@@ -470,14 +470,14 @@ initAstRewriteCommand(AstRewriteCommand *in, Ast *expression)
 
 struct Parameter
 {
-  String  name;
-  Ast    *type;
+  Token  name;
+  Ast   *type;
 };
 
 inline Parameter *
 initParameter(Parameter *out, Token *token, Ast *type)
 {
-  out->name = token->text;
+  out->name = *token;
   out->type = type;
   return out;
 }

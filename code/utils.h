@@ -120,10 +120,10 @@ equal(String a, String b)
 }
 
 inline String
-toString(char *c)
+toString(const char *c)
 {
     String out;
-    out.chars = c;
+    out.chars  = (char*)c;
     out.length = 0;
     while (*c)
     {

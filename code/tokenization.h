@@ -57,13 +57,13 @@ struct Token
 };
 
 inline Token
-newToken(String text, s32 line, s32 column, TokenCategory cat)
+newToken(const char *text)
 {
   Token out;
-  out.text   = text;
-  out.line   = line;
-  out.column = column;
-  out.cat    = cat;
+  out.text   = toString(text);
+  out.line   = 0;
+  out.column = 0;
+  out.cat    = TC_Alphanumeric;
   return out;
 }
 

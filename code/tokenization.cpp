@@ -124,6 +124,12 @@ printToBuffer(MemoryArena *buffer, String s)
   return out;
 }
 
+inline char *
+printToBuffer(MemoryArena *buffer, Token *token)
+{
+  return printToBuffer(buffer, token->text);
+}
+
 inline void
 printCharToBufferRepeat(char *buffer, char c, s32 repeat)
 {
@@ -510,12 +516,73 @@ parseError(Token *token, char *format, ...)
   __crt_va_end(arg_list);
 }
 
+#if 0
+inline Token *
+getExpressionToken(Expression *in0)
+{
+  Token *out = 0;
+  switch (in0->cat)
+  {
+    case EC_Variable:
+    {
+      Variable *in = caste(in0, Variable);
+      out = &in->name;
+    } break;
+
+    case EC_Form:
+    {
+      Form *in = caste(in0, Form);
+      out = &in->name;
+    } break;
+
+    case EC_Function:
+    {
+      Function *in = caste(in0, Function);
+      out = &in->name;
+    } break;
+
+    case EC_Sequence:
+    {
+      Sequence *in = caste(in0, Sequence);
+      out = getExpressionToken(in->items[in->count-1]);
+    } break;
+
+    case EC_Application:
+    {
+      Application *in = caste(in0, Application);
+      out = getExpressionToken(in->op);
+    } break;
+
+    case EC_ArrowType:
+    {
+      ArrowType *in = caste(in0, ArrowType);
+      out = &in->token;
+    } break;
+
+    default:
+        todoIncomplete;
+  }
+  return out;
+}
+#endif
+
 internal void
-parseError(Ast *ast, char *format, ...)
+parseError(Expression *in, char *format, ...)
 {
   va_list arg_list;
   __crt_va_start(arg_list, format);
-  parseErrorVA(ast->token.line, ast->token.column, format, arg_list);
+  Token *token = &in->token;
+  parseErrorVA(token->line, token->column, format, arg_list);
+  __crt_va_end(arg_list);
+}
+
+internal void
+parseError(Ast *in, char *format, ...)
+{
+  va_list arg_list;
+  __crt_va_start(arg_list, format);
+  Token *token = &in->token;
+  parseErrorVA(token->line, token->column, format, arg_list);
   __crt_va_end(arg_list);
 }
 
