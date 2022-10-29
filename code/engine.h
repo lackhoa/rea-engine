@@ -17,6 +17,7 @@ enum ExpressionCategory
 {
   // might be free or bound
   EC_Variable,
+  EC_Identifier,
 
   // ground values
   EC_Application,               // operator application
@@ -81,6 +82,18 @@ initVariable(Variable *var, Token *name, u32 id, Expression *type)
   var->id          = id;
   var->stack_depth = 0;
   var->type        = type;
+}
+
+struct Identifier
+{
+  Expression  h;
+  Expression *value;
+};
+
+inline void
+initIdentifier(Identifier *in, Expression *value)
+{
+  in->value = value;
 }
 
 struct Application
@@ -581,6 +594,11 @@ struct Bindings
     Bindings    *next;
 };
 
+struct ValueBindings
+{
+  Bindings *v;
+};
+
 inline Bindings *
 newBindings(MemoryArena *arena, Bindings *outer)
 {
@@ -602,8 +620,8 @@ struct ValueBinding
   ValueBinding *next;
 };
 
-struct ValueBindings
+inline ValueBindings
+toValueBindings(Bindings *bindings)
 {
-  MemoryArena  *arena;
-  ValueBinding  table[2048];
-};
+  return ValueBindings{bindings};
+}
