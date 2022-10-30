@@ -589,8 +589,8 @@ lookupNameCurrentFrame(Bindings *bindings, String key, b32 add_if_missing)
 {
   Binding *slot = 0;
   b32 found = false;
-  u32 hash = stringHash(key);
-  slot = bindings->table + (hash % arrayCount(bindings->table));
+  u32 hash = stringHash(key) % arrayCount(bindings->table);
+  slot = bindings->table + hash;
   b32 first_slot_valid = slot->key.length;
   if (first_slot_valid)
   {
@@ -1636,8 +1636,10 @@ typecheck(Environment env, Expression *in0, Expression *expected_type)
           {
             if (signature->param_count == arg_count)
             {
-              // todo #memory might leak
+              // todo #memory we have a memory corruption here when using
+              // temp_arena for signature_env.
               Environment signature_env = env;
+              env.arena = temp_arena;
               Expression **stack_frame = pushArrayZero(temp_arena, arg_count, Expression*);
               extendStack(&signature_env, arg_count, stack_frame);
               for (int arg_id = 0;
@@ -1819,7 +1821,7 @@ buildFork(MemoryArena *arena, Bindings *outer_bindings, AstFork *ast)
                  (input_case_id < case_count) && parsing();
                  input_case_id++)
             {
-              Bindings *bindings = newBindings(global_temp_arena, outer_bindings);
+              Bindings *bindings = extendBindings(global_temp_arena, outer_bindings);
 
               Ast *ast_pattern = ast->patterns[input_case_id];
               Form *ctor = 0;
@@ -2070,7 +2072,7 @@ BUILD_EXPRESSION
 
       // introduce own bindings
       Bindings *outer_bindings = bindings;
-      Bindings *bindings       = newBindings(arena, outer_bindings);
+      Bindings *bindings       = extendBindings(arena, outer_bindings);
 
       // build parameters
       Variable **params = pushArray(arena, ast->param_count, Variable*);
@@ -2763,7 +2765,7 @@ parseFunction(MemoryArena *arena, Token *name)
       {
         // note: we have to rebuild the function's local bindings (todo: parse
         // signature+body together?)
-        Bindings *fun_bindings = newBindings(arena, 0);
+        Bindings *fun_bindings = extendBindings(arena, 0);
         for (s32 param_id = 0;
              param_id < signature->param_count;
              param_id++)
