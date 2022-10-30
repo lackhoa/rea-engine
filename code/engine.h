@@ -6,13 +6,8 @@
 #include "rea_builtins.h"
 
 // NOTE: Think of this like the function stack, we'll clean it every once in a while.
-global_variable MemoryArena  global_temp_arena_;
-global_variable MemoryArena *global_temp_arena = &global_temp_arena_;
+global_variable MemoryArena *temp_arena;
  
-#define unpackGlobals                                               \
-  Tokenizer   *tk         = global_tokenizer;  (void) tk;           \
-  MemoryArena *temp_arena = global_temp_arena; (void) temp_arena;
-
 enum ExpressionCategory
 {
   // right after parsing
@@ -23,18 +18,20 @@ enum ExpressionCategory
   EC_Variable,
   EC_Constant,
 
-  EC_Application,               // operator application
+  EC_Composite,                 // operator application
   EC_Fork,                      // switch statement
   EC_Form,                      // like Coq inductive types
   EC_Function,                  // holds actual computation (ie body that can be executed)
+
   EC_ArrowType,                 // type of procedure and built-in objects
 
+  // todo: all these could be collapsed down into "EC_Composite"
   // typechecker commands
-  EC_Sequence,                  // like scheme's "begin" keyword
   EC_RewriteCommand,
 
-  // strictly non-values
-  EC_Hole,                    // hole left in for type-checking
+  // dummy values for denoting only
+  EC_Hole,                      // hole left in for type-checking
+  EC_DummySequence,          // like scheme's "begin" keyword
 };
 
 struct Expression
@@ -75,7 +72,6 @@ struct Variable
 {
   Expression  h;
 
-  Token  name; // todo this information might be duplicated
   s32    id;
   s32    stack_delta;
   s32    stack_depth;
@@ -83,9 +79,8 @@ struct Variable
 };
 
 inline void
-initVariable(Variable *var, Token *name, u32 id, Expression *type)
+initVariable(Variable *var, u32 id, Expression *type)
 {
-  var->name        = *name;
   var->stack_delta = 0;
   var->id          = id;
   var->stack_depth = 0;
@@ -113,7 +108,7 @@ initIdentifier(Constant *in, Expression *value)
   in->value = value;
 }
 
-struct Application
+struct Composite
 {
   Expression   h;
   Expression  *type; // for caching
@@ -123,7 +118,7 @@ struct Application
 };
 
 inline void
-initApplication(Application *app, Expression *op, s32 arg_count, Expression **args)
+initApplication(Composite *app, Expression *op, s32 arg_count, Expression **args)
 {
   app->type      = 0;
   app->op        = op;
@@ -161,6 +156,7 @@ initArrowType(ArrowType *in, s32 param_count, Variable **params, Expression *ret
   in->return_type = return_type;
 }
 
+#if 0
 struct Sequence
 {
   Expression   h;
@@ -175,6 +171,7 @@ initSequence(Sequence *in, s32 count, Expression **items)
   in->count = count;
   in->items = items;
 }
+#endif
 
 struct RewriteCommand
 {
@@ -205,9 +202,9 @@ getFormOf(Expression *in0)
   Form *out = 0;
   switch (in0->cat)
   {
-    case EC_Application:
+    case EC_Composite:
     {
-      Application *in = castExpression(in0, Application);
+      Composite *in = castExpression(in0, Composite);
       out = castExpression(in->op, Form);
     } break;
 
@@ -348,7 +345,7 @@ newEnvironment(MemoryArena *arena)
 {
   Environment out = {};
   out.arena       = arena;
-  out.temp_arena  = global_temp_arena;
+  out.temp_arena  = temp_arena;
   return out;
 }
 
@@ -358,7 +355,10 @@ enum AstCategory
   AC_AstBranch,
   AC_AstFork,
   AC_AstArrowType,
+#if 0
   AC_AstSequence,
+#endif
+  AC_DummySequence,
   AC_AstRewriteCommand,
 };
 
@@ -401,7 +401,6 @@ newAstLeaf(MemoryArena *arena, Token *token)
   return out;
 }
 
-// todo: we can just store the args inline?
 struct AstBranch
 {
   Ast   h;
@@ -415,7 +414,7 @@ struct AstFork
   Ast   h;
   Ast  *subject;
   s32   case_count;
-  Ast **patterns; // todo omg so many pointers
+  Ast **patterns;
   Ast **bodies;
 };
 
@@ -433,6 +432,7 @@ newAstFork(MemoryArena *arena, Token *token,
   return out;
 }
 
+#if 0
 struct AstSequence
 {
   Ast   h;
@@ -448,6 +448,7 @@ newAstSequence(MemoryArena *arena, Token *token, s32 count, Ast **items)
   out->items = items;
   return out;
 }
+#endif
 
 struct AstRewriteCommand
 {

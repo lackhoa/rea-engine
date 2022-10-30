@@ -54,6 +54,7 @@ struct Token
   s32           line;
   s32           column;
   TokenCategory cat;
+  operator String() { return text; }
 };
 
 inline Token
