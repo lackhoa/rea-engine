@@ -15,11 +15,14 @@ global_variable MemoryArena *global_temp_arena = &global_temp_arena_;
 
 enum ExpressionCategory
 {
-  // might be free or bound
-  EC_Variable,
+  // right after parsing
   EC_Identifier,
+  EC_AbstractFork,
 
-  // ground values
+  // built expressions
+  EC_Variable,
+  EC_Constant,
+
   EC_Application,               // operator application
   EC_Fork,                      // switch statement
   EC_Form,                      // like Coq inductive types
@@ -63,6 +66,11 @@ b32 identicalB32(Expression *lhs, Expression *rhs);
 #define castExpression(exp, Cat) (((exp)->cat == EC_##Cat) ? (Cat*)(exp) : 0)
 #define caste(exp, Cat) castExpression(exp, Cat)
 
+struct Identifier
+{
+  Expression h;
+};
+
 struct Variable
 {
   Expression  h;
@@ -84,14 +92,23 @@ initVariable(Variable *var, Token *name, u32 id, Expression *type)
   var->type        = type;
 }
 
-struct Identifier
+struct AbstractFork
+{
+  Expression   h;
+  Expression  *subject;
+  s32          case_count;
+  Expression **patterns;
+  Expression **bodies;
+};
+
+struct Constant
 {
   Expression  h;
   Expression *value;
 };
 
 inline void
-initIdentifier(Identifier *in, Expression *value)
+initIdentifier(Constant *in, Expression *value)
 {
   in->value = value;
 }

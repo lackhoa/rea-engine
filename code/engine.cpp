@@ -361,9 +361,9 @@ printExpression(MemoryArena *buffer, Expression *in0, PrintOptions opt)
 
     switch (in0->cat)
     {
-      case EC_Identifier:
+      case EC_Constant:
       {
-        Identifier *in = castExpression(in0, Identifier);
+        Constant *in = castExpression(in0, Constant);
         printToBuffer(buffer, in->h.token.text);
       } break;
 
@@ -667,7 +667,7 @@ lookupLocalName(MemoryArena *arena, Bindings *bindings, Token *token)
 }
 
 inline Expression *
-identifierFromGlobalName(MemoryArena *arena, Token *token)
+constantFromGlobalName(MemoryArena *arena, Token *token)
 {
   Expression *out0 = 0;
   auto lookup = lookupNameCurrentFrame(global_bindings.v, token->text, false);
@@ -675,7 +675,7 @@ identifierFromGlobalName(MemoryArena *arena, Token *token)
   {
     // Everything in the global scope becomes identifier.
     Expression *value = lookup.slot->value;
-    Identifier *out = newExpression(arena, Identifier, token);
+    Constant *out = newExpression(arena, Constant, token);
     initIdentifier(out, value);
     out0 = (Expression*)out;
   }
@@ -990,9 +990,9 @@ normalize(Environment env, Expression *in0, b32 force_expand=false)
 
   switch (in0->cat)
   {
-    case EC_Identifier:
+    case EC_Constant:
     {
-      Identifier *in = castExpression(in0, Identifier);
+      Constant *in = castExpression(in0, Constant);
       out0 = in->value;
       if (in->value->cat != EC_Form)
         breakhere;
@@ -1409,9 +1409,9 @@ typecheck(Environment env, Expression *in0, Expression *expected_type)
 
   switch (in0->cat)
   {
-    case EC_Identifier:
+    case EC_Constant:
     {
-      Identifier *in = castExpression(in0, Identifier);
+      Constant *in = castExpression(in0, Constant);
       out0 = typeOfValue(in->value);
     } break;
 
@@ -1682,170 +1682,6 @@ typecheck(MemoryArena *arena, Expression *in, Expression *expected_type)
   return out;
 }
 
-// todo: check that every case has been filled in
-internal Fork *
-buildFork(MemoryArena *arena, Bindings *outer_bindings, AstFork *ast)
-{
-  unpackGlobals;
-  pushContext;
-  Fork *out = 0;
-
-  if (Expression *subject = buildExpression(arena, outer_bindings, ast->subject))
-  {
-    if (Expression *subject_type = typecheck(newEnvironment(arena), subject, 0))
-    {
-      if (Form *form = castExpression(subject_type, Form))
-      {
-        s32 case_count = ast->case_count;
-        if (form->ctor_count == case_count)
-        {
-          if (case_count == 0)
-            parseError((Ast*)ast, "todo: cannot assign type to empty fork");
-          else
-          {
-            ForkCase *cases = pushArrayZero(arena, case_count, ForkCase);
-        
-            for (s32 input_case_id = 0;
-                 (input_case_id < case_count) && parsing();
-                 input_case_id++)
-            {
-              Bindings *bindings = extendBindings(global_temp_arena, outer_bindings);
-
-              Ast *ast_pattern = ast->patterns[input_case_id];
-              Form *ctor = 0;
-              Variable **params;
-              s32 param_count;
-              pushContextName("transform switch case pattern");
-              switch (ast_pattern->cat)
-              {
-                case AC_AstLeaf:
-                {
-                  params = 0;
-                  param_count = 0;
-                  if (Expression *pattern = buildExpression(temp_arena, outer_bindings, ast_pattern))
-                  {
-                    Expression *norm_pattern = normalize(temp_arena, pattern);
-                    if ((ctor = castExpression(norm_pattern, Form)))
-                    {
-                      if (!identicalB32(ctor->type, subject_type))
-                      {
-                        parseError(ast_pattern, "constructor of wrong type");
-                        pushAttachment("expected type", subject_type);
-                        pushAttachment("got type", ctor->type);
-                      }
-                    }
-                    else
-                      parseError(ast_pattern, "expected a member constructor");
-                  }
-                } break;
-
-                case AC_AstBranch:
-                {
-                  AstBranch *branch = castAst(ast_pattern, AstBranch);
-                  if (Expression *op0 = buildExpression(arena, outer_bindings, branch->op))
-                  {
-                    Expression *op = normalize(temp_arena, op0);
-                    if ((ctor = castExpression(op, Form)))
-                    {
-                      if (ArrowType *ctor_sig = castExpression(ctor->type, ArrowType))
-                      {
-                        if (identicalB32(ctor_sig->return_type, subject_type))
-                        {
-                          param_count = branch->arg_count;
-                          if (param_count == ctor_sig->param_count)
-                          {
-                            allocateArrayZero(arena, param_count, params);
-                            for (s32 param_id = 0; param_id < param_count; param_id++)
-                            {// MARK: loop over pattern variables
-                              Ast *ast_arg = branch->args[param_id];
-                              if (AstLeaf *arg = castAst(ast_arg, AstLeaf))
-                              {
-                                Token *param_name = &arg->h.token;
-                                auto lookup = lookupNameCurrentFrame(bindings, param_name->text, true);
-                                if (lookup.found)
-                                  tokenError("reused parameter name");
-                                else
-                                {
-                                  assert(ctor_sig->params[param_id]);
-                                  // pattern variable: only the name is different
-                                  Variable *param_src = ctor_sig->params[param_id];
-                                  params[param_id] = copyStruct(arena, param_src);
-                                  Variable *param = params[param_id];
-                                  param->name = *param_name;
-                                  lookup.slot->value = (Expression*)param;
-                                }
-                              }
-                              else
-                                parseError(ast_arg, "expected pattern variable");
-                            }
-                          }
-                          else
-                            parseError(ast_pattern, "pattern has wrong amount of parameters (expected: %d, got: %d)", ctor_sig->param_count, param_count);
-                        }
-                        else
-                        {
-                          parseError(ast_pattern, "composite constructor has wrong return type (todo: support more flexible return type)");
-                          pushAttachment("expected type", subject_type);
-                          pushAttachment("got type", ctor_sig->return_type);
-                        }
-                      }
-                      else
-                      {
-                        parseError(branch->op, "expected a composite constructor");
-                        pushAttachment("got type", (Expression*)ctor_sig);
-                      }
-                    }
-                    else
-                      parseError(ast_pattern, "expected a composite constructor");
-                  }
-                } break;
-
-                invalidDefaultCase;
-              }
-              popContext();
-
-              Expression *body = 0;
-              if (noError())
-              {
-                pushContextName("fork case body building");
-                Ast *ast_body = ast->bodies[input_case_id];
-                body = buildExpression(arena, bindings, ast_body);
-                popContext();
-              }
-
-              if (noError())
-              {
-                // we could error out sooner but whatevs.
-                if (cases[ctor->ctor_id].body)
-                {
-                  parseError(ast->bodies[input_case_id], "fork case handled twice");
-                  pushAttachment("constructor", (Expression*)ctor);
-                }
-                else
-                  initForkCase(cases + ctor->ctor_id, body, params, param_count);
-              }
-            }
-
-            if (noError())
-            {
-              out = newExpression(arena, Fork, &ast->h.token);
-              initFork(out, form, subject, case_count, cases);
-            }
-          }
-        }
-        else
-          parseError((Ast*)ast, "wrong number of cases, expected: %d, got: %d",
-                     form->ctor_count, ast->case_count);
-      }
-      else
-        parseError(ast->subject, "cannot fork this expression");
-    }
-  }
-
-  popContext();
-  return out;
-}
-
 struct ExpressionParsing
 {
   Expression *expression;
@@ -1888,36 +1724,27 @@ parseExpressionFull(MemoryArena *arena)
   return parseExpressionAndTypecheck(arena, 0, 0);
 }
 
-BUILD_EXPRESSION
+internal Expression *
+a2e(MemoryArena *arena, Ast *ast0)
 {
   Expression *out0 = 0;
-
   switch (ast0->cat)
   {
     case AC_AstLeaf:
     {
-      AstLeaf *ast = castAst(ast0, AstLeaf);
-      if (equal(&ast->h.token, '_'))
+      AstLeaf *in = castAst(ast0, AstLeaf);
+      if (equal(&in->h.token, '_'))
         out0 = hole_expression;
       else
       {
-        auto lookup = lookupLocalName(arena, bindings, &ast0->token);
-        if (lookup.found)
-          out0 = lookup.expr;
-        else
-        {
-          if (Expression *identifier = identifierFromGlobalName(arena, &ast0->token))
-            out0 = identifier;
-          else
-            parseError(ast0, "unbound identifier in expression");
-        }
+        out0 = (Expression *)newExpression(arena, Identifier, &ast0->token);
       }
     } break;
 
     case AC_AstBranch:
     {
       AstBranch *ast = castAst(ast0, AstBranch);
-      if (Expression *op = buildExpression(arena, bindings, ast->op))
+      if (Expression *op = a2e(arena, ast->op))
       {
         s32 arg_count = ast->arg_count;
         Expression **args = pushArray(arena, arg_count, Expression*);
@@ -1925,7 +1752,7 @@ BUILD_EXPRESSION
              (arg_id < arg_count) && noError();
              arg_id++)
         {
-          args[arg_id] = buildExpression(arena, bindings, ast->args[arg_id]);
+          args[arg_id] = a2e(arena, ast->args[arg_id]);
         }
         if (noError())
         {
@@ -1936,6 +1763,25 @@ BUILD_EXPRESSION
       }
     } break;
 
+    case AC_AstArrowType:
+    {
+      AstArrowType *ast = castAst(ast0, AstArrowType);
+      ArrowType *out = newExpression(arena, ArrowType, &ast0->token);
+
+      Variable **params = pushArray(arena, ast->param_count, Variable*);
+      for (s32 param_id = 0;
+           param_id < ast->param_count && noError();
+           param_id++)
+      {
+        Parameter *ast_param = ast->params + param_id;
+        Variable *param = params[param_id] = newExpression(arena, Variable, &ast_param->name);
+        initVariable(param, &ast_param->name, param_id, a2e(arena, ast_param->type));
+      }
+
+      initArrowType(out, ast->param_count, params, a2e(arena, ast->return_type));
+      out0 = (Expression *)out;
+    } break;
+
     case AC_AstSequence:
     {
       AstSequence *ast = castAst(ast0, AstSequence);
@@ -1943,54 +1789,14 @@ BUILD_EXPRESSION
       Expression **items = pushArray(arena, count, Expression*);
       for (s32 id = 0; (id < count) && noError(); id++)
       {
-        items[id] = buildExpression(arena, bindings, ast->items[id]);
+        items[id] = a2e(arena, ast->items[id]);
       }
       if (noError())
       {
-        Sequence *out = newExpression(arena, Sequence, &ast->h.token);
+        Sequence *out = newExpression(arena, Sequence, &ast0->token);
         initSequence(out, count, items);
         out0 = (Expression*)out;
       }
-    } break;
-
-    case AC_AstArrowType:
-    {
-      AstArrowType *ast = castAst(ast0, AstArrowType);
-      ArrowType *out = newExpression(arena, ArrowType, &ast0->token);
-
-      // introduce own bindings
-      Bindings *outer_bindings = bindings;
-      Bindings *bindings       = extendBindings(arena, outer_bindings);
-
-      // build parameters
-      Variable **params = pushArray(arena, ast->param_count, Variable*);
-      for (s32 param_id = 0;
-           param_id < ast->param_count && noError();
-           param_id++)
-      {
-        Parameter *ast_param = ast->params + param_id;
-        if (Expression *param_type = buildExpression(arena, bindings, ast_param->type))
-        {
-          Variable *param = params[param_id] = newExpression(arena, Variable, &ast_param->name);
-          initVariable(param, &ast_param->name, param_id, param_type);
-          addBinding(bindings, param->name.text, (Expression*)param);
-        }
-      }
-
-      if (noError())
-      {
-        // parse return type
-        if (Expression *return_type = buildExpression(arena, bindings, ast->return_type))
-        {
-          initArrowType(out, ast->param_count, params, return_type);
-          out0 = (Expression *)out;
-        }
-      }
-    } break;
-
-    case AC_AstFork:
-    {
-      out0 = (Expression *)buildFork(arena, bindings, castAst(ast0, AstFork));
     } break;
 
     case AC_AstRewriteCommand:
@@ -1998,24 +1804,312 @@ BUILD_EXPRESSION
       AstRewriteCommand *ast = castAst(ast0, AstRewriteCommand);
       if (ast->lhs)
       {
-        if (Expression *lhs = buildExpression(arena, bindings, ast->lhs))
-          if (Expression *rhs = buildExpression(arena, bindings, ast->rhs))
+        if (Expression *lhs = a2e(arena, ast->lhs))
+          if (Expression *rhs = a2e(arena, ast->rhs))
           {
             RewriteCommand *out = newExpression(arena, RewriteCommand, &ast0->token);
-            out->lhs = lhs;
-            out->rhs = rhs;
+            out->lhs   = lhs;
+            out->rhs   = rhs;
             out->proof = 0;
             out0 = (Expression*)out;
           }
       }
-      else if (Expression *proof = buildExpression(arena, bindings, ast->proof))
+      else if (Expression *proof = a2e(arena, ast->proof))
       {
         RewriteCommand *out = newExpression(arena, RewriteCommand, &ast0->token);
-        out->lhs = 0;
-        out->rhs = 0;
+        out->lhs   = 0;
+        out->rhs   = 0;
         out->proof = proof;
         out0 = (Expression*)out;
       }
+    } break;
+
+    case AC_AstFork:
+    {
+      AbstractFork *out = newExpression(arena, AbstractFork, &ast0->token);
+      AstFork      *ast = castAst(ast0, AstFork);
+
+      out->subject = a2e(arena, ast->subject);
+      s32 case_count = ast->case_count;
+      out->case_count = case_count;
+      allocateArray(arena, case_count, out->patterns);
+      allocateArray(arena, case_count, out->bodies);
+      for (s32 input_case_id = 0;
+           (input_case_id < case_count) && parsing();
+           input_case_id++)
+      {
+        out->patterns[input_case_id] = a2e(arena, ast->patterns[input_case_id]);
+        out->bodies[input_case_id]   = a2e(arena, ast->bodies[input_case_id]);
+      }
+      out0 = (Expression*)out;
+    } break;
+
+    invalidDefaultCase;
+  }
+  return out0;
+}
+
+// note: Manipulation may be done in-place, but we might also allocate new
+// memory, so beware!
+internal Expression *
+buildExpression(MemoryArena *arena, Bindings *bindings, Expression *in0)
+{
+  unpackGlobals;
+  Expression *out0 = in0;
+
+  switch (in0->cat)
+  {
+    case EC_Hole:
+    {
+      out0 = hole_expression;
+    } break;
+
+    case EC_Identifier:
+    {
+      auto lookup = lookupLocalName(arena, bindings, &in0->token);
+      if (lookup.found)
+        out0 = lookup.expr;
+      else
+      {
+        if (Expression *constant = constantFromGlobalName(arena, &in0->token))
+          out0 = constant;
+        else
+          parseError(in0, "unbound identifier in expression");
+      }
+    } break;
+
+    case EC_Application:
+    {
+      Application *in = castExpression(in0, Application);
+      if ((in->op = buildExpression(arena, bindings, in->op)))
+      {
+        s32 arg_count = in->arg_count;
+        for (s32 arg_id = 0;
+             (arg_id < arg_count) && noError();
+             arg_id++)
+        {
+          in->args[arg_id] = buildExpression(arena, bindings, in->args[arg_id]);
+        }
+        if (noError())
+          out0 = in0;
+      }
+    } break;
+
+    case EC_ArrowType:
+    {
+      ArrowType *in = castExpression(in0, ArrowType);
+
+      // introduce own bindings
+      Bindings *outer_bindings = bindings;
+      Bindings *bindings       = extendBindings(arena, outer_bindings);
+
+      // build parameters
+      for (s32 param_id = 0;
+           param_id < in->param_count && noError();
+           param_id++)
+      {
+        Variable *param = in->params[param_id];
+        if ((param->type = buildExpression(arena, bindings, param->type)))
+          addBinding(bindings, param->name.text, (Expression*)param);
+      }
+
+      if (noError())
+      {
+        if ((in->return_type = buildExpression(arena, bindings, in->return_type)))
+          out0 = in0;
+      }
+    } break;
+
+    case EC_Sequence:
+    {
+      Sequence *in = castExpression(in0, Sequence);
+      for (s32 id = 0; id < in->count && noError(); id++)
+      {
+        in->items[id] = buildExpression(arena, bindings, in->items[id]);
+      }
+      if (noError())
+        out0 = in0;
+    } break;
+
+    case EC_RewriteCommand:
+    {
+      RewriteCommand *in = castExpression(in0, RewriteCommand);
+      if (in->lhs)
+      {
+        if (Expression *lhs = buildExpression(arena, bindings, in->lhs))
+          if (Expression *rhs = buildExpression(arena, bindings, in->rhs))
+          {
+            in->lhs = lhs;
+            in->rhs = rhs;
+            out0 = in0;
+          }
+      }
+      else if (Expression *proof = buildExpression(arena, bindings, in->proof))
+      {
+        in->proof = proof;
+        out0 = in0;
+      }
+    } break;
+
+    case EC_AbstractFork:
+    {
+      AbstractFork *in = castExpression(in0, AbstractFork);
+      Fork *out = 0;
+
+      Bindings *outer_bindings = bindings;
+      if (Expression *subject = buildExpression(arena, outer_bindings, in->subject))
+      {
+        if (Expression *subject_type = typecheck(newEnvironment(arena), subject, 0))
+        {
+          if (Form *form = castExpression(subject_type, Form))
+          {
+            s32 case_count = in->case_count;
+            if (form->ctor_count == case_count)
+            {
+              if (case_count == 0)
+                parseError((Ast*)in, "todo: cannot assign type to empty fork");
+              else
+              {
+                ForkCase *cases = pushArrayZero(arena, case_count, ForkCase);
+        
+                for (s32 input_case_id = 0;
+                     (input_case_id < case_count) && parsing();
+                     input_case_id++)
+                {
+                  Bindings *bindings = extendBindings(global_temp_arena, outer_bindings);
+
+                  Expression *ast_pattern = in->patterns[input_case_id];
+                  Form *ctor = 0;
+                  Variable **params;
+                  s32 param_count;
+                  pushContextName("transform switch case pattern");
+                  switch (ast_pattern->cat)
+                  {
+                    case EC_Identifier:
+                    {
+                      params = 0;
+                      param_count = 0;
+                      if (Expression *pattern = buildExpression(temp_arena, outer_bindings, ast_pattern))
+                      {
+                        Expression *norm_pattern = normalize(temp_arena, pattern);
+                        if ((ctor = castExpression(norm_pattern, Form)))
+                        {
+                          if (!identicalB32(ctor->type, subject_type))
+                          {
+                            parseError(ast_pattern, "constructor of wrong type");
+                            pushAttachment("expected type", subject_type);
+                            pushAttachment("got type", ctor->type);
+                          }
+                        }
+                        else
+                          parseError(ast_pattern, "expected a member constructor");
+                      }
+                    } break;
+
+                    case EC_Application:
+                    {
+                      Application *branch = castExpression(ast_pattern, Application);
+                      if (Expression *op0 = buildExpression(arena, outer_bindings, branch->op))
+                      {
+                        Expression *op = normalize(temp_arena, op0);
+                        if ((ctor = castExpression(op, Form)))
+                        {
+                          if (ArrowType *ctor_sig = castExpression(ctor->type, ArrowType))
+                          {
+                            if (identicalB32(ctor_sig->return_type, subject_type))
+                            {
+                              param_count = branch->arg_count;
+                              if (param_count == ctor_sig->param_count)
+                              {
+                                allocateArrayZero(arena, param_count, params);
+                                for (s32 param_id = 0; param_id < param_count; param_id++)
+                                {// MARK: loop over pattern variables
+                                  Expression *ast_arg = branch->args[param_id];
+                                  if (Identifier *arg = castExpression(ast_arg, Identifier))
+                                  {
+                                    Token *param_name = &arg->h.token;
+                                    auto lookup = lookupNameCurrentFrame(bindings, param_name->text, true);
+                                    if (lookup.found)
+                                      tokenError("reused parameter name");
+                                    else
+                                    {
+                                      assert(ctor_sig->params[param_id]);
+                                      // pattern variable: only the name is different
+                                      Variable *param_src = ctor_sig->params[param_id];
+                                      params[param_id] = copyStruct(arena, param_src);
+                                      Variable *param = params[param_id];
+                                      param->name = *param_name;
+                                      lookup.slot->value = (Expression*)param;
+                                    }
+                                  }
+                                  else
+                                    parseError(ast_arg, "expected pattern variable");
+                                }
+                              }
+                              else
+                                parseError(ast_pattern, "pattern has wrong amount of parameters (expected: %d, got: %d)", ctor_sig->param_count, param_count);
+                            }
+                            else
+                            {
+                              parseError(ast_pattern, "composite constructor has wrong return type (todo: support more flexible return type)");
+                              pushAttachment("expected type", subject_type);
+                              pushAttachment("got type", ctor_sig->return_type);
+                            }
+                          }
+                          else
+                          {
+                            parseError(branch->op, "expected a composite constructor");
+                            pushAttachment("got type", (Expression*)ctor_sig);
+                          }
+                        }
+                        else
+                          parseError(ast_pattern, "expected a composite constructor");
+                      }
+                    } break;
+
+                    invalidDefaultCase;
+                  }
+                  popContext();
+
+                  Expression *body = 0;
+                  if (noError())
+                  {
+                    pushContextName("fork case body building");
+                    Expression *ast_body = in->bodies[input_case_id];
+                    body = buildExpression(arena, bindings, ast_body);
+                    popContext();
+                  }
+
+                  if (noError())
+                  {
+                    // we could error out sooner but whatevs.
+                    if (cases[ctor->ctor_id].body)
+                    {
+                      parseError(in->bodies[input_case_id], "fork case handled twice");
+                      pushAttachment("constructor", (Expression*)ctor);
+                    }
+                    else
+                      initForkCase(cases + ctor->ctor_id, body, params, param_count);
+                  }
+                }
+
+                if (noError())
+                {
+                  out = newExpression(arena, Fork, &in->h.token);
+                  initFork(out, form, subject, case_count, cases);
+                }
+              }
+            }
+            else
+              parseError((Ast*)in, "wrong number of cases, expected: %d, got: %d",
+                         form->ctor_count, in->case_count);
+          }
+          else
+            parseError(in->subject, "cannot fork this expression");
+        }
+      }
+
+      out0 = (Expression *)out;
     } break;
 
     invalidDefaultCase;
@@ -2023,6 +2117,11 @@ BUILD_EXPRESSION
 
   NULL_WHEN_ERROR(out0);
   return out0;
+}
+
+BUILD_EXPRESSION
+{
+  return buildExpression(arena, bindings, a2e(arena, ast0));
 }
 
 inline Expression *
@@ -2620,7 +2719,7 @@ parseTypedef(MemoryArena *arena)
           if (noError())
           {
             assert(parsed_ctor_count == expected_ctor_count);
-            assert(identifierFromGlobalName(temp_arena, &form_name));
+            assert(constantFromGlobalName(temp_arena, &form_name));
           }
         }
       }
