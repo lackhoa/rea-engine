@@ -50,3 +50,10 @@ andCommutative :: (a, b, c: Bool) -> (a & (b & c) = (a & b) & c)
  }
 print andCommutative;
 check andCommutative(true, false, true) : (true & (false & true) = (true & false) & true);
+
+dependentTypeTest :: (T: Type, A: T, a: A) -> (a = a)
+{
+ truth
+ }
+print dependentTypeTest;
+print dependentTypeTest(Set, Bool, true);

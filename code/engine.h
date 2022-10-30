@@ -312,14 +312,6 @@ extendStack(Environment *env, s32 arg_count, Expression **args)
   stack->arg_count = arg_count;
   stack->args      = args;
 
-  for (s32 arg_id = 0; arg_id < arg_count; arg_id++)
-  {
-    if (Variable *var = castExpression(stack->args[arg_id], Variable))
-    {
-      assert(var->stack_depth != 0);
-    }
-  }
-
   env->stack = stack;
   env->stack_depth++;
 }

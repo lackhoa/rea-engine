@@ -1512,7 +1512,7 @@ typeOfValue(Expression *in0)
 }
 
 // NOTE: the output as well as "expected_type" are instantiated, but expression
-// types are always abstract.
+// types are abstract.
 internal Expression *
 typecheck(Environment env, Expression *in0, Expression *expected_type)
 {
@@ -1625,62 +1625,41 @@ typecheck(Environment env, Expression *in0, Expression *expected_type)
     case EC_Application:
     {
       Application *in = castExpression(in0, Application);
-
       if (in->type)
         out0 = in->type;
       else
       {
         s32 arg_count = in->arg_count;
-
         if (Expression *op_type = typecheck(env, in->op, 0))
         {
           if (ArrowType *signature = castExpression(op_type, ArrowType))
           {
             if (signature->param_count == arg_count)
             {
+              // todo #memory might leak
+              Environment signature_env = env;
+              Expression **stack_frame = pushArrayZero(temp_arena, arg_count, Expression*);
+              extendStack(&signature_env, arg_count, stack_frame);
               for (int arg_id = 0;
-                   (arg_id < signature->param_count) && noError();
+                   (arg_id < arg_count) && noError();
                    arg_id++)
               {// Type inference for the arguments. todo: the hole stuff is
                // kinda hard-coded only for the equality.
                 Expression *arg   = in->args[arg_id];
                 Variable   *param = signature->params[arg_id];
-                
-                if (param->type->cat == EC_Variable)
+
+                if (arg->cat != EC_Hole)
                 {
-                  Variable *param_type = castExpression(param->type, Variable);
-                  Expression *lookup = in->args[param_type->id];
-                  if (param_type->stack_delta != 0)
+                  Expression *norm_param_type = normalize(signature_env, param->type);
+                  Expression *arg_type = typecheck(env, arg, norm_param_type);
+                  stack_frame[arg_id] = normalize(env, arg);
+                  if (norm_param_type == 0)
                   {
-                    todoIncomplete;  // don't know what happens here.
+                    Variable *param_type_var = castExpression(param->type, Variable);
+                    assert(param_type_var->stack_delta == 0);
+                    stack_frame[param_type_var->id] = arg_type;
                   }
-                  else if (lookup->cat == EC_Hole)
-                  {
-                    if (Expression *arg_type = typecheck(env, arg, 0))
-                    {
-                      if (Expression *arg_type_type = typecheck(env, arg_type, 0))
-                      {
-                        // TODO: this is incorrect because env is in the wrong abstraction.
-                        Expression *norm_param_type = normalize(env, param_type->type);
-                        if (identicalB32(norm_param_type, arg_type_type))
-                        {
-                          // NOTE: here we mutate the input expression.
-                          in->args[param_type->id] = arg_type;
-                        }
-                        else
-                        {
-                          parseError(arg, "the type of argument %d has wrong type", arg_id);
-                          pushAttachment("got", arg_type_type);
-                          pushAttachment("expected", param_type->type);
-                        }
-                      }
-                    }
-                  }
-                  else
-                    typecheck(env, arg, lookup);
                 }
-                else if (arg->cat != EC_Hole)
-                  typecheck(env, arg, param->type);
               }
               
               if (noError())
@@ -1692,6 +1671,8 @@ typecheck(Environment env, Expression *in0, Expression *expected_type)
                 }
                 extendStack(&env, arg_count, norm_args);
                 out0 = normalize(env, signature->return_type);
+                // TODO #speed we could choose to hold off this typing, since
+                // most applications aren't referred to anyway.
                 in->type = abstractExpression(env, out0);
               }
             }
