@@ -18,6 +18,8 @@ global_variable Form *builtin_Type;
 global_variable Expression *hole_expression;
 global_variable Expression *dummy_sequence;
 global_variable Ast        *dummy_sequence_ast;
+global_variable Expression *dummy_rewrite;
+global_variable Ast        *dummy_rewrite_ast;
 
 global_variable u64 global_next_form_id;
 inline u64

@@ -25,13 +25,10 @@ enum ExpressionCategory
 
   EC_ArrowType,                 // type of procedure and built-in objects
 
-  // todo: all these could be collapsed down into "EC_Composite"
-  // typechecker commands
-  EC_RewriteCommand,
-
   // dummy values for denoting only
-  EC_Hole,                      // hole left in for type-checking
-  EC_DummySequence,          // like scheme's "begin" keyword
+  EC_DummyHole,                 // hole left in for type-checking
+  EC_DummySequence,             // like scheme's "begin" keyword
+  EC_DummyRewrite,
 };
 
 struct Expression
@@ -155,33 +152,6 @@ initArrowType(ArrowType *in, s32 param_count, Variable **params, Expression *ret
   in->params      = params;
   in->return_type = return_type;
 }
-
-#if 0
-struct Sequence
-{
-  Expression   h;
-  s32          count;
-  Expression **items;
-};
-
-inline void
-initSequence(Sequence *in, s32 count, Expression **items)
-{
-  assert(count);
-  in->count = count;
-  in->items = items;
-}
-#endif
-
-struct RewriteCommand
-{
-  Expression h;
-
-  Expression *lhs;
-  Expression *rhs;
-
-  Expression *proof;
-};
 
 struct Form
 {
@@ -355,11 +325,8 @@ enum AstCategory
   AC_AstBranch,
   AC_AstFork,
   AC_AstArrowType,
-#if 0
-  AC_AstSequence,
-#endif
   AC_DummySequence,
-  AC_AstRewriteCommand,
+  AC_DummyRewrite,
 };
 
 struct Ast
@@ -430,51 +397,6 @@ newAstFork(MemoryArena *arena, Token *token,
   out->bodies     = bodies;
 
   return out;
-}
-
-#if 0
-struct AstSequence
-{
-  Ast   h;
-  s32   count;
-  Ast **items;
-};
-
-inline AstSequence *
-newAstSequence(MemoryArena *arena, Token *token, s32 count, Ast **items)
-{
-  AstSequence *out = newAst(arena, AstSequence, token);
-  out->count = count;
-  out->items = items;
-  return out;
-}
-#endif
-
-struct AstRewriteCommand
-{
-  Ast  h;
-
-  // note: lean on computation
-  Ast *lhs;
-  Ast *rhs;
-  // note: based on a proof object (mutually exclusive with lhs => rhs)
-  Ast *proof;
-};
-
-inline void
-initAstRewriteCommand(AstRewriteCommand *in, Ast *lhs, Ast *rhs)
-{
-  in->lhs = lhs;
-  in->rhs = rhs;
-  in->proof = 0;
-}
-
-inline void
-initAstRewriteCommand(AstRewriteCommand *in, Ast *expression)
-{
-  in->lhs = 0;
-  in->rhs = 0;
-  in->proof = expression;
 }
 
 struct Parameter

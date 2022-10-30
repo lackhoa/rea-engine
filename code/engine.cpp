@@ -386,21 +386,47 @@ printExpression(MemoryArena *buffer, Expression *in0, PrintOptions opt)
       {
         Composite *in = castExpression(in0, Composite);
 
-        printExpression(buffer, in->op, new_opt);
-
-        printToBuffer(buffer, "(");
-        for (s32 arg_id = 0; arg_id < in->arg_count; arg_id++)
+        if (in->op == dummy_sequence)
         {
-          printExpression(buffer, in->args[arg_id], new_opt);
-          if (arg_id < in->arg_count-1)
-            printToBuffer(buffer, ", ");
+          for (s32 arg_id = 0; arg_id < in->arg_count; arg_id++)
+          {
+            printExpression(buffer, in->args[arg_id], new_opt);
+            if (arg_id < in->arg_count-1)
+              printToBuffer(buffer, "; ");
+          }
         }
-        printToBuffer(buffer, ")");
-
-        if (opt.detailed || opt.print_type)
+        else if (in->op == dummy_rewrite)
         {
-          printToBuffer(buffer, ": ");
-          printExpression(buffer, in->type, new_opt);
+          printToBuffer(buffer, "rewrite ");
+          if (in->arg_count == 1)
+          {
+            printExpression(buffer, in->args[0], new_opt);
+          }
+          else if (in->arg_count == 2)
+          {
+            printExpression(buffer, in->args[0], new_opt);
+            printToBuffer(buffer, " => ");
+            printExpression(buffer, in->args[1], new_opt);
+          }
+        }
+        else
+        {
+          printExpression(buffer, in->op, new_opt);
+
+          printToBuffer(buffer, "(");
+          for (s32 arg_id = 0; arg_id < in->arg_count; arg_id++)
+          {
+            printExpression(buffer, in->args[arg_id], new_opt);
+            if (arg_id < in->arg_count-1)
+              printToBuffer(buffer, ", ");
+          }
+          printToBuffer(buffer, ")");
+
+          if (opt.detailed || opt.print_type)
+          {
+            printToBuffer(buffer, ": ");
+            printExpression(buffer, in->type, new_opt);
+          }
         }
       } break;
 
@@ -508,25 +534,9 @@ printExpression(MemoryArena *buffer, Expression *in0, PrintOptions opt)
         printExpression(buffer, arrow->return_type, new_opt);
       } break;
 
-      case EC_Hole:
+      case EC_DummyHole:
       {
         printToBuffer(buffer, "_");
-      } break;
-
-      case EC_RewriteCommand:
-      {
-        RewriteCommand *in = castExpression(in0, RewriteCommand);
-        printToBuffer(buffer, "rewrite ");
-        if (in->proof)
-        {
-          printExpression(buffer, in->proof, new_opt);
-        }
-        else
-        {
-          printExpression(buffer, in->lhs, new_opt);
-          printToBuffer(buffer, " => ");
-          printExpression(buffer, in->rhs, new_opt);
-        }
       } break;
 
       default:
@@ -1518,45 +1528,50 @@ typecheck(Environment env, Expression *in0, Expression *expected_type)
         for (s32 id = 0; id < in->arg_count; id++)
         {
           Expression *item0 = in->args[id];
-          if (item0->cat == EC_RewriteCommand)
+          if (Composite *item = castExpression(item0, Composite))
           {
-            RewriteCommand *item = castExpression(item0, RewriteCommand);
-            if (item->lhs)
+            if (item->op == dummy_rewrite)
             {
-              Expression *norm_lhs = item->lhs;
-              Expression *norm_rhs = normalize(env, item->rhs);
-              while (noError())
+              if (item->arg_count == 1)
               {
-                Expression *before = norm_lhs;
-                norm_lhs = normalize(env, norm_lhs, true);
-                if (identicalB32(norm_lhs, norm_rhs))
+                if (Expression *rewrite_rule0 = typecheck(env, item->args[0], 0))
                 {
-                  addRewrite(&env, normalize(env, item->lhs), norm_rhs);
-                  break;
-                }
-                else if (identicalB32(norm_lhs, before))
-                {
-                  parseError(item0, "failed to prove legitimacy of rewrite rule");
+                  b32 rule_valid = false;
+                  Expression *norm_rule0 = normalize(env, rewrite_rule0);
+                  if (Composite *norm_rule = castExpression(norm_rule0, Composite))
+                  {
+                    if (norm_rule->op == (Expression*)builtin_identical)
+                    {
+                      rule_valid = true;
+                      addRewrite(&env, norm_rule->args[1], norm_rule->args[2]);
+                    }
+                  }
+                  if (!rule_valid)
+                    parseError(item0, "invalid rewrite rule, can only be equality");
                 }
               }
-            }
-            else
-            {
-              if (Expression *rewrite_rule0 = typecheck(env, item->proof, 0))
+              else if (item->arg_count == 2)
               {
-                b32 rule_valid = false;
-                Expression *norm_rule0 = normalize(env, rewrite_rule0);
-                if (Composite *norm_rule = castExpression(norm_rule0, Composite))
+                Expression *lhs = item->args[0];
+                Expression *norm_lhs = lhs;
+                Expression *norm_rhs = normalize(env, item->args[1]);
+                while (noError())
                 {
-                  if (norm_rule->op == (Expression*)builtin_identical)
+                  Expression *before = norm_lhs;
+                  norm_lhs = normalize(env, norm_lhs, true);
+                  if (identicalB32(norm_lhs, norm_rhs))
                   {
-                    rule_valid = true;
-                    addRewrite(&env, norm_rule->args[1], norm_rule->args[2]);
+                    addRewrite(&env, normalize(env, lhs), norm_rhs);
+                    break;
+                  }
+                  else if (identicalB32(norm_lhs, before))
+                  {
+                    parseError(item0, "failed to prove legitimacy of rewrite rule");
                   }
                 }
-                if (!rule_valid)
-                  parseError(item0, "invalid rewrite rule, can only be equality");
               }
+              else
+                invalidCodePath;
             }
           }
         }
@@ -1565,6 +1580,11 @@ typecheck(Environment env, Expression *in0, Expression *expected_type)
           // typechecking is done on the last item
           out0 = typecheck(env, in->args[in->arg_count-1], expected_type);
         }
+      }
+      else if (in->op == dummy_rewrite)
+      {
+        // NOTE: questionable hack, but what's the harm.
+        out0 = &builtin_True->h;
       }
       else
       {
@@ -1587,7 +1607,7 @@ typecheck(Environment env, Expression *in0, Expression *expected_type)
                 Expression *arg   = in->args[arg_id];
                 Variable   *param = signature->params[arg_id];
 
-                if (arg->cat != EC_Hole)
+                if (arg->cat != EC_DummyHole)
                 {
                   Expression *norm_param_type = normalize(signature_env, param->type);
                   Expression *arg_type = typecheck(env, arg, norm_param_type);
@@ -1633,12 +1653,6 @@ typecheck(Environment env, Expression *in0, Expression *expected_type)
       introduceVariables(&env, in);
       if (typecheck(env, in->return_type, 0))
         out0 = (Expression*)builtin_Type;  // todo: #theory it's not a form but somehow is a type?
-    } break;
-
-    // NOTE: questionable hack, but what's the harm.
-    case EC_RewriteCommand:
-    {
-      out0 = &builtin_True->h;
     } break;
 
     invalidDefaultCase;
@@ -1733,6 +1747,11 @@ a2e(MemoryArena *arena, Ast *ast0)
       out0 = dummy_sequence;
     } break;
 
+    case AC_DummyRewrite:
+    {
+      out0 = dummy_rewrite;
+    } break;
+
     case AC_AstLeaf:
     {
       AstLeaf *in = castAst(ast0, AstLeaf);
@@ -1785,31 +1804,6 @@ a2e(MemoryArena *arena, Ast *ast0)
       out0 = (Expression *)out;
     } break;
 
-    case AC_AstRewriteCommand:
-    {
-      AstRewriteCommand *ast = castAst(ast0, AstRewriteCommand);
-      if (ast->lhs)
-      {
-        if (Expression *lhs = a2e(arena, ast->lhs))
-          if (Expression *rhs = a2e(arena, ast->rhs))
-          {
-            RewriteCommand *out = newExpression(arena, RewriteCommand, &ast0->token);
-            out->lhs   = lhs;
-            out->rhs   = rhs;
-            out->proof = 0;
-            out0 = (Expression*)out;
-          }
-      }
-      else if (Expression *proof = a2e(arena, ast->proof))
-      {
-        RewriteCommand *out = newExpression(arena, RewriteCommand, &ast0->token);
-        out->lhs   = 0;
-        out->rhs   = 0;
-        out->proof = proof;
-        out0 = (Expression*)out;
-      }
-    } break;
-
     case AC_AstFork:
     {
       AbstractFork *out = newExpression(arena, AbstractFork, &ast0->token);
@@ -1840,13 +1834,15 @@ a2e(MemoryArena *arena, Ast *ast0)
 internal Expression *
 buildExpression(MemoryArena *arena, Bindings *bindings, Expression *in0)
 {
-  Expression *out0 = in0;
+  Expression *out0 = 0;
 
   switch (in0->cat)
   {
-    case EC_Hole:
+    case EC_DummyRewrite:
+    case EC_DummySequence:
+    case EC_DummyHole:
     {
-      out0 = hole_expression;
+      out0 = in0;
     } break;
 
     case EC_Identifier:
@@ -1902,26 +1898,6 @@ buildExpression(MemoryArena *arena, Bindings *bindings, Expression *in0)
       {
         if ((in->return_type = buildExpression(arena, bindings, in->return_type)))
           out0 = in0;
-      }
-    } break;
-
-    case EC_RewriteCommand:
-    {
-      RewriteCommand *in = castExpression(in0, RewriteCommand);
-      if (in->lhs)
-      {
-        if (Expression *lhs = buildExpression(arena, bindings, in->lhs))
-          if (Expression *rhs = buildExpression(arena, bindings, in->rhs))
-          {
-            in->lhs = lhs;
-            in->rhs = rhs;
-            out0 = in0;
-          }
-      }
-      else if (Expression *proof = buildExpression(arena, bindings, in->proof))
-      {
-        in->proof = proof;
-        out0 = in0;
       }
     } break;
 
@@ -2084,11 +2060,6 @@ buildExpression(MemoryArena *arena, Bindings *bindings, Expression *in0)
       }
 
       out0 = (Expression *)out;
-    } break;
-
-    case EC_DummySequence:
-    {
-      out0 = in0;
     } break;
 
     invalidDefaultCase;
@@ -2360,27 +2331,33 @@ newAstBranch(MemoryArena *arena, Ast *op, s32 arg_count, Ast **args)
   return out;
 }
 
-internal AstRewriteCommand *
+internal AstBranch *
 parseRewrite(MemoryArena *arena)
 {
-  AstRewriteCommand *out = 0;
+  AstBranch *out = 0;
   Token token = global_tokenizer->last_token;
-  if (Ast *lhs = parseExpressionToAst(arena))
+  if (Ast *lhs_or_proof = parseExpressionToAst(arena))
   {
+    out = newAst(arena, AstBranch, &token);
+    out->op = dummy_rewrite_ast;
     if (optionalCategory(TC_StrongArrow))
     {
       if (Ast *rhs = parseExpressionToAst(arena))
       {
-        out = newAst(arena, AstRewriteCommand, &token);
-        initAstRewriteCommand(out, lhs, rhs);
+        out->arg_count = 2;
+        allocateArray(arena, out->arg_count, out->args);
+        out->args[0] = lhs_or_proof;
+        out->args[1] = rhs;
       }
     }
     else
     {
-      out = newAst(arena, AstRewriteCommand, &token);
-      initAstRewriteCommand(out, lhs);
+      out->arg_count = 1;
+      allocateArray(arena, out->arg_count, out->args);
+      out->args[0] = lhs_or_proof;
     }
   }
+  NULL_WHEN_ERROR(out);
   return out;
 }
 
@@ -3037,8 +3014,14 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
     allocate(arena, dummy_sequence_ast, true);
     dummy_sequence_ast->cat = AC_DummySequence;
 
+    allocate(arena, dummy_rewrite, true);
+    dummy_rewrite->cat = EC_DummyRewrite;
+    allocate(arena, dummy_rewrite_ast, true);
+    dummy_rewrite_ast->cat = AC_DummyRewrite;
+
     allocate(arena, hole_expression);
-    hole_expression->cat = EC_Hole;
+    hole_expression->cat = EC_DummyHole;
+
 
     {// Equality
       b32 success = interpretFile(state, platformGetFileFullPath(arena, "../data/builtins.rea"), true);
