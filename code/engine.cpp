@@ -301,49 +301,6 @@ identicalTrinary(Expression *lhs0, Expression *rhs0)
   return out;
 }
 
-inline void
-printAst(Ast *ast0)
-{
-  MemoryArena *buffer = 0;
-  switch (ast0->cat)
-  {
-    case AC_AstLeaf:
-    {
-      AstLeaf *in = castAst(ast0, AstLeaf);
-      printToBuffer(buffer, in->h.token);
-    } break;
-
-    case AC_AstBranch:
-    {
-      AstBranch *in = castAst(ast0, AstBranch);
-      printAst(in->op);
-      printToBuffer(buffer, "(");
-      for (s32 arg_id = 0; arg_id < in->arg_count; arg_id++)
-      {
-        printAst(in->args[arg_id]);
-        printToBuffer(buffer, ",");
-      }
-      printToBuffer(buffer, ")");
-    } break;
-
-    case AC_AstFork:
-    {
-      AstFork *in = castAst(ast0, AstFork);
-      (void)in;
-      printToBuffer(buffer, "fork");
-    } break;
-
-    case AC_AstArrowType:
-    {
-      AstArrowType *in = castAst(ast0, AstArrowType);
-      (void)in;
-      printToBuffer(buffer, "arrow");
-    } break;
-
-    invalidDefaultCase;
-  }
-}
-
 struct PrintOptions{b32 detailed; b32 print_type;};
 
 internal char*
@@ -441,12 +398,12 @@ printExpression(MemoryArena *buffer, Expression *in0, PrintOptions opt)
           {// print pattern
             case EC_Form:
             {
-              printExpression(buffer, (Expression*)ctor, new_opt);
+              printExpression(buffer, &ctor->h, new_opt);
             } break;
 
             case EC_ArrowType:
             {
-              printExpression(buffer, (Expression*)ctor, new_opt);
+              printExpression(buffer, &ctor->h, new_opt);
               printToBuffer(buffer, " ");
               ArrowType *signature = castExpression(ctor->type, ArrowType);
               for (s32 param_id = 0; param_id < signature->param_count; param_id++)
@@ -490,7 +447,7 @@ printExpression(MemoryArena *buffer, Expression *in0, PrintOptions opt)
               Form *ctor = in->ctors + ctor_id;
               printToBuffer(buffer, &ctor->h.token);
               printToBuffer(buffer, ": ");
-              printExpression(buffer, (Expression*)ctor->type, new_opt);
+              printExpression(buffer, ctor->type, new_opt);
             }
             printToBuffer(buffer, " }");
           }
@@ -659,7 +616,7 @@ lookupLocalName(MemoryArena *arena, Bindings *bindings, Token *token)
         Variable *var = newExpression(arena, Variable, token);
         initVariable(var, original_var->id, original_var->type);
         var->stack_delta = stack_delta;
-        expr = (Expression*)var;
+        expr = &var->h;
       }
       else
         expr = value;
@@ -773,13 +730,13 @@ addBuiltinForm(MemoryArena *arena, char *name, Expression *type, const char **ct
     Token ctor_name = newToken(ctor_names[ctor_id]);
     ctor->h.cat   = EC_Form;
     ctor->h.token = ctor_name;
-    initForm(ctor, (Expression*)form, ctor_id);
-    if (!addGlobalBinding(ctor_name, (Expression *)ctor))
+    initForm(ctor, &form->h, ctor_id);
+    if (!addGlobalBinding(ctor_name, &ctor->h))
       invalidCodePath;
   }
 
   initForm(form, type, ctor_count, ctors, getNextFormId());
-  if (!addGlobalBinding(form_name.text, (Expression*)form))
+  if (!addGlobalBinding(form_name.text, &form->h))
     invalidCodePath;
 
   return form;
@@ -856,7 +813,7 @@ transformVariables(Environment env, Expression *in0, variable_transformer *trans
     {
       Composite *in  = castExpression(in0, Composite);
       Composite *out = copyStruct(env.arena, in);
-      out0 = (Expression*)out;
+      out0 = &out->h;
       out->op = transformVariables(env, in->op, transformer, opt);
       allocateArray(env.arena, out->arg_count, out->args);
       for (s32 arg_id = 0; arg_id < out->arg_count; arg_id++)
@@ -869,7 +826,7 @@ transformVariables(Environment env, Expression *in0, variable_transformer *trans
     {
       Fork *in_fork  = castExpression(in0, Fork);
       Fork *out_fork = copyStruct(env.arena, in_fork);
-      out0 = (Expression*)out_fork;
+      out0 = &out_fork->h;
       out_fork->subject = transformVariables(env, in_fork->subject, transformer, opt);
       allocateArray(env.arena, out_fork->case_count, out_fork->cases);
       env.stack_offset++;
@@ -904,7 +861,7 @@ VARIABLE_TRANSFORMER(abstractInstantiated)
     assert(in->stack_delta < env.stack_offset);
     out = in;
   }
-  return (Expression*)out;
+  return &out->h;
 }
 
 internal Expression *
@@ -920,7 +877,7 @@ VARIABLE_TRANSFORMER(replaceCurrentLevelVariable)
   if (env.stack_offset == in->stack_delta)
     return args[in->id];
   else
-    return (Expression*)in;
+    return &in->h;
 }
 
 // think of a function application
@@ -1060,7 +1017,7 @@ normalize(Environment env, Expression *in0, b32 force_expand=false)
           out0 = normalize(new_env, fun->body);
         }
       }
-      else if (norm_op == (Expression*)builtin_identical)
+      else if (norm_op == &builtin_identical->h)
       {// special case for equality
         Expression *lhs = norm_args[1];
         Expression *rhs = norm_args[2];
@@ -1076,7 +1033,7 @@ normalize(Environment env, Expression *in0, b32 force_expand=false)
           Composite *rapp = castExpression(rhs, Composite);
           assert(identicalB32(lapp->op, rapp->op)); // if they aren't equal then it'd already be false.
           Composite *out = copyStruct(env.arena, in);
-          out0 = (Expression*)out;
+          out0 = &out->h;
           if (lapp->arg_count > 1)
           {
             todoIncomplete;  // we need "and" expression
@@ -1138,14 +1095,14 @@ normalize(Environment env, Expression *in0, b32 force_expand=false)
       {
         Fork *out = copyStruct(env.arena, in);
         out->subject = norm_subject;
-        out0 = (Expression*)out;
+        out0 = &out->h;
       }
 
 #if 0
       if (!subject_matched)
       {
         Fork *out = copyStruct(env.arena, in);
-        out0 = (Expression*)out;
+        out0 = out;
         out->subject = norm_subject;
         allocateArray(env.arena, out->case_count, out->cases);
         Environment *outer_env = &env;
@@ -1180,7 +1137,7 @@ normalize(Environment env, Expression *in0, b32 force_expand=false)
     {
       ArrowType *in = castExpression(in0, ArrowType);
       ArrowType *out = copyStruct(env.arena, in);
-      out0 = (Expression*)out;
+      out0 = &out->h;
       env.stack_offset++;
       out->return_type = normalize(env, in->return_type);
       allocateArray(env.arena, out->param_count, out->params);
@@ -1261,15 +1218,6 @@ addRewrite(Environment *env, Expression *lhs0, Expression *rhs0)
 #endif
   }
 }
-
-#define BUILD_EXPRESSION                        \
-  internal Expression *                         \
-  buildExpression(MemoryArena *arena, Bindings *bindings, Ast *ast0)
-
-internal Expression *
-buildExpression(MemoryArena *arena, Bindings *bindings, Expression *in0);
-
-BUILD_EXPRESSION;
 
 struct CallStack
 {
@@ -1361,7 +1309,7 @@ VARIABLE_TRANSFORMER(rebaseVariable)
   }
   else
     out = in;
-  return (Expression*)out;
+  return &out->h;
 }
 
 inline Expression *
@@ -1402,7 +1350,7 @@ typeOfValue(Expression *in0)
     case EC_Function:
     {
       Function *in = castExpression(in0, Function);
-      out = (Expression*)in->signature;
+      out = &in->signature->h;
     } break;
 
     invalidDefaultCase;
@@ -1456,7 +1404,7 @@ typecheck(Environment env, Expression *in0, Expression *expected_type)
         ForkCase *casev    = in->cases + case_id;
 
         Form       *ctor     = form->ctors + case_id;
-        Expression *ctor_exp = (Expression*)ctor;
+        Expression *ctor_exp = &ctor->h;
 
         switch (ctor->type->cat)
         {
@@ -1468,11 +1416,11 @@ typecheck(Environment env, Expression *in0, Expression *expected_type)
 
           case EC_ArrowType:
           {// composite
-            ArrowType    *signature = castExpression(ctor->type, ArrowType);
-            Expression  **params    = (Expression**)introduceVariables(&env, signature->param_count, casev->params);
-            Composite  *pattern   = newExpression(env.temp_arena, Composite, &ctor->h.token);
+            ArrowType   *signature = castExpression(ctor->type, ArrowType);
+            Expression **params    = introduceVariables(&env, signature->param_count, casev->params);
+            Composite   *pattern   = newExpression(env.temp_arena, Composite, &ctor->h.token);
             initComposite(pattern, ctor_exp, signature->param_count, params);
-            addRewrite(&env, norm_subject, (Expression*)pattern);
+            addRewrite(&env, norm_subject, &pattern->h);
           } break;
 
           default:
@@ -1498,7 +1446,7 @@ typecheck(Environment env, Expression *in0, Expression *expected_type)
     {
       Function *in = castExpression(in0, Function);
       if (in->signature)
-        out0 = (Expression*)in->signature;
+        out0 = &in->signature->h;
       else if (expected_type)
       {
         if (ArrowType *expected_signature = castExpression(expected_type, ArrowType))
@@ -1542,7 +1490,7 @@ typecheck(Environment env, Expression *in0, Expression *expected_type)
                   Expression *norm_rule0 = normalize(env, rewrite_rule0);
                   if (Composite *norm_rule = castExpression(norm_rule0, Composite))
                   {
-                    if (norm_rule->op == (Expression*)builtin_identical)
+                    if (norm_rule->op == &builtin_identical->h)
                     {
                       rule_valid = true;
                       addRewrite(&env, norm_rule->args[1], norm_rule->args[2]);
@@ -1654,7 +1602,7 @@ typecheck(Environment env, Expression *in0, Expression *expected_type)
       ArrowType *in = castExpression(in0, ArrowType);
       introduceVariables(&env, in);
       if (typecheck(env, in->return_type, 0))
-        out0 = (Expression*)builtin_Type;  // todo: #theory it's not a form but somehow is a type?
+        out0 = &builtin_Type->h;  // todo: #theory it's not a form but somehow is a type?
     } break;
 
     invalidDefaultCase;
@@ -1703,137 +1651,6 @@ struct ExpressionParsing
   operator bool() { return (bool)expression; }
 };
 
-inline ExpressionParsing
-parseExpressionAndTypecheck(MemoryArena *arena, Bindings *bindings, Expression *expected_type)
-{
-  ExpressionParsing out = {};
-  if (Expression *ast = parseExpressionToExpression(arena))
-  {
-    if (Expression *expression = buildExpression(arena, bindings, ast))
-    {
-      if (Expression *type = typecheck(newEnvironment(arena), expression, expected_type))
-      {
-        out.expression = expression;
-        out.type       = type;
-      }
-    }
-  }
-
-  NULL_WHEN_ERROR(out);
-  return out;
-}
-
-inline Expression *
-parseExpression(MemoryArena *arena)
-{
-  return parseExpressionAndTypecheck(arena, 0, 0).expression;
-}
-
-inline ExpressionParsing
-parseExpressionFull(MemoryArena *arena)
-{
-  return parseExpressionAndTypecheck(arena, 0, 0);
-}
-
-//nocheckin
-internal Expression *
-a2e(MemoryArena *arena, Ast *ast0)
-{
-  Expression *out0 = 0;
-  switch (ast0->cat)
-  {
-    case AC_AstExpressionWrapper:
-    {
-      out0 = castAst(ast0, AstExpressionWrapper)->expression;
-    } break;
-
-    case AC_DummySequence:
-    {
-      out0 = dummy_sequence;
-    } break;
-
-    case AC_DummyRewrite:
-    {
-      out0 = dummy_rewrite;
-    } break;
-
-    case AC_AstLeaf:
-    {
-      AstLeaf *in = castAst(ast0, AstLeaf);
-      if (equal(&in->h.token, '_'))
-        out0 = hole_expression;
-      else
-      {
-        out0 = (Expression *)newExpression(arena, Identifier, &ast0->token);
-      }
-    } break;
-
-    case AC_AstBranch:
-    {
-      AstBranch *ast = castAst(ast0, AstBranch);
-      if (Expression *op = a2e(arena, ast->op))
-      {
-        s32 arg_count = ast->arg_count;
-        Expression **args = pushArray(arena, arg_count, Expression*);
-        for (s32 arg_id = 0;
-             (arg_id < arg_count) && noError();
-             arg_id++)
-        {
-          args[arg_id] = a2e(arena, ast->args[arg_id]);
-        }
-        if (noError())
-        {
-          Composite *out = newExpression(arena, Composite, &ast->h.token);
-          initComposite(out, op, arg_count, args);
-          out0 = (Expression*)out;
-        }
-      }
-    } break;
-
-    case AC_AstArrowType:
-    {
-      AstArrowType *ast = castAst(ast0, AstArrowType);
-      ArrowType *out = newExpression(arena, ArrowType, &ast0->token);
-
-      Variable **params = pushArray(arena, ast->param_count, Variable*);
-      for (s32 param_id = 0;
-           param_id < ast->param_count && noError();
-           param_id++)
-      {
-        Parameter *ast_param = ast->params + param_id;
-        Variable *param = params[param_id] = newExpression(arena, Variable, &ast_param->name);
-        initVariable(param, param_id, a2e(arena, ast_param->type));
-      }
-
-      initArrowType(out, ast->param_count, params, a2e(arena, ast->return_type));
-      out0 = (Expression *)out;
-    } break;
-
-    case AC_AstFork:
-    {
-      AbstractFork *out = newExpression(arena, AbstractFork, &ast0->token);
-      AstFork      *ast = castAst(ast0, AstFork);
-
-      out->subject = a2e(arena, ast->subject);
-      s32 case_count = ast->case_count;
-      out->case_count = case_count;
-      allocateArray(arena, case_count, out->patterns);
-      allocateArray(arena, case_count, out->bodies);
-      for (s32 input_case_id = 0;
-           (input_case_id < case_count) && parsing();
-           input_case_id++)
-      {
-        out->patterns[input_case_id] = a2e(arena, ast->patterns[input_case_id]);
-        out->bodies[input_case_id]   = a2e(arena, ast->bodies[input_case_id]);
-      }
-      out0 = (Expression*)out;
-    } break;
-
-    invalidDefaultCase;
-  }
-  return out0;
-}
-
 // note: Manipulation may be done in-place, but we might also allocate new
 // memory, so beware!
 internal Expression *
@@ -1877,6 +1694,7 @@ buildExpression(MemoryArena *arena, Bindings *bindings, Expression *in0)
         new_args[0] = hole_expression;
         new_args[1] = in->args[0];
         new_args[2] = in->args[1];
+        // todo: still nervous about putting the whole form there...
         initComposite(in, &builtin_identical->h, 3, new_args);
         build_op = false;
       }
@@ -1912,7 +1730,7 @@ buildExpression(MemoryArena *arena, Bindings *bindings, Expression *in0)
       {
         Variable *param = in->params[param_id];
         if ((param->type = buildExpression(arena, bindings, param->type)))
-          addBinding(bindings, param->h.token.text, (Expression*)param);
+          addBinding(bindings, param->h.token.text, &param->h);
       }
 
       if (noError())
@@ -1938,7 +1756,7 @@ buildExpression(MemoryArena *arena, Bindings *bindings, Expression *in0)
             if (form->ctor_count == case_count)
             {
               if (case_count == 0)
-                parseError((Ast*)in, "todo: cannot assign type to empty fork");
+                parseError(&in->h, "todo: cannot assign type to empty fork");
               else
               {
                 ForkCase *cases = pushArray(arena, case_count, ForkCase, true);
@@ -2010,7 +1828,7 @@ buildExpression(MemoryArena *arena, Bindings *bindings, Expression *in0)
                                       params[param_id] = copyStruct(arena, param_src);
                                       Variable *param = params[param_id];
                                       param->h.token = *param_name;
-                                      lookup.slot->value = (Expression*)param;
+                                      lookup.slot->value = &param->h;
                                     }
                                   }
                                   else
@@ -2030,7 +1848,7 @@ buildExpression(MemoryArena *arena, Bindings *bindings, Expression *in0)
                           else
                           {
                             parseError(branch->op, "expected a composite constructor");
-                            pushAttachment("got type", (Expression*)ctor_sig);
+                            pushAttachment("got type", &ctor_sig->h);
                           }
                         }
                         else
@@ -2057,7 +1875,7 @@ buildExpression(MemoryArena *arena, Bindings *bindings, Expression *in0)
                     if (cases[ctor->ctor_id].body)
                     {
                       parseError(in->bodies[input_case_id], "fork case handled twice");
-                      pushAttachment("constructor", (Expression*)ctor);
+                      pushAttachment("constructor", &ctor->h);
                     }
                     else
                       initForkCase(cases + ctor->ctor_id, body, params, param_count);
@@ -2072,7 +1890,7 @@ buildExpression(MemoryArena *arena, Bindings *bindings, Expression *in0)
               }
             }
             else
-              parseError((Ast*)in, "wrong number of cases, expected: %d, got: %d",
+              parseError(&in->h, "wrong number of cases, expected: %d, got: %d",
                          form->ctor_count, in->case_count);
           }
           else
@@ -2080,7 +1898,7 @@ buildExpression(MemoryArena *arena, Bindings *bindings, Expression *in0)
         }
       }
 
-      out0 = (Expression *)out;
+      out0 = &out->h;
     } break;
 
     invalidDefaultCase;
@@ -2090,9 +1908,36 @@ buildExpression(MemoryArena *arena, Bindings *bindings, Expression *in0)
   return out0;
 }
 
-BUILD_EXPRESSION
+inline ExpressionParsing
+parseExpressionAndTypecheck(MemoryArena *arena, Bindings *bindings, Expression *expected_type)
 {
-  return buildExpression(arena, bindings, a2e(arena, ast0));
+  ExpressionParsing out = {};
+  if (Expression *ast = parseExpressionToExpression(arena))
+  {
+    if (Expression *expression = buildExpression(arena, bindings, ast))
+    {
+      if (Expression *type = typecheck(newEnvironment(arena), expression, expected_type))
+      {
+        out.expression = expression;
+        out.type       = type;
+      }
+    }
+  }
+
+  NULL_WHEN_ERROR(out);
+  return out;
+}
+
+inline Expression *
+parseExpression(MemoryArena *arena)
+{
+  return parseExpressionAndTypecheck(arena, 0, 0).expression;
+}
+
+inline ExpressionParsing
+parseExpressionFull(MemoryArena *arena)
+{
+  return parseExpressionAndTypecheck(arena, 0, 0);
 }
 
 inline Expression *
@@ -2335,16 +2180,7 @@ parseRewrite(MemoryArena *arena)
   return out;
 }
 
-// nocheckin
-inline Ast *
-e2a(MemoryArena *arena, Expression *expr)
-{
-  AstExpressionWrapper *out = newAst(arena, AstExpressionWrapper, &expr->token);
-  out->expression = expr;
-  return (Ast*)out;
-}
-
-internal Ast *
+internal Expression *
 parseOperand(MemoryArena *arena)
 {
   pushContext;
@@ -2434,7 +2270,7 @@ parseOperand(MemoryArena *arena)
   if (noError()) {assert(out);} else out = 0;
 
   popContext();
-  return e2a(arena, out);
+  return out;
 }
 
 inline b32
@@ -2467,7 +2303,7 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
   }
   else
   {
-    if (Expression *operand = a2e(arena, parseOperand(arena)))
+    if (Expression *operand = parseOperand(arena))
     {
       // (a+b) * c
       //     ^
@@ -2521,12 +2357,6 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
   return out;
 }
 
-inline Ast *
-parseExpressionToAst(MemoryArena *arena)
-{
-  return e2a(arena, parseExpressionToAstMain(arena, ParseExpressionOptions{}));
-}
-
 inline Expression *
 parseExpressionToExpression(MemoryArena *arena)
 {
@@ -2543,7 +2373,7 @@ parseConstructorDef(MemoryArena *arena, Form *out, Form *form, s32 ctor_id)
   out->h.token = ctor_token;
   if (isIdentifier(&ctor_token))
   {
-    if (addGlobalBinding(ctor_token.text, (Expression*)out))
+    if (addGlobalBinding(ctor_token.text, &out->h))
     {
       if (optionalChar(':'))
       {
@@ -2576,8 +2406,8 @@ parseConstructorDef(MemoryArena *arena, Form *out, Form *form, s32 ctor_id)
       else
       {
         // default type is the form itself
-        if (form->type == (Expression*)builtin_Set)
-          initForm(out, (Expression*)form, ctor_id);
+        if (form->type == &builtin_Set->h)
+          initForm(out, &form->h, ctor_id);
         else
           parseError(&ctor_token, "constructors must construct a set member");
       }
@@ -2602,9 +2432,9 @@ parseTypedef(MemoryArena *arena)
   {
     Form *form = newExpression(arena, Form, &form_name);
     // NOTE: the type is in scope of its own constructor.
-    if (addGlobalBinding(form_name.text, (Expression*)form))
+    if (addGlobalBinding(form_name.text, &form->h))
     {
-      Expression *type = (Expression*)builtin_Set;
+      Expression *type = &builtin_Set->h;
       if (optionalChar(':'))
       {// type override
         b32 valid_type = false;
@@ -2613,10 +2443,10 @@ parseTypedef(MemoryArena *arena)
           Expression *norm_type = normalize(temp_arena, type_parsing.expression);
           if (ArrowType *arrow = castExpression(norm_type, ArrowType))
           {
-            if (arrow->return_type == (Expression*)builtin_Set)
+            if (arrow->return_type == &builtin_Set->h)
               valid_type = true;
           }
-          else if (norm_type == (Expression*)builtin_Set)
+          else if (norm_type == &builtin_Set->h)
             valid_type = true;
 
           if (valid_type)
@@ -2687,7 +2517,7 @@ parseFunction(MemoryArena *arena, Token *name)
     if (ArrowType *signature = castExpression(signature0, ArrowType))
     {
       Function *fun = newExpression(arena, Function, name);
-      if (addGlobalBinding(name->text, (Expression*)fun))
+      if (addGlobalBinding(name->text, &fun->h))
       {
         // note: we have to rebuild the function's local bindings
         Bindings *fun_bindings = extendBindings(arena, 0);
@@ -2696,7 +2526,7 @@ parseFunction(MemoryArena *arena, Token *name)
              param_id++)
         {
           Variable *param = signature->params[param_id];
-          b32 add = addBinding(fun_bindings, param->h.token.text, (Expression*)param);
+          b32 add = addBinding(fun_bindings, param->h.token.text, &param->h);
           assert(add);
         }
 
@@ -2708,7 +2538,7 @@ parseFunction(MemoryArena *arena, Token *name)
             if (requireChar('}'))
             {
               initFunction(fun, body);
-              typecheck(arena, (Expression*)fun, (Expression*)signature);
+              typecheck(arena, &fun->h, &signature->h);
             }
           }
         }
@@ -2717,7 +2547,7 @@ parseFunction(MemoryArena *arena, Token *name)
         tokenError("re-definition");
     }
     else
-      parseError((Expression*)signature, "function definition requires an arrow type");
+      parseError(&signature->h, "function definition requires an arrow type");
   }
 
   popContext();
@@ -3005,17 +2835,13 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
     const char *builtin_Type_members[] = {"Set"};
     builtin_Type = addBuiltinForm(arena, "Type", 0, builtin_Type_members, 1);
     builtin_Set  = castExpression(lookupGlobalName("Set"), Form);
-    builtin_Type->type = (Expression*)builtin_Type; // note: circular types are gonna bite us
+    builtin_Type->type = &builtin_Type->h; // note: circular types are gonna bite us
 
     allocate(arena, dummy_sequence, true);
     dummy_sequence->cat = EC_DummySequence;
-    allocate(arena, dummy_sequence_ast, true);
-    dummy_sequence_ast->cat = AC_DummySequence;
 
     allocate(arena, dummy_rewrite, true);
     dummy_rewrite->cat = EC_DummyRewrite;
-    allocate(arena, dummy_rewrite_ast, true);
-    dummy_rewrite_ast->cat = AC_DummyRewrite;
 
     allocate(arena, hole_expression);
     hole_expression->cat = EC_DummyHole;
@@ -3028,11 +2854,11 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
     }
 
     const char *true_members[] = {"truth"};
-    addBuiltinForm(arena, "True", (Expression*)builtin_Set, true_members, 1);
+    addBuiltinForm(arena, "True", &builtin_Set->h, true_members, 1);
     builtin_True  = castExpression(lookupGlobalName("True"), Form);
     builtin_truth = castExpression(lookupGlobalName("truth"), Form);
 
-    addBuiltinForm(arena, "False", (Expression*)builtin_Set, (const char **)0, 0);
+    addBuiltinForm(arena, "False", &builtin_Set->h, (const char **)0, 0);
     builtin_False = castExpression(lookupGlobalName("False"), Form);
   }
 

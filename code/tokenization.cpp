@@ -577,16 +577,6 @@ parseError(Expression *in, char *format, ...)
 }
 
 internal void
-parseError(Ast *in, char *format, ...)
-{
-  va_list arg_list;
-  __crt_va_start(arg_list, format);
-  Token *token = &in->token;
-  parseErrorVA(token->line, token->column, format, arg_list);
-  __crt_va_end(arg_list);
-}
-
-internal void
 parseError(Tokenizer *tk, Token *token, char *format, ...)
 {
   va_list arg_list;
