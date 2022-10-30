@@ -1,7 +1,10 @@
-#if !defined(PLATFORM_H)
-
+#pragma once
 #include "utils.h"
 #include "memory.h"
+
+//
+// Platform -> Engine
+//
 
 struct ReadFileResult
 {
@@ -23,14 +26,18 @@ struct FilePath
 };
 FilePath platformGetFileFullPath(MemoryArena* arena, char *file);
 
+#if 0
 struct EngineMemory
 {
     void* storage;
     size_t storage_size;
 };
-
-int
-engineMain(EngineMemory *memory);
-
-#define PLATFORM_H
 #endif
+
+void *platformVirtualAlloc(void *base_address, size_t size);
+
+//
+// Engine -> Platform
+//
+int
+engineMain();

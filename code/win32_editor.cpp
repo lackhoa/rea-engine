@@ -332,6 +332,14 @@ WinMain(HINSTANCE instance,
 }
 #endif
 
+void *platformVirtualAlloc(void *base_address, size_t size)
+{
+  void *out = VirtualAlloc(base_address, size,
+                           MEM_RESERVE|MEM_COMMIT,
+                           PAGE_READWRITE);
+  return out;
+}
+
 #include <stdio.h>
 int main()
 {
@@ -341,15 +349,16 @@ int main()
     QueryPerformanceFrequency(&perfCountFrequencyResult);
     globalPerfCountFrequency = perfCountFrequencyResult.QuadPart;
 
+#if 0
     EngineMemory memory;
 
-    memory.storage_size = megaBytes(256);
     LPVOID base_address = (LPVOID)teraBytes(2);
     memory.storage = VirtualAlloc(base_address, memory.storage_size,
-                                         MEM_RESERVE|MEM_COMMIT,
-                                         PAGE_READWRITE);
+                                  MEM_RESERVE|MEM_COMMIT,
+                                  PAGE_READWRITE);
+#endif
 
-    if (!engineMain(&memory))
+    if (!engineMain())
         code = 1;
 
     return code;

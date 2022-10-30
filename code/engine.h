@@ -594,15 +594,9 @@ struct ValueBindings
 inline Bindings *
 extendBindings(MemoryArena *arena, Bindings *outer)
 {
-  Bindings *out = pushStruct(arena, Bindings);
-  for (int i = 0; i < arrayCount(out->table); i++)
-  {// invalidate these slots
-    Binding *slot = &out->table[i];
-    slot->key.length = 0;
-    slot->next       = 0;
-  }
-  out->next    = outer;
-  out->arena   = arena;
+  Bindings *out = pushStructZero(arena, Bindings);
+  out->next  = outer;
+  out->arena = arena;
   return out;
 }
 

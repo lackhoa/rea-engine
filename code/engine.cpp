@@ -150,26 +150,6 @@ identicalB32(Expression *lhs, Expression *rhs)
   return identicalTrinary(lhs, rhs) == Trinary_True;
 }
 
-#if 0
-inline b32
-lessGrounded(Expression *a, Expression *b)
-{
-  s32 out = 0;
-  switch (a->cat)
-  {
-    case EC_Variable:
-    {
-      switch (b->cat)
-      {
-        case EC_Variable: {out = false;} break;
-        default:
-      }
-    } break;
-  }
-  return out;
-}
-#endif
-
 inline b32
 isCompositeForm(Expression *expression)
 {
@@ -178,15 +158,6 @@ isCompositeForm(Expression *expression)
   else
     return false;
 }
-
-#if 0
-inline b32
-canBeRewritten(Expression *in)
-{
-  return (in->cat == EC_Variable ||
-          in->cat == EC_Application);
-}
-#endif
 
 internal Trinary
 compareExpressionList(Expression **lhs_list, Expression **rhs_list, s32 count)
@@ -806,29 +777,6 @@ addBuiltinForm(MemoryArena *arena, char *name, Expression *type, const char **ct
 
 struct OptionalU32 { b32 success; u32 value; };
 
-#if 0
-internal void
-checkStack(Stack *stack)
-{
-#if REA_DIAGNOSTICS
-  while (stack)
-  {
-    if (stack->args)
-    {
-      for (s32 arg_id = 0; arg_id < stack->count; arg_id++)
-      {
-        auto arg = stack->args[arg_id];
-        auto param_type = stack->signature->params[arg_id]->type;
-        if (arg && (arg->cat != EC_Hole) && (param_type->cat != EC_Variable))
-          assert(identicalB32(arg->type, param_type));
-      }
-    }
-    stack = stack->next;
-  }
-#endif
-}
-#endif
-
 // builtin expession end markers for now
 inline b32
 isExpressionEndMarker(Token *token)
@@ -924,17 +872,6 @@ transformVariables(Environment env, Expression *in0, variable_transformer *trans
       }
     } break;
 
-#if 0
-    case EC_Function:
-    {
-      Function *in_proc = castExpression(in, Function);
-      Function *out_proc = copyStruct(env.arena, in_proc);
-      out = (Expression*)out_proc;
-      env.stack_offset++;
-      out_proc->body = transformVariables(env, in_proc->body, transformer, opt);
-    } break;
-#endif
-
     default:
         out0 = in0;
   }
@@ -1026,55 +963,6 @@ introduceVariables(Environment *env, ArrowType *signature)
 {
   return introduceVariables(env, signature->param_count, signature->params);
 }
-
-#if 0
-internal Variable **
-createAtoms(Environment *env, ArrowType *signature)
-{
-  return createAtoms(env, signature->param_count, signature->params);
-}
-#endif
-
-#if 0
-internal void
-extendStack(Environment *env, ArrowType *signature, Expression **args)
-{
-  auto temp_arena = env->arena;
-
-  if (!args)
-    args = (Expression**)createAtoms(env, signature);
-
-  Stack *stack     = pushStruct(arena, Stack);
-  stack->next      = env->stack;
-  stack->count     = signature->param_count;
-  stack->signature = signature;
-  stack->args      = args;
-
-  env->stack       = stack;
-
-#if REA_DIAGNOSTICS
-  {
-    for (s32 arg_id = 0; arg_id < stack->count; arg_id++)
-    {
-      assert(identicalB32(args[arg_id]->type, signature->params[arg_id]->header.type));
-    }
-  }
-#endif
-}
-#endif
-
-#if 0
-inline b32
-hasType(Expression *in)
-{
-  b32 out;
-  if (in->cat == EC_Builtin_Type)
-    out = true;
-  else
-    out = (b32)in->type;
-  return out;
-}
-#endif
 
 inline void
 printRewrites(Environment env)
@@ -2994,63 +2882,6 @@ lookupGlobalName(char *name)
   return lookupNameCurrentFrame(global_bindings.v, toString(name), false).slot->value;
 }
 
-internal void
-initializeEngine(EngineState *state)
-{
-  MemoryArena *arena = state->arena;
-  global_temp_arena_ = subArena(arena, megaBytes(2));
-  global_temp_arena  = &global_temp_arena_;
-  global_bindings = toValueBindings(pushStruct(arena, Bindings));
-  global_bindings.v->arena = arena;
-
-  const char *builtin_Type_members[] = {"Set"};
-  builtin_Type = addBuiltinForm(arena, "Type", 0, builtin_Type_members, 1);
-  builtin_Set  = castExpression(lookupGlobalName("Set"), Form);
-  builtin_Type->type = (Expression*)builtin_Type; // todo: circular types are gonna bite us
-
-  allocate(arena, hole_expression);
-  hole_expression->cat = EC_Hole;
-
-  {// Equality
-    b32 success = interpretFile(state, platformGetFileFullPath(arena, "../data/builtins.rea"), true);
-    assert(success);
-
-    builtin_identical = castExpression(lookupGlobalName("identical"), Form);
-
-#if 0
-    ArrowType *identical_type = newExpression(arena, ArrowType);
-    // Here we give 'identical' a type (A: Set, a:A, b:A) -> Prop.
-    // TODO: so we can't prove equality between Sets.
-    identical_type->param_count = 3;
-    identical_type->return_type = (Expression*)builtin_Set;
-
-    allocateArray(arena, 3, identical_type->params);
-    auto args = identical_type->params;
-
-    args[0] = newExpression(arena, Variable);
-    initVariable(args[0], toString("A"), 0, (Expression*)builtin_Set);
-
-    args[1] = newExpression(arena, Variable);
-    initVariable(args[1], toString("a"), 1, (Expression*)args[0]);
-
-    args[2] = newExpression(arena, Variable);
-    initVariable(args[2], toString("b"), 2, (Expression*)args[0]);
-
-    Form *identical_members = pushArray(arena, 1, Form);
-    initForm(builtin_refl, "refl", type);
-    initForm(builtin_identical, toString("identical"), (Expression*)identical_type, 0, 0, getNextFormId());
-#endif
-  }
-
-  const char *true_members[] = {"truth"};
-  addBuiltinForm(arena, "True", (Expression*)builtin_Set, true_members, 1);
-  builtin_True  = lookupGlobalName("True");
-  builtin_truth = lookupGlobalName("truth");
-
-  addBuiltinForm(arena, "False", (Expression*)builtin_Set, (const char **)0, 0);
-  builtin_False = lookupGlobalName("False");
-}
-
 internal b32
 interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
 {
@@ -3131,7 +2962,33 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
   EngineState *state = pushStruct(arena, EngineState);
   state->arena = arena;
 
-  initializeEngine(state);
+  {
+    global_bindings = toValueBindings(pushStruct(arena, Bindings));
+    global_bindings.v->arena = arena;
+
+    const char *builtin_Type_members[] = {"Set"};
+    builtin_Type = addBuiltinForm(arena, "Type", 0, builtin_Type_members, 1);
+    builtin_Set  = castExpression(lookupGlobalName("Set"), Form);
+    builtin_Type->type = (Expression*)builtin_Type; // todo: circular types are gonna bite us
+
+    allocate(arena, hole_expression);
+    hole_expression->cat = EC_Hole;
+
+    {// Equality
+      b32 success = interpretFile(state, platformGetFileFullPath(arena, "../data/builtins.rea"), true);
+      assert(success);
+      builtin_identical = castExpression(lookupGlobalName("identical"), Form);
+    }
+
+    const char *true_members[] = {"truth"};
+    addBuiltinForm(arena, "True", (Expression*)builtin_Set, true_members, 1);
+    builtin_True  = lookupGlobalName("True");
+    builtin_truth = lookupGlobalName("truth");
+
+    addBuiltinForm(arena, "False", (Expression*)builtin_Set, (const char **)0, 0);
+    builtin_False = lookupGlobalName("False");
+  }
+
   FilePath input_path = platformGetFileFullPath(arena, initial_file);
   b32 success = interpretFile(state, input_path, true);
 
@@ -3147,8 +3004,10 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
 }
 
 int
-engineMain(EngineMemory *memory)
+engineMain()
 {
+  int success = true;
+
 #if REA_INTERNAL
   // for printf debugging: when it crashes you can still see the prints
   setvbuf(stdout, NULL, _IONBF, 0);
@@ -3157,30 +3016,34 @@ engineMain(EngineMemory *memory)
   assert(arrayCount(keywords)       == Keywords_Count_);
   assert(arrayCount(metaDirectives) == MetaDirective_Count_);
 
-  int success = true;
+  void   *permanent_memory_base = (void*)teraBytes(2);
+  size_t  permanent_memory_size = megaBytes(256);
+  permanent_memory_base = platformVirtualAlloc(permanent_memory_base, permanent_memory_size);
+  MemoryArena  permanent_arena_ = newArena(permanent_memory_size, permanent_memory_base);
+  MemoryArena *permanent_arena  = &permanent_arena_;
 
-  auto init_arena_ = newArena(memory->storage_size, memory->storage);
-  auto init_arena = &init_arena_;
-
-  MemoryArena interp_arena_ = subArena(init_arena, getArenaFree(init_arena));
-  MemoryArena *interp_arena = &interp_arena_;
+  void   *temp_memory_base = (void*)teraBytes(3);
+  size_t  temp_memory_size = megaBytes(2);
+  temp_memory_base = platformVirtualAlloc(temp_memory_base, permanent_memory_size);
+  global_temp_arena_ = newArena(temp_memory_size, temp_memory_base);
+  global_temp_arena  = &global_temp_arena_;
 
 #if 1
-  if (!beginInterpreterSession(interp_arena, "../data/basics.rea"))
+  if (!beginInterpreterSession(permanent_arena, "../data/basics.rea"))
     success = false;
-  resetZeroArena(interp_arena);
+  resetZeroArena(permanent_arena);
 #endif
 
 #if 1
-  if (!beginInterpreterSession(interp_arena, "../data/nat.rea"))
+  if (!beginInterpreterSession(permanent_arena, "../data/nat.rea"))
     success = false;
-  resetZeroArena(interp_arena);
+  resetZeroArena(permanent_arena);
 #endif
 
 #if 1
-  if (!beginInterpreterSession(interp_arena, "../data/test.rea"))
+  if (!beginInterpreterSession(permanent_arena, "../data/test.rea"))
     success = false;
-  resetZeroArena(interp_arena);
+  resetZeroArena(permanent_arena);
 #endif
 
   return success;
