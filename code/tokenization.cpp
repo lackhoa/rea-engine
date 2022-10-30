@@ -496,7 +496,7 @@ parseErrorVA(s32 line, s32 column, char *format, va_list arg_list, Tokenizer *tk
   // useless work after failure (#speed).
 
   auto arena = tk->error_arena;
-  tk->error = pushStructZero(arena, ParseErrorData);
+  tk->error = pushStruct(arena, ParseErrorData, true);
   tk->error->message = subArena(tk->error_arena, 256);
 
   printToBufferVA(&tk->error->message, format, arg_list);

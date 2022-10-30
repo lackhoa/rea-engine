@@ -57,14 +57,10 @@ pushSize(MemoryArena *arena, size_t size, b32 zero = false)
     return(out);
 }
 
-#define pushStruct(arena, type) (type *) pushSize(arena, sizeof(type))
-#define pushStructZero(arena, type) (type *) pushSize(arena, sizeof(type), true)
-#define pushArray(arena, count, type) (type *) pushSize(arena, count*sizeof(type))
-#define pushArrayZero(arena, count, type) (type *) pushSize(arena, count*sizeof(type), true)
+#define pushStruct(arena, type, ...) (type *) pushSize(arena, sizeof(type), __VA_ARGS__)
+#define pushArray(arena, count, type, ...) (type *) pushSize(arena, count*sizeof(type), __VA_ARGS__)
 #define allocate(arena, x, ...) x = (mytypeof(x)) pushSize(arena, sizeof(*x), __VA_ARGS__)
-#define allocateZero(arena, x) x = (mytypeof(x)) pushSize(arena, sizeof(*x), true)
-#define allocateArray(arena, count, x) x = (mytypeof(x)) pushSize(arena, count*sizeof(*x))
-#define allocateArrayZero(arena, count, x) x = (mytypeof(x)) pushSize(arena, count*sizeof(*x), true)
+#define allocateArray(arena, count, x, ...) x = (mytypeof(x)) pushSize(arena, count*sizeof(*x), __VA_ARGS__)
 
 inline MemoryArena
 subArena(MemoryArena *parent, size_t size)

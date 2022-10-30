@@ -612,7 +612,7 @@ struct ValueBindings
 inline Bindings *
 extendBindings(MemoryArena *arena, Bindings *outer)
 {
-  Bindings *out = pushStructZero(arena, Bindings);
+  Bindings *out = pushStruct(arena, Bindings, true);
   out->next  = outer;
   out->arena = arena;
   return out;

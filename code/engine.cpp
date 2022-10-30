@@ -1577,7 +1577,7 @@ typecheck(Environment env, Expression *in0, Expression *expected_type)
             {
               Environment signature_env = env;
               env.arena = temp_arena;
-              Expression **stack_frame = pushArrayZero(temp_arena, arg_count, Expression*);
+              Expression **stack_frame = pushArray(temp_arena, arg_count, Expression*, true);
               extendStack(&signature_env, arg_count, stack_frame);
               for (int arg_id = 0;
                    (arg_id < arg_count) && noError();
@@ -1944,7 +1944,7 @@ buildExpression(MemoryArena *arena, Bindings *bindings, Expression *in0)
                 parseError((Ast*)in, "todo: cannot assign type to empty fork");
               else
               {
-                ForkCase *cases = pushArrayZero(arena, case_count, ForkCase);
+                ForkCase *cases = pushArray(arena, case_count, ForkCase, true);
         
                 for (s32 input_case_id = 0;
                      (input_case_id < case_count) && parsing();
@@ -1995,7 +1995,7 @@ buildExpression(MemoryArena *arena, Bindings *bindings, Expression *in0)
                               param_count = branch->arg_count;
                               if (param_count == ctor_sig->param_count)
                               {
-                                allocateArrayZero(arena, param_count, params);
+                                allocateArray(arena, param_count, params, true);
                                 for (s32 param_id = 0; param_id < param_count; param_id++)
                                 {// MARK: loop over pattern variables
                                   Expression *ast_arg = branch->args[param_id];
