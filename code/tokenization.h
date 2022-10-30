@@ -68,8 +68,8 @@ newToken(const char *text)
   return out;
 }
 
-struct Expression;
-struct ErrorAttachment { char *string; Expression *expression;};
+struct Ast;
+struct ErrorAttachment { char *string; Ast *expression;};
 
 struct ParseErrorData
 {

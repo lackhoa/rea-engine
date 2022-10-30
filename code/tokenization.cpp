@@ -145,14 +145,14 @@ printCharToBufferRepeat(char *buffer, char c, s32 repeat)
 global_variable Tokenizer *global_tokenizer;
 
 inline void
-pushAttachment(Tokenizer *tk, char *string, Expression *exp)
+pushAttachment(Tokenizer *tk, char *string, Ast *exp)
 {
     assert(tk->error->attached_count < arrayCount(tk->error->attached));
     tk->error->attached[tk->error->attached_count++] = {string, exp};
 }
 
 inline void
-pushAttachment(char *string, Expression *exp)
+pushAttachment(char *string, Ast *exp)
 {
     pushAttachment(global_tokenizer, string, exp);
 }
@@ -567,7 +567,7 @@ getExpressionToken(Expression *in0)
 #endif
 
 internal void
-parseError(Expression *in, char *format, ...)
+parseError(Ast *in, char *format, ...)
 {
   va_list arg_list;
   __crt_va_start(arg_list, format);

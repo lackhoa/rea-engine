@@ -8,75 +8,74 @@
 // NOTE: Think of this like the function stack, we'll clean it every once in a while.
 global_variable MemoryArena *temp_arena;
  
-enum ExpressionCategory
+enum AstCategory
 {
   // right after parsing
-  EC_Identifier,
-  EC_AbstractFork,
+  AC_Identifier,
+  AC_AbstractFork,
 
   // built expressions
-  EC_Variable,
-  EC_Constant,
+  AC_Variable,
+  AC_Constant,
 
-  EC_Composite,                 // operator application
-  EC_Fork,                      // switch statement
-  EC_Form,                      // like Coq inductive types
-  EC_Function,                  // holds actual computation (ie body that can be executed)
+  AC_Composite,                 // operator application
+  AC_Fork,                      // switch statement
+  AC_Form,                      // like Coq inductive types
+  AC_Function,                  // holds actual computation (ie body that can be executed)
 
-  EC_ArrowType,                 // type of procedure and built-in objects
+  AC_ArrowType,                 // type of procedure and built-in objects
 
   // dummy values for denoting only
-  EC_DummyHole,                 // hole left in for type-checking
-  EC_DummySequence,             // like scheme's "begin" keyword
-  EC_DummyRewrite,
+  AC_DummyHole,                 // hole left in for type-checking
+  AC_DummySequence,             // like scheme's "begin" keyword
+  AC_DummyRewrite,
 };
 
-struct Expression
+struct Ast
 {
-  ExpressionCategory cat;
+  AstCategory cat;
   Token              token;
 };
 
 inline void
-initExpression(Expression *in, ExpressionCategory cat, Token *token)
+initAst(Ast *in, AstCategory cat, Token *token)
 {
   in->cat   = cat;
   in->token = *token;
 }
 
-inline Expression *
-newExpression_(MemoryArena *arena, ExpressionCategory cat, Token *token, size_t size)
+inline Ast *
+newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
 {
-  Expression *out = (Expression *)pushSize(arena, size, true);
-  initExpression(out, cat, token);
+  Ast *out = (Ast *)pushSize(arena, size, true);
+  initAst(out, cat, token);
   return out;
 }
 
-#define newExpression(arena, cat, token)        \
-  ((cat *) newExpression_(arena, EC_##cat, token, sizeof(cat)))
+#define newAst(arena, cat, token)        \
+  ((cat *) newAst_(arena, AC_##cat, token, sizeof(cat)))
 
-b32 identicalB32(Expression *lhs, Expression *rhs);
+b32 identicalB32(Ast *lhs, Ast *rhs);
 
-#define castExpression(exp, Cat) (((exp)->cat == EC_##Cat) ? (Cat*)(exp) : 0)
-#define caste(exp, Cat) castExpression(exp, Cat)
+#define castAst(exp, Cat) (((exp)->cat == AC_##Cat) ? (Cat*)(exp) : 0)
 
 struct Identifier
 {
-  Expression h;
+  Ast h;
 };
 
 struct Variable
 {
-  Expression  h;
+  Ast  h;
 
   s32    id;
   s32    stack_delta;
   s32    stack_depth;
-  Expression *type;
+  Ast *type;
 };
 
 inline void
-initVariable(Variable *var, u32 id, Expression *type)
+initVariable(Variable *var, u32 id, Ast *type)
 {
   var->stack_delta = 0;
   var->id          = id;
@@ -86,36 +85,36 @@ initVariable(Variable *var, u32 id, Expression *type)
 
 struct AbstractFork
 {
-  Expression   h;
-  Expression  *subject;
+  Ast   h;
+  Ast  *subject;
   s32          case_count;
-  Expression **patterns;
-  Expression **bodies;
+  Ast **patterns;
+  Ast **bodies;
 };
 
 struct Constant
 {
-  Expression  h;
-  Expression *value;
+  Ast  h;
+  Ast *value;
 };
 
 inline void
-initIdentifier(Constant *in, Expression *value)
+initIdentifier(Constant *in, Ast *value)
 {
   in->value = value;
 }
 
 struct Composite
 {
-  Expression   h;
-  Expression  *type; // for caching
-  Expression  *op;
+  Ast   h;
+  Ast  *type; // for caching
+  Ast  *op;
   s32          arg_count;
-  Expression **args;
+  Ast **args;
 };
 
 inline void
-initComposite(Composite *app, Expression *op, s32 arg_count, Expression **args)
+initComposite(Composite *app, Ast *op, s32 arg_count, Ast **args)
 {
   app->type      = 0;
   app->op        = op;
@@ -125,11 +124,11 @@ initComposite(Composite *app, Expression *op, s32 arg_count, Expression **args)
 
 struct ForkCase
 {
-  Expression  *body;
+  Ast  *body;
   Variable   **params;
 };
 inline void
-initForkCase(ForkCase *fork_case, Expression *body, Variable **params, s32 param_count)
+initForkCase(ForkCase *fork_case, Ast *body, Variable **params, s32 param_count)
 {
   if (param_count)
     assert(params);
@@ -139,14 +138,14 @@ initForkCase(ForkCase *fork_case, Expression *body, Variable **params, s32 param
 
 struct ArrowType
 {
-  Expression   h;
+  Ast   h;
   s32          param_count;
   Variable   **params;
-  Expression  *return_type;
+  Ast  *return_type;
 };
 
 inline void
-initArrowType(ArrowType *in, s32 param_count, Variable **params, Expression *return_type)
+initArrowType(ArrowType *in, s32 param_count, Variable **params, Ast *return_type)
 {
   in->param_count = param_count;
   in->params      = params;
@@ -155,9 +154,9 @@ initArrowType(ArrowType *in, s32 param_count, Variable **params, Expression *ret
 
 struct Form
 {
-  Expression  h;
+  Ast  h;
 
-  Expression *type;
+  Ast *type;
   s32         ctor_id;
 
   s32   ctor_count;
@@ -165,20 +164,20 @@ struct Form
 };
 
 inline Form *
-getFormOf(Expression *in0)
+getFormOf(Ast *in0)
 {
   Form *out = 0;
   switch (in0->cat)
   {
-    case EC_Composite:
+    case AC_Composite:
     {
-      Composite *in = castExpression(in0, Composite);
-      out = castExpression(in->op, Form);
+      Composite *in = castAst(in0, Composite);
+      out = castAst(in->op, Form);
     } break;
 
-    case EC_Form:
+    case AC_Form:
     {
-      out = castExpression(in0, Form);
+      out = castAst(in0, Form);
     } break;
 
     invalidDefaultCase;
@@ -187,9 +186,9 @@ getFormOf(Expression *in0)
 }
 
 inline void
-initForm(Form *in, Expression *type0, s32 ctor_count, Form *ctors, s32 ctor_id)
+initForm(Form *in, Ast *type0, s32 ctor_count, Form *ctors, s32 ctor_id)
 {
-  in->h.cat      = EC_Form;
+  in->h.cat      = AC_Form;
   in->type       = type0;
   in->ctor_count = ctor_count;
   in->ctors      = ctors;
@@ -197,9 +196,9 @@ initForm(Form *in, Expression *type0, s32 ctor_count, Form *ctors, s32 ctor_id)
 }
 
 inline void
-initForm(Form *in, Expression *type0, s32 ctor_id)
+initForm(Form *in, Ast *type0, s32 ctor_id)
 {
-  in->h.cat   = EC_Form;
+  in->h.cat   = AC_Form;
   in->type    = type0;
   in->ctor_id = ctor_id;
   in->ctor_count = 0;
@@ -208,16 +207,16 @@ initForm(Form *in, Expression *type0, s32 ctor_id)
 
 struct Fork
 {
-  Expression h;
+  Ast h;
 
   Form       *form;
-  Expression *subject;
+  Ast *subject;
   s32         case_count;
   ForkCase   *cases;
 };
 
 inline void
-initFork(Fork *out, Form *form, Expression *subject, s32 case_count, ForkCase *cases)
+initFork(Fork *out, Form *form, Ast *subject, s32 case_count, ForkCase *cases)
 {
   out->form       = form;
   out->subject    = subject;
@@ -230,13 +229,13 @@ initFork(Fork *out, Form *form, Expression *subject, s32 case_count, ForkCase *c
 
 struct Function
 {
-  Expression  h;
-  Expression *body;
+  Ast  h;
+  Ast *body;
   ArrowType  *signature;
 };
 
 inline void
-initFunction(Function *fun, Expression *body)
+initFunction(Function *fun, Ast *body)
 {
   assert(body);
   fun->body = body;
@@ -253,12 +252,12 @@ enum Trinary
 };
 
 internal Trinary
-identicalTrinary(Expression *lhs, Expression *rhs);
+identicalTrinary(Ast *lhs, Ast *rhs);
 
 struct Rewrite
 {
-  Expression *lhs;
-  Expression *rhs;
+  Ast *lhs;
+  Ast *rhs;
   Rewrite    *next;
 };
 
@@ -266,7 +265,7 @@ struct Stack
 {
   Stack       *outer;
   s32          arg_count;
-  Expression **args;
+  Ast **args;
 };
 
 // used in normalization, typechecking, etc.
@@ -283,7 +282,7 @@ struct Environment
 };
 
 inline void
-extendStack(Environment *env, s32 arg_count, Expression **args)
+extendStack(Environment *env, s32 arg_count, Ast **args)
 {
   Stack *stack = pushStruct(env->temp_arena, Stack);
   stack->outer     = env->stack;
@@ -295,7 +294,7 @@ extendStack(Environment *env, s32 arg_count, Expression **args)
 }
 
 inline Rewrite *
-newRewrite(Environment *env, Expression *lhs, Expression *rhs)
+newRewrite(Environment *env, Ast *lhs, Ast *rhs)
 {
   Rewrite *out = pushStruct(env->temp_arena, Rewrite);
   out->lhs  = lhs;
@@ -313,13 +312,13 @@ newEnvironment(MemoryArena *arena)
   return out;
 }
 
-inline Expression *
+inline Ast *
 parseExpressionToExpression(MemoryArena *arena);
 
-struct ExpressionList
+struct AstList
 {
-  Expression     *first;
-  ExpressionList *next;
+  Ast     *first;
+  AstList *next;
 };
 
 #define castValue(value, category) ((value->cat == VC_##category) ? (category*)value : 0)
@@ -381,7 +380,7 @@ struct FunctionV
 {
   Value h;
   Token name;
-  Expression *body;
+  Ast *body;
 };
 
 struct ArrowTypeV
@@ -390,13 +389,13 @@ struct ArrowTypeV
 
   s32          param_count;
   Variable   **params;
-  Expression  *return_type;
+  Ast  *return_type;
 };
 
 struct Binding
 {
     String      key;
-    Expression *value;
+    Ast *value;
     Binding    *next;
 };
 
