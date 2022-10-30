@@ -47,13 +47,13 @@ initExpression(Expression *in, ExpressionCategory cat, Token *token)
 inline Expression *
 newExpression_(MemoryArena *arena, ExpressionCategory cat, Token *token, size_t size)
 {
-  Expression *out = (Expression *)pushSize(arena, size);
+  Expression *out = (Expression *)pushSize(arena, size, true);
   initExpression(out, cat, token);
   return out;
 }
 
 #define newExpression(arena, cat, token)        \
-  (cat *) newExpression_(arena, EC_##cat, token, sizeof(cat))
+  ((cat *) newExpression_(arena, EC_##cat, token, sizeof(cat)))
 
 b32 identicalB32(Expression *lhs, Expression *rhs);
 
@@ -115,7 +115,7 @@ struct Composite
 };
 
 inline void
-initApplication(Composite *app, Expression *op, s32 arg_count, Expression **args)
+initComposite(Composite *app, Expression *op, s32 arg_count, Expression **args)
 {
   app->type      = 0;
   app->op        = op;
@@ -157,10 +157,8 @@ struct Form
 {
   Expression  h;
 
-  Token       name;
   Expression *type;
-
-  s32 ctor_id;
+  s32         ctor_id;
 
   s32   ctor_count;
   Form *ctors;
@@ -189,11 +187,9 @@ getFormOf(Expression *in0)
 }
 
 inline void
-initForm(Form *in, Token *name, Expression *type0, s32 ctor_count, Form *ctors, s32 ctor_id)
+initForm(Form *in, Expression *type0, s32 ctor_count, Form *ctors, s32 ctor_id)
 {
-  *in = {};
   in->h.cat      = EC_Form;
-  in->name       = *name;
   in->type       = type0;
   in->ctor_count = ctor_count;
   in->ctors      = ctors;
@@ -201,13 +197,13 @@ initForm(Form *in, Token *name, Expression *type0, s32 ctor_count, Form *ctors, 
 }
 
 inline void
-initForm(Form *in, Token *name, Expression *type0, s32 ctor_id)
+initForm(Form *in, Expression *type0, s32 ctor_id)
 {
-  *in = {};
-  in->h.cat = EC_Form;
-  in->name  = *name;
-  in->type  = type0;
+  in->h.cat   = EC_Form;
+  in->type    = type0;
   in->ctor_id = ctor_id;
+  in->ctor_count = 0;
+  in->ctors      = 0;
 }
 
 struct Fork
@@ -235,16 +231,14 @@ initFork(Fork *out, Form *form, Expression *subject, s32 case_count, ForkCase *c
 struct Function
 {
   Expression  h;
-  Token       name;
   Expression *body;
   ArrowType  *signature;
 };
 
 inline void
-initFunction(Function *fun, Token *name, Expression *body)
+initFunction(Function *fun, Expression *body)
 {
   assert(body);
-  fun->name = *name;
   fun->body = body;
 }
 
@@ -321,6 +315,7 @@ newEnvironment(MemoryArena *arena)
 
 enum AstCategory
 {
+  AC_AstExpressionWrapper,
   AC_AstLeaf,
   AC_AstBranch,
   AC_AstFork,
@@ -337,7 +332,7 @@ struct Ast
   Token token;
 };
 
-#define castAst(ast, type) (type*)((ast->cat == AC_##type) ? ast : 0)
+#define castAst(ast, type) ((type*)((ast->cat == AC_##type) ? ast : 0))
 
 inline void
 initAst(Ast *out, AstCategory cat, Token *token)
@@ -355,6 +350,12 @@ newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
 }
 #define newAst(arena, cat, token)                \
   (cat *) newAst_(arena, AC_##cat, token, sizeof(cat))
+
+struct AstExpressionWrapper
+{
+  Ast         h;
+  Expression *expression;
+};
 
 struct AstLeaf
 {
@@ -387,7 +388,7 @@ struct AstFork
 
 inline AstFork *
 newAstFork(MemoryArena *arena, Token *token,
-             Ast *subject, s32 case_count, Ast **patterns, Ast **bodies)
+           Ast *subject, s32 case_count, Ast **patterns, Ast **bodies)
 {
   AstFork * out = newAst(arena, AstFork, token);
 
@@ -413,8 +414,6 @@ initParameter(Parameter *out, Token *token, Ast *type)
   return out;
 }
 
-struct ParameterList{s32 count; Parameter *items;};
-
 struct AstArrowType
 {
   Ast        h;
@@ -435,10 +434,13 @@ initAstArrowType(AstArrowType *out, s32 param_count, Parameter *params, Ast *ret
 inline Ast *
 parseExpressionToAst(MemoryArena *arena);
 
-struct AstList
+inline Expression *
+parseExpressionToExpression(MemoryArena *arena);
+
+struct ExpressionList
 {
-  Ast     *first;
-  AstList *next;
+  Expression     *first;
+  ExpressionList *next;
 };
 
 #define castValue(value, category) ((value->cat == VC_##category) ? (category*)value : 0)
