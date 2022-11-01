@@ -2,6 +2,7 @@ CompileFlags:
   Compiler: clang
   Add:
     - -xc++
+    - -ferror-limit=0
     - -DReaWindows
     - -DREA_INTERNAL
     - -DREA_DIAGNOSTICS

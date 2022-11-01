@@ -151,10 +151,10 @@ identicalB32(Ast *lhs, Ast *rhs)
 }
 
 inline b32
-isCompositeForm(Ast *expression)
+isCompositeForm(Ast *in0)
 {
-  if (auto app = castAst(expression, Composite))
-    return app->op->cat == AC_Form;
+  if (Composite *in = castAst(in0, Composite))
+    return castAst(in->op, Form) != 0;
   else
     return false;
 }
@@ -214,8 +214,8 @@ identicalTrinary(Ast *lhs0, Ast *rhs0)
 
       case AC_Form:
       {
-        if ((castAst(lhs0, Form))->ctor_id ==
-            (castAst(rhs0, Form))->ctor_id)
+        if (castAst(lhs0, Form)->ctor_id ==
+            castAst(rhs0, Form)->ctor_id)
           out = Trinary_True;
         else
           out = Trinary_False;
@@ -394,18 +394,18 @@ printExpression(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         {
           ForkCase *casev = fork->cases + ctor_id;
           Form *ctor = form->ctors + ctor_id;
-          switch (ctor->type->cat)
+          switch (ctor->h.type->cat)
           {// print pattern
             case AC_Form:
             {
-              printExpression(buffer, &ctor->h, new_opt);
+              printExpression(buffer, &ctor->h.a, new_opt);
             } break;
 
             case AC_ArrowType:
             {
-              printExpression(buffer, &ctor->h, new_opt);
+              printExpression(buffer, &ctor->h.a, new_opt);
               printToBuffer(buffer, " ");
-              ArrowType *signature = castAst(ctor->type, ArrowType);
+              ArrowType *signature = castAst(ctor->h.type, ArrowType);
               for (s32 param_id = 0; param_id < signature->param_count; param_id++)
               {
                 printToBuffer(buffer, &casev->params[param_id]->h.token);
@@ -427,8 +427,6 @@ printExpression(MemoryArena *buffer, Ast *in0, PrintOptions opt)
       case AC_Form:
       {
         Form *in = castAst(in0, Form);
-        if (equal(&in0->token, "identical"))
-          breakhere;
         if (opt.detailed && in != builtin_Type)
         {
           printToBuffer(buffer, &in0->token);
@@ -436,7 +434,7 @@ printExpression(MemoryArena *buffer, Ast *in0, PrintOptions opt)
           if (opt.print_type)
           {
             printToBuffer(buffer, ": ");
-            printExpression(buffer, in->type, new_opt);
+            printExpression(buffer, in->h.type, new_opt);
           }
 
           if (in->ctor_count)
@@ -445,9 +443,9 @@ printExpression(MemoryArena *buffer, Ast *in0, PrintOptions opt)
             for (s32 ctor_id = 0; ctor_id < in->ctor_count; ctor_id++)
             {
               Form *ctor = in->ctors + ctor_id;
-              printToBuffer(buffer, &ctor->h.token);
+              printToBuffer(buffer, &ctor->h.a.token);
               printToBuffer(buffer, ": ");
-              printExpression(buffer, ctor->type, new_opt);
+              printExpression(buffer, ctor->h.type, new_opt);
             }
             printToBuffer(buffer, " }");
           }
@@ -639,9 +637,8 @@ constantFromGlobalName(MemoryArena *arena, Token *token)
   if (lookup.found)
   {
     // Everything in the global scope becomes identifier.
-    Ast *value = lookup.slot->value;
     Constant *out = newAst(arena, Constant, token);
-    initIdentifier(out, value);
+    initIdentifier(out, lookup.slot->value);
     out0 = &out->h;
   }
   return out0;
@@ -721,22 +718,21 @@ internal Form *
 addBuiltinForm(MemoryArena *arena, char *name, Ast *type, const char **ctor_names, s32 ctor_count)
 {
   Token form_name = newToken(name);
-  Form *form = newAst(arena, Form, &form_name);
+  Form *form = newValue(arena, Form, &form_name, type);
 
   Form *ctors = pushArray(arena, ctor_count, Form);
   for (s32 ctor_id = 0; ctor_id < ctor_count; ctor_id++)
   {
     Form *ctor = ctors + ctor_id;
     Token ctor_name = newToken(ctor_names[ctor_id]);
-    ctor->h.cat   = AC_Form;
-    ctor->h.token = ctor_name;
-    initForm(ctor, &form->h, ctor_id);
-    if (!addGlobalBinding(ctor_name, &ctor->h))
+    initValue(&ctor->h, VC_Form, &ctor_name, &form->h.a);
+    initForm(ctor, ctor_id);
+    if (!addGlobalBinding(ctor_name, &ctor->h.a))
       invalidCodePath;
   }
 
-  initForm(form, type, ctor_count, ctors, getNextFormId());
-  if (!addGlobalBinding(form_name.text, &form->h))
+  initForm(form, ctor_count, ctors, getNextFormId());
+  if (!addGlobalBinding(form_name.text, &form->h.a))
     invalidCodePath;
 
   return form;
@@ -952,7 +948,7 @@ parseExpression(MemoryArena *arena);
 internal Ast *
 normalize(Environment env, Ast *in0, b32 force_expand=false)
 {
-  Ast *out0 = 0;
+  Ast *out0 = {};
 
   switch (in0->cat)
   {
@@ -960,8 +956,6 @@ normalize(Environment env, Ast *in0, b32 force_expand=false)
     {
       Constant *in = castAst(in0, Constant);
       out0 = in->value;
-      if (in->value->cat != AC_Form)
-        breakhere;
     } break;
 
     case AC_Variable:
@@ -992,7 +986,7 @@ normalize(Environment env, Ast *in0, b32 force_expand=false)
            arg_id++)
       {
         Ast *in_arg = in->args[arg_id];
-        norm_args[arg_id]  = normalize(env, in_arg);
+        norm_args[arg_id] = normalize(env, in_arg);
       }
 
       Ast *norm_op = normalize(env, in->op);
@@ -1017,15 +1011,15 @@ normalize(Environment env, Ast *in0, b32 force_expand=false)
           out0 = normalize(new_env, fun->body);
         }
       }
-      else if (norm_op == &builtin_identical->h)
+      else if (norm_op == &builtin_identical->h.a)
       {// special case for equality
         Ast *lhs = norm_args[1];
         Ast *rhs = norm_args[2];
         Trinary compare = identicalTrinary(lhs, rhs);
         if (compare == Trinary_True)
-          out0 = &builtin_True->h;
+          out0 = &builtin_True->h.a;
         else if (compare == Trinary_False)
-          out0 = &builtin_False->h;
+          out0 = &builtin_False->h.a;
         else if (isCompositeForm(lhs)
                  && isCompositeForm(rhs))
         {// Leibniz' principle
@@ -1097,40 +1091,6 @@ normalize(Environment env, Ast *in0, b32 force_expand=false)
         out->subject = norm_subject;
         out0 = &out->h;
       }
-
-#if 0
-      if (!subject_matched)
-      {
-        Fork *out = copyStruct(env.arena, in);
-        out0 = out;
-        out->subject = norm_subject;
-        allocateArray(env.arena, out->case_count, out->cases);
-        Environment *outer_env = &env;
-        for (s32 case_id = 0; case_id < out->case_count; case_id++)
-        {
-          Environment env = *outer_env;
-          Form *ctor = in->form->ctors + case_id;
-          switch (ctor->type->cat)
-          {
-            case AC_Form:
-            {
-              extendStack(&env, 0, 0);
-            } break;
-
-            case AC_ArrowType:
-            {
-              introduceVariables(&env,
-                                 castAst(ctor->type, ArrowType)->param_count,
-                                 in->cases[case_id].params);
-            } break;
-
-            invalidDefaultCase;
-          }
-          out->cases[case_id]      = in->cases[case_id];
-          out->cases[case_id].body = normalize(env, in->cases[case_id].body);
-        }
-      }
-#endif
     } break;
 
     case AC_ArrowType:
@@ -1181,7 +1141,7 @@ normalized(Environment env, Ast *in)
   return identicalB32(in, norm);
 }
 
-inline void
+internal void
 addRewrite(Environment *env, Ast *lhs0, Ast *rhs0)
 {
   assert(normalized(*env, lhs0));
@@ -1327,18 +1287,17 @@ rebaseUpExpr(MemoryArena *arena, Ast *in)
   return transformVariables(newEnvironment(arena), in, rebaseVariable, &adjustment);
 }
 
-// TODO: oh man this is just a dispatch function. Really wished everything had
-// type, huh?
 inline Ast *
-typeOfValue(Ast *in0)
+typeOfValue(Ast *value)
 {
   Ast *out = 0;
+  Ast *in0 = value;
   switch (in0->cat)
   {
     case AC_Form:
     {
       Form *in = castAst(in0, Form);
-      out = in->type;
+      out = in->h.type;
     } break;
 
     case AC_Composite:
@@ -1376,7 +1335,7 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
     case AC_Form:
     {
       Form *in = castAst(in0, Form);
-      out0 = in->type;
+      out0 = in->h.type;
     } break;
 
     case AC_Variable:
@@ -1403,10 +1362,10 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
 
         ForkCase *casev    = in->cases + case_id;
 
-        Form       *ctor     = form->ctors + case_id;
-        Ast *ctor_exp = &ctor->h;
+        Form *ctor     = form->ctors + case_id;
+        Ast  *ctor_exp = &ctor->h.a;
 
-        switch (ctor->type->cat)
+        switch (ctor->h.type->cat)
         {
           case AC_Form:
           {// member
@@ -1416,7 +1375,7 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
 
           case AC_ArrowType:
           {// composite
-            ArrowType   *signature = castAst(ctor->type, ArrowType);
+            ArrowType   *signature = castAst(ctor->h.type, ArrowType);
             Ast **params    = introduceVariables(&env, signature->param_count, casev->params);
             Composite   *pattern   = newAst(env.temp_arena, Composite, &ctor->h.token);
             initComposite(pattern, ctor_exp, signature->param_count, params);
@@ -1490,7 +1449,7 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
                   Ast *norm_rule0 = normalize(env, rewrite_rule0);
                   if (Composite *norm_rule = castAst(norm_rule0, Composite))
                   {
-                    if (norm_rule->op == &builtin_identical->h)
+                    if (norm_rule->op == &builtin_identical->h.a)
                     {
                       rule_valid = true;
                       addRewrite(&env, norm_rule->args[1], norm_rule->args[2]);
@@ -1534,7 +1493,7 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
       else if (in->op == dummy_rewrite)
       {
         // NOTE: questionable hack, but what's the harm.
-        out0 = &builtin_True->h;
+        out0 = &builtin_True->h.a;
       }
       else
       {
@@ -1602,7 +1561,7 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
       ArrowType *in = castAst(in0, ArrowType);
       introduceVariables(&env, in);
       if (typecheck(env, in->return_type, 0))
-        out0 = &builtin_Type->h;  // todo: #theory it's not a form but somehow is a type?
+        out0 = &builtin_Type->h.a;  // todo: #theory it's not a form but somehow is a type?
     } break;
 
     invalidDefaultCase;
@@ -1620,7 +1579,6 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
       if (!identicalB32(norm_expected, norm_actual))
       {
         matched = false;
-        identicalB32(norm_expected, norm_actual);
         parseError(in0, "actual type differs from expected type");
         pushAttachment("expected", norm_expected);
         pushAttachment("got", norm_actual);
@@ -1695,7 +1653,7 @@ buildExpression(MemoryArena *arena, Bindings *bindings, Ast *in0)
         new_args[1] = in->args[0];
         new_args[2] = in->args[1];
         // todo: still nervous about putting the whole form there...
-        initComposite(in, &builtin_identical->h, 3, new_args);
+        initComposite(in, &builtin_identical->h.a, 3, new_args);
         build_op = false;
       }
 
@@ -1783,11 +1741,11 @@ buildExpression(MemoryArena *arena, Bindings *bindings, Ast *in0)
                         Ast *norm_pattern = normalize(temp_arena, pattern);
                         if ((ctor = castAst(norm_pattern, Form)))
                         {
-                          if (!identicalB32(ctor->type, subject_type))
+                          if (!identicalB32(ctor->h.type, subject_type))
                           {
                             parseError(ast_pattern, "constructor of wrong type");
                             pushAttachment("expected type", subject_type);
-                            pushAttachment("got type", ctor->type);
+                            pushAttachment("got type", ctor->h.type);
                           }
                         }
                         else
@@ -1803,9 +1761,9 @@ buildExpression(MemoryArena *arena, Bindings *bindings, Ast *in0)
                         Ast *op = normalize(temp_arena, op0);
                         if ((ctor = castAst(op, Form)))
                         {
-                          if (ArrowType *ctor_sig = castAst(ctor->type, ArrowType))
+                          if (ArrowType *ctor_sig = castAst(ctor->h.type, ArrowType))
                           {
-                            if (identicalB32(&getFormOf(ctor_sig->return_type)->h, &getFormOf(subject_type)->h))
+                            if (identicalB32(&getFormOf(ctor_sig->return_type)->h.a, &getFormOf(subject_type)->h.a))
                             {
                               param_count = branch->arg_count;
                               if (param_count == ctor_sig->param_count)
@@ -1875,7 +1833,7 @@ buildExpression(MemoryArena *arena, Bindings *bindings, Ast *in0)
                     if (cases[ctor->ctor_id].body)
                     {
                       parseError(in->bodies[input_case_id], "fork case handled twice");
-                      pushAttachment("constructor", &ctor->h);
+                      pushAttachment("constructor", &ctor->h.a);
                     }
                     else
                       initForkCase(cases + ctor->ctor_id, body, params, param_count);
@@ -2369,11 +2327,9 @@ parseConstructorDef(MemoryArena *arena, Form *out, Form *form, s32 ctor_id)
   pushContext;
 
   Token ctor_token = nextToken();
-  out->h.cat   = AC_Form;
-  out->h.token = ctor_token;
   if (isIdentifier(&ctor_token))
   {
-    if (addGlobalBinding(ctor_token.text, &out->h))
+    if (addGlobalBinding(ctor_token.text, &out->h.a))
     {
       if (optionalChar(':'))
       {
@@ -2394,7 +2350,8 @@ parseConstructorDef(MemoryArena *arena, Form *out, Form *form, s32 ctor_id)
 
           if (valid_type)
           {
-            initForm(out, type0, ctor_id);
+            initValue(&out->h, VC_Form, &ctor_token, type0);
+            initForm(out, ctor_id);
           }
           else
           {
@@ -2406,8 +2363,11 @@ parseConstructorDef(MemoryArena *arena, Form *out, Form *form, s32 ctor_id)
       else
       {
         // default type is the form itself
-        if (form->type == &builtin_Set->h)
-          initForm(out, &form->h, ctor_id);
+        if (form->h.type == &builtin_Set->h.a)
+        {
+          initValue(&out->h, VC_Form, &ctor_token, &form->h.a);
+          initForm(out, ctor_id);
+        }
         else
           parseError(&ctor_token, "constructors must construct a set member");
       }
@@ -2430,11 +2390,11 @@ parseTypedef(MemoryArena *arena)
   Token form_name = nextToken();
   if (isIdentifier(&form_name))
   {
-    Form *form = newAst(arena, Form, &form_name);
+    Form *form = pushStruct(arena, Form);
     // NOTE: the type is in scope of its own constructor.
-    if (addGlobalBinding(form_name.text, &form->h))
+    if (addGlobalBinding(form_name.text, &form->h.a))
     {
-      Ast *type = &builtin_Set->h;
+      Ast *type = &builtin_Set->h.a;
       if (optionalChar(':'))
       {// type override
         b32 valid_type = false;
@@ -2443,10 +2403,10 @@ parseTypedef(MemoryArena *arena)
           Ast *norm_type = normalize(temp_arena, type_parsing.expression);
           if (ArrowType *arrow = castAst(norm_type, ArrowType))
           {
-            if (arrow->return_type == &builtin_Set->h)
+            if (arrow->return_type == &builtin_Set->h.a)
               valid_type = true;
           }
-          else if (norm_type == &builtin_Set->h)
+          else if (norm_type == &builtin_Set->h.a)
             valid_type = true;
 
           if (valid_type)
@@ -2467,7 +2427,8 @@ parseTypedef(MemoryArena *arena)
         if (noError(&tk_copy))
         {
           Form *ctors = pushArray(arena, expected_ctor_count, Form);
-          initForm(form, type, expected_ctor_count, ctors, getNextFormId());
+          initValue(&form->h, VC_Form, &form_name, type);
+          initForm(form, expected_ctor_count, ctors, getNextFormId());
           s32 parsed_ctor_count = 0;
           for (s32 stop = 0;
                !stop && noError();)
@@ -2835,7 +2796,7 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
     const char *builtin_Type_members[] = {"Set"};
     builtin_Type = addBuiltinForm(arena, "Type", 0, builtin_Type_members, 1);
     builtin_Set  = castAst(lookupGlobalName("Set"), Form);
-    builtin_Type->type = &builtin_Type->h; // note: circular types are gonna bite us
+    builtin_Type->h.type = &builtin_Type->h.a; // note: circular types are gonna bite us
 
     allocate(arena, dummy_sequence, true);
     dummy_sequence->cat = AC_DummySequence;
@@ -2854,11 +2815,11 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
     }
 
     const char *true_members[] = {"truth"};
-    addBuiltinForm(arena, "True", &builtin_Set->h, true_members, 1);
+    addBuiltinForm(arena, "True", &builtin_Set->h.a, true_members, 1);
     builtin_True  = castAst(lookupGlobalName("True"), Form);
     builtin_truth = castAst(lookupGlobalName("truth"), Form);
 
-    addBuiltinForm(arena, "False", &builtin_Set->h, (const char **)0, 0);
+    addBuiltinForm(arena, "False", &builtin_Set->h.a, (const char **)0, 0);
     builtin_False = castAst(lookupGlobalName("False"), Form);
   }
 

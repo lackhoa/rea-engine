@@ -20,7 +20,6 @@ enum AstCategory
 
   AC_Composite,                 // operator application
   AC_Fork,                      // switch statement
-  AC_Form,                      // like Coq inductive types
   AC_Function,                  // holds actual computation (ie body that can be executed)
 
   AC_ArrowType,                 // type of procedure and built-in objects
@@ -29,12 +28,15 @@ enum AstCategory
   AC_DummyHole,                 // hole left in for type-checking
   AC_DummySequence,             // like scheme's "begin" keyword
   AC_DummyRewrite,
+
+  // tunnelling value into ast
+  AC_Form = 100,
 };
 
 struct Ast
 {
   AstCategory cat;
-  Token              token;
+  Token       token;
 };
 
 inline void
@@ -87,7 +89,7 @@ struct AbstractFork
 {
   Ast   h;
   Ast  *subject;
-  s32          case_count;
+  s32   case_count;
   Ast **patterns;
   Ast **bodies;
 };
@@ -107,9 +109,9 @@ initIdentifier(Constant *in, Ast *value)
 struct Composite
 {
   Ast   h;
-  Ast  *type; // for caching
+  Ast  *type;                   // for caching
   Ast  *op;
-  s32          arg_count;
+  s32   arg_count;
   Ast **args;
 };
 
@@ -138,10 +140,10 @@ initForkCase(ForkCase *fork_case, Ast *body, Variable **params, s32 param_count)
 
 struct ArrowType
 {
-  Ast   h;
-  s32          param_count;
-  Variable   **params;
-  Ast  *return_type;
+  Ast        h;
+  s32        param_count;
+  Variable **params;
+  Ast       *return_type;
 };
 
 inline void
@@ -150,59 +152,6 @@ initArrowType(ArrowType *in, s32 param_count, Variable **params, Ast *return_typ
   in->param_count = param_count;
   in->params      = params;
   in->return_type = return_type;
-}
-
-struct Form
-{
-  Ast  h;
-
-  Ast *type;
-  s32         ctor_id;
-
-  s32   ctor_count;
-  Form *ctors;
-};
-
-inline Form *
-getFormOf(Ast *in0)
-{
-  Form *out = 0;
-  switch (in0->cat)
-  {
-    case AC_Composite:
-    {
-      Composite *in = castAst(in0, Composite);
-      out = castAst(in->op, Form);
-    } break;
-
-    case AC_Form:
-    {
-      out = castAst(in0, Form);
-    } break;
-
-    invalidDefaultCase;
-  }
-  return out;
-}
-
-inline void
-initForm(Form *in, Ast *type0, s32 ctor_count, Form *ctors, s32 ctor_id)
-{
-  in->h.cat      = AC_Form;
-  in->type       = type0;
-  in->ctor_count = ctor_count;
-  in->ctors      = ctors;
-  in->ctor_id    = ctor_id;
-}
-
-inline void
-initForm(Form *in, Ast *type0, s32 ctor_id)
-{
-  in->h.cat   = AC_Form;
-  in->type    = type0;
-  in->ctor_id = ctor_id;
-  in->ctor_count = 0;
-  in->ctors      = 0;
 }
 
 struct Fork
@@ -263,9 +212,9 @@ struct Rewrite
 
 struct Stack
 {
-  Stack       *outer;
-  s32          arg_count;
-  Ast **args;
+  Stack  *outer;
+  s32     arg_count;
+  Ast   **args;
 };
 
 // used in normalization, typechecking, etc.
@@ -321,82 +270,11 @@ struct AstList
   AstList *next;
 };
 
-#define castValue(value, category) ((value->cat == VC_##category) ? (category*)value : 0)
-
-enum ValueCategory
-{
-  VC_ParameterV,
-  VC_StackValue,
-  VC_ApplicationV,
-  VC_FormV,
-  VC_FunctionV,
-  VC_ArrowTypeV,
-};
-
-struct Value
-{
-  ValueCategory cat;
-};
-
-struct StackValue
-{
-  Value h;
-
-  String name;
-  s32    stack_depth;
-};
-
-struct ParameterV
-{
-  Value h;
-
-  String name;
-  Value *type;
-};
-
-struct ApplicationV
-{
-  Value h;
-
-  Value  *op;
-  s32     arg_count;
-  Value **args;
-};
-
-struct FormV
-{
-  Value h;
-
-  Token  name;
-  Value *type;
-
-  s32 ctor_id;
-
-  s32   ctor_count;
-  Form *ctors;
-};
-
-struct FunctionV
-{
-  Value h;
-  Token name;
-  Ast *body;
-};
-
-struct ArrowTypeV
-{
-  Value        h;
-
-  s32          param_count;
-  Variable   **params;
-  Ast  *return_type;
-};
-
 struct Binding
 {
-    String      key;
-    Ast *value;
-    Binding    *next;
+    String   key;
+    Ast     *value;
+    Binding *next;
 };
 
 struct Bindings
@@ -420,15 +298,101 @@ extendBindings(MemoryArena *arena, Bindings *outer)
   return out;
 }
 
-struct ValueBinding
-{
-  String        key;
-  Value        *value;
-  ValueBinding *next;
-};
-
 inline ValueBindings
 toValueBindings(Bindings *bindings)
 {
   return ValueBindings{bindings};
+}
+
+enum ValueCategory
+{
+  VC_Form = 100,
+  VC_StackRef,
+  VC_Function,
+  VC_CompositeV,
+  VC_ArrowTypeV,
+};
+
+struct Value
+{
+  union
+  {
+    struct
+    {
+      ValueCategory  cat;
+      Token          token;
+    };
+    Ast a;         // tunnelling for now
+  };
+  Ast *type;
+};
+
+inline void
+initValue(Value *in, ValueCategory cat, Token *token, Ast *type)
+{
+  in->cat     = cat;
+  in->a.token = *token;
+  in->type    = type;
+}
+
+inline Value *
+newValue_(MemoryArena *arena, ValueCategory cat, Token *token, Ast *type, size_t size)
+{
+  Value *out = (Value *)pushSize(arena, size, true);
+  initValue(out, cat, token, type);
+  return out;
+}
+
+#define newValue(arena, cat, token, type)                        \
+  ((cat *) newValue_(arena, VC_##cat, token, type, sizeof(cat)))
+
+struct Form
+{
+  Value h;
+
+  s32  ctor_id;
+
+  s32   ctor_count;
+  Form *ctors;
+};
+
+inline void
+initForm(Form *in, s32 ctor_count, Form *ctors, s32 ctor_id)
+{
+  in->h.a.cat    = AC_Form;
+  in->ctor_count = ctor_count;
+  in->ctors      = ctors;
+  in->ctor_id    = ctor_id;
+}
+
+inline void
+initForm(Form *in, s32 ctor_id)
+{
+  in->h.a.cat    = AC_Form;
+  in->ctor_id    = ctor_id;
+  in->ctor_count = 0;
+  in->ctors      = 0;
+}
+
+inline Form *
+getFormOf(Ast *in0)
+{
+  Form *out = 0;
+  switch (in0->cat)
+  {
+    case AC_Composite:
+    {
+      Composite *in = castAst(in0, Composite);
+      /* out = castValue(value, Form); */
+      out = castAst(in->op, Form);
+    } break;
+
+    case AC_Form:
+    {
+      out = castAst(in0, Form);
+    } break;
+
+    invalidDefaultCase;
+  }
+  return out;
 }
