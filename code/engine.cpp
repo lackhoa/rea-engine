@@ -106,6 +106,7 @@ hasAnyVariable(Ast *in)
   return searchVariable(env, in, isAnyVariable, 0);
 }
 
+#if 0
 VARIABLE_MATCHER(isFreeVariable)
 {
   (void) opt;
@@ -143,6 +144,7 @@ hasDeepVariable(Environment env, Ast *in)
 {
   return searchVariable(env, in, isDeepVariable, 0);
 }
+#endif
 
 inline b32
 identicalB32(Ast *lhs, Ast *rhs)
@@ -202,10 +204,10 @@ identicalTrinary(Ast *lhs0, Ast *rhs0)
   {
     switch (lhs0->cat)
     {
-      case AC_Variable:
+      case AC_StackRef:
       {
-        auto lvar = castAst(lhs0, Variable);
-        auto rvar = castAst(rhs0, Variable);
+        auto lvar = castAst(lhs0, StackRef);
+        auto rvar = castAst(rhs0, StackRef);
         if ((lvar->stack_depth)
             && (lvar->stack_depth == rvar->stack_depth)
             && (lvar->id == rvar->id))
@@ -304,7 +306,7 @@ identicalTrinary(Ast *lhs0, Ast *rhs0)
 struct PrintOptions{b32 detailed; b32 print_type;};
 
 internal char*
-printExpression(MemoryArena *buffer, Ast *in0, PrintOptions opt)
+printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
 {
   char *out = buffer ? (char*)getArenaNext(buffer) : 0;
   if (in0)
@@ -314,6 +316,11 @@ printExpression(MemoryArena *buffer, Ast *in0, PrintOptions opt)
 
     switch (in0->cat)
     {
+      case AC_StackRef:
+      {
+        StackRef *in = castAst(in0, StackRef);
+        printToBuffer(buffer, "%.*s<%d>", in->name.length, in->name.chars, in->stack_depth);
+      } break;
       case AC_Constant:
       {
         Constant *in = castAst(in0, Constant);
@@ -324,10 +331,7 @@ printExpression(MemoryArena *buffer, Ast *in0, PrintOptions opt)
       {
         Variable *in = castAst(in0, Variable);
 #if 0
-        if (in->stack_depth)
-          printToBuffer(buffer, "%.*s<%d>", in->name.length, in->name.chars, in->stack_depth);
-        else
-          printToBuffer(buffer, "%.*s[%d]", in->name.length, in->name.chars, in->stack_delta);
+        printToBuffer(buffer, "%.*s[%d]", in->name.length, in->name.chars, in->stack_delta);
 #else
         printToBuffer(buffer, in->h.token);
 #endif
@@ -335,7 +339,7 @@ printExpression(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         if (opt.detailed || opt.print_type)
         {
           printToBuffer(buffer, ": ");
-          printExpression(buffer, in->type, new_opt);
+          printAst(buffer, in->type, new_opt);
         }
       } break;
 
@@ -347,7 +351,7 @@ printExpression(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         {
           for (s32 arg_id = 0; arg_id < in->arg_count; arg_id++)
           {
-            printExpression(buffer, in->args[arg_id], new_opt);
+            printAst(buffer, in->args[arg_id], new_opt);
             if (arg_id < in->arg_count-1)
               printToBuffer(buffer, "; ");
           }
@@ -357,23 +361,23 @@ printExpression(MemoryArena *buffer, Ast *in0, PrintOptions opt)
           printToBuffer(buffer, "rewrite ");
           if (in->arg_count == 1)
           {
-            printExpression(buffer, in->args[0], new_opt);
+            printAst(buffer, in->args[0], new_opt);
           }
           else if (in->arg_count == 2)
           {
-            printExpression(buffer, in->args[0], new_opt);
+            printAst(buffer, in->args[0], new_opt);
             printToBuffer(buffer, " => ");
-            printExpression(buffer, in->args[1], new_opt);
+            printAst(buffer, in->args[1], new_opt);
           }
         }
         else
         {
-          printExpression(buffer, in->op, new_opt);
+          printAst(buffer, in->op, new_opt);
 
           printToBuffer(buffer, "(");
           for (s32 arg_id = 0; arg_id < in->arg_count; arg_id++)
           {
-            printExpression(buffer, in->args[arg_id], new_opt);
+            printAst(buffer, in->args[arg_id], new_opt);
             if (arg_id < in->arg_count-1)
               printToBuffer(buffer, ", ");
           }
@@ -385,7 +389,7 @@ printExpression(MemoryArena *buffer, Ast *in0, PrintOptions opt)
       {
         Fork *fork = castAst(in0, Fork);
         printToBuffer(buffer, "fork ");
-        printExpression(buffer, fork->subject, new_opt);
+        printAst(buffer, fork->subject, new_opt);
         printToBuffer(buffer, " {");
         Form *form = fork->form;
         for (s32 ctor_id = 0;
@@ -398,12 +402,12 @@ printExpression(MemoryArena *buffer, Ast *in0, PrintOptions opt)
           {// print pattern
             case AC_Form:
             {
-              printExpression(buffer, &ctor->h.a, new_opt);
+              printAst(buffer, &ctor->h.a, new_opt);
             } break;
 
             case AC_ArrowType:
             {
-              printExpression(buffer, &ctor->h.a, new_opt);
+              printAst(buffer, &ctor->h.a, new_opt);
               printToBuffer(buffer, " ");
               ArrowType *signature = castAst(ctor->h.type, ArrowType);
               for (s32 param_id = 0; param_id < signature->param_count; param_id++)
@@ -417,7 +421,7 @@ printExpression(MemoryArena *buffer, Ast *in0, PrintOptions opt)
           }
 
           printToBuffer(buffer, ": ");
-          printExpression(buffer, casev->body, new_opt);
+          printAst(buffer, casev->body, new_opt);
           if (ctor_id != form->ctor_count-1)
             printToBuffer(buffer, ", ");
         }
@@ -434,7 +438,7 @@ printExpression(MemoryArena *buffer, Ast *in0, PrintOptions opt)
           if (opt.print_type)
           {
             printToBuffer(buffer, ": ");
-            printExpression(buffer, in->h.type, new_opt);
+            printAst(buffer, in->h.type, new_opt);
           }
 
           if (in->ctor_count)
@@ -445,7 +449,7 @@ printExpression(MemoryArena *buffer, Ast *in0, PrintOptions opt)
               Form *ctor = in->ctors + ctor_id;
               printToBuffer(buffer, &ctor->h.a.token);
               printToBuffer(buffer, ": ");
-              printExpression(buffer, ctor->h.type, new_opt);
+              printAst(buffer, ctor->h.type, new_opt);
             }
             printToBuffer(buffer, " }");
           }
@@ -461,7 +465,7 @@ printExpression(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         if (opt.detailed)
         {
           printToBuffer(buffer, " { ");
-          printExpression(buffer, in->body, new_opt);
+          printAst(buffer, in->body, new_opt);
           printToBuffer(buffer, " }");
         }
       } break;
@@ -477,13 +481,13 @@ printExpression(MemoryArena *buffer, Ast *in0, PrintOptions opt)
           Variable *param = arrow->params[param_id];
           printToBuffer(buffer, &param->h.token);
           printToBuffer(buffer, ": ");
-          printExpression(buffer, param->type, new_opt);
+          printAst(buffer, param->type, new_opt);
           if (param_id < arrow->param_count-1)
             printToBuffer(buffer, ", ");
         }
         printToBuffer(buffer, ") -> ");
 
-        printExpression(buffer, arrow->return_type, new_opt);
+        printAst(buffer, arrow->return_type, new_opt);
       } break;
 
       case AC_DummyHole:
@@ -505,13 +509,32 @@ printExpression(MemoryArena *buffer, Ast *in0, PrintOptions opt)
 inline void
 myprint(Ast *expr)
 {
-  printExpression(0, expr, {});
+  printAst(0, expr, {});
 }
 
 inline void
 myprint(char *str)
 {
   printToBuffer(0, str);
+}
+
+inline void
+myprint(Stack *stack)
+{
+  myprint("[");
+  while (stack)
+  {
+    myprint("[");
+    for (s32 arg_id = 0; arg_id < stack->arg_count; arg_id++)
+    {
+      myprint(stack->args[arg_id]);
+      if (arg_id != stack->arg_count-1)
+        myprint(", ");
+    }
+    myprint("], ");
+    stack = stack->outer;
+  }
+  myprint("]");
 }
 
 global_variable ValueBindings global_bindings;
@@ -841,6 +864,7 @@ transformVariables(Environment env, Ast *in0, variable_transformer *transformer,
   return out0;
 }
 
+#if 0
 VARIABLE_TRANSFORMER(abstractInstantiated)
 {
   (void) opt;
@@ -865,6 +889,7 @@ abstractExpression(Environment env, Ast *in)
 {
   return transformVariables(env, in, abstractInstantiated, 0);
 }
+#endif
 
 // think of a function application
 VARIABLE_TRANSFORMER(replaceCurrentLevelVariable)
@@ -906,25 +931,26 @@ rewriteExpression(Environment *env, Ast *in)
 }
 
 internal Ast **
-introduceVariables(Environment *env, s32 count, Variable **models)
+introduce(Environment *env, s32 count, Variable **models)
 {
-  Variable **atoms = pushArray(env->temp_arena, count, Variable*);
+  StackRef **refs = pushArray(env->temp_arena, count, StackRef*);
   s32 stack_depth = env->stack_depth+1;
   for (s32 id = 0; id < count; id++)
   {
     Variable *model = models[id];
-    Variable *dst = copyStruct(env->temp_arena, model);
-    atoms[id] = dst;
-    dst->stack_depth = stack_depth;
+    StackRef *ref = refs[id] = newValue(env->arena, StackRef, &model->h.token, model->type);
+    ref->name = model->h.token;
+    ref->id = model->id;
+    ref->stack_depth = stack_depth;
   }
-  extendStack(env, count, (Ast**)atoms);
-  return (Ast**)atoms;
+  extendStack(env, count, (Ast**)refs);
+  return (Ast**)refs;
 }
 
 internal Ast **
-introduceVariables(Environment *env, ArrowType *signature)
+introduce(Environment *env, ArrowType *signature)
 {
-  return introduceVariables(env, signature->param_count, signature->params);
+  return introduce(env, signature->param_count, signature->params);
 }
 
 inline void
@@ -932,9 +958,9 @@ printRewrites(Environment env)
 {
   for (Rewrite *rewrite = env.rewrite; rewrite; rewrite = rewrite->next)
   {
-    printExpression(0, rewrite->lhs, {});
+    printAst(0, rewrite->lhs, {});
     printToBuffer(0, " => ");
-    printExpression(0, rewrite->rhs, {});
+    printAst(0, rewrite->rhs, {});
     if (rewrite->next)
       printToBuffer(0, ", ");
   }
@@ -961,8 +987,7 @@ normalize(Environment env, Ast *in0, b32 force_expand=false)
     case AC_Variable:
     {
       Variable *in = castAst(in0, Variable);
-      if (!in->stack_depth
-          && in->stack_delta >= env.stack_offset)
+      if (in->stack_delta >= env.stack_offset)
       {
         Stack *stack = env.stack;
         for (s32 delta = 0;
@@ -992,26 +1017,15 @@ normalize(Environment env, Ast *in0, b32 force_expand=false)
       Ast *norm_op = normalize(env, in->op);
       if (norm_op->cat == AC_Function)
       {// Function application
-        b32 has_any_variable = false;
-        if (!force_expand)
-        {
-          for (s32 arg_id = 0;
-               arg_id < in->arg_count && !has_any_variable;
-               arg_id++)
-          {
-            if (hasAnyVariable(norm_args[arg_id]))
-              has_any_variable = true;
-          }
-        }
-        if (force_expand || !has_any_variable)
-        {
-          Function *fun = castAst(norm_op, Function);
-          Environment new_env = env;
-          extendStack(&new_env, in->arg_count, norm_args);
-          out0 = normalize(new_env, fun->body);
-        }
+        Function *fun = castAst(norm_op, Function);
+        Environment fun_env = env;
+        extendStack(&fun_env, in->arg_count, norm_args);
+        // note: this might fail, in which case we back out.
+        out0 = normalize(fun_env, fun->body);
       }
-      else if (norm_op == &builtin_identical->h.a)
+      else if ((norm_op == &builtin_identical->h.a) &&
+               env.stack_offset == 0  // todo: questionable?
+               )
       {// special case for equality
         Ast *lhs = norm_args[1];
         Ast *rhs = norm_args[2];
@@ -1061,12 +1075,10 @@ normalize(Environment env, Ast *in0, b32 force_expand=false)
 
       Environment *outer_env = &env;
       Environment env = *outer_env;
-      b32 subject_matched = false;
       switch (norm_subject->cat)
       {
         case AC_Form:
         {
-          subject_matched = true;
           Form *ctor = castAst(norm_subject, Form);
           extendStack(&env, 0, 0);
           out0 = normalize(env, in->cases[ctor->ctor_id].body);
@@ -1077,20 +1089,13 @@ normalize(Environment env, Ast *in0, b32 force_expand=false)
           Composite *subject = castAst(norm_subject, Composite);
           if (Form *ctor = castAst(subject->op, Form))
           {
-            subject_matched = true;
             Ast *body = in->cases[ctor->ctor_id].body;
             extendStack(&env, subject->arg_count, subject->args);
             out0 = normalize(env, body);
           }
         } break;
       }
-
-      if (!subject_matched)
-      {
-        Fork *out = copyStruct(env.arena, in);
-        out->subject = norm_subject;
-        out0 = &out->h;
-      }
+      // note: we fail if the fork is undetermined
     } break;
 
     case AC_ArrowType:
@@ -1114,10 +1119,13 @@ normalize(Environment env, Ast *in0, b32 force_expand=false)
     } break;
   }
 
-  Ast *before_rewrite = out0;
-  out0 = rewriteExpression(&env, out0);
-  if (out0 != before_rewrite)
-    out0 = normalize(env, out0); // do another iteration
+  if (out0)
+  {
+    Ast *before_rewrite = out0;
+    out0 = rewriteExpression(&env, out0);
+    if (out0 != before_rewrite)
+      out0 = normalize(env, out0); // do another iteration
+  }
 
   return out0;
 }
@@ -1309,7 +1317,7 @@ typeOfValue(Ast *value)
     case AC_Function:
     {
       Function *in = castAst(in0, Function);
-      out = &in->signature->h;
+      out = in->h.type;
     } break;
 
     invalidDefaultCase;
@@ -1369,14 +1377,15 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
         {
           case AC_Form:
           {// member
+            normalize(env, in->subject);
             addRewrite(&env, norm_subject, ctor_exp);
-            introduceVariables(&env, 0, 0);
+            introduce(&env, 0, 0);
           } break;
 
           case AC_ArrowType:
           {// composite
             ArrowType   *signature = castAst(ctor->h.type, ArrowType);
-            Ast **params    = introduceVariables(&env, signature->param_count, casev->params);
+            Ast **params    = introduce(&env, signature->param_count, casev->params);
             Composite   *pattern   = newAst(env.temp_arena, Composite, &ctor->h.token);
             initComposite(pattern, ctor_exp, signature->param_count, params);
             addRewrite(&env, norm_subject, &pattern->h);
@@ -1391,7 +1400,6 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
           if (!common_type)
           {
             // fork body has more specific type than outer scope???
-            assert(!hasDeepVariable(*outer_env, body_type));
             common_type = body_type;
           }
         }
@@ -1404,15 +1412,15 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
     case AC_Function:
     {
       Function *in = castAst(in0, Function);
-      if (in->signature)
-        out0 = &in->signature->h;
+      if (in->h.type)
+        out0 = in->h.type;
       else if (expected_type)
       {
         if (ArrowType *expected_signature = castAst(expected_type, ArrowType))
         {
-          introduceVariables(&env, expected_signature);
+          introduce(&env, expected_signature);
           // Grant the function its type first, since the function body may call itself.
-          in->signature = expected_signature;
+          in->h.type = &expected_signature->h;
           Ast *expected_body_type = normalize(env, expected_signature->return_type);
           if (typecheck(env, in->body, expected_body_type))
             out0 = expected_type;
@@ -1539,9 +1547,8 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
                 }
                 extendStack(&env, arg_count, norm_args);
                 out0 = normalize(env, signature->return_type);
-                // TODO #speed we could choose to hold off this typing, since
-                // most applications aren't referred to anyway.
-                in->type = abstractExpression(env, out0);
+                // nocheckin: this is NOT cool... we are caching the unabstracted type.
+                in->type = out0;
               }
             }
             else
@@ -1559,7 +1566,7 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
     case AC_ArrowType:
     {
       ArrowType *in = castAst(in0, ArrowType);
-      introduceVariables(&env, in);
+      introduce(&env, in);
       if (typecheck(env, in->return_type, 0))
         out0 = &builtin_Type->h.a;  // todo: #theory it's not a form but somehow is a type?
     } break;
@@ -2478,7 +2485,7 @@ parseFunction(MemoryArena *arena, Token *name)
     if (ArrowType *signature = castAst(signature0, ArrowType))
     {
       Function *fun = newAst(arena, Function, name);
-      if (addGlobalBinding(name->text, &fun->h))
+      if (addGlobalBinding(name->text, &fun->h.a))
       {
         // note: we have to rebuild the function's local bindings
         Bindings *fun_bindings = extendBindings(arena, 0);
@@ -2498,8 +2505,8 @@ parseFunction(MemoryArena *arena, Token *name)
             Ast *body = buildExpression(arena, fun_bindings, body_ast);
             if (requireChar('}'))
             {
-              initFunction(fun, body);
-              typecheck(arena, &fun->h, &signature->h);
+              fun->body = body;
+              typecheck(arena, &fun->h.a, &signature->h);
             }
           }
         }
@@ -2609,9 +2616,9 @@ parseTopLevel(EngineState *state)
             if (auto parsing = parseExpressionFull(temp_arena))
             {
               Ast *reduced = normalizeStart(temp_arena, parsing.expression);
-              printExpression(0, reduced, {.detailed=true});
+              printAst(0, reduced, {.detailed=true});
               printToBuffer(0, ": ");
-              printExpression(0, parsing.type, {});
+              printAst(0, parsing.type, {});
               printNewline();
             }
             requireChar(';');
@@ -2621,9 +2628,9 @@ parseTopLevel(EngineState *state)
           {
             if (auto parsing = parseExpressionFull(temp_arena))
             {
-              printExpression(0, parsing.expression, {.detailed=true});
+              printAst(0, parsing.expression, {.detailed=true});
               printToBuffer(0, ": ");
-              printExpression(0, parsing.type, {});
+              printAst(0, parsing.type, {});
               printNewline();
             }
             requireChar(';');
@@ -2633,7 +2640,7 @@ parseTopLevel(EngineState *state)
           {
             if (Ast *exp = parseExpression(temp_arena))
             {
-              char *output = printExpression(temp_arena, exp, {.detailed=true, .print_type=true});
+              char *output = printAst(temp_arena, exp, {.detailed=true, .print_type=true});
               printf("%s\n", output);
             }
             requireChar(';');
@@ -2755,7 +2762,7 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
         {
           auto attachment = error->attached[attached_id];
           printf("%s: ", attachment.string);
-          printExpression(0, attachment.expression, {});
+          printAst(0, attachment.expression, {});
           if (attached_id != error->attached_count-1) 
             printf("\n");
         }
@@ -2840,6 +2847,9 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
 int
 engineMain()
 {
+  astdbg whatever = {};
+  (void)whatever;
+
   int success = true;
 
 #if REA_INTERNAL

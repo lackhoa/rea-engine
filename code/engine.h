@@ -20,7 +20,6 @@ enum AstCategory
 
   AC_Composite,                 // operator application
   AC_Fork,                      // switch statement
-  AC_Function,                  // holds actual computation (ie body that can be executed)
 
   AC_ArrowType,                 // type of procedure and built-in objects
 
@@ -30,7 +29,9 @@ enum AstCategory
   AC_DummyRewrite,
 
   // tunnelling value into ast
-  AC_Form = 100,
+  AC_Form     = 100,
+  AC_Function = 101,            // holds actual computation (ie body that can be executed)
+  AC_StackRef = 102,
 };
 
 struct Ast
@@ -70,9 +71,8 @@ struct Variable
 {
   Ast  h;
 
-  s32    id;
-  s32    stack_delta;
-  s32    stack_depth;
+  s32  id;
+  s32  stack_delta;
   Ast *type;
 };
 
@@ -81,7 +81,6 @@ initVariable(Variable *var, u32 id, Ast *type)
 {
   var->stack_delta = 0;
   var->id          = id;
-  var->stack_depth = 0;
   var->type        = type;
 }
 
@@ -174,20 +173,6 @@ initFork(Fork *out, Form *form, Ast *subject, s32 case_count, ForkCase *cases)
 
   for (s32 case_id = 0; case_id < case_count; case_id++)
     assert(out->cases[case_id].body);
-}
-
-struct Function
-{
-  Ast  h;
-  Ast *body;
-  ArrowType  *signature;
-};
-
-inline void
-initFunction(Function *fun, Ast *body)
-{
-  assert(body);
-  fun->body = body;
 }
 
 struct ParseExpressionOptions
@@ -306,9 +291,9 @@ toValueBindings(Bindings *bindings)
 
 enum ValueCategory
 {
-  VC_Form = 100,
+  VC_Form     = 100,
+  VC_Function = 101,
   VC_StackRef,
-  VC_Function,
   VC_CompositeV,
   VC_ArrowTypeV,
 };
@@ -383,7 +368,6 @@ getFormOf(Ast *in0)
     case AC_Composite:
     {
       Composite *in = castAst(in0, Composite);
-      /* out = castValue(value, Form); */
       out = castAst(in->op, Form);
     } break;
 
@@ -396,3 +380,31 @@ getFormOf(Ast *in0)
   }
   return out;
 }
+
+struct Function
+{
+  Value  h;
+
+  Ast   *body;
+};
+
+struct StackRef
+{
+  Value h;
+
+  String name;
+  s32 id;
+  s32 stack_depth;
+};
+
+union astdbg
+{
+  Variable  Variable;
+  Constant  Constant;
+  Composite Composite;
+  Fork      Fork;
+  ArrowType ArrowType;
+  Form      Form;
+  Function  Function;
+  StackRef  StackRef;
+};
