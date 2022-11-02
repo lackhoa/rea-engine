@@ -1,2 +1,23 @@
 #load "boolean.rea"
 #load "nat.rea"
+
+plusAssociative :: (a, b, c: Nat) -> a + (b + c) = (a + b) + c
+{
+ fork a
+ {
+  0    : truth,
+  s(a'): rewrite plusAssociative(a', b, c); truth,
+  }
+ }
+
+;; testCurrying :: (a: Nat) -> (b, c: Nat) -> a + (b + c) = (a + b) + c
+;; {
+;;  fork a
+;;  {
+;;   0:
+;;   out :: (b, c: Nat) { plusAssociative(b, c) };
+;;   out,
+
+;;   s(a'): plusCommutative,
+;;   }
+;;  }

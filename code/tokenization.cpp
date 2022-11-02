@@ -72,65 +72,6 @@ isSpecial(char c)
 }
 
 inline void
-printToBufferVA(MemoryArena *buffer, char *format, va_list arg_list)
-{
-    char *at = (char *)getArenaNext(buffer);
-    auto printed = vsprintf_s(at, (buffer->cap - buffer->used), format, arg_list);
-    buffer->used += printed;
-}
-
-inline char *
-printToBuffer(MemoryArena *buffer, char *format, ...)
-{
-  char *out = 0;
-
-   va_list arg_list;
-  __crt_va_start(arg_list, format);
-
-  if (buffer)
-  {
-    out = (char *)getArenaNext(buffer);
-    char *at = out;
-    auto printed = vsprintf_s(at, (buffer->cap-1 - buffer->used), format, arg_list);
-    buffer->used += printed;
-    buffer->base[buffer->used] = 0; // nil-termination
-  }
-  else
-    vprintf_s(format, arg_list);
-
-  __crt_va_end(arg_list);
-
-  return out;
-}
-
-inline char *
-printToBuffer(MemoryArena *buffer, String s)
-{
-  char *out = 0;
-  if (buffer)
-  {
-    out = (char *)getArenaNext(buffer);
-    char *at = out;
-    const char *c = s.chars;
-    for (s32 index = 0; index < s.length; index++)
-      *at++ = *c++;
-    *at = 0;
-    buffer->used = at - (char *)buffer->base;
-    assert(buffer->used <= buffer->cap);
-  }
-  else
-    printf("%.*s", s.length, s.chars);
-
-  return out;
-}
-
-inline char *
-printToBuffer(MemoryArena *buffer, Token *token)
-{
-  return printToBuffer(buffer, token->text);
-}
-
-inline void
 printCharToBufferRepeat(char *buffer, char c, s32 repeat)
 {
     for (s32 index = 0 ;
@@ -450,23 +391,6 @@ inString(char *string, Token *token)
         }
     }
     return false;
-}
-
-internal void
-debugPrintTokens(Tokenizer tk)
-{
-    while (*tk.at)
-    {
-        Token token = nextToken(&tk);
-        printf("%.*s ", token.text.length, token.text.chars);
-    }
-    printf("\n");
-}
-
-inline void
-myprint()
-{
-  printToBuffer(0, "\n");
 }
 
 // TODO: Better hash function!

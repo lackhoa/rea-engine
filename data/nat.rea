@@ -76,7 +76,7 @@ plusIdRight :: (n: Nat) -> n + 0 = n
  fork n
  {
   0      : truth,
-  s(n69) : rewrite s(n69) + 0 => s(n69 + 0); rewrite plusIdRight(n69); truth,
+  s(n69) : rewrite plusIdRight(n69); truth,
   }
  }
 
@@ -84,12 +84,8 @@ plusSRight :: (n, m: Nat) -> n + s(m) = s(n+m)
 {
  fork n
  {
-  0    : rewrite 0 + s(m) => s(m); rewrite 0 + m => m; truth,
-  s(n'):
-  rewrite s(n') + s(m) => s(n' + s(m));
-  rewrite plusSRight(n', m);
-  rewrite s(n') + m => s(n'+m);
-  truth,
+  0    : rewrite 0 + m => m; truth,
+  s(n'): rewrite plusSRight(n', m); truth,
   }
  }
 
