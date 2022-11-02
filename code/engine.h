@@ -12,8 +12,6 @@ enum AstCategory
 {
   AC_Null = 0,
 
-  AC_Composite = 1,
-
   // result after parsing
   AC_Identifier,
   AC_AbstractFork,
@@ -22,8 +20,10 @@ enum AstCategory
   AC_Variable,
   AC_Constant,
 
-  AC_Fork,                      // switch statement
-  AC_ArrowType,                 // type of procedure and built-in objects
+  AC_Fork,
+
+  AC_Composite,
+  AC_Arrow,
 
   // dummy values for denoting only
   AC_DummyHole,                 // hole left in for type-checking
@@ -31,10 +31,11 @@ enum AstCategory
   AC_DummyRewrite,
 
   // tunnelling values into ast
-  AC_CompositeV = 101,
-  AC_Form       = 102,
-  AC_Function   = 103,          // holds actual computation (ie body that can be executed)
-  AC_StackRef   = 104,
+  AC_CompositeV,
+  AC_ArrowV,
+  AC_Form,
+  AC_Function,          // holds actual computation (ie body that can be executed)
+  AC_StackRef,
 };
 
 struct Ast
@@ -63,7 +64,8 @@ newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
 
 b32 identicalB32(Ast *lhs, Ast *rhs);
 
-#define castAst(exp, Cat) (((exp)->cat == AC_##Cat || (exp)->cat == AC_##Cat + 100) ? (Cat*)(exp) : 0)
+#define castAst(exp, Cat) ((exp)->cat == AC_##Cat ? (Cat*)(exp) : 0)
+#define polyAst(exp, Cat, Cat2) (((exp)->cat == AC_##Cat || (exp)->cat == AC_##Cat2) ? (Cat*)(exp) : 0)
 
 struct Identifier
 {
@@ -120,23 +122,6 @@ initForkCase(ForkCase *fork_case, Ast *body, Variable **params, s32 param_count)
     assert(params);
   fork_case->body   = body;
   fork_case->params = params;
-}
-
-struct ArrowType
-{
-  Ast        h;
-
-  s32        param_count;
-  Variable **params;
-  Ast       *return_type;
-};
-
-inline void
-initArrowType(ArrowType *in, s32 param_count, Variable **params, Ast *return_type)
-{
-  in->param_count = param_count;
-  in->params      = params;
-  in->return_type = return_type;
 }
 
 struct Fork
@@ -278,12 +263,14 @@ toValueBindings(Bindings *bindings)
   return ValueBindings{bindings};
 }
 
+// actually a subset of "AstCategory"
 enum ValueCategory
 {
-  VC_CompositeV = 101,
-  VC_Form       = 102,
-  VC_Function   = 103,
-  VC_StackRef   = 104,
+  VC_CompositeV = AC_CompositeV,
+  VC_ArrowTypeV = AC_ArrowV,
+  VC_Form       = AC_Form,
+  VC_Function   = AC_Function,
+  VC_StackRef   = AC_StackRef,
 };
 
 struct Value
@@ -369,7 +356,7 @@ struct Composite
 {
   union
   {
-    Ast   h;
+    Ast   a;
     Value v;
   };
 
@@ -386,4 +373,27 @@ initComposite(Composite *app, Ast *op, s32 arg_count, Ast **args)
   app->op        = op;
   app->arg_count = arg_count;
   app->args      = args;
+}
+
+struct Arrow
+{
+  union
+  {
+    Ast   a;
+    Value v;
+  };
+
+  s32        param_count;
+  Variable **params;
+  Ast       *return_type;
+};
+
+typedef Arrow ArrowV;
+
+inline void
+initArrowType(Arrow *in, s32 param_count, Variable **params, Ast *return_type)
+{
+  in->param_count = param_count;
+  in->params      = params;
+  in->return_type = return_type;
 }
