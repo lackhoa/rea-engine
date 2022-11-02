@@ -708,18 +708,19 @@ rewriteExpression(Environment *env, Ast *in)
 internal Ast **
 introduce(Environment *env, s32 count, Variable **models)
 {
-  StackRef **refs = pushArray(env->temp_arena, count, StackRef*);
+  assert(count < arrayCount(env->stack->args));
   s32 stack_depth = env->stack_depth+1;
+  StackRef **refs = pushArray(temp_arena, count, StackRef *);
   for (s32 id = 0; id < count; id++)
   {
     Variable *model = models[id];
-    StackRef *ref = refs[id] = newValue(env->arena, StackRef, &model->h.token, model->type);
-    ref->name = model->h.token;
-    ref->id = model->id;
+    StackRef *ref = refs[id] = newValue(temp_arena, StackRef, &model->h.token, model->type);
+    ref->name        = model->h.token.text;
+    ref->id          = model->id;
     ref->stack_depth = stack_depth;
   }
   extendStack(env, count, (Ast**)refs);
-  return (Ast**)refs;
+  return env->stack->args;
 }
 
 internal Ast **
@@ -745,29 +746,31 @@ printRewrites(Environment env)
 inline Ast *
 parseExpression(MemoryArena *arena);
 
-inline Ast *
-typeOfValue(Ast *in0)
+inline b32
+isValue(Ast *in0)
 {
   Value *in = (Value*)in0;
-  Ast *out = 0;
+  b32 out = false;
   switch (in->cat)
   {
     case VC_ArrowV:
-    {
-      if (!in->type)
-        in->type = out = &builtin_Type->v.a;
-    } break;
-
     case VC_StackRef:
     case VC_Form:
     case VC_FunctionV:
     case VC_CompositeV:
     {
-      out = in->type;
+      out = true;
     } break;
-
-    invalidDefaultCase;
   }
+  return out;
+}
+
+inline Ast *
+typeOfValue(Ast *in0)
+{
+  assert(isValue(in0));
+  Value *in = (Value*)in0;
+  Ast *out = in->type;
   return out;
 }
 
@@ -856,7 +859,7 @@ normalize(Environment env, Ast *in0)
         for (int arg_id = 0; arg_id < out->arg_count; arg_id++)
           out->args[arg_id] = norm_args[arg_id];
 
-        // annotate the type (todo: maybe promote it to a CompositeV?).
+        // annotate the type
         ArrowV *signature = castAst(typeOfValue(norm_op), ArrowV);
         out->v.type = normalize(env, signature->return_type);
       }
@@ -934,10 +937,9 @@ normalize(Environment env, Ast *in0)
       out0 = normalize(env, out0); // do another iteration
 
     if (env.stack_offset == 0)
-    {
-      // assert that output is value (well unless it's a variable, idk)
-      typeOfValue(out0);
-    }
+      // TODO: this hole is ruining my life!
+      if (out0->cat != AC_DummyHole)
+        assert(isValue(out0));
   }
 
   return out0;
@@ -1029,6 +1031,7 @@ rebaseUpExpr(MemoryArena *arena, Ast *in)
   return transformVariables(newEnvironment(arena), in, rebaseVariable, &adjustment);
 }
 
+// todo: #mem I don't think we need the arena here?
 // NOTE: the output as well as "expected_type" are instantiated, but expression
 // types are abstract.
 internal Ast *
@@ -1085,7 +1088,7 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
             ArrowV  *signature = castAst(ctor->v.type, ArrowV);
             Ast    **params    = introduce(&env, signature->param_count, casev->params);
             // NOTE: we could add a type here, but not sure if we need it.
-            CompositeV *pattern = newValue(env.temp_arena, CompositeV, &ctor->v.token, 0);
+            CompositeV *pattern = newValue(temp_arena, CompositeV, &ctor->v.token, 0);
 
             pattern->op        = ctor_exp;
             pattern->arg_count = signature->param_count;
@@ -1209,38 +1212,39 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
             if (signature->param_count == arg_count)
             {
               Environment signature_env = env;
-              env.arena = temp_arena;
-              Ast **stack_frame = pushArray(temp_arena, arg_count, Ast*, true);
-              extendStack(&signature_env, arg_count, stack_frame);
+              signature_env.arena = temp_arena;
+              extendStack(&signature_env, arg_count, 0);
+              Ast **stack_frame = signature_env.stack->args;
               for (int arg_id = 0;
                    (arg_id < arg_count) && noError();
                    arg_id++)
               {// Type inference for the arguments. todo: the hole stuff is
                // kinda hard-coded only for the equality.
                 Ast      *arg   = in->args[arg_id];
-                Variable *param = signature->params[arg_id];
-
-                if (arg->cat != AC_DummyHole)
+                if (arg->cat == AC_DummyHole)
                 {
-                  Ast *norm_param_type = normalize(signature_env, param->type);
-                  Ast *arg_type = typecheck(env, arg, norm_param_type);
+                  stack_frame[arg_id] = 0;
+                }
+                else
+                {
                   stack_frame[arg_id] = normalize(env, arg);
+
+                  Variable *param = signature->params[arg_id];
+                  Ast *norm_param_type = normalize(signature_env, param->type);
+                  // NOTE: we must always typecheck the args!!!
+                  Ast *arg_type = typecheck(env, arg, norm_param_type);
                   if (norm_param_type == 0)
                   {
                     Variable *param_type_var = castAst(param->type, Variable);
                     assert(param_type_var->stack_delta == 0);
                     stack_frame[param_type_var->id] = arg_type;
-
-                    Ast **hole = in->args + param_type_var->id;
-                    assert((*hole)->cat == AC_DummyHole);
-                    *hole = arg_type;  // mutate the input ast
                   }
                 }
               }
               
               if (noError())
               {
-                Ast **norm_args = pushArray(env.arena, arg_count, Ast*);
+                Ast **norm_args = pushArray(temp_arena, arg_count, Ast*);
                 for (s32 arg_id = 0; arg_id < arg_count; arg_id++)
                 {
                   norm_args[arg_id] = normalize(env, in->args[arg_id]);
@@ -1250,7 +1254,7 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
               }
             }
             else
-              parseError(in0, "incorrect arg count: %d (procedure expected %d)", arg_count, signature->param_count);
+              parseError(in0, "incorrect arg count: %d (signature expected %d)", arg_count, signature->param_count);
           }
           else
           {
@@ -2204,7 +2208,7 @@ parseFunction(MemoryArena *arena, Token *name)
   pushContext;
 
   assert(isIdentifier(name));
-  char *debug_name = "andWithFalse";
+  char *debug_name = "dependentTypeTest";
   if (equal(toString(debug_name), name->text))
     breakhere;
 

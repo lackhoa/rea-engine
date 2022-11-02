@@ -172,16 +172,15 @@ struct Rewrite
 
 struct Stack
 {
-  Stack  *outer;
-  s32     arg_count;
-  Ast   **args;
+  Stack *outer;
+  s32    arg_count;
+  Ast   *args[32];  // todo: compute this cap
 };
 
 // used in normalization, typechecking, etc.
 struct Environment
 {
   MemoryArena *arena;
-  MemoryArena *temp_arena;
 
   Stack *stack;
   s32 stack_depth;              // 0 is reserved
@@ -190,13 +189,21 @@ struct Environment
   Rewrite *rewrite;
 };
 
+// todo: #speed copying values around
 inline void
 extendStack(Environment *env, s32 arg_count, Ast **args)
 {
-  Stack *stack = pushStruct(env->temp_arena, Stack);
+  Stack *stack = pushStruct(temp_arena, Stack);
   stack->outer     = env->stack;
+  assert(arg_count <= arrayCount(stack->args));
   stack->arg_count = arg_count;
-  stack->args      = args;
+  if (args)
+  {
+    for (s32 arg_id = 0; arg_id < arg_count; arg_id++)
+    {
+      stack->args[arg_id] = args[arg_id];
+    }
+  }
 
   env->stack = stack;
   env->stack_depth++;
@@ -205,7 +212,7 @@ extendStack(Environment *env, s32 arg_count, Ast **args)
 inline Rewrite *
 newRewrite(Environment *env, Ast *lhs, Ast *rhs)
 {
-  Rewrite *out = pushStruct(env->temp_arena, Rewrite);
+  Rewrite *out = pushStruct(temp_arena, Rewrite);
   out->lhs  = lhs;
   out->rhs  = rhs;
   out->next = env->rewrite;
@@ -216,8 +223,7 @@ inline Environment
 newEnvironment(MemoryArena *arena)
 {
   Environment out = {};
-  out.arena       = arena;
-  out.temp_arena  = temp_arena;
+  out.arena = arena;
   return out;
 }
 

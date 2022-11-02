@@ -340,3 +340,9 @@ printToBuffer(MemoryArena *buffer, String s)
 
   return out;
 }
+
+inline b32
+belongsToArena(MemoryArena *arena, u8 *memory)
+{
+  return ((memory >= arena->base) && (memory < arena->base + arena->cap));
+}
