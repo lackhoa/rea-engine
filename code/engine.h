@@ -10,6 +10,10 @@ global_variable MemoryArena *temp_arena;
  
 enum AstCategory
 {
+  AC_Null = 0,
+
+  AC_Composite = 1,
+
   // result after parsing
   AC_Identifier,
   AC_AbstractFork,
@@ -18,7 +22,6 @@ enum AstCategory
   AC_Variable,
   AC_Constant,
 
-  AC_Composite,                 // operator application
   AC_Fork,                      // switch statement
   AC_ArrowType,                 // type of procedure and built-in objects
 
@@ -28,9 +31,10 @@ enum AstCategory
   AC_DummyRewrite,
 
   // tunnelling values into ast
-  AC_Form       = 100,
-  AC_Function   = 101,          // holds actual computation (ie body that can be executed)
-  AC_StackRef   = 102,
+  AC_CompositeV = 101,
+  AC_Form       = 102,
+  AC_Function   = 103,          // holds actual computation (ie body that can be executed)
+  AC_StackRef   = 104,
 };
 
 struct Ast
@@ -59,7 +63,7 @@ newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
 
 b32 identicalB32(Ast *lhs, Ast *rhs);
 
-#define castAst(exp, Cat) (((exp)->cat == AC_##Cat) ? (Cat*)(exp) : 0)
+#define castAst(exp, Cat) (((exp)->cat == AC_##Cat || (exp)->cat == AC_##Cat + 100) ? (Cat*)(exp) : 0)
 
 struct Identifier
 {
@@ -102,25 +106,6 @@ inline void
 initIdentifier(Constant *in, Ast *value)
 {
   in->value = value;
-}
-
-struct Composite
-{
-  Ast   h;
-
-  Ast  *op;
-  s32   arg_count;
-  Ast **args;
-
-  Ast *type;
-};
-
-inline void
-initComposite(Composite *app, Ast *op, s32 arg_count, Ast **args)
-{
-  app->op        = op;
-  app->arg_count = arg_count;
-  app->args      = args;
 }
 
 struct ForkCase
@@ -295,9 +280,10 @@ toValueBindings(Bindings *bindings)
 
 enum ValueCategory
 {
-  VC_Form       = 100,
-  VC_Function   = 101,
-  VC_StackRef   = 102,
+  VC_CompositeV = 101,
+  VC_Form       = 102,
+  VC_Function   = 103,
+  VC_StackRef   = 104,
 };
 
 struct Value
@@ -378,3 +364,26 @@ struct StackRef
   s32 id;
   s32 stack_depth;
 };
+
+struct Composite
+{
+  union
+  {
+    Ast   h;
+    Value v;
+  };
+
+  Ast  *op;
+  s32   arg_count;
+  Ast **args;
+};
+
+typedef Composite CompositeV;
+
+inline void
+initComposite(Composite *app, Ast *op, s32 arg_count, Ast **args)
+{
+  app->op        = op;
+  app->arg_count = arg_count;
+  app->args      = args;
+}

@@ -261,6 +261,7 @@ identicalTrinary(Ast *lhs0, Ast *rhs0) // TODO: turn the args into values
       } break;
 
       case AC_Composite:
+      case AC_CompositeV:
       {
         Composite *lhs = castAst(lhs0, Composite);
         Composite *rhs = castAst(rhs0, Composite);
@@ -352,6 +353,7 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
       } break;
 
       case AC_Composite:
+      case AC_CompositeV:
       {
         Composite *in = castAst(in0, Composite);
 
@@ -982,13 +984,9 @@ typeOfValue(Ast *in0)
     case AC_StackRef:
     case AC_Form:
     case AC_Function:
+    case AC_CompositeV:
     {
       Value *in = (Value*)in0;
-      out = in->type;
-    } break;
-    case AC_Composite:
-    {
-      Composite *in = castAst(in0, Composite);
       out = in->type;
     } break;
 
@@ -1029,6 +1027,7 @@ normalize(Environment env, Ast *in0)
         out0 = in0;
     } break;
 
+    case AC_CompositeV:
     case AC_Composite:
     {
       Composite *in = castAst(in0, Composite);
@@ -1069,16 +1068,17 @@ normalize(Environment env, Ast *in0)
 
       if (!out0)
       {
-        Composite *out = copyStruct(env.arena, in);
+        CompositeV *out = copyStruct(env.arena, in);
+        out->v.cat = VC_CompositeV;
         out0 = &out->h;
         out->op = norm_op;
         allocateArray(env.arena, out->arg_count, out->args);
         for (int arg_id = 0; arg_id < out->arg_count; arg_id++)
           out->args[arg_id] = norm_args[arg_id];
 
-        // annotate the type (todo: maybe promote it to a Composite?).
+        // annotate the type (todo: maybe promote it to a CompositeV?).
         ArrowType *signature = castAst(typeOfValue(norm_op), ArrowType);
-        out->type = normalize(env, signature->return_type);
+        out->v.type = normalize(env, signature->return_type);
       }
     } break;
 
@@ -1098,6 +1098,7 @@ normalize(Environment env, Ast *in0)
           out0 = normalize(env, in->cases[ctor->ctor_id].body);
         } break;
 
+        case AC_CompositeV:
         case AC_Composite:
         {
           Composite *subject = castAst(norm_subject, Composite);
@@ -1210,9 +1211,9 @@ addRewrite(Environment *env, Ast *lhs0, Ast *rhs0)
 
 #if 0
     printToBuffer(0, "added rewrite: ");
-    printExpression(0, lhs, {});
+    printAst(0, lhs, {});
     printToBuffer(0, " -> ");
-    printExpression(0, rhs, {});
+    printAst(0, rhs, {});
     printNewline();
 #endif
   }
@@ -1331,26 +1332,28 @@ rebaseUpExpr(MemoryArena *arena, Ast *in)
 internal Ast *
 typecheck(Environment env, Ast *in0, Ast *expected_type)
 {
-  Ast *out0 = 0;
+  Ast *actual = 0;
 
   switch (in0->cat)
   {
     case AC_Constant:
     {
       Constant *in = castAst(in0, Constant);
-      out0 = typeOfValue(in->value);
+      actual = typeOfValue(in->value);
     } break;
 
+#if 0
     case AC_Form:
     {
       Form *in = castAst(in0, Form);
       out0 = in->h.type;
     } break;
+#endif
 
     case AC_Variable:
     {
       Variable *in = castAst(in0, Variable);
-      out0 = in->type;
+      actual = in->type;
     } break;
 
     case AC_Fork:
@@ -1385,9 +1388,10 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
 
           case AC_ArrowType:
           {// composite
-            ArrowType  *signature      = castAst(ctor->h.type, ArrowType);
-            Ast       **params         = introduce(&env, signature->param_count, casev->params);
-            Composite *pattern = newAst(env.temp_arena, Composite, &ctor->h.token);
+            ArrowType  *signature = castAst(ctor->h.type, ArrowType);
+            Ast       **params    = introduce(&env, signature->param_count, casev->params);
+            // NOTE: we could add a type here, but not sure if we need it.
+            CompositeV *pattern = newValue(env.temp_arena, CompositeV, &ctor->h.token, 0);
 
             pattern->op        = ctor_exp;
             pattern->arg_count = signature->param_count;
@@ -1411,14 +1415,14 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
       }
 
       if (noError())
-        out0 = common_type;
+        actual = common_type;
     } break;
 
     case AC_Function:
     {
       Function *in = castAst(in0, Function);
       if (in->h.type)
-        out0 = in->h.type;
+        actual = in->h.type;
       else if (expected_type)
       {
         if (ArrowType *expected_signature = castAst(expected_type, ArrowType))
@@ -1428,7 +1432,7 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
           in->h.type = &expected_signature->h;
           Ast *expected_body_type = normalize(env, expected_signature->return_type);
           if (typecheck(env, in->body, expected_body_type))
-            out0 = expected_type;
+            actual = expected_type;
         }
         else
         {
@@ -1443,11 +1447,7 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
     case AC_Composite:
     {
       Composite *in = castAst(in0, Composite);
-      if (in->type)
-      {
-        out0 = in->type;
-      }
-      else if (in->op == dummy_sequence)
+      if (in->op == dummy_sequence)
       {
         for (s32 id = 0; id < in->arg_count; id++)
         {
@@ -1505,13 +1505,13 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
         if (noError())
         {
           // typechecking is done on the last item
-          out0 = typecheck(env, in->args[in->arg_count-1], expected_type);
+          actual = typecheck(env, in->args[in->arg_count-1], expected_type);
         }
       }
       else if (in->op == dummy_rewrite)
       {
-        // NOTE: questionable hack, but what's the harm.
-        out0 = &builtin_True->h.a;
+        // NOTE: questionable hack for syntactic convenience.
+        actual = &builtin_True->h.a;
       }
       else
       {
@@ -1560,7 +1560,7 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
                   norm_args[arg_id] = normalize(env, in->args[arg_id]);
                 }
                 extendStack(&env, arg_count, norm_args);
-                out0 = normalize(env, signature->return_type);
+                actual = normalize(env, signature->return_type);
               }
             }
             else
@@ -1578,11 +1578,11 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
     case AC_ArrowType:
     {
       ArrowType *in = castAst(in0, ArrowType);
-      // NOTE: notice how short this is! (Not saying it's even correct.)
+      // NOTE: notice how short this is! (Not saying it's correct.)
       // It's thanks to "introduce". Let's hope that it works?
       introduce(&env, in);
       if (typecheck(env, in->return_type, 0))
-        out0 = &builtin_Type->h.a;  // todo: #theory it's not a form but somehow is a type?
+        actual = &builtin_Type->h.a;  // todo: #theory it's not a form but somehow is a type?
     } break;
 
     invalidDefaultCase;
@@ -1591,8 +1591,8 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
   Ast *out = 0;
   if (noError())
   {
-    assert(out0);
-    Ast *norm_actual = normalize(env, out0);
+    assert(actual);
+    Ast *norm_actual = normalize(env, actual);
     b32 matched = true;
     if (expected_type)
     {
@@ -1637,9 +1637,9 @@ getFormOf(Ast *in0)
   Form *out = 0;
   switch (in0->cat)
   {
-    case AC_Composite:
+    case AC_CompositeV:
     {
-      Composite *in = castAst(in0, Composite);
+      CompositeV *in = castAst(in0, CompositeV);
       out = castAst(in->op, Form);
     } break;
 
@@ -1690,14 +1690,18 @@ buildExpression(MemoryArena *arena, Bindings *bindings, Ast *in0)
       b32 build_op = true;
       if ((in->op->cat == AC_Identifier) &&
           equal(in->op->token, "="))
-      {// NOTE: special built-in notation for equality
+      {// todo: special built-in notation for equality
         assert(in->arg_count == 2);
         Ast **new_args = pushArray(arena, 3, Ast*);
         new_args[0] = hole_expression;
         new_args[1] = in->args[0];
         new_args[2] = in->args[1];
-        // todo: still nervous about putting the whole form there...
-        initComposite(in, &builtin_identical->h.a, 3, new_args);
+        // note: this is just a temporary hack to have a constant expr as the
+        // operator, and not the whole form.
+        Token identical_token = in->op->token;
+        identical_token.text  = toString("identical");
+        Ast *identical = constantFromGlobalName(arena, &identical_token);
+        initComposite(in, identical, 3, new_args);
         build_op = false;
       }
 
