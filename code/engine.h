@@ -24,17 +24,18 @@ enum AstCategory
 
   AC_Composite,
   AC_Arrow,
+  AC_Function,
 
   // dummy values for denoting only
   AC_DummyHole,                 // hole left in for type-checking
   AC_DummySequence,             // like scheme's "begin" keyword
   AC_DummyRewrite,
 
-  // tunnelling values into ast
+  // todo: currently tunnel values into ast, maybe remove later?
   AC_CompositeV,
   AC_ArrowV,
   AC_Form,
-  AC_Function,          // holds actual computation (ie body that can be executed)
+  AC_FunctionV,
   AC_StackRef,
 };
 
@@ -221,7 +222,7 @@ newEnvironment(MemoryArena *arena)
 }
 
 inline Ast *
-parseExpressionToExpression(MemoryArena *arena);
+parseExpressionToAst(MemoryArena *arena);
 
 struct AstList
 {
@@ -267,9 +268,9 @@ toValueBindings(Bindings *bindings)
 enum ValueCategory
 {
   VC_CompositeV = AC_CompositeV,
-  VC_ArrowTypeV = AC_ArrowV,
+  VC_ArrowV     = AC_ArrowV,
   VC_Form       = AC_Form,
-  VC_Function   = AC_Function,
+  VC_FunctionV  = AC_FunctionV,
   VC_StackRef   = AC_StackRef,
 };
 
@@ -282,7 +283,7 @@ struct Value
       ValueCategory  cat;
       Token          token;
     };
-    Ast a;         // tunnelling for now
+    Ast a;         // tunnelling for now (I guess, if we think we don't need "token")
   };
   Ast *type;
 };
@@ -310,7 +311,7 @@ newValue_(MemoryArena *arena, ValueCategory cat, Token *token, Ast *type, size_t
 
 struct Form
 {
-  Value h;
+  Value v;
 
   s32  ctor_id;
 
@@ -321,7 +322,7 @@ struct Form
 inline void
 initForm(Form *in, s32 ctor_count, Form *ctors, s32 ctor_id)
 {
-  in->h.a.cat    = AC_Form;
+  in->v.a.cat    = AC_Form;
   in->ctor_count = ctor_count;
   in->ctors      = ctors;
   in->ctor_id    = ctor_id;
@@ -330,7 +331,7 @@ initForm(Form *in, s32 ctor_count, Form *ctors, s32 ctor_id)
 inline void
 initForm(Form *in, s32 ctor_id)
 {
-  in->h.a.cat    = AC_Form;
+  in->v.a.cat    = AC_Form;
   in->ctor_id    = ctor_id;
   in->ctor_count = 0;
   in->ctors      = 0;
@@ -338,10 +339,15 @@ initForm(Form *in, s32 ctor_id)
 
 struct Function
 {
-  Value  h;
+  union
+  {
+    Ast   a;
+    Value v;
+  };
 
   Ast   *body;
 };
+typedef Function FunctionV;
 
 struct StackRef
 {
