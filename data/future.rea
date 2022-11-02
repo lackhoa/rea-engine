@@ -1,0 +1,10 @@
+;; testCurrying :: (a: Nat) -> ((b, c: Nat) -> a + (b + c) = (a + b) + c)
+;; {
+;;  fork a
+;;  {
+;;   0:     plusCommutative,
+;;   s(a'): plusCommutative,
+;;   }
+;;  }
+
+;; check truth: False = (2*3 = 5);  ;; todo: this doesn't work due to typing of "=".

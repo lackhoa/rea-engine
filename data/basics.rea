@@ -17,8 +17,8 @@ testAbstraction :: (a, b: Bool) -> Bool
 {
  fork a
  {
+  true : b,
   false: fork b {false: a, true: false},
-  true : b
   }
  }
 print testAbstraction;

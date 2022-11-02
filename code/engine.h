@@ -31,8 +31,6 @@ enum AstCategory
   AC_Form       = 100,
   AC_Function   = 101,          // holds actual computation (ie body that can be executed)
   AC_StackRef   = 102,
-  AC_CompositeV = 103,
-  AC_ArrowTypeV = 104,
 };
 
 struct Ast
@@ -109,9 +107,12 @@ initIdentifier(Constant *in, Ast *value)
 struct Composite
 {
   Ast   h;
+
   Ast  *op;
   s32   arg_count;
   Ast **args;
+
+  Ast *type;
 };
 
 inline void
@@ -139,6 +140,7 @@ initForkCase(ForkCase *fork_case, Ast *body, Variable **params, s32 param_count)
 struct ArrowType
 {
   Ast        h;
+
   s32        param_count;
   Variable **params;
   Ast       *return_type;
@@ -179,9 +181,12 @@ struct ParseExpressionOptions
   s32 min_precedence = -9999;
 };
 
+// NOTE: bool can be converted directly to this this
 enum Trinary
 {
-  Trinary_Unknown, Trinary_False, Trinary_True,
+  Trinary_False   = 0,
+  Trinary_True    = 1,
+  Trinary_Unknown = 2, 
 };
 
 internal Trinary
@@ -293,8 +298,6 @@ enum ValueCategory
   VC_Form       = 100,
   VC_Function   = 101,
   VC_StackRef   = 102,
-  VC_CompositeV = 103,
-  VC_ArrowTypeV = 104,
 };
 
 struct Value
@@ -374,13 +377,4 @@ struct StackRef
   String name;
   s32 id;
   s32 stack_depth;
-};
-
-struct CompositeV
-{
-  Value h;
-
-  Ast  *op;
-  s32   arg_count;
-  Ast **args;
 };

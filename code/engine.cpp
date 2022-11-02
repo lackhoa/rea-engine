@@ -204,10 +204,19 @@ identicalTrinary(Ast *lhs0, Ast *rhs0) // TODO: turn the args into values
   {
     switch (lhs0->cat)
     {
+      case AC_Variable:
+      {
+        Variable* lhs = castAst(lhs0, Variable);
+        Variable* rhs = castAst(rhs0, Variable);
+        // NOTE: I'm pretty sure this comparison is correct rn, but who knows.
+        out = (Trinary)(lhs->id == rhs->id &&
+                        lhs->stack_delta == rhs->stack_delta);
+      } break;
+
       case AC_StackRef:
       {
-        auto lvar = castAst(lhs0, StackRef);
-        auto rvar = castAst(rhs0, StackRef);
+        StackRef* lvar = castAst(lhs0, StackRef);
+        StackRef* rvar = castAst(rhs0, StackRef);
         if ((lvar->stack_depth)
             && (lvar->stack_depth == rvar->stack_depth)
             && (lvar->id == rvar->id))
@@ -216,28 +225,25 @@ identicalTrinary(Ast *lhs0, Ast *rhs0) // TODO: turn the args into values
 
       case AC_Form:
       {
-        if (castAst(lhs0, Form)->ctor_id ==
-            castAst(rhs0, Form)->ctor_id)
-          out = Trinary_True;
-        else
-          out = Trinary_False;
+        out = (Trinary)(castAst(lhs0, Form)->ctor_id == castAst(rhs0, Form)->ctor_id);
       } break;
 
       case AC_ArrowType:
       {
-        // todo: important: comparison of dependent types wouldn't work
-        auto larrow = castAst(lhs0, ArrowType);
-        auto rarrow = castAst(rhs0, ArrowType);
+        // todo: important: comparison of dependent types wouldn't work, since
+        // we don't know how to compare variables yet.
+        ArrowType* larrow = castAst(lhs0, ArrowType);
+        ArrowType* rarrow = castAst(rhs0, ArrowType);
         Trinary return_type_compare = identicalTrinary(larrow->return_type, rarrow->return_type);
         if (return_type_compare == Trinary_False)
           out = Trinary_False;
         else if (return_type_compare == Trinary_True)
         {
-          auto param_count = larrow->param_count;
+          s32 param_count = larrow->param_count;
           if (rarrow->param_count == param_count)
           {
-            auto lparam_types = pushArray(temp_arena, param_count, Ast*);
-            auto rparam_types = pushArray(temp_arena, param_count, Ast*);
+            Ast** lparam_types = pushArray(temp_arena, param_count, Ast*);
+            Ast** rparam_types = pushArray(temp_arena, param_count, Ast*);
 
             for (s32 param_id = 0;
                  param_id < param_count;
@@ -254,10 +260,10 @@ identicalTrinary(Ast *lhs0, Ast *rhs0) // TODO: turn the args into values
         }
       } break;
 
-      case AC_CompositeV:
+      case AC_Composite:
       {
-        CompositeV *lhs = castAst(lhs0, CompositeV);
-        CompositeV *rhs = castAst(rhs0, CompositeV);
+        Composite *lhs = castAst(lhs0, Composite);
+        Composite *rhs = castAst(rhs0, Composite);
         {
           Trinary op_compare = identicalTrinary(lhs->op, rhs->op);
           if ((op_compare == Trinary_False) &&
@@ -385,23 +391,6 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
           }
           printToBuffer(buffer, ")");
         }
-      } break;
-
-      case AC_CompositeV:
-      {
-        CompositeV *in = castAst(in0, CompositeV);
-
-        printAst(buffer, in->op, new_opt);
-
-        printToBuffer(buffer, "(");
-        for (s32 arg_id = 0; arg_id < in->arg_count; arg_id++)
-        {
-          printAst(buffer, in->args[arg_id], new_opt);
-          if (arg_id < in->arg_count-1)
-            printToBuffer(buffer, ", ");
-        }
-        printToBuffer(buffer, ")");
-
       } break;
 
       case AC_Fork:
@@ -828,10 +817,6 @@ precedenceOf(Token *op)
 
 typedef VARIABLE_TRANSFORMER(variable_transformer);
 
-#define TRANSFORM_VARIABLES                     \
-  inline Expression *                           \
-  transformVariables(Environment env, Expression *in, variable_transformer *transformer, void *opt)
-
 // note: this makes a copy (todo: #mem don't copy if not necessary)
 // todo cheesing out on functions right now
 inline Ast *
@@ -989,18 +974,21 @@ inline Ast *
 parseExpression(MemoryArena *arena);
 
 inline Ast *
-typeOfValue(Ast *value)
+typeOfValue(Ast *in0)
 {
   Ast *out = 0;
-  Value *in0 = (Value*)value;
   switch (in0->cat)
   {
-    case VC_StackRef:
-    case VC_Form:
-    case VC_CompositeV:
-    case VC_Function:
+    case AC_StackRef:
+    case AC_Form:
+    case AC_Function:
     {
       Value *in = (Value*)in0;
+      out = in->type;
+    } break;
+    case AC_Composite:
+    {
+      Composite *in = castAst(in0, Composite);
       out = in->type;
     } break;
 
@@ -1013,6 +1001,7 @@ typeOfValue(Ast *value)
 internal Ast *
 normalize(Environment env, Ast *in0)
 {
+  b32 INTRODUCE_PATH = false;
   Ast *out0 = {};
 
   switch (in0->cat)
@@ -1054,86 +1043,42 @@ normalize(Environment env, Ast *in0)
       }
 
       Ast *norm_op = normalize(env, in->op);
-      if (norm_op->cat == AC_Function)
-      {// Function application
-        Function *fun = castAst(norm_op, Function);
-        Environment fun_env = env;
-        extendStack(&fun_env, in->arg_count, norm_args);
-        // note: this might fail, in which case we back out.
-        out0 = normalize(fun_env, fun->body);
-      }
-      else if ((norm_op == &builtin_identical->h.a) &&
-               env.stack_offset == 0  // todo: questionable?
-               )
-      {// special case for equality
-        Ast *lhs = norm_args[1];
-        Ast *rhs = norm_args[2];
-        Trinary compare = identicalTrinary(lhs, rhs);
-        if (compare == Trinary_True)
-          out0 = &builtin_True->h.a;
-        else if (compare == Trinary_False)
-          out0 = &builtin_False->h.a;
+      // todo: we don't expand if there is any free variable. (eg for arrow
+      // types this would not normalize the return type).
+      if (env.stack_offset == 0)
+      {
+        if (norm_op->cat == AC_Function)
+        {// Function application
+          Function *fun = castAst(norm_op, Function);
+          Environment fun_env = env;
+          extendStack(&fun_env, in->arg_count, norm_args);
+          // note: this might fail, in which case we back out.
+          out0 = normalize(fun_env, fun->body);
+        }
+        else if (norm_op == &builtin_identical->h.a)
+        {// special case for equality
+          Ast *lhs = norm_args[1];
+          Ast *rhs = norm_args[2];
+          Trinary compare = identicalTrinary(lhs, rhs);
+          if (compare == Trinary_True)
+            out0 = &builtin_True->h.a;
+          else if (compare == Trinary_False)
+            out0 = &builtin_False->h.a;
+        }
       }
 
       if (!out0)
       {
-        ArrowType *signature = castAst(typeOfValue(norm_op), ArrowType);
-        CompositeV *out = newValue(env.arena, CompositeV, &in->h.token, signature->return_type);
-        out0 = &out->h.a;
+        Composite *out = copyStruct(env.arena, in);
+        out0 = &out->h;
         out->op = norm_op;
-        out->arg_count = in->arg_count;
         allocateArray(env.arena, out->arg_count, out->args);
         for (int arg_id = 0; arg_id < out->arg_count; arg_id++)
           out->args[arg_id] = norm_args[arg_id];
-      }
-    } break;
 
-    // nocheckin: cutnpaste from "AC_Composite"
-    case AC_CompositeV:
-    {
-      CompositeV *in = castAst(in0, CompositeV);
-
-      Ast **norm_args = pushArray(temp_arena, in->arg_count, Ast*);
-      for (auto arg_id = 0;
-           arg_id < in->arg_count;
-           arg_id++)
-      {
-        Ast *in_arg = in->args[arg_id];
-        norm_args[arg_id] = normalize(env, in_arg);
-      }
-
-      Ast *norm_op = normalize(env, in->op);
-      if (norm_op->cat == AC_Function)
-      {// Function application
-        Function *fun = castAst(norm_op, Function);
-        Environment fun_env = env;
-        extendStack(&fun_env, in->arg_count, norm_args);
-        // note: this might fail, in which case we back out.
-        out0 = normalize(fun_env, fun->body);
-      }
-      else if ((norm_op == &builtin_identical->h.a) &&
-               env.stack_offset == 0  // todo: questionable?
-               )
-      {// special case for equality
-        Ast *lhs = norm_args[1];
-        Ast *rhs = norm_args[2];
-        Trinary compare = identicalTrinary(lhs, rhs);
-        if (compare == Trinary_True)
-          out0 = &builtin_True->h.a;
-        else if (compare == Trinary_False)
-          out0 = &builtin_False->h.a;
-      }
-
-      if (!out0)
-      {
+        // annotate the type (todo: maybe promote it to a Composite?).
         ArrowType *signature = castAst(typeOfValue(norm_op), ArrowType);
-        CompositeV *out = newValue(env.arena, CompositeV, &in->h.token, in->h.type);
-        out0 = &out->h.a;
-        out->op = norm_op;
-        out->arg_count = in->arg_count;
-        allocateArray(env.arena, out->arg_count, out->args);
-        for (int arg_id = 0; arg_id < out->arg_count; arg_id++)
-          out->args[arg_id] = norm_args[arg_id];
+        out->type = normalize(env, signature->return_type);
       }
     } break;
 
@@ -1153,9 +1098,9 @@ normalize(Environment env, Ast *in0)
           out0 = normalize(env, in->cases[ctor->ctor_id].body);
         } break;
 
-        case AC_CompositeV:
+        case AC_Composite:
         {
-          CompositeV *subject = castAst(norm_subject, CompositeV);
+          Composite *subject = castAst(norm_subject, Composite);
           if (Form *ctor = castAst(subject->op, Form))
           {
             Ast *body = in->cases[ctor->ctor_id].body;
@@ -1172,8 +1117,19 @@ normalize(Environment env, Ast *in0)
       ArrowType *in = castAst(in0, ArrowType);
       ArrowType *out = copyStruct(env.arena, in);
       out0 = &out->h;
-      env.stack_offset++;
-      out->return_type = normalize(env, in->return_type);
+
+      if (INTRODUCE_PATH)
+      {
+        Environment signature_env = env;
+        introduce(&signature_env, out);
+        out->return_type = normalize(signature_env, in->return_type);
+      }
+      else
+      {
+        env.stack_offset++;
+        out->return_type = normalize(env, in->return_type);
+      }
+
       allocateArray(env.arena, out->param_count, out->params);
       for (s32 param_id = 0; param_id < out->param_count; param_id++)
       {
@@ -1196,8 +1152,10 @@ normalize(Environment env, Ast *in0)
       out0 = normalize(env, out0); // do another iteration
 
     if (env.stack_offset == 0)
-      // assert that output is value (well unless it's a freaking variable, idk)
+    {
+      // assert that output is value (well unless it's a variable, idk)
       typeOfValue(out0);
+    }
   }
 
   return out0;
@@ -1383,12 +1341,6 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
       out0 = typeOfValue(in->value);
     } break;
 
-    case AC_CompositeV:
-    {
-      CompositeV *in = castAst(in0, CompositeV);
-      out0 = in->h.type;
-    } break;
-
     case AC_Form:
     {
       Form *in = castAst(in0, Form);
@@ -1433,16 +1385,15 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
 
           case AC_ArrowType:
           {// composite
-            ArrowType   *signature      = castAst(ctor->h.type, ArrowType);
-            Ast        **params         = introduce(&env, signature->param_count, casev->params);
-            Ast         *composite_type = normalize(env, signature->return_type);
-            CompositeV  *pattern        = newValue(env.temp_arena, CompositeV, &ctor->h.token, composite_type);
+            ArrowType  *signature      = castAst(ctor->h.type, ArrowType);
+            Ast       **params         = introduce(&env, signature->param_count, casev->params);
+            Composite *pattern = newAst(env.temp_arena, Composite, &ctor->h.token);
 
             pattern->op        = ctor_exp;
             pattern->arg_count = signature->param_count;
             pattern->args      = params;
 
-            addRewrite(&env, norm_subject, &pattern->h.a);
+            addRewrite(&env, norm_subject, &pattern->h);
           } break;
 
           default:
@@ -1492,7 +1443,11 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
     case AC_Composite:
     {
       Composite *in = castAst(in0, Composite);
-      if (in->op == dummy_sequence)
+      if (in->type)
+      {
+        out0 = in->type;
+      }
+      else if (in->op == dummy_sequence)
       {
         for (s32 id = 0; id < in->arg_count; id++)
         {
@@ -1507,7 +1462,7 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
                 {
                   b32 rule_valid = false;
                   Ast *norm_rule0 = normalize(env, rewrite_rule0);
-                  if (CompositeV *norm_rule = castAst(norm_rule0, CompositeV))
+                  if (Composite *norm_rule = castAst(norm_rule0, Composite))
                   {
                     if (norm_rule->op == &builtin_identical->h.a)
                     {
@@ -1623,6 +1578,8 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
     case AC_ArrowType:
     {
       ArrowType *in = castAst(in0, ArrowType);
+      // NOTE: notice how short this is! (Not saying it's even correct.)
+      // It's thanks to "introduce". Let's hope that it works?
       introduce(&env, in);
       if (typecheck(env, in->return_type, 0))
         out0 = &builtin_Type->h.a;  // todo: #theory it's not a form but somehow is a type?
@@ -1647,6 +1604,7 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
         normalize(env, expected_type);
         typecheck(env, in0, 0);
         pushAttachment("expected", norm_expected);
+        normalize(env, expected_type);
         pushAttachment("got", norm_actual);
       }
     }
@@ -1679,12 +1637,6 @@ getFormOf(Ast *in0)
   Form *out = 0;
   switch (in0->cat)
   {
-    case AC_CompositeV:
-    {
-      CompositeV *in = castAst(in0, CompositeV);
-      out = castAst(in->op, Form);
-    } break;
-
     case AC_Composite:
     {
       Composite *in = castAst(in0, Composite);
@@ -2942,7 +2894,6 @@ union astdbg
   Form      Form;
   Function  Function;
   StackRef  StackRef;
-  CompositeV CompositeV;
 };
 
 int
