@@ -32,72 +32,27 @@
       }
 #endif
 
-enum ValueCategory
-{
-  VC_ParameterV,
-  VC_StackValue,
-  VC_ApplicationV,
-  VC_FormV,
-  VC_FunctionV,
-  VC_ArrowTypeV,
-};
+#if 0
+        else if (isCompositeForm(lhs)
+                 && isCompositeForm(rhs))
+        {// Leibniz' principle
+          Composite *lapp = castAst(lhs, Composite);
+          Composite *rapp = castAst(rhs, Composite);
+          assert(identicalB32(lapp->op, rapp->op)); // if they aren't equal then it'd already be false.
 
-struct Value
-{
-  ValueCategory cat;
-};
+          CompositeV *out = newValue(env.arena, CompositeV, &in->h.token, );
+          out0 = &out->h;
 
-struct StackValue
-{
-  Value h;
-
-  String name;
-  s32    stack_depth;
-};
-
-struct ParameterV
-{
-  Value h;
-
-  String name;
-  Value *type;
-};
-
-struct ApplicationV
-{
-  Value h;
-
-  Value  *op;
-  s32     arg_count;
-  Value **args;
-};
-
-struct FormV
-{
-  Value h;
-
-  Token  name;
-  Value *type;
-
-  s32 ctor_id;
-
-  s32   ctor_count;
-  Form *ctors;
-};
-
-struct FunctionV
-{
-  Value h;
-  Token name;
-  Ast *body;
-};
-
-struct ArrowTypeV
-{
-  Value        h;
-
-  s32          param_count;
-  Variable   **params;
-  Ast  *return_type;
-};
-
+          if (lapp->arg_count > 1)
+          {
+            todoIncomplete;  // we need "and" expression
+          }
+          else
+          {
+            allocateArray(env.arena, 3, out->args);
+            out->args[0] = in->args[0];
+            out->args[1] = lapp->args[0];
+            out->args[2] = rapp->args[0];
+          }
+        }
+#endif

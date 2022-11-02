@@ -10,7 +10,7 @@ global_variable MemoryArena *temp_arena;
  
 enum AstCategory
 {
-  // right after parsing
+  // result after parsing
   AC_Identifier,
   AC_AbstractFork,
 
@@ -20,7 +20,6 @@ enum AstCategory
 
   AC_Composite,                 // operator application
   AC_Fork,                      // switch statement
-
   AC_ArrowType,                 // type of procedure and built-in objects
 
   // dummy values for denoting only
@@ -28,10 +27,12 @@ enum AstCategory
   AC_DummySequence,             // like scheme's "begin" keyword
   AC_DummyRewrite,
 
-  // tunnelling value into ast
-  AC_Form     = 100,
-  AC_Function = 101,            // holds actual computation (ie body that can be executed)
-  AC_StackRef = 102,
+  // tunnelling values into ast
+  AC_Form       = 100,
+  AC_Function   = 101,          // holds actual computation (ie body that can be executed)
+  AC_StackRef   = 102,
+  AC_CompositeV = 103,
+  AC_ArrowTypeV = 104,
 };
 
 struct Ast
@@ -108,7 +109,6 @@ initIdentifier(Constant *in, Ast *value)
 struct Composite
 {
   Ast   h;
-  Ast  *type;                   // for caching
   Ast  *op;
   s32   arg_count;
   Ast **args;
@@ -117,7 +117,6 @@ struct Composite
 inline void
 initComposite(Composite *app, Ast *op, s32 arg_count, Ast **args)
 {
-  app->type      = 0;
   app->op        = op;
   app->arg_count = arg_count;
   app->args      = args;
@@ -190,9 +189,9 @@ identicalTrinary(Ast *lhs, Ast *rhs);
 
 struct Rewrite
 {
-  Ast *lhs;
-  Ast *rhs;
-  Rewrite    *next;
+  Ast     *lhs;
+  Ast     *rhs;
+  Rewrite *next;
 };
 
 struct Stack
@@ -291,11 +290,11 @@ toValueBindings(Bindings *bindings)
 
 enum ValueCategory
 {
-  VC_Form     = 100,
-  VC_Function = 101,
-  VC_StackRef,
-  VC_CompositeV,
-  VC_ArrowTypeV,
+  VC_Form       = 100,
+  VC_Function   = 101,
+  VC_StackRef   = 102,
+  VC_CompositeV = 103,
+  VC_ArrowTypeV = 104,
 };
 
 struct Value
@@ -331,6 +330,8 @@ newValue_(MemoryArena *arena, ValueCategory cat, Token *token, Ast *type, size_t
 #define newValue(arena, cat, token, type)                        \
   ((cat *) newValue_(arena, VC_##cat, token, type, sizeof(cat)))
 
+#define castValue(value, Cat) (((value)->cat == VC_##Cat) ? (Cat*)(value) : 0)
+
 struct Form
 {
   Value h;
@@ -359,28 +360,6 @@ initForm(Form *in, s32 ctor_id)
   in->ctors      = 0;
 }
 
-inline Form *
-getFormOf(Ast *in0)
-{
-  Form *out = 0;
-  switch (in0->cat)
-  {
-    case AC_Composite:
-    {
-      Composite *in = castAst(in0, Composite);
-      out = castAst(in->op, Form);
-    } break;
-
-    case AC_Form:
-    {
-      out = castAst(in0, Form);
-    } break;
-
-    invalidDefaultCase;
-  }
-  return out;
-}
-
 struct Function
 {
   Value  h;
@@ -397,14 +376,11 @@ struct StackRef
   s32 stack_depth;
 };
 
-union astdbg
+struct CompositeV
 {
-  Variable  Variable;
-  Constant  Constant;
-  Composite Composite;
-  Fork      Fork;
-  ArrowType ArrowType;
-  Form      Form;
-  Function  Function;
-  StackRef  StackRef;
+  Value h;
+
+  Ast  *op;
+  s32   arg_count;
+  Ast **args;
 };

@@ -192,7 +192,7 @@ compareExpressionList(Ast **lhs_list, Ast **rhs_list, s32 count)
 // NOTE: values going in must be normalized
 // NOTE: we need a trinary return value to detect if the comparison is false.
 internal Trinary
-identicalTrinary(Ast *lhs0, Ast *rhs0)
+identicalTrinary(Ast *lhs0, Ast *rhs0) // TODO: turn the args into values
 {
   Trinary out = Trinary_Unknown;
 
@@ -254,10 +254,10 @@ identicalTrinary(Ast *lhs0, Ast *rhs0)
         }
       } break;
 
-      case AC_Composite:
+      case AC_CompositeV:
       {
-        Composite *lhs = castAst(lhs0,  Composite);
-        Composite *rhs = castAst(rhs0,  Composite);
+        CompositeV *lhs = castAst(lhs0, CompositeV);
+        CompositeV *rhs = castAst(rhs0, CompositeV);
         {
           Trinary op_compare = identicalTrinary(lhs->op, rhs->op);
           if ((op_compare == Trinary_False) &&
@@ -274,6 +274,7 @@ identicalTrinary(Ast *lhs0, Ast *rhs0)
         }
       } break;
 
+#if 0
       case AC_Fork:
       {
         Fork *lhs = castAst(lhs0, Fork);
@@ -290,6 +291,7 @@ identicalTrinary(Ast *lhs0, Ast *rhs0)
             out = Trinary_True;
         }
       } break;
+#endif
 
       invalidDefaultCase;
     }
@@ -383,6 +385,23 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
           }
           printToBuffer(buffer, ")");
         }
+      } break;
+
+      case AC_CompositeV:
+      {
+        CompositeV *in = castAst(in0, CompositeV);
+
+        printAst(buffer, in->op, new_opt);
+
+        printToBuffer(buffer, "(");
+        for (s32 arg_id = 0; arg_id < in->arg_count; arg_id++)
+        {
+          printAst(buffer, in->args[arg_id], new_opt);
+          if (arg_id < in->arg_count-1)
+            printToBuffer(buffer, ", ");
+        }
+        printToBuffer(buffer, ")");
+
       } break;
 
       case AC_Fork:
@@ -659,7 +678,6 @@ constantFromGlobalName(MemoryArena *arena, Token *token)
   auto lookup = lookupNameCurrentFrame(global_bindings.v, token->text, false);
   if (lookup.found)
   {
-    // Everything in the global scope becomes identifier.
     Constant *out = newAst(arena, Constant, token);
     initIdentifier(out, lookup.slot->value);
     out0 = &out->h;
@@ -964,15 +982,36 @@ printRewrites(Environment env)
     if (rewrite->next)
       printToBuffer(0, ", ");
   }
-  printNewline();
+  myprint();
 }
 
 inline Ast *
 parseExpression(MemoryArena *arena);
 
+inline Ast *
+typeOfValue(Ast *value)
+{
+  Ast *out = 0;
+  Value *in0 = (Value*)value;
+  switch (in0->cat)
+  {
+    case VC_StackRef:
+    case VC_Form:
+    case VC_CompositeV:
+    case VC_Function:
+    {
+      Value *in = (Value*)in0;
+      out = in->type;
+    } break;
+
+    invalidDefaultCase;
+  }
+  return out;
+}
+
 // todo #speed don't pass the Environment in wholesale?
 internal Ast *
-normalize(Environment env, Ast *in0, b32 force_expand=false)
+normalize(Environment env, Ast *in0)
 {
   Ast *out0 = {};
 
@@ -1034,37 +1073,67 @@ normalize(Environment env, Ast *in0, b32 force_expand=false)
           out0 = &builtin_True->h.a;
         else if (compare == Trinary_False)
           out0 = &builtin_False->h.a;
-        else if (isCompositeForm(lhs)
-                 && isCompositeForm(rhs))
-        {// Leibniz' principle
-          Composite *lapp = castAst(lhs, Composite);
-          Composite *rapp = castAst(rhs, Composite);
-          assert(identicalB32(lapp->op, rapp->op)); // if they aren't equal then it'd already be false.
-          Composite *out = copyStruct(env.arena, in);
-          out0 = &out->h;
-          if (lapp->arg_count > 1)
-          {
-            todoIncomplete;  // we need "and" expression
-          }
-          else
-          {
-            allocateArray(env.arena, 3, out->args);
-            out->args[0] = in->args[0];
-            out->args[1] = lapp->args[0];
-            out->args[2] = rapp->args[0];
-          }
-        }
       }
 
       if (!out0)
       {
-        Composite *out_app = copyStruct(env.arena, in);
-        out0 = &out_app->h;
+        ArrowType *signature = castAst(typeOfValue(norm_op), ArrowType);
+        CompositeV *out = newValue(env.arena, CompositeV, &in->h.token, signature->return_type);
+        out0 = &out->h.a;
+        out->op = norm_op;
+        out->arg_count = in->arg_count;
+        allocateArray(env.arena, out->arg_count, out->args);
+        for (int arg_id = 0; arg_id < out->arg_count; arg_id++)
+          out->args[arg_id] = norm_args[arg_id];
+      }
+    } break;
 
-        out_app->op = norm_op;
-        allocateArray(env.arena, out_app->arg_count, out_app->args);
-        for (int arg_id = 0; arg_id < out_app->arg_count; arg_id++)
-          out_app->args[arg_id] = norm_args[arg_id];
+    // nocheckin: cutnpaste from "AC_Composite"
+    case AC_CompositeV:
+    {
+      CompositeV *in = castAst(in0, CompositeV);
+
+      Ast **norm_args = pushArray(temp_arena, in->arg_count, Ast*);
+      for (auto arg_id = 0;
+           arg_id < in->arg_count;
+           arg_id++)
+      {
+        Ast *in_arg = in->args[arg_id];
+        norm_args[arg_id] = normalize(env, in_arg);
+      }
+
+      Ast *norm_op = normalize(env, in->op);
+      if (norm_op->cat == AC_Function)
+      {// Function application
+        Function *fun = castAst(norm_op, Function);
+        Environment fun_env = env;
+        extendStack(&fun_env, in->arg_count, norm_args);
+        // note: this might fail, in which case we back out.
+        out0 = normalize(fun_env, fun->body);
+      }
+      else if ((norm_op == &builtin_identical->h.a) &&
+               env.stack_offset == 0  // todo: questionable?
+               )
+      {// special case for equality
+        Ast *lhs = norm_args[1];
+        Ast *rhs = norm_args[2];
+        Trinary compare = identicalTrinary(lhs, rhs);
+        if (compare == Trinary_True)
+          out0 = &builtin_True->h.a;
+        else if (compare == Trinary_False)
+          out0 = &builtin_False->h.a;
+      }
+
+      if (!out0)
+      {
+        ArrowType *signature = castAst(typeOfValue(norm_op), ArrowType);
+        CompositeV *out = newValue(env.arena, CompositeV, &in->h.token, in->h.type);
+        out0 = &out->h.a;
+        out->op = norm_op;
+        out->arg_count = in->arg_count;
+        allocateArray(env.arena, out->arg_count, out->args);
+        for (int arg_id = 0; arg_id < out->arg_count; arg_id++)
+          out->args[arg_id] = norm_args[arg_id];
       }
     } break;
 
@@ -1084,9 +1153,9 @@ normalize(Environment env, Ast *in0, b32 force_expand=false)
           out0 = normalize(env, in->cases[ctor->ctor_id].body);
         } break;
 
-        case AC_Composite:
+        case AC_CompositeV:
         {
-          Composite *subject = castAst(norm_subject, Composite);
+          CompositeV *subject = castAst(norm_subject, CompositeV);
           if (Form *ctor = castAst(subject->op, Form))
           {
             Ast *body = in->cases[ctor->ctor_id].body;
@@ -1125,6 +1194,10 @@ normalize(Environment env, Ast *in0, b32 force_expand=false)
     out0 = rewriteExpression(&env, out0);
     if (out0 != before_rewrite)
       out0 = normalize(env, out0); // do another iteration
+
+    if (env.stack_offset == 0)
+      // assert that output is value (well unless it's a freaking variable, idk)
+      typeOfValue(out0);
   }
 
   return out0;
@@ -1295,36 +1368,6 @@ rebaseUpExpr(MemoryArena *arena, Ast *in)
   return transformVariables(newEnvironment(arena), in, rebaseVariable, &adjustment);
 }
 
-inline Ast *
-typeOfValue(Ast *value)
-{
-  Ast *out = 0;
-  Ast *in0 = value;
-  switch (in0->cat)
-  {
-    case AC_Form:
-    {
-      Form *in = castAst(in0, Form);
-      out = in->h.type;
-    } break;
-
-    case AC_Composite:
-    {
-      Composite *in = castAst(in0, Composite);
-      out = in->type;
-    } break;
-
-    case AC_Function:
-    {
-      Function *in = castAst(in0, Function);
-      out = in->h.type;
-    } break;
-
-    invalidDefaultCase;
-  }
-  return out;
-}
-
 // NOTE: the output as well as "expected_type" are instantiated, but expression
 // types are abstract.
 internal Ast *
@@ -1338,6 +1381,12 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
     {
       Constant *in = castAst(in0, Constant);
       out0 = typeOfValue(in->value);
+    } break;
+
+    case AC_CompositeV:
+    {
+      CompositeV *in = castAst(in0, CompositeV);
+      out0 = in->h.type;
     } break;
 
     case AC_Form:
@@ -1384,11 +1433,16 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
 
           case AC_ArrowType:
           {// composite
-            ArrowType   *signature = castAst(ctor->h.type, ArrowType);
-            Ast **params    = introduce(&env, signature->param_count, casev->params);
-            Composite   *pattern   = newAst(env.temp_arena, Composite, &ctor->h.token);
-            initComposite(pattern, ctor_exp, signature->param_count, params);
-            addRewrite(&env, norm_subject, &pattern->h);
+            ArrowType   *signature      = castAst(ctor->h.type, ArrowType);
+            Ast        **params         = introduce(&env, signature->param_count, casev->params);
+            Ast         *composite_type = normalize(env, signature->return_type);
+            CompositeV  *pattern        = newValue(env.temp_arena, CompositeV, &ctor->h.token, composite_type);
+
+            pattern->op        = ctor_exp;
+            pattern->arg_count = signature->param_count;
+            pattern->args      = params;
+
+            addRewrite(&env, norm_subject, &pattern->h.a);
           } break;
 
           default:
@@ -1438,9 +1492,7 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
     case AC_Composite:
     {
       Composite *in = castAst(in0, Composite);
-      if (in->type)
-        out0 = in->type;
-      else if (in->op == dummy_sequence)
+      if (in->op == dummy_sequence)
       {
         for (s32 id = 0; id < in->arg_count; id++)
         {
@@ -1455,7 +1507,7 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
                 {
                   b32 rule_valid = false;
                   Ast *norm_rule0 = normalize(env, rewrite_rule0);
-                  if (Composite *norm_rule = castAst(norm_rule0, Composite))
+                  if (CompositeV *norm_rule = castAst(norm_rule0, CompositeV))
                   {
                     if (norm_rule->op == &builtin_identical->h.a)
                     {
@@ -1464,7 +1516,10 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
                     }
                   }
                   if (!rule_valid)
+                  {
                     parseError(item0, "invalid rewrite rule, can only be equality");
+                    pushAttachment("got", norm_rule0);
+                  }
                 }
               }
               else if (item->arg_count == 2)
@@ -1475,7 +1530,7 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
                 while (noError())
                 {
                   Ast *before = norm_lhs;
-                  norm_lhs = normalize(env, norm_lhs, true);
+                  norm_lhs = normalize(env, norm_lhs);
                   if (identicalB32(norm_lhs, norm_rhs))
                   {
                     addRewrite(&env, normalize(env, lhs), norm_rhs);
@@ -1521,8 +1576,8 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
                    arg_id++)
               {// Type inference for the arguments. todo: the hole stuff is
                // kinda hard-coded only for the equality.
-                Ast *arg   = in->args[arg_id];
-                Variable   *param = signature->params[arg_id];
+                Ast      *arg   = in->args[arg_id];
+                Variable *param = signature->params[arg_id];
 
                 if (arg->cat != AC_DummyHole)
                 {
@@ -1534,6 +1589,10 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
                     Variable *param_type_var = castAst(param->type, Variable);
                     assert(param_type_var->stack_delta == 0);
                     stack_frame[param_type_var->id] = arg_type;
+
+                    Ast **hole = in->args + param_type_var->id;
+                    assert((*hole)->cat == AC_DummyHole);
+                    *hole = arg_type;  // mutate the input ast
                   }
                 }
               }
@@ -1547,8 +1606,6 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
                 }
                 extendStack(&env, arg_count, norm_args);
                 out0 = normalize(env, signature->return_type);
-                // nocheckin: this is NOT cool... we are caching the unabstracted type.
-                in->type = out0;
               }
             }
             else
@@ -1587,6 +1644,8 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
       {
         matched = false;
         parseError(in0, "actual type differs from expected type");
+        normalize(env, expected_type);
+        typecheck(env, in0, 0);
         pushAttachment("expected", norm_expected);
         pushAttachment("got", norm_actual);
       }
@@ -1595,9 +1654,7 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
       out = norm_actual;
   }
   else
-  {
-    assert(!out0);
-  }
+    out = 0;
 
   return out;
 }
@@ -1615,6 +1672,34 @@ struct ExpressionParsing
   Ast *type;
   operator bool() { return (bool)expression; }
 };
+
+inline Form *
+getFormOf(Ast *in0)
+{
+  Form *out = 0;
+  switch (in0->cat)
+  {
+    case AC_CompositeV:
+    {
+      CompositeV *in = castAst(in0, CompositeV);
+      out = castAst(in->op, Form);
+    } break;
+
+    case AC_Composite:
+    {
+      Composite *in = castAst(in0, Composite);
+      out = castAst(in->op, Form);
+    } break;
+
+    case AC_Form:
+    {
+      out = castAst(in0, Form);
+    } break;
+
+    invalidDefaultCase;
+  }
+  return out;
+}
 
 // note: Manipulation may be done in-place, but we might also allocate new
 // memory, so beware!
@@ -2619,7 +2704,7 @@ parseTopLevel(EngineState *state)
               printAst(0, reduced, {.detailed=true});
               printToBuffer(0, ": ");
               printAst(0, parsing.type, {});
-              printNewline();
+              myprint();
             }
             requireChar(';');
           } break;
@@ -2631,7 +2716,7 @@ parseTopLevel(EngineState *state)
               printAst(0, parsing.expression, {.detailed=true});
               printToBuffer(0, ": ");
               printAst(0, parsing.type, {});
-              printNewline();
+              myprint();
             }
             requireChar(';');
           } break;
@@ -2677,14 +2762,16 @@ parseTopLevel(EngineState *state)
           case TC_ColonEqual:
           {
             pushContextName("constant definition: CONSTANT := VALUE;");
-            Ast *value = parseExpression(arena);
-            Ast *norm  = normalizeStart(arena, value);
-            if (parsing())
+            if (Ast *value = parseExpression(arena))
             {
-              if (!addGlobalBinding(name->text, norm))
-                tokenError(name, "redefinition of global name");
+              Ast *norm  = normalizeStart(arena, value);
+              if (noError())
+              {
+                if (!addGlobalBinding(name->text, norm))
+                  tokenError(name, "redefinition of global name");
+              }
+              requireChar(';');
             }
-            requireChar(';');
             popContext();
           } break;
 
@@ -2844,11 +2931,24 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
   return success;
 }
 
+// little debug struct
+union astdbg
+{
+  Variable  Variable;
+  Constant  Constant;
+  Composite Composite;
+  Fork      Fork;
+  ArrowType ArrowType;
+  Form      Form;
+  Function  Function;
+  StackRef  StackRef;
+  CompositeV CompositeV;
+};
+
 int
 engineMain()
 {
-  astdbg whatever = {};
-  (void)whatever;
+  astdbg whatever = {}; (void)whatever;
 
   int success = true;
 

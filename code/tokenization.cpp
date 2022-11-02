@@ -464,7 +464,7 @@ debugPrintTokens(Tokenizer tk)
 }
 
 inline void
-printNewline()
+myprint()
 {
   printToBuffer(0, "\n");
 }
