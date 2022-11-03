@@ -32,7 +32,7 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
       case AC_Constant:
       {
         Constant *in = castAst(in0, Constant);
-        printToBuffer(buffer, in->h.token);
+        printToBuffer(buffer, in->a.token);
       } break;
 
       case AC_Variable:
@@ -41,7 +41,7 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
 #if 0
         printToBuffer(buffer, "%.*s[%d]", in->name.length, in->name.chars, in->stack_delta);
 #else
-        printToBuffer(buffer, in->h.token);
+        printToBuffer(buffer, in->a.token);
 #endif
 
         if (opt.detailed || opt.print_type)
@@ -122,7 +122,7 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
               Arrow *signature = polyAst(ctor->v.type, Arrow, ArrowV);
               for (s32 param_id = 0; param_id < signature->param_count; param_id++)
               {
-                printToBuffer(buffer, casev->params[param_id]->h.token);
+                printToBuffer(buffer, casev->param_names[param_id]);
                 printToBuffer(buffer, " ");
               }
             } break;
@@ -184,22 +184,21 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
       case AC_ArrowV:
       case AC_Arrow:
       {
-        Arrow *arrow = polyAst(in0, Arrow, ArrowV);
+        Arrow *in = polyAst(in0, Arrow, ArrowV);
         printToBuffer(buffer, "(");
         for (int param_id = 0;
-             param_id < arrow->param_count;
+             param_id < in->param_count;
              param_id++)
         {
-          Parameter *param = arrow->params[param_id];
-          printToBuffer(buffer, param->h.token);
+          printToBuffer(buffer, in->param_names[param_id]);
           printToBuffer(buffer, ": ");
-          printAst(buffer, param->type, new_opt);
-          if (param_id < arrow->param_count-1)
+          printAst(buffer, in->param_types[param_id], new_opt);
+          if (param_id < in->param_count-1)
             printToBuffer(buffer, ", ");
         }
         printToBuffer(buffer, ") -> ");
 
-        printAst(buffer, arrow->return_type, new_opt);
+        printAst(buffer, in->return_type, new_opt);
       } break;
 
       default:

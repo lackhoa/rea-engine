@@ -88,7 +88,7 @@ searchVariable(Environment env, Ast *in, variable_matcher *matcher, void *opt)
         {
           // we only wanna search the types, since we probably don't care about
           // the parameters.
-          if (searchVariable(env, arrow->params[param_id]->type, matcher, opt))
+          if (searchVariable(env, arrow->param_types[param_id], matcher, opt))
           {
             found = true;
             break;
@@ -248,20 +248,7 @@ identicalTrinary(Ast *lhs0, Ast *rhs0) // TODO: turn the args into values
         {
           s32 param_count = larrow->param_count;
           if (rarrow->param_count == param_count)
-          {
-            Ast** lparam_types = pushArray(temp_arena, param_count, Ast*);
-            Ast** rparam_types = pushArray(temp_arena, param_count, Ast*);
-
-            for (s32 param_id = 0;
-                 param_id < param_count;
-                 param_id++)
-            {
-              lparam_types[param_id] = larrow->params[param_id]->type;
-              rparam_types[param_id] = rarrow->params[param_id]->type;
-            }
-
-            out = compareExpressionList(lparam_types, rparam_types, param_count);
-          }
+            out = compareExpressionList(larrow->param_types, rarrow->param_types, param_count);
           else
             out = Trinary_False;
         }
@@ -317,14 +304,56 @@ myprint(Stack *stack)
   myprint("]");
 }
 
-global_variable ValueBindings global_bindings;
+global_variable GlobalBindings *global_bindings;
 
-struct LookupName { Binding* slot; b32 found; };
+struct LookupName { GlobalBinding* slot; b32 found; };
 
 internal LookupName
-lookupNameCurrentFrame(Bindings *bindings, String key, b32 add_if_missing)
+lookupNameCurrentFrame(GlobalBindings *bindings, String key)
 {
-  Binding *slot = 0;
+  GlobalBinding *slot = 0;
+  b32 found = false;
+  u32 hash = stringHash(key) % arrayCount(bindings->table);
+  slot = bindings->table + hash;
+  b32 first_slot_valid = slot->key.length;
+  if (first_slot_valid)
+  {
+    b32 stop = false;
+    while (!stop)
+    {
+      if (equal(slot->key, key))
+      {
+        stop = true;
+        found = true;
+      }
+      else if (slot->next)
+        slot = slot->next;
+      else
+      {
+        stop = true;
+        allocate(bindings->arena, slot->next);
+        slot = slot->next;
+        slot->key  = key;
+        slot->next = 0;
+      }
+    }
+  }
+  else
+  {
+    slot->key = key;
+    slot->value = {};
+  }
+
+  LookupName out = { slot, found };
+  return out;
+}
+
+struct LookupLocalName { LocalBinding* slot; b32 found; };
+
+internal LookupLocalName
+lookupNameCurrentFrame(LocalBindings *bindings, String key, b32 add_if_missing)
+{
+  LocalBinding *slot = 0;
   b32 found = false;
   u32 hash = stringHash(key) % arrayCount(bindings->table);
   slot = bindings->table + hash;
@@ -360,27 +389,27 @@ lookupNameCurrentFrame(Bindings *bindings, String key, b32 add_if_missing)
     slot->value = {};
   }
 
-  LookupName out = { slot, found };
+  LookupLocalName out = { slot, found };
   return out;
 }
 
 inline b32
-addBinding(Bindings *bindings, String key, Ast *value)
+addBinding(LocalBindings *bindings, String key, s32 id, Ast *type)
 {
   auto lookup = lookupNameCurrentFrame(bindings, key, true);
   b32 succeed = false;
   if (!lookup.found)
   {
-    lookup.slot->value = value;
+    lookup.slot->value = LocalBindingValue{id, type};
     succeed = true;
   }
   return succeed;
 }
 
 inline b32
-addGlobalBinding(String key, Ast *value)
+addGlobalBinding(String key, Value *value)
 {
-  auto lookup = lookupNameCurrentFrame(global_bindings.v, key, true);
+  auto lookup = lookupNameCurrentFrame(global_bindings, key);
   b32 succeed = true;
   if (lookup.found)
     succeed = false;
@@ -390,7 +419,7 @@ addGlobalBinding(String key, Ast *value)
 }
 
 inline b32
-addGlobalBinding(char *key, Ast *value)
+addGlobalBinding(char *key, Value *value)
 {
   return addGlobalBinding(toString(key), value);
 }
@@ -398,7 +427,7 @@ addGlobalBinding(char *key, Ast *value)
 struct LookupNameRecursive { Ast *expr; b32 found; };
 
 inline LookupNameRecursive
-lookupLocalName(MemoryArena *arena, Bindings *bindings, Token *token)
+lookupLocalName(MemoryArena *arena, LocalBindings *bindings, Token *token)
 {
   Ast *expr = {};
   b32 found = false;
@@ -407,20 +436,15 @@ lookupLocalName(MemoryArena *arena, Bindings *bindings, Token *token)
        bindings;
        stack_delta++)
   {
-    LookupName lookup = lookupNameCurrentFrame(bindings, token->text, false);
+    LookupLocalName lookup = lookupNameCurrentFrame(bindings, token->text, false);
     if (lookup.found)
     {
       found = true;
-      Ast *value = lookup.slot->value;
-      if (Parameter *param = castAst(value, Parameter))
-      {
-        Variable *var = newAst(arena, Variable, token);
-        initVariable(var, param->id, param->type);
-        var->stack_delta = stack_delta;
-        expr = &var->h;
-      }
-      else
-        invalidCodePath;
+      auto [id, type] = lookup.slot->value;
+      Variable *var = newAst(arena, Variable, token);
+      initVariable(var, id, type);
+      var->stack_delta = stack_delta;
+      expr = &var->a;
       break;
     }
     else
@@ -436,12 +460,12 @@ inline Ast *
 constantFromGlobalName(MemoryArena *arena, Token *token)
 {
   Ast *out0 = 0;
-  auto lookup = lookupNameCurrentFrame(global_bindings.v, token->text, false);
+  auto lookup = lookupNameCurrentFrame(global_bindings, token->text);
   if (lookup.found)
   {
     Constant *out = newAst(arena, Constant, token);
-    initIdentifier(out, lookup.slot->value);
-    out0 = &out->h;
+    initConstant(out, lookup.slot->value);
+    out0 = &out->a;
   }
   return out0;
 }
@@ -529,12 +553,12 @@ addBuiltinForm(MemoryArena *arena, char *name, Ast *type, const char **ctor_name
     Token ctor_name = newToken(ctor_names[ctor_id]);
     initValue(&ctor->v, AC_Form, &ctor_name, &form->v.a);
     initForm(ctor, ctor_id);
-    if (!addGlobalBinding(ctor_name, &ctor->v.a))
+    if (!addGlobalBinding(ctor_name, &ctor->v))
       invalidCodePath;
   }
 
   initForm(form, ctor_count, ctors, getNextFormId());
-  if (!addGlobalBinding(form_name.text, &form->v.a))
+  if (!addGlobalBinding(form_name.text, &form->v))
     invalidCodePath;
 
   return form;
@@ -620,7 +644,7 @@ transformVariables(Environment env, Ast *in0, variable_transformer *transformer,
     {
       Fork *in_fork  = castAst(in0, Fork);
       Fork *out_fork = copyStruct(env.arena, in_fork);
-      out0 = &out_fork->h;
+      out0 = &out_fork->a;
       out_fork->subject = transformVariables(env, in_fork->subject, transformer, opt);
       allocateArray(env.arena, out_fork->case_count, out_fork->cases);
       env.stack_offset++;
@@ -673,7 +697,7 @@ VARIABLE_TRANSFORMER(replaceCurrentLevelVariable)
   if (env.stack_offset == in->stack_delta)
     return args[in->id];
   else
-    return &in->h;
+    return &in->a;
 }
 
 // think of a function application
@@ -706,17 +730,16 @@ rewriteExpression(Environment *env, Ast *in)
 }
 
 internal Ast **
-introduce(Environment *env, s32 count, Parameter **models)
+introduce(Environment *env, s32 count, Token *names, Ast **types)
 {
   assert(count < arrayCount(env->stack->args));
   s32 stack_depth = env->stack_depth+1;
   StackRef **refs = pushArray(temp_arena, count, StackRef *);
   for (s32 id = 0; id < count; id++)
   {
-    Parameter *model = models[id];
-    StackRef *ref = refs[id] = newValue(temp_arena, StackRef, &model->h.token, model->type);
-    ref->name        = model->h.token.text;
-    ref->id          = model->id;
+    StackRef *ref = refs[id] = newValue(temp_arena, StackRef, names+id, types[id]);
+    ref->name        = names[id];
+    ref->id          = id;
     ref->stack_depth = stack_depth;
   }
   extendStack(env, count, (Ast**)refs);
@@ -726,7 +749,7 @@ introduce(Environment *env, s32 count, Parameter **models)
 internal Ast **
 introduce(Environment *env, Arrow *signature)
 {
-  return introduce(env, signature->param_count, signature->params);
+  return introduce(env, signature->param_count, signature->param_names, signature->param_types);
 }
 
 inline void
@@ -746,15 +769,6 @@ printRewrites(Environment env)
 inline Ast *
 parseExpression(MemoryArena *arena);
 
-inline Ast *
-typeOfValue(Ast *in0)
-{
-  assert(isValue(in0));
-  Value *in = (Value*)in0;
-  Ast *out = in->type;
-  return out;
-}
-
 // todo #speed don't pass the Environment in wholesale?
 internal Ast *
 normalize(Environment env, Ast *in0)
@@ -767,7 +781,7 @@ normalize(Environment env, Ast *in0)
     case AC_Constant:
     {
       Constant *in = castAst(in0, Constant);
-      out0 = in->value;
+      out0 = &in->value->a;
     } break;
 
     case AC_Variable:
@@ -841,7 +855,7 @@ normalize(Environment env, Ast *in0)
           out->args[arg_id] = norm_args[arg_id];
 
         // annotate the type
-        ArrowV *signature = castAst(typeOfValue(norm_op), ArrowV);
+        ArrowV *signature = castAst(toValue(norm_op)->type, ArrowV);
         out->v.type = normalize(env, signature->return_type);
       }
     } break;
@@ -896,11 +910,11 @@ normalize(Environment env, Ast *in0)
         out->return_type = normalize(signature_env, in->return_type);
       }
 
-      allocateArray(env.arena, out->param_count, out->params);
+      allocateArray(env.arena, out->param_count, out->param_types);
       for (s32 param_id = 0; param_id < out->param_count; param_id++)
       {
-        Parameter *param = out->params[param_id] = copyStruct(env.arena, in->params[param_id]);
-        param->type = normalize(signature_env, param->type);
+        Ast *norm_param_type = normalize(signature_env, in->param_types[param_id]);
+        out->param_types[param_id] = norm_param_type;
       }
     } break;
 
@@ -994,7 +1008,7 @@ VARIABLE_TRANSFORMER(rebaseVariable)
   }
   else
     out = in;
-  return &out->h;
+  return &out->a;
 }
 
 inline Ast *
@@ -1012,20 +1026,18 @@ rebaseUpExpr(MemoryArena *arena, Ast *in)
   return transformVariables(newEnvironment(arena), in, rebaseVariable, &adjustment);
 }
 
-// todo: #mem I don't think we need the arena here?
 // NOTE: the output as well as "expected_type" are instantiated, but expression
 // types are abstract.
 internal Ast *
 typecheck(Environment env, Ast *in0, Ast *expected_type)
 {
   Ast *actual = 0;
-
   switch (in0->cat)
   {
     case AC_Constant:
     {
       Constant *in = castAst(in0, Constant);
-      actual = typeOfValue(in->value);
+      actual = in->value->type;
     } break;
 
     case AC_Variable:
@@ -1048,7 +1060,7 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
            case_id < in->case_count && noError();
            case_id++)
       {
-        Environment  env = *outer_env;
+        Environment env = *outer_env;
 
         ForkCase *casev    = in->cases + case_id;
 
@@ -1061,13 +1073,13 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
           {// member
             normalize(env, in->subject);
             addRewrite(&env, norm_subject, ctor_exp);
-            introduce(&env, 0, 0);
+            introduce(&env, 0, 0, 0);
           } break;
 
           case AC_ArrowV:
           {// composite
             ArrowV  *signature = castAst(ctor->v.type, ArrowV);
-            Ast    **params    = introduce(&env, signature->param_count, casev->params);
+            Ast    **params    = introduce(&env, signature->param_count, casev->param_names, casev->param_types);
             // NOTE: we could add a type here, but not sure if we need it.
             CompositeV *pattern = newValue(temp_arena, CompositeV, &ctor->v.a.token, 0);
 
@@ -1189,13 +1201,13 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
                 {
                   stack_frame[arg_id] = normalize(env, arg);
 
-                  Parameter *param = signature->params[arg_id];
-                  Ast *norm_param_type = normalize(signature_env, param->type);
+                  Ast *param_type = signature->param_types[arg_id];
+                  Ast *norm_param_type = normalize(signature_env, param_type);
                   // NOTE: we must always typecheck the args!!!
                   Ast *arg_type = typecheck(env, arg, norm_param_type);
                   if (norm_param_type == 0)
                   {
-                    Variable *param_type_var = castAst(param->type, Variable);
+                    Variable *param_type_var = castAst(param_type, Variable);
                     assert(param_type_var->stack_delta == 0);
                     stack_frame[param_type_var->id] = arg_type;
                   }
@@ -1210,7 +1222,7 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
                   norm_args[arg_id] = normalize(env, in->args[arg_id]);
                 }
                 extendStack(&env, arg_count, norm_args);
-                actual = normalize(env, signature->return_type);
+                actual = signature->return_type;
               }
             }
             else
@@ -1304,7 +1316,7 @@ getFormOf(Ast *in0)
 // note: Manipulation may be done in-place, but we might also allocate new
 // memory, so beware!
 internal Ast *
-buildAst(MemoryArena *arena, Bindings *bindings, Ast *in0)
+buildAst(MemoryArena *arena, LocalBindings *bindings, Ast *in0)
 {
   Ast *out0 = 0;
 
@@ -1336,10 +1348,6 @@ buildAst(MemoryArena *arena, Bindings *bindings, Ast *in0)
       Composite *in = castAst(in0, Composite);
 
       b32 build_op = true;
-      if (in->op->cat == AC_DummyAssignment)
-      {
-        todoIncomplete;
-      }
       if ((in->op->cat == AC_Identifier) &&
           equal(in->op->token, "="))
       {// todo: special built-in notation for equality
@@ -1353,6 +1361,7 @@ buildAst(MemoryArena *arena, Bindings *bindings, Ast *in0)
         Token identical_token = in->op->token;
         identical_token.text  = toString("identical");
         Ast *identical = constantFromGlobalName(arena, &identical_token);
+        assert(identical);
         initComposite(in, identical, 3, new_args);
         build_op = false;
       }
@@ -1378,17 +1387,19 @@ buildAst(MemoryArena *arena, Bindings *bindings, Ast *in0)
       Arrow *in = castAst(in0, Arrow);
 
       // introduce own bindings
-      Bindings *outer_bindings = bindings;
-      Bindings *bindings       = extendBindings(arena, outer_bindings);
+      LocalBindings *outer_bindings = bindings;
+      LocalBindings *bindings       = extendBindings(arena, outer_bindings);
 
       // build parameters
       for (s32 param_id = 0;
            param_id < in->param_count && noError();
            param_id++)
       {
-        Parameter *param = in->params[param_id];
-        if ((param->type = buildAst(arena, bindings, param->type)))
-          addBinding(bindings, param->h.token.text, &param->h);
+        if (Ast *param_type = buildAst(arena, bindings, in->param_types[param_id]))
+        {
+          in->param_types[param_id] = param_type;
+          addBinding(bindings, in->param_names[param_id], param_id, in->param_types[param_id]);
+        }
       }
 
       if (noError())
@@ -1403,18 +1414,18 @@ buildAst(MemoryArena *arena, Bindings *bindings, Ast *in0)
       AbstractFork *in = castAst(in0, AbstractFork);
       Fork *out = 0;
 
-      Bindings *outer_bindings = bindings;
-      if (Ast *subject = buildAst(arena, outer_bindings, in->subject))
+      LocalBindings *outer_bindings = bindings;
+      if (Ast *subject = buildAst(arena, outer_bindings, in->f.subject))
       {
         if (Ast *subject_type = typecheck(newEnvironment(arena), subject, 0))
         {
           if (Form *form = castAst(subject_type, Form))
           {
-            s32 case_count = in->case_count;
+            s32 case_count = in->f.case_count;
             if (form->ctor_count == case_count)
             {
               if (case_count == 0)
-                parseError(&in->h, "todo: cannot assign type to empty fork");
+                parseError(&in->a, "todo: cannot assign type to empty fork");
               else
               {
                 ForkCase *cases = pushArray(arena, case_count, ForkCase, true);
@@ -1423,19 +1434,21 @@ buildAst(MemoryArena *arena, Bindings *bindings, Ast *in0)
                      (input_case_id < case_count) && parsing();
                      input_case_id++)
                 {
-                  Bindings *bindings = extendBindings(temp_arena, outer_bindings);
+                  LocalBindings *bindings = extendBindings(temp_arena, outer_bindings);
 
                   Ast *ast_pattern = in->patterns[input_case_id];
                   Form *ctor = 0;
-                  Parameter **params;
-                  s32 param_count;
+                  Token      *param_names;
+                  Ast       **param_types;
+                  s32         param_count;
                   pushContextName("transform switch case pattern");
                   switch (ast_pattern->cat)
                   {
                     case AC_Identifier:
                     {
-                      params = 0;
-                      param_count = 0;
+                      param_names  = 0;
+                      param_types  = 0;
+                      param_count  = 0;
                       if (Ast *pattern = buildAst(temp_arena, outer_bindings, ast_pattern))
                       {
                         Ast *norm_pattern = normalize(temp_arena, pattern);
@@ -1469,24 +1482,23 @@ buildAst(MemoryArena *arena, Bindings *bindings, Ast *in0)
                               param_count = branch->arg_count;
                               if (param_count == ctor_sig->param_count)
                               {
-                                allocateArray(arena, param_count, params, true);
+                                allocateArray(arena, param_count, param_names, true);
+                                allocateArray(arena, param_count, param_types, true);
                                 for (s32 param_id = 0; param_id < param_count; param_id++)
                                 {// MARK: loop over pattern variables
                                   Ast *ast_arg = branch->args[param_id];
                                   if (Identifier *arg = castAst(ast_arg, Identifier))
                                   {
-                                    Token *param_name = &arg->h.token;
+                                    Token *param_name = &arg->a.token;
                                     auto lookup = lookupNameCurrentFrame(bindings, param_name->text, true);
                                     if (lookup.found)
                                       tokenError("reused parameter name");
                                     else
                                     {
-                                      assert(ctor_sig->params[param_id]);
                                       // pattern variable: only the name is different
-                                      Parameter *param_src = ctor_sig->params[param_id];
-                                      Parameter *param = params[param_id] = copyStruct(arena, param_src);
-                                      param->h.token = *param_name;
-                                      lookup.slot->value = &param->h;
+                                      param_names[param_id] = *param_name;
+                                      param_types[param_id] = ctor_sig->param_types[param_id];
+                                      lookup.slot->value = {param_id, param_types[param_id]};
                                     }
                                   }
                                   else
@@ -1536,27 +1548,44 @@ buildAst(MemoryArena *arena, Bindings *bindings, Ast *in0)
                       pushAttachment("constructor", &ctor->v.a);
                     }
                     else
-                      initForkCase(cases + ctor->ctor_id, body, params, param_count);
+                    {
+                      ForkCase *fork_case = cases + ctor->ctor_id;
+                      fork_case->body        = body;
+                      fork_case->param_names = param_names;
+                      fork_case->param_types = param_types;
+                    }
                   }
                 }
 
                 if (noError())
                 {
-                  out = newAst(arena, Fork, &in->h.token);
+                  out = newAst(arena, Fork, &in->a.token);
                   initFork(out, form, subject, case_count, cases);
                 }
               }
             }
             else
-              parseError(&in->h, "wrong number of cases, expected: %d, got: %d",
-                         form->ctor_count, in->case_count);
+              parseError(&in->a, "wrong number of cases, expected: %d, got: %d",
+                         form->ctor_count, in->f.case_count);
           }
           else
-            parseError(in->subject, "cannot fork this expression");
+            parseError(in->f.subject, "cannot fork this expression");
         }
       }
 
-      out0 = &out->h;
+      out0 = &out->a;
+    } break;
+
+    case AC_Let:
+    {
+      todoIncomplete;
+#if 0
+      Let *in = castAst(in0, Let);
+      in->rhs = buildAst(arena, bindings, in->rhs);
+      if (!addBinding(bindings, in->lhs.a.token, in->rhs))
+        parseError(&in->lhs.a, "local name redefinition");
+      out0 = in0;
+#endif
     } break;
 
     invalidDefaultCase;
@@ -1567,7 +1596,7 @@ buildAst(MemoryArena *arena, Bindings *bindings, Ast *in0)
 }
 
 inline ExpressionParsing
-parseExpressionAndTypecheck(MemoryArena *arena, Bindings *bindings, Ast *expected_type)
+parseExpressionAndTypecheck(MemoryArena *arena, LocalBindings *bindings, Ast *expected_type)
 {
   ExpressionParsing out = {};
   if (Ast *ast = parseExpressionToAst(arena))
@@ -1676,16 +1705,12 @@ parseSequence(MemoryArena *arena)
           case TC_ColonEqual:
           {
             pushContextName("definition");
-            Identifier *lhs = newAst(arena, Identifier, name);
             if (Ast *rhs = parseExpressionToAst(arena))
             {
-              Composite *assignment = newAst(arena, Composite, &after_name);
+              Let *assignment = newAst(arena, Let, &after_name);
               ast = &assignment->a;
-              assignment->op = &dummy_assignment;
-              assignment->arg_count = 2;
-              assignment->args = pushArray(arena, 2, Ast*);
-              assignment->args[0] = &lhs->h;
-              assignment->args[1] = rhs;
+              initAst(&assignment->lhs.a, AC_Identifier, name);
+              assignment->rhs = rhs;
             }
             popContext();
           } break;
@@ -1796,10 +1821,10 @@ parseFork(MemoryArena *arena)
       {
         assert(case_count == actual_case_count);
         out = newAst(arena, AbstractFork, &token);
-        out->subject    = subject;
-        out->case_count = case_count;
-        out->patterns   = patterns;
-        out->bodies     = bodies;
+        out->f.subject    = subject;
+        out->f.case_count = case_count;
+        out->patterns     = patterns;
+        out->bodies       = bodies;
       }
     }
   }
@@ -1814,15 +1839,17 @@ parseArrowType(MemoryArena *arena)
   Arrow *out = 0;
   pushContext;
 
-  Parameter **params;
-  s32        param_count;
+  s32         param_count;
+  Token      *param_names;
+  Ast       **param_types;
   if (requireChar('('))
   {
     Tokenizer tk_copy = *global_tokenizer;
     param_count = getCommaSeparatedListLength(&tk_copy);
-    if (parsing(&tk_copy))
+    if (noError(&tk_copy))
     {
-      params = pushArray(arena, param_count, Parameter*);
+      param_names = pushArray(arena, param_count, Token);
+      param_types = pushArray(arena, param_count, Ast*);
 
       s32 parsed_param_count = 0;
       s32 typeless_run = 0;
@@ -1838,19 +1865,21 @@ parseArrowType(MemoryArena *arena)
         else if (isIdentifier(&param_name_token))
         {
           s32 param_id = parsed_param_count++;
-          Parameter *param = params[param_id] =
-            newAst(arena, Parameter, &param_name_token);
-          param->id = param_id;
+          param_names[param_id] = param_name_token;
 
           if (optionalChar(':'))
           {
             if (Ast *param_type = parseExpressionToAst(arena))
             {
-              param->type = param_type;
+              param_types[param_id] = param_type;
               if (typeless_run)
               {
-                for (s32 offset = 1; offset <= typeless_run; offset++)
-                  params[param_id - offset]->type = param_type;
+                for (s32 offset = 1;
+                     offset <= typeless_run;
+                     offset++)
+                {
+                  param_types[param_id - offset]  = param_type;
+                }
                 typeless_run = 0;
               }
 
@@ -1889,7 +1918,10 @@ parseArrowType(MemoryArena *arena)
     if (Ast *return_type = parseExpressionToAst(arena))
     {
       out = newAst(arena, Arrow, &arrow_token);
-      initArrowType(out, param_count, params, return_type);
+      out->param_count = param_count;
+      out->return_type = return_type;
+      out->param_names = param_names;
+      out->param_types = param_types;
     }
   }
 
@@ -1911,7 +1943,7 @@ parseOperand(MemoryArena *arena)
     {
       case Keyword_Fork:
       {
-        out = &parseFork(arena)->h;
+        out = &parseFork(arena)->a;
       } break;
 
       default:
@@ -1924,7 +1956,7 @@ parseOperand(MemoryArena *arena)
       // todo: this doesn't preserve identifier location
       out = &dummy_hole;
     else
-      out = &(newAst(arena, Identifier, &token1))->h;
+      out = &(newAst(arena, Identifier, &token1))->a;
   }
   else if (equal(&token1, '('))
   {
@@ -2007,11 +2039,10 @@ seesArrowExpression()
 internal Ast *
 parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
 {
-  pushContext;
-
   Ast *out = 0;
   if (seesArrowExpression())
   {
+    // todo wth is this?
     out = &parseArrowType(arena)->a;
   }
   else
@@ -2043,7 +2074,7 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
               args[0] = operand;
               args[1] = recurse;
               Composite *new_operand = newAst(arena, Composite, &op_token);
-              initComposite(new_operand, &op->h, 2, args);
+              initComposite(new_operand, &op->a, 2, args);
               operand = &new_operand->a;
             }
           }
@@ -2066,7 +2097,6 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
   }
 
   NULL_WHEN_ERROR(out);
-  popContext();
   return out;
 }
 
@@ -2084,7 +2114,7 @@ parseConstructorDef(MemoryArena *arena, Form *out, Form *form, s32 ctor_id)
   Token ctor_token = nextToken();
   if (isIdentifier(&ctor_token))
   {
-    if (addGlobalBinding(ctor_token.text, &out->v.a))
+    if (addGlobalBinding(ctor_token.text, &out->v))
     {
       if (optionalChar(':'))
       {
@@ -2147,7 +2177,7 @@ parseTypedef(MemoryArena *arena)
   {
     Form *form = pushStruct(arena, Form);
     // NOTE: the type is in scope of its own constructor.
-    if (addGlobalBinding(form_name.text, &form->v.a))
+    if (addGlobalBinding(form_name.text, &form->v))
     {
       Ast *type = &builtin_Set->v.a;
       if (optionalChar(':'))
@@ -2234,16 +2264,15 @@ parseFunction(MemoryArena *arena, Token *name)
     if (ArrowV *signature = castAst(signature0, ArrowV))
     {
       FunctionV *funv = newValue(arena, FunctionV, name, signature0);
-      if (addGlobalBinding(name->text, &funv->v.a))
+      if (addGlobalBinding(name->text, &funv->v))
       {
         // note: we have to rebuild the function's local bindings
-        Bindings *fun_bindings = extendBindings(arena, 0);
+        LocalBindings *fun_bindings = extendBindings(arena, 0);
         for (s32 param_id = 0;
              param_id < signature->param_count;
              param_id++)
         {
-          Parameter *param = signature->params[param_id];
-          b32 add = addBinding(fun_bindings, param->h.token.text, &param->h);
+          b32 add = addBinding(fun_bindings, signature->param_names[param_id], param_id, signature->param_types[param_id]);
           assert(add);
         }
 
@@ -2435,8 +2464,8 @@ parseTopLevel(EngineState *state)
             pushContextName("constant definition: CONSTANT := VALUE;");
             if (Ast *value = parseExpression(arena))
             {
-              Ast *norm  = normalizeStart(arena, value);
-              if (!addGlobalBinding(name->text, norm))
+              Ast *norm = normalizeStart(arena, value);
+              if (!addGlobalBinding(name->text, toValue(norm)))
                 tokenError(name, "redefinition of global name");
               requireChar(';');
             }
@@ -2465,10 +2494,10 @@ parseTopLevel(EngineState *state)
   popContext();
 }
 
-inline Ast *
+inline Value *
 lookupGlobalName(char *name)
 {
-  return lookupNameCurrentFrame(global_bindings.v, toString(name), false).slot->value;
+  return lookupNameCurrentFrame(global_bindings, toString(name)).slot->value;
 }
 
 internal b32
@@ -2552,27 +2581,27 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
   state->arena = arena;
 
   {
-    global_bindings = toValueBindings(pushStruct(arena, Bindings));
-    global_bindings.v->arena = arena;
+    global_bindings = pushStruct(arena, GlobalBindings);
+    global_bindings->arena = arena;
 
     const char *builtin_Type_members[] = {"Set"};
     builtin_Type = addBuiltinForm(arena, "Type", 0, builtin_Type_members, 1);
-    builtin_Set  = castAst(lookupGlobalName("Set"), Form);
+    builtin_Set  = castValue(lookupGlobalName("Set"), Form);
     builtin_Type->v.type = &builtin_Type->v.a; // note: circular types are gonna bite us
 
     {// Equality
       b32 success = interpretFile(state, platformGetFileFullPath(arena, "../data/builtins.rea"), true);
       assert(success);
-      builtin_identical = castAst(lookupGlobalName("identical"), Form);
+      builtin_identical = castValue(lookupGlobalName("identical"), Form);
     }
 
     const char *true_members[] = {"truth"};
     addBuiltinForm(arena, "True", &builtin_Set->v.a, true_members, 1);
-    builtin_True  = castAst(lookupGlobalName("True"), Form);
-    builtin_truth = castAst(lookupGlobalName("truth"), Form);
+    builtin_True  = castValue(lookupGlobalName("True"), Form);
+    builtin_truth = castValue(lookupGlobalName("truth"), Form);
 
     addBuiltinForm(arena, "False", &builtin_Set->v.a, (const char **)0, 0);
-    builtin_False = castAst(lookupGlobalName("False"), Form);
+    builtin_False = castValue(lookupGlobalName("False"), Form);
   }
 
   FilePath input_path = platformGetFileFullPath(arena, initial_file);

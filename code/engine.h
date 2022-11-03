@@ -14,14 +14,12 @@ enum AstCategory
   AC_DummyHole,                 // hole left in for type-checking
   AC_DummySequence,             // like scheme's "begin" keyword
   AC_DummyRewrite,
-  AC_DummyAssignment,
 
   // result after initial parsing
   AC_Identifier,
   AC_AbstractFork,
 
   // result after building (ie everything after that)
-  AC_Parameter,
   AC_Variable,
   AC_Constant,
 
@@ -30,6 +28,7 @@ enum AstCategory
   AC_Composite,
   AC_Arrow,
   AC_Function,
+  AC_Let,
 
   // values subset
   AC_CompositeV = 0x80,
@@ -45,6 +44,8 @@ struct Ast
   Token       token;
 };
 
+struct Value;
+
 inline b32
 isValue(AstCategory cat)
 {
@@ -56,6 +57,13 @@ inline b32
 isValue(Ast *in0)
 {
   return isValue(in0->cat);
+}
+
+inline Value *
+toValue(Ast *ast)
+{
+  assert(isValue(ast));
+  return (Value*) ast;
 }
 
 inline void
@@ -79,24 +87,17 @@ newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
 b32 identicalB32(Ast *lhs, Ast *rhs);
 
 #define castAst(exp, Cat) ((exp)->cat == AC_##Cat ? (Cat*)(exp) : 0)
+#define castValue(exp, Cat) ((isValue(AC_##Cat) && (exp)->a.cat == AC_##Cat) ? (Cat*)(exp) : 0)
 #define polyAst(exp, Cat, Cat2) (((exp)->cat == AC_##Cat || (exp)->cat == AC_##Cat2) ? (Cat*)(exp) : 0)
 
 struct Identifier
 {
-  Ast h;
-};
-
-struct Parameter
-{
-  Ast  h;
-
-  s32  id;
-  Ast *type;
+  Ast a;
 };
 
 struct Variable
 {
-  Ast  h;
+  Ast  a;
 
   s32  id;
   s32  stack_delta;
@@ -111,23 +112,14 @@ initVariable(Variable *var, u32 id, Ast *type)
   var->type        = type;
 }
 
-struct AbstractFork
-{
-  Ast   h;
-  Ast  *subject;
-  s32   case_count;
-  Ast **patterns;
-  Ast **bodies;
-};
-
 struct Constant
 {
-  Ast  h;
-  Ast *value;
+  Ast    a;
+  Value *value;
 };
 
 inline void
-initIdentifier(Constant *in, Ast *value)
+initConstant(Constant *in, Value *value)
 {
   in->value = value;
 }
@@ -135,27 +127,21 @@ initIdentifier(Constant *in, Ast *value)
 struct ForkCase
 {
   Ast        *body;
-  Parameter **params;
+
+  Token  *param_names;
+  Ast   **param_types;
 };
-inline void
-initForkCase(ForkCase *fork_case, Ast *body, Parameter **params, s32 param_count)
-{
-  if (param_count)
-    assert(params);
-  fork_case->body   = body;
-  fork_case->params = params;
-}
 
 struct Form;
 
 struct Fork
 {
-  Ast h;
+  Ast a;
 
-  Form       *form;
-  Ast *subject;
-  s32         case_count;
-  ForkCase   *cases;
+  Form     *form;
+  Ast      *subject;
+  s32       case_count;
+  ForkCase *cases;
 };
 
 inline void
@@ -169,6 +155,18 @@ initFork(Fork *out, Form *form, Ast *subject, s32 case_count, ForkCase *cases)
   for (s32 case_id = 0; case_id < case_count; case_id++)
     assert(out->cases[case_id].body);
 }
+
+// NOTE: I plan have the fork mutated in-place from parsing to typechecking,
+// let's see how it goes...
+struct AbstractFork
+{
+  Ast a;
+
+  Fork f;
+
+  Ast **patterns;
+  Ast **bodies;
+};
 
 struct ParseExpressionOptions
 {
@@ -259,38 +257,37 @@ struct AstList
   AstList *next;
 };
 
-struct Binding
+// nocheckin: don't need the type
+struct LocalBindingValue
 {
-    String   key;
-    Ast     *value;
-    Binding *next;
+  s32  id;
+  Ast *type;
 };
 
-struct Bindings
+struct LocalBinding
 {
-    MemoryArena *arena;
-    Binding      table[128];    // NOTE: this is a hash table
-    Bindings    *next;
+  s32                hash;
+  String             key;
+  LocalBindingValue  value;
+  LocalBinding      *next;
 };
 
-struct ValueBindings
+struct LocalBindings
 {
-  Bindings *v;
+  MemoryArena   *arena;
+  LocalBinding   table[128];
+  LocalBindings *next;
+  s32 count;
 };
 
-inline Bindings *
-extendBindings(MemoryArena *arena, Bindings *outer)
+inline LocalBindings *
+extendBindings(MemoryArena *arena, LocalBindings *outer)
 {
-  Bindings *out = pushStruct(arena, Bindings, true);
+  LocalBindings *out = pushStruct(arena, LocalBindings, true);
   out->next  = outer;
   out->arena = arena;
+  out->count = 0;
   return out;
-}
-
-inline ValueBindings
-toValueBindings(Bindings *bindings)
-{
-  return ValueBindings{bindings};
 }
 
 struct Value
@@ -359,13 +356,21 @@ struct Function
 };
 typedef Function FunctionV;
 
+struct Let
+{
+  Ast a;
+
+  Identifier  lhs;
+  Ast        *rhs;
+};
+
 struct StackRef
 {
   Value h;
 
   String name;
-  s32 id;
-  s32 stack_depth;
+  s32    id;
+  s32    stack_depth;
 };
 
 struct Composite
@@ -399,17 +404,26 @@ struct Arrow
     Value v;
   };
 
-  s32         param_count;
-  Parameter **params;
-  Ast       *return_type;
+  s32  param_count;
+  Ast *return_type;
+
+  Token  *param_names;
+  Ast   **param_types;
 };
 
 typedef Arrow ArrowV;
 
-inline void
-initArrowType(Arrow *in, s32 param_count, Parameter **params, Ast *return_type)
+struct GlobalBinding
 {
-  in->param_count = param_count;
-  in->params      = params;
-  in->return_type = return_type;
-}
+    String         key;
+    Value         *value;
+    GlobalBinding *next;
+};
+
+struct GlobalBindings
+{
+    MemoryArena    *arena;
+    GlobalBinding   table[1024];
+    GlobalBindings *next;
+};
+

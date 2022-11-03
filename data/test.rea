@@ -1,12 +1,21 @@
 #load "boolean.rea"
 #load "nat.rea"
 
-testLocalVariable :: (x: Nat) -> Nat
-{
- a := 3;
- a * x;
- }
-check truth: testLocalVariable(2) = 6
+;; testForkComplexValues :: (a, b: Nat) -> Nat
+;; {
+;;  fork a+b
+;;  {
+;;   0:    0,
+;;   s(n): n,
+;;   }
+;;  }
+
+;; testLocalVariable :: (x: Nat) -> Nat
+;; {
+;;  a := 3;
+;;  a * x;
+;;  }
+;; check truth: testLocalVariable(2) = 6
 
 ;; testCurrying :: (a: Nat) -> (b, c: Nat) -> a + (b + c) = (a + b) + c
 ;; {
