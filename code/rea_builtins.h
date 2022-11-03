@@ -1,10 +1,7 @@
 #pragma once
 
 #include "utils.h"
-
-struct Ast;
-struct Form;
-struct ArrowType;
+#include "engine.h"
 
 global_variable Form *builtin_refl;
 global_variable Form *builtin_identical;
@@ -14,9 +11,10 @@ global_variable Form *builtin_False;
 global_variable Form *builtin_Set;
 global_variable Form *builtin_Type;
 
-global_variable Ast *hole_expression;
-global_variable Ast *dummy_sequence;
-global_variable Ast *dummy_rewrite;
+global_variable Ast dummy_hole;
+global_variable Ast dummy_sequence;
+global_variable Ast dummy_rewrite;
+global_variable Ast dummy_assignment;
 
 global_variable u64 global_next_form_id;
 inline u64

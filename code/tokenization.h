@@ -85,7 +85,7 @@ typedef ParseErrorData* ParseError;
 struct ParseContext { char *first; ParseContext *next; };
 
 // note: the tokenizer also doubles as our error tracker, which may sound weird
-// but in reality it doesn't pose any problem, that said it could be better.
+// but in reality it doesn't pose any problem.
 struct Tokenizer
 {
     ParseError    error;

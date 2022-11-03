@@ -1,6 +1,7 @@
 #include "utils.h"
 #include "engine.h"
 #include "tokenization.h"
+#include "rea_builtins.h"
 
 struct PrintOptions{b32 detailed; b32 print_type;};
 
@@ -8,7 +9,11 @@ internal char*
 printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
 {
   char *out = buffer ? (char*)getArenaNext(buffer) : 0;
-  if (in0)
+  if (in0 == &dummy_hole)
+  {
+    printToBuffer(buffer, "_");
+  }
+  else if (in0)
   {
     PrintOptions new_opt = opt;
     new_opt.detailed = false;
@@ -51,7 +56,7 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
       {
         Composite *in = polyAst(in0, Composite, CompositeV);
 
-        if (in->op == dummy_sequence)
+        if (in->op == &dummy_sequence)
         {
           for (s32 arg_id = 0; arg_id < in->arg_count; arg_id++)
           {
@@ -60,7 +65,7 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
               printToBuffer(buffer, "; ");
           }
         }
-        else if (in->op == dummy_rewrite)
+        else if (in->op == &dummy_rewrite)
         {
           printToBuffer(buffer, "rewrite ");
           if (in->arg_count == 1)
@@ -195,11 +200,6 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         printToBuffer(buffer, ") -> ");
 
         printAst(buffer, arrow->return_type, new_opt);
-      } break;
-
-      case AC_DummyHole:
-      {
-        printToBuffer(buffer, "_");
       } break;
 
       default:

@@ -1,14 +1,12 @@
 #load "boolean.rea"
 #load "nat.rea"
 
-plusAssociative :: (a, b, c: Nat) -> a + (b + c) = (a + b) + c
+testLocalVariable :: (x: Nat) -> Nat
 {
- fork a
- {
-  0    : truth,
-  s(a'): rewrite plusAssociative(a', b, c); truth,
-  }
+ a := 3;
+ a * x;
  }
+check truth: testLocalVariable(2) = 6
 
 ;; testCurrying :: (a: Nat) -> (b, c: Nat) -> a + (b + c) = (a + b) + c
 ;; {

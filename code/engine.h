@@ -3,7 +3,6 @@
 #include "utils.h"
 #include "memory.h"
 #include "tokenization.h"
-#include "rea_builtins.h"
 
 // NOTE: Think of this like the function stack, we'll clean it every once in a while.
 global_variable MemoryArena *temp_arena;
@@ -25,11 +24,6 @@ enum AstCategory
   AC_Composite,
   AC_Arrow,
   AC_Function,
-
-  // dummy values for denoting only
-  AC_DummyHole,                 // hole left in for type-checking
-  AC_DummySequence,             // like scheme's "begin" keyword
-  AC_DummyRewrite,
 
   // todo: currently tunnel values into ast, maybe remove later?
   AC_CompositeV,
@@ -124,6 +118,8 @@ initForkCase(ForkCase *fork_case, Ast *body, Variable **params, s32 param_count)
   fork_case->body   = body;
   fork_case->params = params;
 }
+
+struct Form;
 
 struct Fork
 {

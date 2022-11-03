@@ -97,3 +97,12 @@ plusCommutative :: (n, m: Nat) -> (n + m = m + n)
   s(n1): rewrite plusCommutative(n1, m); rewrite plusSRight(m, n1); truth,
   }
  }
+
+plusAssociative :: (a, b, c: Nat) -> a + (b + c) = (a + b) + c
+{
+ fork a
+ {
+  0    : truth,
+  s(a'): rewrite plusAssociative(a', b, c); truth,
+  }
+ }
