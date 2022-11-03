@@ -527,7 +527,7 @@ addBuiltinForm(MemoryArena *arena, char *name, Ast *type, const char **ctor_name
   {
     Form *ctor = ctors + ctor_id;
     Token ctor_name = newToken(ctor_names[ctor_id]);
-    initValue(&ctor->v, VC_Form, &ctor_name, &form->v.a);
+    initValue(&ctor->v, AC_Form, &ctor_name, &form->v.a);
     initForm(ctor, ctor_id);
     if (!addGlobalBinding(ctor_name, &ctor->v.a))
       invalidCodePath;
@@ -746,25 +746,6 @@ printRewrites(Environment env)
 inline Ast *
 parseExpression(MemoryArena *arena);
 
-inline b32
-isValue(Ast *in0)
-{
-  Value *in = (Value*)in0;
-  b32 out = false;
-  switch (in->cat)
-  {
-    case VC_ArrowV:
-    case VC_StackRef:
-    case VC_Form:
-    case VC_FunctionV:
-    case VC_CompositeV:
-    {
-      out = true;
-    } break;
-  }
-  return out;
-}
-
 inline Ast *
 typeOfValue(Ast *in0)
 {
@@ -852,7 +833,7 @@ normalize(Environment env, Ast *in0)
       if (!out0)
       {
         CompositeV *out = copyStruct(env.arena, in);
-        out->v.cat = VC_CompositeV;
+        out->a.cat = AC_CompositeV;
         out0 = &out->a;
         out->op = norm_op;
         allocateArray(env.arena, out->arg_count, out->args);
@@ -899,7 +880,7 @@ normalize(Environment env, Ast *in0)
     {
       Arrow *in = castAst(in0, Arrow);
       ArrowV *out = copyStruct(env.arena, in);
-      out->v.cat  = VC_ArrowV;
+      out->a.cat  = AC_ArrowV;
       out->v.type = &builtin_Type->v.a;
       out0 = &out->a;
 
@@ -1088,7 +1069,7 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
             ArrowV  *signature = castAst(ctor->v.type, ArrowV);
             Ast    **params    = introduce(&env, signature->param_count, casev->params);
             // NOTE: we could add a type here, but not sure if we need it.
-            CompositeV *pattern = newValue(temp_arena, CompositeV, &ctor->v.token, 0);
+            CompositeV *pattern = newValue(temp_arena, CompositeV, &ctor->v.a.token, 0);
 
             pattern->op        = ctor_exp;
             pattern->arg_count = signature->param_count;
@@ -2124,7 +2105,7 @@ parseConstructorDef(MemoryArena *arena, Form *out, Form *form, s32 ctor_id)
 
           if (valid_type)
           {
-            initValue(&out->v, VC_Form, &ctor_token, norm_type0);
+            initValue(&out->v, AC_Form, &ctor_token, norm_type0);
             initForm(out, ctor_id);
           }
           else
@@ -2139,7 +2120,7 @@ parseConstructorDef(MemoryArena *arena, Form *out, Form *form, s32 ctor_id)
         // default type is the form itself
         if (form->v.type == &builtin_Set->v.a)
         {
-          initValue(&out->v, VC_Form, &ctor_token, &form->v.a);
+          initValue(&out->v, AC_Form, &ctor_token, &form->v.a);
           initForm(out, ctor_id);
         }
         else
@@ -2201,7 +2182,7 @@ parseTypedef(MemoryArena *arena)
         if (noError(&tk_copy))
         {
           Form *ctors = pushArray(arena, expected_ctor_count, Form);
-          initValue(&form->v, VC_Form, &form_name, type);
+          initValue(&form->v, AC_Form, &form_name, type);
           initForm(form, expected_ctor_count, ctors, getNextFormId());
           s32 parsed_ctor_count = 0;
           for (s32 stop = 0;

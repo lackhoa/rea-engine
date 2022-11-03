@@ -31,12 +31,12 @@ enum AstCategory
   AC_Arrow,
   AC_Function,
 
-  // values (todo: currently tunnel into ast)
-  AC_CompositeV,
-  AC_ArrowV,
-  AC_Form,
-  AC_FunctionV,
-  AC_StackRef,
+  // values subset
+  AC_CompositeV = 0x80,
+  AC_ArrowV     = 0x81,
+  AC_Form       = 0x82,
+  AC_FunctionV  = 0x83,
+  AC_StackRef   = 0x84,
 };
 
 struct Ast
@@ -44,6 +44,19 @@ struct Ast
   AstCategory cat;
   Token       token;
 };
+
+inline b32
+isValue(AstCategory cat)
+{
+  b32 out = (cat >> 7);
+  return out;
+}
+
+inline b32
+isValue(Ast *in0)
+{
+  return isValue(in0->cat);
+}
 
 inline void
 initAst(Ast *in, AstCategory cat, Token *token)
@@ -280,40 +293,23 @@ toValueBindings(Bindings *bindings)
   return ValueBindings{bindings};
 }
 
-// actually a subset of "AstCategory"
-enum ValueCategory
-{
-  VC_CompositeV = AC_CompositeV,
-  VC_ArrowV     = AC_ArrowV,
-  VC_Form       = AC_Form,
-  VC_FunctionV  = AC_FunctionV,
-  VC_StackRef   = AC_StackRef,
-};
-
 struct Value
 {
-  union
-  {
-    struct
-    {
-      ValueCategory  cat;
-      Token          token;
-    };
-    Ast a;         // tunnelling for now (I guess, if we think we don't need "token")
-  };
+  Ast a;
   Ast *type;
 };
 
 inline void
-initValue(Value *in, ValueCategory cat, Token *token, Ast *type)
+initValue(Value *in, AstCategory cat, Token *token, Ast *type)
 {
-  in->cat     = cat;
+  assert(isValue(cat));
+  in->a.cat   = cat;
   in->a.token = *token;
   in->type    = type;
 }
 
 inline Value *
-newValue_(MemoryArena *arena, ValueCategory cat, Token *token, Ast *type, size_t size)
+newValue_(MemoryArena *arena, AstCategory cat, Token *token, Ast *type, size_t size)
 {
   Value *out = (Value *)pushSize(arena, size, true);
   initValue(out, cat, token, type);
@@ -321,9 +317,7 @@ newValue_(MemoryArena *arena, ValueCategory cat, Token *token, Ast *type, size_t
 }
 
 #define newValue(arena, cat, token, type)                        \
-  ((cat *) newValue_(arena, VC_##cat, token, type, sizeof(cat)))
-
-#define castValue(value, Cat) (((value)->cat == VC_##Cat) ? (Cat*)(value) : 0)
+  ((cat *) newValue_(arena, AC_##cat, token, type, sizeof(cat)))
 
 struct Form
 {
