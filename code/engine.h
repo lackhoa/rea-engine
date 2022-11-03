@@ -11,11 +11,17 @@ enum AstCategory
 {
   AC_Null = 0,
 
-  // result after parsing
+  AC_DummyHole,                 // hole left in for type-checking
+  AC_DummySequence,             // like scheme's "begin" keyword
+  AC_DummyRewrite,
+  AC_DummyAssignment,
+
+  // result after initial parsing
   AC_Identifier,
   AC_AbstractFork,
 
-  // built expressions
+  // result after building (ie everything after that)
+  AC_Parameter,
   AC_Variable,
   AC_Constant,
 
@@ -25,7 +31,7 @@ enum AstCategory
   AC_Arrow,
   AC_Function,
 
-  // todo: currently tunnel values into ast, maybe remove later?
+  // values (todo: currently tunnel into ast)
   AC_CompositeV,
   AC_ArrowV,
   AC_Form,
@@ -65,6 +71,14 @@ b32 identicalB32(Ast *lhs, Ast *rhs);
 struct Identifier
 {
   Ast h;
+};
+
+struct Parameter
+{
+  Ast  h;
+
+  s32  id;
+  Ast *type;
 };
 
 struct Variable
@@ -107,11 +121,11 @@ initIdentifier(Constant *in, Ast *value)
 
 struct ForkCase
 {
-  Ast  *body;
-  Variable   **params;
+  Ast        *body;
+  Parameter **params;
 };
 inline void
-initForkCase(ForkCase *fork_case, Ast *body, Variable **params, s32 param_count)
+initForkCase(ForkCase *fork_case, Ast *body, Parameter **params, s32 param_count)
 {
   if (param_count)
     assert(params);
@@ -391,15 +405,15 @@ struct Arrow
     Value v;
   };
 
-  s32        param_count;
-  Variable **params;
+  s32         param_count;
+  Parameter **params;
   Ast       *return_type;
 };
 
 typedef Arrow ArrowV;
 
 inline void
-initArrowType(Arrow *in, s32 param_count, Variable **params, Ast *return_type)
+initArrowType(Arrow *in, s32 param_count, Parameter **params, Ast *return_type)
 {
   in->param_count = param_count;
   in->params      = params;

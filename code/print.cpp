@@ -190,7 +190,7 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
              param_id < arrow->param_count;
              param_id++)
         {
-          Variable *param = arrow->params[param_id];
+          Parameter *param = arrow->params[param_id];
           printToBuffer(buffer, param->h.token);
           printToBuffer(buffer, ": ");
           printAst(buffer, param->type, new_opt);
