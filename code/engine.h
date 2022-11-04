@@ -101,15 +101,13 @@ struct Variable
 
   s32  id;
   s32  stack_delta;
-  Ast *type;
 };
 
 inline void
-initVariable(Variable *var, u32 id, Ast *type)
+initVariable(Variable *var, u32 id)
 {
   var->stack_delta = 0;
   var->id          = id;
-  var->type        = type;
 }
 
 struct Constant
@@ -247,7 +245,6 @@ struct AstList
 struct LocalBindingValue
 {
   s32  id;
-  Ast *type;
 };
 
 struct LocalBinding
@@ -352,7 +349,7 @@ struct Let
 
 struct StackRef
 {
-  Value h;
+  Value v;
 
   String name;
   s32    id;
@@ -412,4 +409,26 @@ struct GlobalBindings
     GlobalBinding   table[1024];
     GlobalBindings *next;
 };
+
+inline Form *
+getFormOf(Ast *in0)
+{
+  Form *out = 0;
+  switch (in0->cat)
+  {
+    case AC_CompositeV:
+    {
+      CompositeV *in = castAst(in0, CompositeV);
+      out = castAst(in->op, Form);
+    } break;
+
+    case AC_Form:
+    {
+      out = castAst(in0, Form);
+    } break;
+
+    invalidDefaultCase;
+  }
+  return out;
+}
 

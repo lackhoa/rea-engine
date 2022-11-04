@@ -43,12 +43,6 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
 #else
         printToBuffer(buffer, in->a.token);
 #endif
-
-        if (opt.detailed || opt.print_type)
-        {
-          printToBuffer(buffer, ": ");
-          printAst(buffer, in->type, new_opt);
-        }
       } break;
 
       case AC_Composite:

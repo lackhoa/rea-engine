@@ -1,8 +1,4 @@
-typedef Bool
-{
- false: Bool,
- true: Bool,
- }
+typedef Bool {false, true}
 
 & :: (a, b: Bool) -> Bool
 {
