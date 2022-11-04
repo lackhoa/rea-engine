@@ -12,12 +12,12 @@ testComplexFork :: (a, b: Nat) -> Nat
 check truth: testComplexFork(0, 0) = 0;
 check truth: testComplexFork(1, 1) = 1;
 
-;; testLocalVariable :: (x: Nat) -> Nat
-;; {
-;;  a := 3;
-;;  a * x;
-;;  }
-;; check truth: testLocalVariable(2) = 6;
+testLocalVariable :: (x: Nat) -> Nat
+{
+ a := 3;
+ a * x;
+ }
+check truth: testLocalVariable(2) = 6;
 
 ;; testCurrying :: (a: Nat) -> (b, c: Nat) -> a + (b + c) = (a + b) + c
 ;; {

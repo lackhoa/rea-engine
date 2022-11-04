@@ -12,19 +12,18 @@ enum AstCategory
   AC_Null = 0,
 
   AC_DummyHole,                 // hole left in for type-checking
-  AC_DummySequence,             // like scheme's "begin" keyword
   AC_DummyRewrite,
 
   // result after initial parsing
   AC_Identifier,
   AC_IncompleteFork,
 
-  // result after building (ie everything after that)
+  // result after building
   AC_Variable,
   AC_Constant,
 
   AC_Fork,
-
+  AC_Sequence,
   AC_Composite,
   AC_Arrow,
   AC_Function,
@@ -370,6 +369,14 @@ struct Composite
 };
 
 typedef Composite CompositeV;
+
+struct Sequence
+{
+  Ast a;
+
+  Ast **items;
+  s32   count;
+};
 
 inline void
 initComposite(Composite *app, Ast *op, s32 arg_count, Ast **args)

@@ -49,6 +49,7 @@ andCommutative :: (a, b, c: Bool) -> (a & (b & c) = (a & b) & c)
   }
  }
 print andCommutative;
+print andCommutative(true, false, true);
 check andCommutative(true, false, true) : (true & (false & true) = (true & false) & true);
 
 dependentTypeTest :: (T: Type, A: T, a: A) -> (a = a)

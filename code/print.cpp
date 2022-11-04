@@ -45,21 +45,23 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
 #endif
       } break;
 
+      case AC_Sequence:
+      {
+        Sequence *in = castAst(in0, Sequence);
+        for (s32 id = 0; id < in->count; id++)
+        {
+          printAst(buffer, in->items[id], new_opt);
+          if (id < in->count-1)
+            printToBuffer(buffer, "; ");
+        }
+      } break;
+
       case AC_Composite:
       case AC_CompositeV:
       {
         Composite *in = polyAst(in0, Composite, CompositeV);
 
-        if (in->op == &dummy_sequence)
-        {
-          for (s32 arg_id = 0; arg_id < in->arg_count; arg_id++)
-          {
-            printAst(buffer, in->args[arg_id], new_opt);
-            if (arg_id < in->arg_count-1)
-              printToBuffer(buffer, "; ");
-          }
-        }
-        else if (in->op == &dummy_rewrite)
+        if (in->op == &dummy_rewrite)
         {
           printToBuffer(buffer, "rewrite ");
           if (in->arg_count == 1)
