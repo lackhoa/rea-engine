@@ -14,4 +14,3 @@ CompileFlags:
     - -Wunused-variable
     - -Wno-unused-function
     - -Wno-pointer-to-int-cast
-    - -Wno-tautological-constant-out-of-range-compare

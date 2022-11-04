@@ -17,7 +17,7 @@ enum AstCategory
 
   // result after initial parsing
   AC_Identifier,
-  AC_AbstractFork,
+  AC_IncompleteFork,
 
   // result after building (ie everything after that)
   AC_Variable,
@@ -124,49 +124,35 @@ initConstant(Constant *in, Value *value)
   in->value = value;
 }
 
-struct ForkCase
+struct ForkParameters
 {
-  Ast        *body;
-
-  Token  *param_names;
-  Ast   **param_types;
+  s32    count;
+  Token *names;
 };
 
 struct Form;
+
+struct ForkParsing
+{
+  Identifier      *ctors;
+  ForkParameters  *params;
+  Ast            **bodies;
+};
 
 struct Fork
 {
   Ast a;
 
-  Form     *form;
-  Ast      *subject;
-  s32       case_count;
-  ForkCase *cases;
+  Form            *form;
+  Ast             *subject;
+  s32              case_count;
+  ForkParameters  *params;
+  Ast            **bodies;
+
+  // temporary parsing data
+  ForkParsing *parsing;
 };
-
-inline void
-initFork(Fork *out, Form *form, Ast *subject, s32 case_count, ForkCase *cases)
-{
-  out->form       = form;
-  out->subject    = subject;
-  out->case_count = case_count;
-  out->cases      = cases;
-
-  for (s32 case_id = 0; case_id < case_count; case_id++)
-    assert(out->cases[case_id].body);
-}
-
-// NOTE: I plan have the fork mutated in-place from parsing to typechecking,
-// let's see how it goes...
-struct AbstractFork
-{
-  Ast a;
-
-  Fork f;
-
-  Ast **patterns;
-  Ast **bodies;
-};
+typedef Fork IncompleteFork;
 
 struct ParseExpressionOptions
 {

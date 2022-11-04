@@ -96,16 +96,16 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
 
       case AC_Fork:
       {
-        Fork *fork = castAst(in0, Fork);
+        Fork *in = castAst(in0, Fork);
         printToBuffer(buffer, "fork ");
-        printAst(buffer, fork->subject, new_opt);
+        printAst(buffer, in->subject, new_opt);
         printToBuffer(buffer, " {");
-        Form *form = fork->form;
+        Form *form = in->form;
         for (s32 ctor_id = 0;
              ctor_id < form->ctor_count;
              ctor_id++)
         {
-          ForkCase *casev = fork->cases + ctor_id;
+          ForkParameters *casev = in->params + ctor_id;
           Form *ctor = form->ctors + ctor_id;
           switch (ctor->v.type->cat)
           {// print pattern
@@ -122,7 +122,7 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
               Arrow *signature = polyAst(ctor->v.type, Arrow, ArrowV);
               for (s32 param_id = 0; param_id < signature->param_count; param_id++)
               {
-                printToBuffer(buffer, casev->param_names[param_id]);
+                printToBuffer(buffer, casev->names[param_id]);
                 printToBuffer(buffer, " ");
               }
             } break;
@@ -131,7 +131,7 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
           }
 
           printToBuffer(buffer, ": ");
-          printAst(buffer, casev->body, new_opt);
+          printAst(buffer, in->bodies[ctor_id], new_opt);
           if (ctor_id != form->ctor_count-1)
             printToBuffer(buffer, ", ");
         }

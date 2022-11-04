@@ -47,7 +47,7 @@ searchVariable(Environment env, Ast *in, variable_matcher *matcher, void *opt)
         for (s32 case_id = 0; case_id < fork->case_count; case_id++)
         {
           env.stack_offset++;
-          if (searchVariable(env, fork->cases[case_id].body, matcher, opt))
+          if (searchVariable(env, fork->bodies[case_id], matcher, opt))
           {
             found = true;
             break;
@@ -646,14 +646,14 @@ transformVariables(Environment env, Ast *in0, variable_transformer *transformer,
       Fork *out_fork = copyStruct(env.arena, in_fork);
       out0 = &out_fork->a;
       out_fork->subject = transformVariables(env, in_fork->subject, transformer, opt);
-      allocateArray(env.arena, out_fork->case_count, out_fork->cases);
+      allocateArray(env.arena, out_fork->case_count, out_fork->params);
       env.stack_offset++;
       for (s32 case_id = 0;
            case_id < out_fork->case_count;
            case_id++)
       {
-        out_fork->cases[case_id] = in_fork->cases[case_id];
-        out_fork->cases[case_id].body = transformVariables(env, in_fork->cases[case_id].body, transformer, opt);
+        out_fork->params[case_id] = in_fork->params[case_id];
+        out_fork->bodies[case_id] = transformVariables(env, in_fork->bodies[case_id], transformer, opt);
       }
     } break;
 
@@ -865,15 +865,14 @@ normalize(Environment env, Ast *in0)
       Fork *in = castAst(in0, Fork);
       Ast *norm_subject = normalize(env, in->subject);
 
-      Environment *outer_env = &env;
-      Environment env = *outer_env;
+      Environment fork_env = env;
       switch (norm_subject->cat)
       {
         case AC_Form:
         {
           Form *ctor = castAst(norm_subject, Form);
-          extendStack(&env, 0, 0);
-          out0 = normalize(env, in->cases[ctor->ctor_id].body);
+          extendStack(&fork_env, 0, 0);
+          out0 = normalize(fork_env, in->bodies[ctor->ctor_id]);
         } break;
 
         case AC_CompositeV:
@@ -881,9 +880,9 @@ normalize(Environment env, Ast *in0)
           CompositeV *subject = castAst(norm_subject, CompositeV);
           if (Form *ctor = castAst(subject->op, Form))
           {
-            Ast *body = in->cases[ctor->ctor_id].body;
-            extendStack(&env, subject->arg_count, subject->args);
-            out0 = normalize(env, body);
+            Ast *body = in->bodies[ctor->ctor_id];
+            extendStack(&fork_env, subject->arg_count, subject->args);
+            out0 = normalize(fork_env, body);
           }
         } break;
       }
@@ -918,10 +917,21 @@ normalize(Environment env, Ast *in0)
       }
     } break;
 
-    default:
+    case AC_IncompleteFork:  // todo this can happen for recursive function, which is ugly
+    {
+      out0 = 0;
+    } break;
+
+    case AC_ArrowV:  // todo why aren't we handling this?
+    case AC_FunctionV:
+    case AC_StackRef:
+    case AC_DummyHole:
+    case AC_Form:
     {
       out0 = in0;
     } break;
+
+    invalidDefaultCase;
   }
 
   if (out0)
@@ -1046,10 +1056,9 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
       actual = in->type;
     } break;
 
-    case AC_Fork:
+    case AC_IncompleteFork:
     {
-      Fork *in = castAst(in0, Fork);
-      Environment *outer_env = &env;
+      IncompleteFork *in = castAst(in0, IncompleteFork);
 
       Form *form = in->form;
 
@@ -1060,9 +1069,9 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
            case_id < in->case_count && noError();
            case_id++)
       {
-        Environment env = *outer_env;
+        Environment fork_env = env;
 
-        ForkCase *casev    = in->cases + case_id;
+        ForkParameters *casev = in->params + case_id;
 
         Form *ctor     = form->ctors + case_id;
         Ast  *ctor_exp = &ctor->v.a;
@@ -1071,15 +1080,14 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
         {
           case AC_Form:
           {// member
-            normalize(env, in->subject);
-            addRewrite(&env, norm_subject, ctor_exp);
-            introduce(&env, 0, 0, 0);
+            addRewrite(&fork_env, norm_subject, ctor_exp);
+            introduce(&fork_env, 0, 0, 0);
           } break;
 
           case AC_ArrowV:
           {// composite
             ArrowV  *signature = castAst(ctor->v.type, ArrowV);
-            Ast    **params    = introduce(&env, signature->param_count, casev->param_names, casev->param_types);
+            Ast    **params    = introduce(&fork_env, signature->param_count, casev->names, signature->param_types);
             // NOTE: we could add a type here, but not sure if we need it.
             CompositeV *pattern = newValue(temp_arena, CompositeV, &ctor->v.a.token, 0);
 
@@ -1087,14 +1095,14 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
             pattern->arg_count = signature->param_count;
             pattern->args      = params;
 
-            addRewrite(&env, norm_subject, &pattern->a);
+            addRewrite(&fork_env, norm_subject, &pattern->a);
           } break;
 
           default:
               invalidCodePath;
         }
 
-        if (Ast *body_type = typecheck(env, casev->body, common_type))
+        if (Ast *body_type = typecheck(fork_env, in->bodies[case_id], common_type))
         {
           if (!common_type)
           {
@@ -1105,7 +1113,10 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
       }
 
       if (noError())
+      {
         actual = common_type;
+        in->a.cat = AC_Fork;
+      }
     } break;
 
     case AC_Composite:
@@ -1194,17 +1205,17 @@ typecheck(Environment env, Ast *in0, Ast *expected_type)
                    arg_id++)
               {// Type inference for the arguments. todo: the hole stuff is
                // kinda hard-coded only for the equality.
-                Ast      *arg   = in->args[arg_id];
+                Ast *arg = in->args[arg_id];
                 if (arg == &dummy_hole)
                   stack_frame[arg_id] = 0;
                 else
                 {
-                  stack_frame[arg_id] = normalize(env, arg);
-
                   Ast *param_type = signature->param_types[arg_id];
                   Ast *norm_param_type = normalize(signature_env, param_type);
-                  // NOTE: we must always typecheck the args!!!
+                  // NOTE: we must typecheck the args first before attempting to
+                  // normalize it! Since forks can't be built before typechecking.
                   Ast *arg_type = typecheck(env, arg, norm_param_type);
+                  stack_frame[arg_id] = normalize(env, arg);
                   if (norm_param_type == 0)
                   {
                     Variable *param_type_var = castAst(param_type, Variable);
@@ -1313,6 +1324,18 @@ getFormOf(Ast *in0)
   return out;
 }
 
+inline Value *
+lookupGlobalName(char *name)
+{
+  return lookupNameCurrentFrame(global_bindings, toString(name)).slot->value;
+}
+
+inline Value *
+lookupGlobalName(String name)
+{
+  return lookupNameCurrentFrame(global_bindings, name).slot->value;
+}
+
 // note: Manipulation may be done in-place, but we might also allocate new
 // memory, so beware!
 internal Ast *
@@ -1387,189 +1410,167 @@ buildAst(MemoryArena *arena, LocalBindings *bindings, Ast *in0)
       Arrow *in = castAst(in0, Arrow);
 
       // introduce own bindings
-      LocalBindings *outer_bindings = bindings;
-      LocalBindings *bindings       = extendBindings(arena, outer_bindings);
+      LocalBindings *local_bindings = extendBindings(arena, bindings);
 
       // build parameters
       for (s32 param_id = 0;
            param_id < in->param_count && noError();
            param_id++)
       {
-        if (Ast *param_type = buildAst(arena, bindings, in->param_types[param_id]))
+        if (Ast *param_type = buildAst(arena, local_bindings, in->param_types[param_id]))
         {
           in->param_types[param_id] = param_type;
-          addBinding(bindings, in->param_names[param_id], param_id, in->param_types[param_id]);
+          addBinding(local_bindings, in->param_names[param_id], param_id, in->param_types[param_id]);
         }
       }
 
       if (noError())
       {
-        if ((in->return_type = buildAst(arena, bindings, in->return_type)))
+        if ((in->return_type = buildAst(arena, local_bindings, in->return_type)))
           out0 = in0;
       }
     } break;
 
-    case AC_AbstractFork:
+    // bookmark: currently simplifying this
+    case AC_IncompleteFork:
     {
-      AbstractFork *in = castAst(in0, AbstractFork);
-      Fork *out = 0;
+      IncompleteFork *in = castAst(in0, IncompleteFork);
+      IncompleteFork *out = in;
 
       LocalBindings *outer_bindings = bindings;
-      if (Ast *subject = buildAst(arena, outer_bindings, in->f.subject))
+      if (Ast *subject = buildAst(arena, outer_bindings, in->subject))
       {
         if (Ast *subject_type = typecheck(newEnvironment(arena), subject, 0))
         {
           if (Form *form = castAst(subject_type, Form))
           {
-            s32 case_count = in->f.case_count;
+            s32 case_count = in->case_count;
             if (form->ctor_count == case_count)
             {
               if (case_count == 0)
                 parseError(&in->a, "todo: cannot assign type to empty fork");
               else
               {
-                ForkCase *cases = pushArray(arena, case_count, ForkCase, true);
+                ForkParameters  *params = pushArray(arena, case_count, ForkParameters, true);
+                Ast            **bodies = pushArray(arena, case_count, Ast *, true);
         
                 for (s32 input_case_id = 0;
                      (input_case_id < case_count) && parsing();
                      input_case_id++)
                 {
-                  LocalBindings *bindings = extendBindings(temp_arena, outer_bindings);
+                  LocalBindings *local_bindings = extendBindings(temp_arena, outer_bindings);
 
-                  Ast *ast_pattern = in->patterns[input_case_id];
-                  Form *ctor = 0;
-                  Token      *param_names;
-                  Ast       **param_types;
-                  s32         param_count;
+                  Token *ctor_token = &in->parsing->ctors[input_case_id].a.token;
+                  ForkParameters *parsed_params = in->parsing->params + input_case_id;
+                  Form *ctor;
+                  Token *param_names;
+                  s32 param_count = parsed_params->count;
                   pushContextName("transform switch case pattern");
-                  switch (ast_pattern->cat)
+                  if (param_count == 0)
                   {
-                    case AC_Identifier:
+                    param_names = 0;
+                    if (Value *lookup = lookupGlobalName(ctor_token->text))
                     {
-                      param_names  = 0;
-                      param_types  = 0;
-                      param_count  = 0;
-                      if (Ast *pattern = buildAst(temp_arena, outer_bindings, ast_pattern))
+                      if ((ctor = castValue(lookup, Form)))
                       {
-                        Ast *norm_pattern = normalize(temp_arena, pattern);
-                        if ((ctor = castAst(norm_pattern, Form)))
+                        if (!identicalB32(ctor->v.type, subject_type))
                         {
-                          if (!identicalB32(ctor->v.type, subject_type))
-                          {
-                            parseError(ast_pattern, "constructor of wrong type");
-                            pushAttachment("expected type", subject_type);
-                            pushAttachment("got type", ctor->v.type);
-                          }
+                          parseError(ctor_token, "constructor of wrong type");
+                          pushAttachment("expected type", subject_type);
+                          pushAttachment("got type", ctor->v.type);
                         }
-                        else
-                          parseError(ast_pattern, "expected a member constructor");
                       }
-                    } break;
-
-                    case AC_Composite:
+                      else
+                        parseError(ctor_token, "expected a member constructor");
+                    }
+                    else
+                      parseError(ctor_token, "undefined identifier");
+                  }
+                  else
+                  {
+                    Value *lookup = lookupGlobalName(ctor_token->text);
+                    if ((ctor = castValue(lookup, Form)))
                     {
-                      Composite *branch = castAst(ast_pattern, Composite);
-                      if (Ast *op0 = buildAst(arena, outer_bindings, branch->op))
+                      if (ArrowV *ctor_sig = castAst(ctor->v.type, ArrowV))
                       {
-                        Ast *op = normalize(temp_arena, op0);
-                        if ((ctor = castAst(op, Form)))
+                        if (identicalB32(&getFormOf(ctor_sig->return_type)->v.a,
+                                         &getFormOf(subject_type)->v.a))
                         {
-                          if (ArrowV *ctor_sig = castAst(ctor->v.type, ArrowV))
+                          if (param_count == ctor_sig->param_count)
                           {
-                            if (identicalB32(&getFormOf(ctor_sig->return_type)->v.a,
-                                             &getFormOf(subject_type)->v.a))
-                            {
-                              param_count = branch->arg_count;
-                              if (param_count == ctor_sig->param_count)
-                              {
-                                allocateArray(arena, param_count, param_names, true);
-                                allocateArray(arena, param_count, param_types, true);
-                                for (s32 param_id = 0; param_id < param_count; param_id++)
-                                {// MARK: loop over pattern variables
-                                  Ast *ast_arg = branch->args[param_id];
-                                  if (Identifier *arg = castAst(ast_arg, Identifier))
-                                  {
-                                    Token *param_name = &arg->a.token;
-                                    auto lookup = lookupNameCurrentFrame(bindings, param_name->text, true);
-                                    if (lookup.found)
-                                      tokenError("reused parameter name");
-                                    else
-                                    {
-                                      // pattern variable: only the name is different
-                                      param_names[param_id] = *param_name;
-                                      param_types[param_id] = ctor_sig->param_types[param_id];
-                                      lookup.slot->value = {param_id, param_types[param_id]};
-                                    }
-                                  }
-                                  else
-                                    parseError(ast_arg, "expected pattern variable");
-                                }
-                              }
+                            allocateArray(arena, param_count, param_names, true);
+                            for (s32 param_id = 0; param_id < param_count; param_id++)
+                            {// MARK: loop over pattern variables
+                              Token *param_name = parsed_params->names + param_id;
+                              auto lookup = lookupNameCurrentFrame(local_bindings, param_name->text, true);
+                              if (lookup.found)
+                                tokenError("reused parameter name");
                               else
-                                parseError(ast_pattern, "pattern has wrong amount of parameters (expected: %d, got: %d)", ctor_sig->param_count, param_count);
-                            }
-                            else
-                            {
-                              parseError(ast_pattern, "composite constructor has wrong return type");
-                              pushAttachment("expected type", subject_type);
-                              pushAttachment("got type", ctor_sig->return_type);
+                              {
+                                // pattern variable: only the name is different
+                                param_names[param_id] = *param_name;
+                                lookup.slot->value = {param_id, ctor_sig->param_types[param_id]};
+                              }
                             }
                           }
                           else
-                          {
-                            parseError(branch->op, "expected a composite constructor");
-                            pushAttachment("got type", &ctor_sig->a);
-                          }
+                            parseError(ctor_token, "pattern has wrong amount of parameters (expected: %d, got: %d)", ctor_sig->param_count, param_count);
                         }
                         else
-                          parseError(ast_pattern, "expected a composite constructor");
+                        {
+                          parseError(ctor_token, "composite constructor has wrong return type");
+                          pushAttachment("expected type", subject_type);
+                          pushAttachment("got type", ctor_sig->return_type);
+                        }
                       }
-                    } break;
-
-                    invalidDefaultCase;
+                      else
+                      {
+                        parseError(ctor_token, "expected a composite constructor");
+                        pushAttachment("got type", &ctor_sig->a);
+                      }
+                    }
+                    else
+                      parseError(ctor_token, "expected a composite constructor");
                   }
                   popContext();
 
-                  Ast *body = 0;
                   if (noError())
                   {
                     pushContextName("fork case body building");
-                    Ast *ast_body = in->bodies[input_case_id];
-                    body = buildAst(arena, bindings, ast_body);
+                    if (Ast *body = buildAst(arena, local_bindings, in->parsing->bodies[input_case_id]))
+                    {
+                      if (bodies[ctor->ctor_id])
+                      {
+                        parseError(in->parsing->bodies[input_case_id], "fork case handled twice");
+                        pushAttachment("constructor", &ctor->v.a);
+                      }
+                      else
+                      {
+                        params[ctor->ctor_id].count = param_count;
+                        params[ctor->ctor_id].names = param_names;
+                        bodies[ctor->ctor_id]       = body;
+                      }
+                    }
                     popContext();
-                  }
-
-                  if (noError())
-                  {
-                    // we could error out sooner but whatevs.
-                    if (cases[ctor->ctor_id].body)
-                    {
-                      parseError(in->bodies[input_case_id], "fork case handled twice");
-                      pushAttachment("constructor", &ctor->v.a);
-                    }
-                    else
-                    {
-                      ForkCase *fork_case = cases + ctor->ctor_id;
-                      fork_case->body        = body;
-                      fork_case->param_names = param_names;
-                      fork_case->param_types = param_types;
-                    }
                   }
                 }
 
                 if (noError())
                 {
-                  out = newAst(arena, Fork, &in->a.token);
-                  initFork(out, form, subject, case_count, cases);
+                  out->form       = form;
+                  out->subject    = subject;
+                  out->case_count = case_count;
+                  out->params     = params;
+                  out->bodies     = bodies;
                 }
               }
             }
             else
               parseError(&in->a, "wrong number of cases, expected: %d, got: %d",
-                         form->ctor_count, in->f.case_count);
+                         form->ctor_count, in->case_count);
           }
           else
-            parseError(in->f.subject, "cannot fork this expression");
+            parseError(in->subject, "cannot fork this expression");
         }
       }
 
@@ -1768,12 +1769,12 @@ parseSequence(MemoryArena *arena)
   return out0;
 }
 
-internal AbstractFork *
+internal IncompleteFork *
 parseFork(MemoryArena *arena)
 {
   pushContext;
 
-  AbstractFork *out = 0;
+  IncompleteFork *out = 0;
   Token token = global_tokenizer->last_token;
   Ast *subject = parseExpressionToAst(arena);
   if (requireChar('{', "to open the typedef body"))
@@ -1782,10 +1783,12 @@ parseFork(MemoryArena *arena)
     s32 case_count = getCommaSeparatedListLength(&tk_copy);
     if (noError(&tk_copy))
     {
-      s32 actual_case_count = 0;
-      Ast **patterns = pushArray(arena, case_count, Ast*);
-      Ast **bodies   = pushArray(arena, case_count, Ast*);
+      ForkParsing *parsing = pushStruct(temp_arena, ForkParsing);
+      Ast **bodies   = parsing->bodies = pushArray(temp_arena, case_count, Ast*);
+      allocateArray(temp_arena, case_count, parsing->ctors);
+      allocateArray(temp_arena, case_count, parsing->params);
 
+      s32 actual_case_count = 0;
       for (b32 stop = false;
            !stop && noError();)
       {
@@ -1795,10 +1798,41 @@ parseFork(MemoryArena *arena)
         {
           pushContextName("fork case");
           auto input_case_id = actual_case_count++;
-          patterns[input_case_id] = parseExpressionToAst(arena);
-          if (noError())
+          if (Ast *pattern0 = parseExpressionToAst(temp_arena))
           {
-            pushContextName("fork body");
+            if (Identifier *ctor = castAst(pattern0, Identifier))
+            {
+              parsing->ctors[input_case_id]  = *ctor;
+              parsing->params[input_case_id] = {};
+            }
+            else if (Composite *pattern = castAst(pattern0, Composite))
+            {
+              s32 param_count = pattern->arg_count;
+              if ((ctor = castAst(pattern->op, Identifier)))
+              {
+                parsing->ctors[input_case_id] = *ctor;
+
+                ForkParameters *params = parsing->params + input_case_id;
+                params->count = param_count;
+                allocateArray(temp_arena, param_count, params->names);
+                for (s32 param_id = 0;
+                     param_id < param_count && noError();
+                     param_id++)
+                {
+                  if (Identifier *param = castAst(pattern->args[param_id], Identifier))
+                  {
+                    params->names[param_id] = param->a.token;
+                  }
+                  else
+                    parseError(pattern->args[param_id], "expected pattern variable");
+                }
+              }
+              else
+                parseError(&pattern->a, "expected constructor");
+            }
+            else
+                parseError(pattern0, "malformed fork pattern");
+
             if (requireChar(':', "syntax: CASE: BODY"))
             {
               if (Ast *body = parseSequence(arena))
@@ -1806,12 +1840,11 @@ parseFork(MemoryArena *arena)
                 bodies[input_case_id] = body;
                 if (!optionalChar(','))
                 {
-                  requireChar('}', "to end fork expression; or you might need ',' to end the fork case");
+                  requireChar('}', "to end fork expression; or use ',' to end the fork case");
                   stop = true;
                 }
               }
             }
-            popContext();
           }
           popContext();
         }
@@ -1820,11 +1853,11 @@ parseFork(MemoryArena *arena)
       if (noError())
       {
         assert(case_count == actual_case_count);
-        out = newAst(arena, AbstractFork, &token);
-        out->f.subject    = subject;
-        out->f.case_count = case_count;
-        out->patterns     = patterns;
-        out->bodies       = bodies;
+        out = newAst(arena, IncompleteFork, &token);
+        out->a.token    = token;
+        out->subject    = subject;
+        out->case_count = case_count;
+        out->parsing    = parsing;
       }
     }
   }
@@ -2492,12 +2525,6 @@ parseTopLevel(EngineState *state)
   }
 
   popContext();
-}
-
-inline Value *
-lookupGlobalName(char *name)
-{
-  return lookupNameCurrentFrame(global_bindings, toString(name)).slot->value;
 }
 
 internal b32
