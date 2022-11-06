@@ -116,7 +116,7 @@ popContext(Tokenizer *tk = global_tokenizer)
 }
 
 inline b32
-parsing(Tokenizer *tk = global_tokenizer)
+hasMore(Tokenizer *tk = global_tokenizer)
 {
     return ((*tk->at != 0) && (!tk->error));
 }
@@ -530,7 +530,7 @@ eatUntilMatchingPair(Tokenizer *tk)
   Token opening = tk->last_token;
   char  closing = getMatchingPair(&opening);
   assert(closing);
-  for (; !found && parsing(tk);)
+  for (; !found && hasMore(tk);)
   {
     Token token = nextToken(tk);
     if (getMatchingPair(&token))
@@ -555,7 +555,7 @@ getCommaSeparatedListLength(Tokenizer *tk)
   char opening_char = opening.text.chars[0];
   char previous = opening_char;
   s32 out = 0;
-  for (b32 stop = false; !stop && parsing(tk);)
+  for (b32 stop = false; !stop && hasMore(tk);)
   {
     Token token = nextToken(tk);
     if (getMatchingPair(&token))

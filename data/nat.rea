@@ -10,8 +10,8 @@ typedef Nat
 {
  fork n
  {
-  0     : m,
-  s(n1) : s(n1 + m),
+  0      : m,
+  s(n69) : s(n69 + m),
   }
  }
 print s;
@@ -84,7 +84,7 @@ plusSRight :: (n, m: Nat) -> n + s(m) = s(n+m)
 {
  fork n
  {
-  0    : rewrite 0 + m => m; truth,
+  0    : truth,
   s(n'): rewrite plusSRight(n', m); truth,
   }
  }

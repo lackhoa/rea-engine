@@ -56,38 +56,38 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         }
       } break;
 
+      case AC_Rewrite:
+      {
+        Rewrite *in = castAst(in0, Rewrite);
+        printToBuffer(buffer, "rewrite ");
+        if (in->rhs)
+        {
+          printAst(buffer, in->lhs, new_opt);
+          printToBuffer(buffer, " => ");
+          printAst(buffer, in->rhs, new_opt);
+        }
+        else
+        {
+          printAst(buffer, in->lhs, new_opt);
+        }
+      } break;
+
       case AC_Composite:
       case AC_CompositeV:
       {
         Composite *in = polyAst(in0, Composite, CompositeV);
 
-        if (in->op == &dummy_rewrite)
-        {
-          printToBuffer(buffer, "rewrite ");
-          if (in->arg_count == 1)
-          {
-            printAst(buffer, in->args[0], new_opt);
-          }
-          else if (in->arg_count == 2)
-          {
-            printAst(buffer, in->args[0], new_opt);
-            printToBuffer(buffer, " => ");
-            printAst(buffer, in->args[1], new_opt);
-          }
-        }
-        else
-        {
-          printAst(buffer, in->op, new_opt);
+        printAst(buffer, in->op, new_opt);
 
-          printToBuffer(buffer, "(");
-          for (s32 arg_id = 0; arg_id < in->arg_count; arg_id++)
-          {
-            printAst(buffer, in->args[arg_id], new_opt);
-            if (arg_id < in->arg_count-1)
-              printToBuffer(buffer, ", ");
-          }
-          printToBuffer(buffer, ")");
+        printToBuffer(buffer, "(");
+        for (s32 arg_id = 0; arg_id < in->arg_count; arg_id++)
+        {
+          printAst(buffer, in->args[arg_id], new_opt);
+          if (arg_id < in->arg_count-1)
+            printToBuffer(buffer, ", ");
         }
+        printToBuffer(buffer, ")");
+
       } break;
 
       case AC_Fork:
@@ -103,7 +103,7 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         {
           ForkParameters *casev = in->params + ctor_id;
           Form *ctor = form->ctors + ctor_id;
-          switch (ctor->v.type->cat)
+          switch (ctor->v.type->a.cat)
           {// print pattern
             case AC_Form:
             {
@@ -115,7 +115,7 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
             {
               printAst(buffer, &ctor->v.a, new_opt);
               printToBuffer(buffer, " ");
-              Arrow *signature = polyAst(ctor->v.type, Arrow, ArrowV);
+              ArrowV *signature = castValue(ctor->v.type, ArrowV);
               for (s32 param_id = 0; param_id < signature->param_count; param_id++)
               {
                 printToBuffer(buffer, casev->names[param_id]);
@@ -144,7 +144,7 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
           if (opt.print_type)
           {
             printToBuffer(buffer, ": ");
-            printAst(buffer, in->v.type, new_opt);
+            printAst(buffer, &in->v.type->a, new_opt);
           }
 
           if (in->ctor_count)
@@ -155,7 +155,7 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
               Form *ctor = in->ctors + ctor_id;
               printToBuffer(buffer, ctor->v.a.token);
               printToBuffer(buffer, ": ");
-              printAst(buffer, ctor->v.type, new_opt);
+              printAst(buffer, &ctor->v.type->a, new_opt);
             }
             printToBuffer(buffer, " }");
           }

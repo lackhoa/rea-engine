@@ -4,6 +4,10 @@
 #include "memory.h"
 #include "tokenization.h"
 
+struct Arrow;
+struct Value;
+struct LocalBindings;
+
 // NOTE: Think of this like the function stack, we'll clean it every once in a while.
 global_variable MemoryArena *temp_arena;
  
@@ -12,7 +16,6 @@ enum AstCategory
   AC_Null = 0,
 
   AC_DummyHole,                 // hole left in for type-checking
-  AC_DummyRewrite,
 
   // result after initial parsing
   AC_Identifier,
@@ -28,6 +31,7 @@ enum AstCategory
   AC_Arrow,
   AC_Function,
   AC_Let,
+  AC_Rewrite,
 
   // values subset
   AC_CompositeV = 0x80,
@@ -42,8 +46,8 @@ struct Ast
   AstCategory cat;
   Token       token;
 };
-
-struct Value;
+// nocheckin
+typedef Ast AstV;
 
 inline b32
 isValue(AstCategory cat)
@@ -61,7 +65,8 @@ isValue(Ast *in0)
 inline Value *
 toValue(Ast *ast)
 {
-  assert(isValue(ast));
+  if (ast)
+    assert(isValue(ast));
   return (Value*) ast;
 }
 
@@ -167,56 +172,38 @@ enum Trinary
 internal Trinary
 identicalTrinary(Ast *lhs, Ast *rhs);
 
-struct Rewrite
+struct RewriteRule
 {
   Ast     *lhs;
   Ast     *rhs;
-  Rewrite *next;
+  RewriteRule *next;
 };
 
 struct Stack
 {
   Stack *outer;
   s32    arg_count;
-  Ast   *args[32];  // todo: compute this cap
+  AstV  *args[32];  // todo: compute this cap
 };
 
+// just jam everything in here!
 // used in normalization, typechecking, etc.
 struct Environment
 {
   MemoryArena *arena;
+  LocalBindings *bindings;
 
   Stack *stack;
-  s32 stack_depth;              // 0 is reserved
-  s32 stack_offset;             // todo #speed pass this separately
+  s32    stack_depth;           // 0 is reserved
+  s32    stack_offset;
 
-  Rewrite *rewrite;
+  RewriteRule *rewrite;
 };
 
-// todo: #speed copying values around
-inline void
-extendStack(Environment *env, s32 arg_count, Ast **args)
-{
-  Stack *stack = pushStruct(temp_arena, Stack);
-  stack->outer     = env->stack;
-  assert(arg_count <= arrayCount(stack->args));
-  stack->arg_count = arg_count;
-  if (args)
-  {
-    for (s32 arg_id = 0; arg_id < arg_count; arg_id++)
-    {
-      stack->args[arg_id] = args[arg_id];
-    }
-  }
-
-  env->stack = stack;
-  env->stack_depth++;
-}
-
-inline Rewrite *
+inline RewriteRule *
 newRewrite(Environment *env, Ast *lhs, Ast *rhs)
 {
-  Rewrite *out = pushStruct(temp_arena, Rewrite);
+  RewriteRule *out = pushStruct(temp_arena, RewriteRule);
   out->lhs  = lhs;
   out->rhs  = rhs;
   out->next = env->rewrite;
@@ -274,12 +261,12 @@ extendBindings(MemoryArena *arena, LocalBindings *outer)
 
 struct Value
 {
-  Ast a;
-  Ast *type;
+  Ast    a;
+  Value *type;
 };
 
 inline void
-initValue(Value *in, AstCategory cat, Token *token, Ast *type)
+initValue(Value *in, AstCategory cat, Token *token, Value *type)
 {
   assert(isValue(cat));
   in->a.cat   = cat;
@@ -288,7 +275,7 @@ initValue(Value *in, AstCategory cat, Token *token, Ast *type)
 }
 
 inline Value *
-newValue_(MemoryArena *arena, AstCategory cat, Token *token, Ast *type, size_t size)
+newValue_(MemoryArena *arena, AstCategory cat, Token *token, Value *type, size_t size)
 {
   Value *out = (Value *)pushSize(arena, size, true);
   initValue(out, cat, token, type);
@@ -335,6 +322,7 @@ struct Function
   };
 
   Ast   *body;
+  Arrow *signature;
 };
 typedef Function FunctionV;
 
@@ -439,3 +427,16 @@ getFormOf(Ast *in0)
   return out;
 }
 
+struct Expression
+{
+  Ast   *ast;
+  Value *type;
+  operator bool() { return (bool)ast; }
+};
+
+struct Rewrite
+{
+  Ast  a;
+  Ast *lhs;
+  Ast *rhs;
+};

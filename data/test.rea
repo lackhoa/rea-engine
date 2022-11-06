@@ -15,18 +15,19 @@ check truth: testComplexFork(1, 1) = 1;
 testLocalVariable :: (x: Nat) -> Nat
 {
  a := 3;
- a * x;
+ b := 2;
+ a + x + b;
  }
-check truth: testLocalVariable(2) = 6;
+check truth: testLocalVariable(1) = 6;
 
-;; testCurrying :: (a: Nat) -> (b, c: Nat) -> a + (b + c) = (a + b) + c
-;; {
-;;  fork a
-;;  {
-;;   0:
-;;   out :: (b, c: Nat) { plusAssociative(b, c) };
-;;   out,
+testCurrying :: (a: Nat) -> (b, c: Nat) -> a + (b + c) = (a + b) + c
+{
+ fork a
+ {
+  0:
+  out :: (b, c: Nat) { plusAssociative(b, c) };
+  out,
 
-;;   s(a'): plusCommutative,
-;;   }
-;;  }
+  s(a'): plusCommutative,
+  }
+ }

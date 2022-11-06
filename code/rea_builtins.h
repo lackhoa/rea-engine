@@ -12,7 +12,6 @@ global_variable Form *builtin_Set;
 global_variable Form *builtin_Type;
 
 global_variable Ast dummy_hole     = {.cat = AC_DummyHole};
-global_variable Ast dummy_rewrite  = {.cat = AC_DummyRewrite};
 
 global_variable u64 global_next_form_id;
 inline u64
