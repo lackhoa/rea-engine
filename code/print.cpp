@@ -1,7 +1,7 @@
 #include "utils.h"
 #include "engine.h"
 #include "tokenization.h"
-#include "rea_builtins.h"
+#include "rea_globals.h"
 
 struct PrintOptions{b32 detailed; b32 print_type;};
 
@@ -116,7 +116,7 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
               printAst(buffer, &ctor->v.a, new_opt);
               printToBuffer(buffer, " ");
               ArrowV *signature = castValue(ctor->v.type, ArrowV);
-              for (s32 param_id = 0; param_id < signature->param_count; param_id++)
+              for (s32 param_id = 0; param_id < signature->a->param_count; param_id++)
               {
                 printToBuffer(buffer, casev->names[param_id]);
                 printToBuffer(buffer, " ");
@@ -137,7 +137,7 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
       case AC_Form:
       {
         Form *in = castAst(in0, Form);
-        if (opt.detailed && in != builtin_Type)
+        if (opt.detailed && in != builtins.Type)
         {
           printToBuffer(buffer, in0->token);
 
@@ -177,10 +177,9 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         }
       } break;
 
-      case AC_ArrowV:
       case AC_Arrow:
       {
-        Arrow *in = polyAst(in0, Arrow, ArrowV);
+        Arrow *in = castAst(in0, Arrow);
         printToBuffer(buffer, "(");
         for (int param_id = 0;
              param_id < in->param_count;
@@ -195,6 +194,12 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         printToBuffer(buffer, ") -> ");
 
         printAst(buffer, in->return_type, new_opt);
+      } break;
+
+      case AC_ArrowV:
+      {
+        ArrowV *in = castAst(in0, ArrowV);
+        printAst(buffer, &in->a->a, opt);
       } break;
 
       default:

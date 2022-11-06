@@ -20,14 +20,28 @@ testLocalVariable :: (x: Nat) -> Nat
  }
 check truth: testLocalVariable(1) = 6;
 
-testCurrying :: (a: Nat) -> (b, c: Nat) -> a + (b + c) = (a + b) + c
+testCurrying :: (a: Nat) -> (b, c: Nat) -> a+(b+c) = (a+b)+c
 {
  fork a
  {
   0:
-  out :: (b, c: Nat) { plusAssociative(b, c) };
+  out :: (b, c: Nat) -> 0 + (b + c) = (0 + b) + c
+  { plusAssociative(0, b, c) }
   out,
 
-  s(a'): plusCommutative,
+  s(a'):
+  out :: (b, c: Nat) -> s(a')+b+c = (s(a')+b)+c
+  { plusAssociative(s(a'), b, c) }
+  out,
   }
  }
+print testCurrying(1,2,3);
+
+testCurrying2 :: (a, b, c: Nat) -> a+(b+c) = (a+b)+c
+{
+ fun :: (b',c': Nat) -> a+(b'+c') = (a+b')+c'
+ { plusAssociative(a, b', c') }
+
+ fun(b,c)
+ }
+print testCurrying(1,2,3);

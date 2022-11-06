@@ -34,11 +34,12 @@ enum AstCategory
   AC_Rewrite,
 
   // values subset
-  AC_CompositeV = 0x80,
-  AC_ArrowV     = 0x81,
-  AC_Form       = 0x82,
-  AC_FunctionV  = 0x83,
-  AC_StackRef   = 0x84,
+  AC_CompositeV   = 0x80,
+  AC_ArrowV       = 0x81,
+  AC_Form         = 0x82,
+  AC_FunctionV    = 0x83,
+  AC_StackRef     = 0x84,
+  AC_AstWithStack = 0x85,
 };
 
 struct Ast
@@ -70,6 +71,20 @@ toValue(Ast *ast)
   return (Value*) ast;
 }
 
+inline Value **
+toValues(Ast **asts, s32 count)
+{
+  for (s32 id = 0; id < count; id++)
+    assert(isValue(asts[id]));
+  return (Value **) asts;
+}
+
+inline Ast **
+toAsts(Value **values)
+{
+  return (Ast **) values;
+}
+
 inline void
 initAst(Ast *in, AstCategory cat, Token *token)
 {
@@ -88,7 +103,7 @@ newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
 #define newAst(arena, cat, token)        \
   ((cat *) newAst_(arena, AC_##cat, token, sizeof(cat)))
 
-b32 identicalB32(Ast *lhs, Ast *rhs);
+b32 identicalB32(Value *lhs, Value *rhs);
 
 #define castAst(exp, Cat) ((exp)->cat == AC_##Cat ? (Cat*)(exp) : 0)
 #define castValue(exp, Cat) ((isValue(AC_##Cat) && (exp)->a.cat == AC_##Cat) ? (Cat*)(exp) : 0)
@@ -170,18 +185,19 @@ enum Trinary
 };
 
 internal Trinary
-identicalTrinary(Ast *lhs, Ast *rhs);
+identicalTrinary(Value *lhs, Value *rhs);
 
 struct RewriteRule
 {
-  Ast     *lhs;
-  Ast     *rhs;
+  Value *lhs;
+  Value *rhs;
   RewriteRule *next;
 };
 
 struct Stack
 {
   Stack *outer;
+  s32    depth;
   s32    arg_count;
   AstV  *args[32];  // todo: compute this cap
 };
@@ -194,14 +210,13 @@ struct Environment
   LocalBindings *bindings;
 
   Stack *stack;
-  s32    stack_depth;           // 0 is reserved
   s32    stack_offset;
 
   RewriteRule *rewrite;
 };
 
 inline RewriteRule *
-newRewrite(Environment *env, Ast *lhs, Ast *rhs)
+newRewrite(Environment *env, Value *lhs, Value *rhs)
 {
   RewriteRule *out = pushStruct(temp_arena, RewriteRule);
   out->lhs  = lhs;
@@ -261,7 +276,14 @@ extendBindings(MemoryArena *arena, LocalBindings *outer)
 
 struct Value
 {
-  Ast    a;
+  union
+  {
+    struct {
+      AstCategory cat;
+      Token       token;
+    };
+    Ast a;
+  };
   Value *type;
 };
 
@@ -376,20 +398,21 @@ initComposite(Composite *app, Ast *op, s32 arg_count, Ast **args)
 
 struct Arrow
 {
-  union
-  {
-    Ast   a;
-    Value v;
-  };
+  Ast   a;
 
-  s32  param_count;
   Ast *return_type;
-
+  s32     param_count;
   Token  *param_names;
   Ast   **param_types;
 };
 
-typedef Arrow ArrowV;
+struct ArrowV
+{
+  Value v;
+  Arrow *a;      // since we already hold pointer to the stack, which is
+                 // transient, we might as well pointer to the ast.
+  Stack *stack;  // value only
+};
 
 struct GlobalBinding
 {
@@ -406,7 +429,7 @@ struct GlobalBindings
 };
 
 inline Form *
-getFormOf(Ast *in0)
+getFormOf(Value *in0)
 {
   Form *out = 0;
   switch (in0->cat)
