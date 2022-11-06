@@ -23,7 +23,7 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
       case AC_StackRef:
       {
         StackRef *in = castAst(in0, StackRef);
-#if 0
+#if 1
         printToBuffer(buffer, "%.*s<%d>", in->name.length, in->name.chars, in->stack_depth);
 #else
         printToBuffer(buffer, in->name);

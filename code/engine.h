@@ -215,6 +215,8 @@ struct Environment
   RewriteRule *rewrite;
 };
 
+#define getStackDepth(stack) (stack ? stack->depth : 0)
+
 inline RewriteRule *
 newRewrite(Environment *env, Value *lhs, Value *rhs)
 {
@@ -337,16 +339,19 @@ initForm(Form *in, s32 ctor_id)
 
 struct Function
 {
-  union
-  {
-    Ast   a;
-    Value v;
-  };
+  Ast   a;
 
   Ast   *body;
   Arrow *signature;
 };
-typedef Function FunctionV;
+
+struct FunctionV
+{
+  Value v;
+
+  Function *a;
+  Stack    *stack;
+};
 
 struct Let
 {
@@ -354,6 +359,14 @@ struct Let
 
   Identifier  lhs;
   Ast        *rhs;
+};
+
+struct RecursiveLet
+{
+  Ast a;
+
+  Identifier  lhs;
+  Function   *rhs;
 };
 
 struct StackRef
@@ -443,6 +456,28 @@ getFormOf(Value *in0)
     case AC_Form:
     {
       out = castAst(in0, Form);
+    } break;
+  }
+  return out;
+}
+
+inline Form *
+getFormOf(Ast *in0)
+{
+  Form *out = 0;
+  switch (in0->cat)
+  {
+    case AC_Composite:
+    {
+      if (Composite *in = castAst(in0, Composite))
+        if (Constant *op = castAst(in->op, Constant))
+          out = castAst(op->value, Form);
+    } break;
+
+    case AC_Constant:
+    {
+      if (Constant *in = castAst(in0, Constant))
+        out = castAst(in->value, Form);
     } break;
 
     invalidDefaultCase;

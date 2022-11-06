@@ -24,18 +24,18 @@ testCurrying :: (a: Nat) -> (b, c: Nat) -> a+(b+c) = (a+b)+c
 {
  fork a
  {
-  0:
-  out :: (b, c: Nat) -> 0 + (b + c) = (0 + b) + c
-  { plusAssociative(0, b, c) }
+  s(a'):
+  out :: (b', c': Nat) -> a+b'+c' = (a+b')+c'
+  { plusAssociative(a, b', c') }
   out,
 
-  s(a'):
-  out :: (b, c: Nat) -> s(a')+b+c = (s(a')+b)+c
-  { plusAssociative(s(a'), b, c) }
+  0:
+  out :: (b, c: Nat) -> a + (b + c) = (a + b) + c
+  { plusAssociative(a, b, c) }
   out,
   }
  }
-print testCurrying(1,2,3);
+print testCurrying(1);
 
 testCurrying2 :: (a, b, c: Nat) -> a+(b+c) = (a+b)+c
 {
@@ -44,4 +44,12 @@ testCurrying2 :: (a, b, c: Nat) -> a+(b+c) = (a+b)+c
 
  fun(b,c)
  }
-print testCurrying(1,2,3);
+print testCurrying2(1,2,3);
+
+testCurrying3 :: (a: Nat) -> Nat
+{
+ b := 3;
+ f :: (n: Nat) -> Nat { n*b }
+ f(a)
+ }
+check truth: testCurrying3(2) = 6;

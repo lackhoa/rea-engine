@@ -346,3 +346,6 @@ belongsToArena(MemoryArena *arena, u8 *memory)
 {
   return ((memory >= arena->base) && (memory < arena->base + arena->cap));
 }
+
+#define maximum(a, b) ((a < b) ? b : a)
+#define minimum(a, b) ((a < b) ? a : b)

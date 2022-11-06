@@ -17,7 +17,7 @@ struct Builtins
 global_variable Builtins builtins;
 
 global_variable Ast dummy_hole = {.cat = AC_DummyHole};
-global_variable Ast dummy_body_under_construction = {};
+global_variable Function dummy_function_under_construction;
 
 global_variable u64 global_next_form_id;
 inline u64

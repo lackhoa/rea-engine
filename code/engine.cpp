@@ -18,11 +18,11 @@ typedef VARIABLE_MATCHER(variable_matcher);
 
 // todo: #speed copying values around
 inline void
-extendStack(Environment *env, s32 arg_count, Ast **args)
+extendStack(Environment *env, s32 arg_count, Ast **args, s32 depth_override=0)
 {
   Stack *stack = pushStruct(temp_arena, Stack);
+  stack->depth = depth_override ? depth_override : (getStackDepth(env->stack) + 1);
   stack->outer = env->stack;
-  stack->depth = stack->outer ? stack->outer->depth+1 : 1;
   assert(arg_count <= arrayCount(stack->args));
   stack->arg_count = arg_count;
   if (args)
@@ -217,10 +217,10 @@ internal AstV *
 normalize(Environment env, AstV *in0);
 
 internal Ast **
-introduce(Environment *env, s32 count, Token *names, Ast **types_ast)
+introduce(Environment *env, s32 count, Token *names, Ast **types_ast, s32 depth_override=0)
 {
   assert(count < arrayCount(env->stack->args));
-  extendStack(env, count, 0);
+  extendStack(env, count, 0, depth_override);
   Value **types = pushArray(temp_arena, count, Value *);
   for (s32 id = 0; id < count; id++)
   {
@@ -241,11 +241,12 @@ introduce(Environment *env, Arrow *signature)
 }
 
 internal Ast **
-introduce(Environment *env, ArrowV *signature)
+introduce(Environment *env, ArrowV *signature, s32 depth_override=0)
 {
-  return introduce(env, signature->a->param_count, signature->a->param_names, signature->a->param_types);
+  return introduce(env, signature->a->param_count, signature->a->param_names, signature->a->param_types, depth_override);
 }
 
+#if 0
 inline Value **
 getParamTypes(MemoryArena *arena, ArrowV *in)
 {
@@ -259,7 +260,9 @@ getParamTypes(MemoryArena *arena, ArrowV *in)
   }
   return out;
 }
+#endif
 
+#if 0
 inline Value *
 getReturnType(MemoryArena *arena, ArrowV *in)
 {
@@ -269,6 +272,7 @@ getReturnType(MemoryArena *arena, ArrowV *in)
   Value *out = toValue(normalize(env, in->a->return_type));
   return out;
 }
+#endif
 
 internal Trinary
 identicalTrinary(Value *lhs0, Value *rhs0) // TODO: turn the args into values
@@ -285,17 +289,16 @@ identicalTrinary(Value *lhs0, Value *rhs0) // TODO: turn the args into values
     {
       case AC_StackRef:
       {
-        StackRef* lvar = castAst(lhs0, StackRef);
-        StackRef* rvar = castAst(rhs0, StackRef);
-        if ((lvar->stack_depth)
-            && (lvar->stack_depth == rvar->stack_depth)
-            && (lvar->id == rvar->id))
+        StackRef* lhs = castAst(lhs0, StackRef);
+        StackRef* rhs = castAst(rhs0, StackRef);
+        if ((lhs->stack_depth == rhs->stack_depth) && (lhs->id == rhs->id))
           out = Trinary_True;
       } break;
 
       case AC_Form:
       {
-        out = (Trinary)(castAst(lhs0, Form)->ctor_id == castAst(rhs0, Form)->ctor_id);
+        out = (Trinary)(castAst(lhs0, Form)->ctor_id ==
+                        castAst(rhs0, Form)->ctor_id);
       } break;
 
       case AC_ArrowV:
@@ -306,8 +309,26 @@ identicalTrinary(Value *lhs0, Value *rhs0) // TODO: turn the args into values
         s32 param_count = lhs->a->param_count;
         if (rhs->a->param_count == param_count)
         {
-          Value **lnorm_param_types = getParamTypes(temp_arena, lhs);
-          Value **rnorm_param_types = getParamTypes(temp_arena, rhs);
+          s32 l_depth = getStackDepth(lhs->stack);
+          s32 r_depth = getStackDepth(rhs->stack);
+          s32 new_depth = maximum(l_depth, r_depth)+1;
+          // s32 rl_stack_delta = r_depth - l_depth;
+          // s32 l_stack_offset = (rl_stack_delta >= 0) ? rl_stack_delta : 0;
+          // s32 r_stack_offset = (rl_stack_delta >= 0) ? 0 : -rl_stack_delta;
+          Environment lenv = newEnvironment(temp_arena);
+          Environment renv = newEnvironment(temp_arena);
+          lenv.stack = lhs->stack;
+          renv.stack = rhs->stack;
+          introduce(&lenv, lhs, new_depth);
+          introduce(&renv, rhs, new_depth);
+
+          Value **lnorm_param_types = pushArray(temp_arena, param_count, Value*);
+          Value **rnorm_param_types = pushArray(temp_arena, param_count, Value*);
+          for (s32 param_id = 0; param_id < param_count; param_id++)
+          {
+            lnorm_param_types[param_id] = toValue(normalize(lenv, lhs->a->param_types[param_id]));
+            rnorm_param_types[param_id] = toValue(normalize(renv, rhs->a->param_types[param_id]));
+          }
           Trinary compare_param_types = compareExpressionList(lnorm_param_types, rnorm_param_types, param_count);
           if (compare_param_types == Trinary_False)
           {
@@ -315,8 +336,9 @@ identicalTrinary(Value *lhs0, Value *rhs0) // TODO: turn the args into values
           }
           else if (compare_param_types == Trinary_True)
           {
-            Value *lnorm_return_type = getReturnType(temp_arena, lhs);
-            Value *rnorm_return_type = getReturnType(temp_arena, rhs);
+            Value *lnorm_return_type = toValue(normalize(lenv, lhs->a->return_type));
+            Value *rnorm_return_type = toValue(normalize(renv, rhs->a->return_type));
+
             out = identicalTrinary(lnorm_return_type, rnorm_return_type);
           }
         }
@@ -501,21 +523,18 @@ normalize(Environment env, AstV *in0)
     case AC_Variable:
     {
       Variable *in = castAst(in0, Variable);
-      s32 stack_delta = in->stack_delta - env.stack_offset;
-      if (stack_delta >= 0)
+      assert(env.stack_offset >= 0);
+      assert(in->stack_delta >= 0);
+      s32 stack_delta = in->stack_delta + env.stack_offset;
+      Stack *stack = env.stack;
+      for (s32 delta = 0; delta < stack_delta; delta++)
+        stack = stack->outer;
+      if (!(in->id < stack->arg_count))
       {
-        Stack *stack = env.stack;
-        for (s32 delta = 0; delta < stack_delta; delta++)
-          stack = stack->outer;
-        if (!(in->id < stack->arg_count))
-        {
-          myprint(env.stack);
-          invalidCodePath;
-        }
-        out0 = stack->args[in->id];
+        myprint(env.stack);
+        invalidCodePath;
       }
-      else
-        out0 = in0;
+      out0 = stack->args[in->id];
     } break;
 
     case AC_Constant:
@@ -541,17 +560,18 @@ normalize(Environment env, AstV *in0)
       Ast *norm_op = normalize(env, in->op);
       // todo: we don't expand if there is any free variable. (eg for arrow
       // types this would not normalize the return type).
-      if (env.stack_offset == 0)
+      // if (env.stack_offset == 0)
       {
         if (norm_op->cat == AC_FunctionV)
         {// Function application
-          FunctionV *fun = castAst(norm_op, FunctionV);
-          Environment fun_env = env;
-          extendStack(&fun_env, in->arg_count, norm_args);
-          if (fun->body != &dummy_body_under_construction)
+          FunctionV *funv = castAst(norm_op, FunctionV);
+          if (funv->a != (Function *)&dummy_function_under_construction)
           {
-            // note: this might fail, in which case we back out.
-            out0 = normalize(fun_env, fun->body);
+            Environment fun_env = env;
+            fun_env.stack = funv->stack;
+            extendStack(&fun_env, in->arg_count, norm_args);
+            // note: normalization might fail, in which case we back out.
+            out0 = normalize(fun_env, funv->a->body);
           }
         }
         else
@@ -648,21 +668,21 @@ normalize(Environment env, AstV *in0)
             env.stack->args[env.stack->arg_count++] = normalize(env, item->rhs);
           } break;
 
+          case AC_Function:
+          {
+            Function  *item        = castAst(item0, Function);
+            Value     *signature_v = toValue(normalize(env, &item->signature->a));
+            FunctionV *funv        = newValue(arena, FunctionV, &item->a.token, signature_v);
+            funv->a     = item;
+            funv->stack = env.stack;
+            env.stack->args[env.stack->arg_count++] = &funv->v.a;
+          } break;
+
           // todo screen the input
           invalidDefaultCase;
         }
       }
       out0 = normalize(env, in->items[in->count-1]);
-    } break;
-
-    case AC_Function:
-    {
-      Function *in = castAst(in0, Function);
-      Value *type = toValue(normalize(env, &in->signature->a));
-      FunctionV *out = newValue(arena, FunctionV, &in->a.token, type);
-
-      env.stack_offset++;
-      out->body = normalize(env, in->body);
     } break;
 
     case AC_ArrowV:
@@ -684,10 +704,9 @@ normalize(Environment env, AstV *in0)
     if (out0 != before_rewrite)
       out0 = normalize(env, out0); // do another iteration
 
-    if (env.stack_offset == 0)
-      // TODO: this hole is ruining my life!
-      if (out0 != &dummy_hole)
-        assert(isValue(out0));
+    // TODO: this hole is ruining my life!
+    if (out0 != &dummy_hole)
+      assert(isValue(out0));
   }
 
   return out0;
@@ -697,12 +716,6 @@ inline Ast *
 normalize(MemoryArena *arena, Ast *in0)
 {
   return normalize(newEnvironment(arena), in0);
-}
-
-internal Ast *
-normalizeStart(MemoryArena *arena, Ast *in)
-{
-  return normalize(newEnvironment(arena), in);
 }
 
 inline b32
@@ -1334,17 +1347,66 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
     case AC_Let:
     {
       Let *in = castAst(in0, Let);
-      // note: add binding first to support recursion
-      addLocalBinding(env->bindings, &in->lhs.a.token);
       if (Expression build_rhs = buildExpression(env, in->rhs, 0))
       {
+        addLocalBinding(env->bindings, &in->lhs.a.token);
         in->rhs = build_rhs.ast;
-        // todo: not enjoying this duplication of logic... perhaps we can feed
-        // this whole expression through "normalize"?
         env->stack->args[env->stack->arg_count++] = normalize(*env, in->rhs);
 
         out.ast  = in->rhs;
         out.type = build_rhs.type;
+      }
+    } break;
+
+    case AC_Function:
+    {// NOTE: both local and global function.
+      Function *in = castAst(in0, Function);
+
+      assert(!expected_type);
+      char *debug_name = "+";
+      if (equal(in->a.token, debug_name))
+        breakhere;
+
+      if (auto build_signature = buildExpression(env, &in->signature->a, 0))
+      {
+        // note: store the built signature, maybe to display it later.
+        in->signature = castAst(build_signature.ast, Arrow);
+        Value *signature_v = toValue(normalize(*env, &in->signature->a));
+        FunctionV *funv = newValue(arena, FunctionV, &in->a.token, signature_v);
+        // note: we only need that funv there for the type.
+        funv->a = &dummy_function_under_construction;
+
+        // note: add binding first to support recursion
+        b32 is_local = (bool)env->bindings;
+        if (is_local)
+        {// local context
+          addLocalBinding(env->bindings, &in->a.token);
+          env->stack->args[env->stack->arg_count++] = &funv->v.a;
+        }
+        else
+        {// global context
+          addGlobalBinding(&in->a.token, &funv->v);
+        }
+
+        if (noError())
+        {
+          addLocalBindings(env, in->signature);
+          assert(noError());
+
+          Value *expected_body_type = toValue(normalize(*env, in->signature->return_type));
+          in->body = buildExpression(env, in->body, expected_body_type).ast;
+          unwindBindingsAndStack(env);
+        }
+        out.ast  = in0;
+        out.type = signature_v;
+
+        // add this function to the stack.
+        funv->a     = in;
+        funv->stack = env->stack;
+        if (is_local)
+        {
+          env->stack->args[env->stack->arg_count++] = &funv->v.a;
+        }
       }
     } break;
 
@@ -1466,7 +1528,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                   {
                     if (ArrowV *ctor_sig = castValue(ctor->v.type, ArrowV))
                     {
-                      if (identicalB32(&getFormOf(getReturnType(temp_arena, ctor_sig))->v,
+                      if (identicalB32(&getFormOf(ctor_sig->a->return_type)->v,
                                        &getFormOf(subject_type)->v))
                       {
                         if (param_count == ctor_sig->a->param_count)
@@ -1480,7 +1542,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                           addRewrite(&env, norm_subject, &pattern->v);
                         }
                         else
-                          parseError(ctor_token, "pattern has wrong amount of parameters (expected: %d, got: %d)", ctor_sig->a->param_count, param_count);
+                          parseError(ctor_token, "pattern has wrong number of parameters (expected: %d, got: %d)", ctor_sig->a->param_count, param_count);
                       }
                       else
                       {
@@ -1544,46 +1606,6 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       }
     } break;
 
-    case AC_Function:
-    {
-      assert(!expected_type);
-      Function *in = castAst(in0, Function);
-
-      char *debug_name = "+";
-      if (equal(in->a.token, debug_name))
-        breakhere;
-
-      if (auto build_signature = buildExpression(env, &in->signature->a, 0))
-      {
-        // note: store the built signature, in order to display it later.
-        // maybe we don't really need it.
-        in->signature = castAst(build_signature.ast, Arrow);
-        Value *signature_v = toValue(normalize(arena, &in->signature->a));
-        FunctionV *funv = newValue(arena, FunctionV, &in->a.token, signature_v);
-
-        if (env->bindings)
-        {// local context: we should already have the bindings
-          env->stack->args[env->stack->arg_count++] = &funv->a;
-        }
-        else
-          addGlobalBinding(&in->a.token, &funv->v);
-
-        if (noError())
-        {
-          addLocalBindings(env, in->signature);
-          assert(noError());
-
-          Value *expected_body_type = toValue(normalize(*env, in->signature->return_type));
-          funv->body = &dummy_body_under_construction;
-          funv->body = buildExpression(env, in->body, expected_body_type).ast;
-          unwindBindingsAndStack(env);
-        }
-        out.ast  = in0;
-        out.type = signature_v;
-
-      }
-    } break;
-
     invalidDefaultCase;
   }
 
@@ -1595,6 +1617,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       if (!identicalB32(norm_expected, out.type))
       {
         parseError(in0, "actual type differs from expected type");
+        identicalB32(norm_expected, out.type);
         pushAttachment("expected", &norm_expected->a);
         pushAttachment("got", &out.type->a);
       }
@@ -1715,20 +1738,23 @@ parseSequence(MemoryArena *arena)
         Token after_name = nextToken();
         switch (after_name.cat)
         {
-          case TC_ColonEqual:
           case TC_DoubleColon:
           {
-            pushContextName("let");
-            Ast *rhs;
-            if (after_name.cat == TC_DoubleColon)
-              rhs = &parseFunction(arena, name)->a;
-            else
-              rhs = parseExpressionToAst(arena);
+            pushContextName("recursive let");
+            Function *fun = parseFunction(arena, name);
+            ast = &fun->a;
+            popContext();
+          } break;
 
-            Let *assignment = newAst(arena, Let, &after_name);
-            ast = &assignment->a;
-            initAst(&assignment->lhs.a, AC_Identifier, name);
-            assignment->rhs = rhs;
+          case TC_ColonEqual:
+          {
+            pushContextName("let");
+            Ast *rhs = parseExpressionToAst(arena);
+
+            Let *let = newAst(arena, Let, name);
+            ast = &let->a;
+            initAst(&let->lhs.a, AC_Identifier, name);
+            let->rhs = rhs;
 
             popContext();
           } break;
@@ -1932,9 +1958,10 @@ parseArrowType(MemoryArena *arena)
   Arrow *out = 0;
   pushContext;
 
-  s32         param_count;
-  Token      *param_names;
-  Ast       **param_types;
+  s32     param_count;
+  Token  *param_names;
+  Ast   **param_types;
+  Token marking_token = peekNext();
   if (requireChar('('))
   {
     Tokenizer tk_copy = *global_tokenizer;
@@ -2007,10 +2034,9 @@ parseArrowType(MemoryArena *arena)
 
   if (requireCategory(TC_Arrow, "syntax: (param: type, ...) -> ReturnType"))
   {
-    Token arrow_token = global_tokenizer->last_token;
     if (Ast *return_type = parseExpressionToAst(arena))
     {
-      out = newAst(arena, Arrow, &arrow_token);
+      out = newAst(arena, Arrow, &marking_token);
       out->param_count = param_count;
       out->return_type = return_type;
       out->param_names = param_names;
@@ -2222,8 +2248,7 @@ parseConstructorDef(MemoryArena *arena, Form *out, Form *form, s32 ctor_id)
           }
           else if (ArrowV *type = castValue(norm_type0, ArrowV))
           {
-            Value *norm_return_type = getReturnType(temp_arena, type);
-            if (getFormOf(norm_return_type) == form)
+            if (getFormOf(type->a->return_type) == form)
               valid_type = true;
           }
 
@@ -2282,9 +2307,9 @@ parseTypedef(MemoryArena *arena)
           Value *norm_type = toValue(normalize(arena, type_parsing.ast));
           if (ArrowV *arrow = castValue(norm_type, ArrowV))
           {
-            Value *norm_return_type = getReturnType(temp_arena, arrow);
-            if (norm_return_type == &builtins.Set->v)
-              valid_type = true;
+            if (Constant *return_type = castAst(arrow->a->return_type, Constant))
+              if (return_type->value == &builtins.Set->v)
+                valid_type = true;
           }
           else if (norm_type == &builtins.Set->v)
             valid_type = true;
@@ -2434,7 +2459,7 @@ parseTopLevel(EngineState *state)
           {
             if (auto parsing = parseExpressionFull(temp_arena))
             {
-              Ast *reduced = normalizeStart(temp_arena, parsing.ast);
+              Ast *reduced = normalize(temp_arena, parsing.ast);
               printAst(0, reduced, {.detailed=true});
               printToBuffer(0, ": ");
               printAst(0, &parsing.type->a, {});
@@ -2499,7 +2524,7 @@ parseTopLevel(EngineState *state)
             pushContextName("constant definition: CONSTANT := VALUE;");
             if (Ast *value = parseExpression(arena))
             {
-              Ast *norm = normalizeStart(arena, value);
+              Ast *norm = normalize(arena, value);
               addGlobalBinding(name, toValue(norm));
               requireChar(';');
             }
@@ -2509,7 +2534,7 @@ parseTopLevel(EngineState *state)
           {
             if (Function *fun = parseFunction(arena, name))
             {
-              buildExpressionGlobal(arena, &fun->v.a);
+              buildExpressionGlobal(arena, &fun->a);
             }
           } break;
 
