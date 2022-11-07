@@ -31,11 +31,12 @@ enum Keyword
     Keyword_PrintRaw,
     Keyword_PrintDebug,
     Keyword_Check,
+    Keyword_Breakhere,
 
     Keywords_Count_,
 };
 const char *keywords[] = {"", "typedef", "define", "fork", "rewrite",
-                          "print", "print_raw", "print_debug", "check"};
+                          "print", "print_raw", "print_debug", "check", "breakhere"};
 
 enum MetaDirective
 {

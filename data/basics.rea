@@ -21,7 +21,6 @@ testAbstraction :: (a, b: Bool) -> Bool
   false: fork b {false: a, true: false},
   }
  }
-print testAbstraction;
 
 andWithFalse :: (a: Bool) -> (a & false = false)
 {
@@ -40,13 +39,10 @@ andCommutative :: (a, b, c: Bool) -> (a & (b & c) = (a & b) & c)
   true : truth,
   }
  }
-print andCommutative;
-print andCommutative(true, false, true);
 check andCommutative(true, false, true) : (true & (false & true) = (true & false) & true);
 
 dependentTypeTest :: (T: Type, A: T, a: A) -> (a = a)
 {
  truth
  }
-print dependentTypeTest;
-print dependentTypeTest(Set, Bool, true);
+check dependentTypeTest(Set, Bool, true): True;

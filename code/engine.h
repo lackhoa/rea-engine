@@ -107,7 +107,6 @@ b32 identicalB32(Value *lhs, Value *rhs);
 
 #define castAst(exp, Cat) ((exp)->cat == AC_##Cat ? (Cat*)(exp) : 0)
 #define castValue(exp, Cat) ((isValue(AC_##Cat) && (exp)->a.cat == AC_##Cat) ? (Cat*)(exp) : 0)
-#define polyAst(exp, Cat, Cat2) (((exp)->cat == AC_##Cat || (exp)->cat == AC_##Cat2) ? (Cat*)(exp) : 0)
 
 struct Identifier
 {
@@ -199,7 +198,7 @@ struct Stack
   Stack *outer;
   s32    depth;
   s32    arg_count;
-  AstV  *args[32];  // todo: compute this cap
+  Value *args[32];              // todo: compute this cap
 };
 
 // just jam everything in here!
@@ -380,18 +379,21 @@ struct StackRef
 
 struct Composite
 {
-  union
-  {
-    Ast   a;
-    Value v;
-  };
+  Ast   a;
 
   Ast  *op;
   s32   arg_count;
   Ast **args;
 };
 
-typedef Composite CompositeV;
+struct CompositeV
+{
+  Value v;
+
+  Value  *op;
+  s32     arg_count;
+  Value **args;
+};
 
 struct Sequence
 {
@@ -413,7 +415,7 @@ struct Arrow
 {
   Ast   a;
 
-  Ast *return_type;
+  Ast *out_type;
   s32     param_count;
   Token  *param_names;
   Ast   **param_types;

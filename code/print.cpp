@@ -73,9 +73,8 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
       } break;
 
       case AC_Composite:
-      case AC_CompositeV:
       {
-        Composite *in = polyAst(in0, Composite, CompositeV);
+        Composite *in = castAst(in0, Composite);
 
         printAst(buffer, in->op, new_opt);
 
@@ -83,6 +82,23 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         for (s32 arg_id = 0; arg_id < in->arg_count; arg_id++)
         {
           printAst(buffer, in->args[arg_id], new_opt);
+          if (arg_id < in->arg_count-1)
+            printToBuffer(buffer, ", ");
+        }
+        printToBuffer(buffer, ")");
+
+      } break;
+
+      case AC_CompositeV:
+      {
+        CompositeV *in = castAst(in0, CompositeV);
+
+        printAst(buffer, &in->op->a, new_opt);
+
+        printToBuffer(buffer, "(");
+        for (s32 arg_id = 0; arg_id < in->arg_count; arg_id++)
+        {
+          printAst(buffer, &in->args[arg_id]->a, new_opt);
           if (arg_id < in->arg_count-1)
             printToBuffer(buffer, ", ");
         }
@@ -165,14 +181,13 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
       } break;
 
       case AC_FunctionV:
-      case AC_Function:
       {
-        Function *in = polyAst(in0, Function, FunctionV);
+        FunctionV *in = castAst(in0, FunctionV);
         printToBuffer(buffer, in0->token);
         if (opt.detailed)
         {
           printToBuffer(buffer, " { ");
-          printAst(buffer, in->body, new_opt);
+          printAst(buffer, in->a->body, new_opt);
           printToBuffer(buffer, " }");
         }
       } break;
@@ -193,7 +208,148 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         }
         printToBuffer(buffer, ") -> ");
 
-        printAst(buffer, in->return_type, new_opt);
+        printAst(buffer, in->out_type, new_opt);
+      } break;
+
+      case AC_ArrowV:
+      {
+        ArrowV *in = castAst(in0, ArrowV);
+        printAst(buffer, &in->a->a, opt);
+      } break;
+
+      default:
+      {
+        printToBuffer(buffer, "<unimplemented category: %u>", in0->cat);
+      } break;
+    }
+  }
+  else
+    printToBuffer(buffer, "<null>");
+  return out;
+}
+
+internal char*
+printAst(MemoryArena *buffer, Value *in0, PrintOptions opt)
+{
+  char *out = buffer ? (char*)getArenaNext(buffer) : 0;
+  if (in0)
+  {
+    PrintOptions new_opt = opt;
+    new_opt.detailed = false;
+
+    switch (in0->cat)
+    {
+      case AC_StackRef:
+      {
+        StackRef *in = castAst(in0, StackRef);
+#if 1
+        printToBuffer(buffer, "%.*s<%d>", in->name.length, in->name.chars, in->stack_depth);
+#else
+        printToBuffer(buffer, in->name);
+#endif
+      } break;
+
+      case AC_CompositeV:
+      {
+        CompositeV *in = castAst(in0, CompositeV);
+
+        printAst(buffer, &in->op->a, new_opt);
+
+        printToBuffer(buffer, "(");
+        for (s32 arg_id = 0; arg_id < in->arg_count; arg_id++)
+        {
+          printAst(buffer, &in->args[arg_id]->a, new_opt);
+          if (arg_id < in->arg_count-1)
+            printToBuffer(buffer, ", ");
+        }
+        printToBuffer(buffer, ")");
+
+      } break;
+
+      case AC_Fork:
+      {
+        Fork *in = castAst(in0, Fork);
+        printToBuffer(buffer, "fork ");
+        printAst(buffer, in->subject, new_opt);
+        printToBuffer(buffer, " {");
+        Form *form = in->form;
+        for (s32 ctor_id = 0;
+             ctor_id < form->ctor_count;
+             ctor_id++)
+        {
+          ForkParameters *casev = in->params + ctor_id;
+          Form *ctor = form->ctors + ctor_id;
+          switch (ctor->v.type->a.cat)
+          {// print pattern
+            case AC_Form:
+            {
+              printAst(buffer, &ctor->v.a, new_opt);
+            } break;
+
+            case AC_ArrowV:
+            case AC_Arrow:
+            {
+              printAst(buffer, &ctor->v.a, new_opt);
+              printToBuffer(buffer, " ");
+              ArrowV *signature = castValue(ctor->v.type, ArrowV);
+              for (s32 param_id = 0; param_id < signature->a->param_count; param_id++)
+              {
+                printToBuffer(buffer, casev->names[param_id]);
+                printToBuffer(buffer, " ");
+              }
+            } break;
+
+            invalidDefaultCase;
+          }
+
+          printToBuffer(buffer, ": ");
+          printAst(buffer, in->bodies[ctor_id], new_opt);
+          if (ctor_id != form->ctor_count-1)
+            printToBuffer(buffer, ", ");
+        }
+        printToBuffer(buffer, "}");
+      } break;
+
+      case AC_Form:
+      {
+        Form *in = castAst(in0, Form);
+        if (opt.detailed && in != builtins.Type)
+        {
+          printToBuffer(buffer, in0->token);
+
+          if (opt.print_type)
+          {
+            printToBuffer(buffer, ": ");
+            printAst(buffer, &in->v.type->a, new_opt);
+          }
+
+          if (in->ctor_count)
+          {
+            printToBuffer(buffer, " {");
+            for (s32 ctor_id = 0; ctor_id < in->ctor_count; ctor_id++)
+            {
+              Form *ctor = in->ctors + ctor_id;
+              printToBuffer(buffer, ctor->v.a.token);
+              printToBuffer(buffer, ": ");
+              printAst(buffer, &ctor->v.type->a, new_opt);
+            }
+            printToBuffer(buffer, " }");
+          }
+        }
+        else
+          printToBuffer(buffer, in0->token);
+      } break;
+
+      case AC_FunctionV:
+      {
+        FunctionV *in = castAst(in0, FunctionV);
+        printToBuffer(buffer, in0->token);
+        if (opt.detailed)
+        {
+          printToBuffer(buffer, " { ");
+          printAst(buffer, in->a->body, new_opt);
+          printToBuffer(buffer, " }");
+        }
       } break;
 
       case AC_ArrowV:
@@ -223,6 +379,12 @@ inline void
 myprint(Ast *in0)
 {
   printAst(0, in0, {});
+}
+
+inline void
+myprint(Value *in0)
+{
+  printAst(0, &in0->a, {});
 }
 
 inline void

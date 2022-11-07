@@ -14,8 +14,6 @@ typedef Nat
   s(n69) : s(n69 + m),
   }
  }
-print s;
-print +;
 
 1 := s(0);
 2 := s(1);
@@ -98,7 +96,7 @@ plusCommutative :: (n, m: Nat) -> (n + m = m + n)
   }
  }
 
-plusAssociative :: (a, b, c: Nat) -> a + (b + c) = (a + b) + c
+plusAssociative :: (a, b, c: Nat) -> (a+b)+c = a+(b+c)
 {
  fork a
  {

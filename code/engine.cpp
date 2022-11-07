@@ -7,6 +7,9 @@
 #include "rea_globals.h"
 #include "print.cpp"
 
+#define TRANSITION 1
+
+global_variable b32 global_debug_mode;
 #define NULL_WHEN_ERROR(name) if (noError()) {assert(name);} else {name = {};}
 
 // Important: all parsing must be aborted when the tokenizer encounters error.
@@ -18,7 +21,7 @@ typedef VARIABLE_MATCHER(variable_matcher);
 
 // todo: #speed copying values around
 inline void
-extendStack(Environment *env, s32 arg_count, Ast **args, s32 depth_override=0)
+extendStack(Environment *env, s32 arg_count, Value **args, s32 depth_override=0)
 {
   Stack *stack = pushStruct(temp_arena, Stack);
   stack->depth = depth_override ? depth_override : (getStackDepth(env->stack) + 1);
@@ -42,6 +45,7 @@ myprint(char *str)
   printToBuffer(0, str);
 }
 
+#if 0
 internal b32
 searchVariable(Environment env, Ast *in, variable_matcher *matcher, void *opt)
 {
@@ -129,6 +133,7 @@ hasAnyVariable(Ast *in)
   Environment env = newEnvironment(temp_arena);
   return searchVariable(env, in, isAnyVariable, 0);
 }
+#endif
 
 #if 0
 VARIABLE_MATCHER(isFreeVariable)
@@ -213,10 +218,13 @@ compareExpressionList(Value **lhs_list, Value **rhs_list, s32 count)
   return out;
 }
 
-internal AstV *
-normalize(Environment env, AstV *in0);
+internal Value *
+normalize(Environment env, Value *in0);
 
-internal Ast **
+internal Value *
+evaluate(Environment env, Ast *in0);
+
+internal Value **
 introduce(Environment *env, s32 count, Token *names, Ast **types_ast, s32 depth_override=0)
 {
   assert(count < arrayCount(env->stack->args));
@@ -224,59 +232,42 @@ introduce(Environment *env, s32 count, Token *names, Ast **types_ast, s32 depth_
   Value **types = pushArray(temp_arena, count, Value *);
   for (s32 id = 0; id < count; id++)
   {
-    types[id] = toValue(normalize(*env, types_ast[id]));
+    types[id] = (evaluate(*env, types_ast[id]));
     StackRef *ref    = newValue(temp_arena, StackRef, names+id, types[id]);
     ref->name        = names[id];
     ref->id          = id;
     ref->stack_depth = env->stack->depth;
-    env->stack->args[id] = &ref->v.a;
+    env->stack->args[id] = &ref->v;
   }
   return env->stack->args;
 }
 
-internal Ast **
+internal Value **
 introduce(Environment *env, Arrow *signature)
 {
   return introduce(env, signature->param_count, signature->param_names, signature->param_types);
 }
 
-internal Ast **
+internal Value **
 introduce(Environment *env, ArrowV *signature, s32 depth_override=0)
 {
   return introduce(env, signature->a->param_count, signature->a->param_names, signature->a->param_types, depth_override);
 }
 
-#if 0
-inline Value **
-getParamTypes(MemoryArena *arena, ArrowV *in)
-{
-  Environment env = newEnvironment(arena);
-  env.stack = in->stack;
-  introduce(&env, in);
-  Value **out = pushArray(arena, in->a->param_count, Value*);
-  for (s32 param_id = 0; param_id < in->a->param_count; param_id++)
-  {
-    out[param_id] = toValue(normalize(env, in->a->param_types[param_id]));
-  }
-  return out;
-}
-#endif
-
-#if 0
-inline Value *
-getReturnType(MemoryArena *arena, ArrowV *in)
-{
-  Environment env = newEnvironment(arena);
-  env.stack = in->stack;
-  introduce(&env, in);
-  Value *out = toValue(normalize(env, in->a->return_type));
-  return out;
-}
-#endif
-
 internal Trinary
 identicalTrinary(Value *lhs0, Value *rhs0) // TODO: turn the args into values
 {
+#if 0
+  if (global_debug_mode)
+  {
+    myprint("comparing: ");
+    myprint(&lhs0->a);
+    myprint(" and ");
+    myprint(&rhs0->a);
+    myprint();
+  }
+#endif
+
   Trinary out = Trinary_Unknown;
 
   if (!lhs0 | !rhs0)
@@ -326,8 +317,8 @@ identicalTrinary(Value *lhs0, Value *rhs0) // TODO: turn the args into values
           Value **rnorm_param_types = pushArray(temp_arena, param_count, Value*);
           for (s32 param_id = 0; param_id < param_count; param_id++)
           {
-            lnorm_param_types[param_id] = toValue(normalize(lenv, lhs->a->param_types[param_id]));
-            rnorm_param_types[param_id] = toValue(normalize(renv, rhs->a->param_types[param_id]));
+            lnorm_param_types[param_id] = (evaluate(lenv, lhs->a->param_types[param_id]));
+            rnorm_param_types[param_id] = (evaluate(renv, rhs->a->param_types[param_id]));
           }
           Trinary compare_param_types = compareExpressionList(lnorm_param_types, rnorm_param_types, param_count);
           if (compare_param_types == Trinary_False)
@@ -336,8 +327,8 @@ identicalTrinary(Value *lhs0, Value *rhs0) // TODO: turn the args into values
           }
           else if (compare_param_types == Trinary_True)
           {
-            Value *lnorm_return_type = toValue(normalize(lenv, lhs->a->return_type));
-            Value *rnorm_return_type = toValue(normalize(renv, rhs->a->return_type));
+            Value *lnorm_return_type = evaluate(lenv, lhs->a->out_type);
+            Value *rnorm_return_type = evaluate(renv, rhs->a->out_type);
 
             out = identicalTrinary(lnorm_return_type, rnorm_return_type);
           }
@@ -351,7 +342,7 @@ identicalTrinary(Value *lhs0, Value *rhs0) // TODO: turn the args into values
         CompositeV *lhs = castAst(lhs0, CompositeV);
         CompositeV *rhs = castAst(rhs0, CompositeV);
 
-        Trinary op_compare = identicalTrinary(toValue(lhs->op), toValue(rhs->op));
+        Trinary op_compare = identicalTrinary((lhs->op), (rhs->op));
         if ((op_compare == Trinary_False) &&
             (lhs->op->cat == AC_Form) &&
             (rhs->op->cat == AC_Form))
@@ -362,7 +353,7 @@ identicalTrinary(Value *lhs0, Value *rhs0) // TODO: turn the args into values
         {
           s32 count = lhs->arg_count;
           assert(lhs->arg_count == rhs->arg_count);
-          out = compareExpressionList(toValues(lhs->args, count), toValues(rhs->args, count), count);
+          out = compareExpressionList((lhs->args), (rhs->args), count);
         }
       } break;
 
@@ -511,15 +502,22 @@ rewriteExpression(Environment *env, Value *in)
 }
 
 // todo #speed don't pass the Environment in wholesale?
-internal AstV *
-normalize(Environment env, AstV *in0)
+internal Value *
+normalize(Environment env, Value *in0)
 {
-  b32 INTRODUCE_PATH = false; (void)INTRODUCE_PATH;
-  Ast *out0 = {};
+  Value *out0 = {};
   MemoryArena *arena = env.arena;
+
+  if (global_debug_mode)
+  {
+    myprint("normalize: ");
+    myprint(in0);
+    myprint();
+  }
 
   switch (in0->cat)
   {
+    // #done
     case AC_Variable:
     {
       Variable *in = castAst(in0, Variable);
@@ -537,27 +535,56 @@ normalize(Environment env, AstV *in0)
       out0 = stack->args[in->id];
     } break;
 
+    // #done
     case AC_Constant:
     {
       Constant *in = castAst(in0, Constant);
-      out0 = &in->value->a;
+      out0 = in->value;
     } break;
 
-    case AC_CompositeV:
+#if !TRANSITION
     case AC_Composite:
     {
-      Composite *in = polyAst(in0, Composite, CompositeV);
+      Composite *in = castAst(in0, Composite);
 
-      Ast **norm_args = pushArray(temp_arena, in->arg_count, Ast*);
+      Value **norm_args = pushArray(arena, in->arg_count, Value*);
       for (auto arg_id = 0;
            arg_id < in->arg_count;
            arg_id++)
       {
         Ast *in_arg = in->args[arg_id];
-        norm_args[arg_id] = normalize(env, in_arg);
+        norm_args[arg_id] = (normalize(env, in_arg));
       }
 
-      Ast *norm_op = normalize(env, in->op);
+      Value *norm_op = (normalize(env, in->op));
+      ArrowV *signature = castValue(norm_op->type, ArrowV);
+      Value *return_type = (normalize(env, signature->a->out_type));
+
+      CompositeV *out = newValue(env.arena, CompositeV, &in->a.token, return_type);
+      out->arg_count = in->arg_count;
+      out->op        = norm_op;
+      out->args      = norm_args;
+
+      out0 = &out->v.a;
+
+      out0 = normalize(env, out0);
+    } break;
+#endif
+
+    case AC_CompositeV:
+    {
+      CompositeV *in = castAst(in0, CompositeV);
+
+      Value **norm_args = pushArray(arena, in->arg_count, Value*);
+      for (auto arg_id = 0;
+           arg_id < in->arg_count;
+           arg_id++)
+      {
+        Value *in_arg = in->args[arg_id];
+        norm_args[arg_id] = (normalize(env, in_arg));
+      }
+
+      Value *norm_op = normalize(env, in->op);
       // todo: we don't expand if there is any free variable. (eg for arrow
       // types this would not normalize the return type).
       // if (env.stack_offset == 0)
@@ -570,44 +597,42 @@ normalize(Environment env, AstV *in0)
             Environment fun_env = env;
             fun_env.stack = funv->stack;
             extendStack(&fun_env, in->arg_count, norm_args);
-            // note: normalization might fail, in which case we back out.
-            out0 = normalize(fun_env, funv->a->body);
+            // note: evaluation might fail, in which case we back out.
+            out0 = evaluate(fun_env, funv->a->body);
           }
         }
         else
         {
           assert(norm_op->cat == AC_Form);
-          if (norm_op == &builtins.identical->v.a)
+          if (norm_op == &builtins.identical->v)
           {// special case for equality
-            Value *lhs = toValue(norm_args[1]);
-            Value *rhs = toValue(norm_args[2]);
+            Value *lhs = norm_args[1];
+            Value *rhs = norm_args[2];
             Trinary compare = identicalTrinary(lhs, rhs);
             if (compare == Trinary_True)
-              out0 = &builtins.True->v.a;
+              out0 = &builtins.True->v;
             else if (compare == Trinary_False)
-              out0 = &builtins.False->v.a;
+              out0 = &builtins.False->v;
           }
         }
       }
 
       if (!out0)
       {
-        CompositeV *out = copyStruct(env.arena, in);
-        out->a.cat = AC_CompositeV;
-        out0 = &out->a;
-        out->op = norm_op;
-        allocateArray(env.arena, out->arg_count, out->args);
-        for (int arg_id = 0; arg_id < out->arg_count; arg_id++)
-          out->args[arg_id] = norm_args[arg_id];
+        ArrowV *signature = castValue(norm_op->type, ArrowV);
+        Value *return_type = evaluate(env, signature->a->out_type);
 
-        // annotate the type
-        ArrowV *signature = castValue(toValue(norm_op)->type, ArrowV);
-        out->v.type = toValue(normalize(env, signature->a->return_type));
-        assert(out0->cat);
+        CompositeV *out = newValue(env.arena, CompositeV, &in->v.a.token, return_type);
+        out->arg_count = in->arg_count;
+        out->op        = norm_op;
+        out->args      = norm_args;
+
+        out0 = &out->v;
       }
       assert(out0->cat);
     } break;
 
+#if !TRANSITION
     case AC_Fork:
     {
       Fork *in = castAst(in0, Fork);
@@ -635,18 +660,9 @@ normalize(Environment env, AstV *in0)
         } break;
 
         default:
-            // note: we fail if the fork is undetermined
-            out0 = 0;
+          // note: we fail if the fork is undetermined
+          out0 = 0;
       }
-    } break;
-
-    case AC_Arrow:
-    {// don't know what to do here, so just copy verbatim the type and store the stack.
-      Arrow *in = castAst(in0, Arrow);
-      ArrowV *out = newValue(env.arena, ArrowV, &in->a.token, &builtins.Type->v);
-      out->a = in;
-      out->stack = env.stack;
-      out0 = &out->v.a;
     } break;
 
     case AC_Sequence:
@@ -656,26 +672,25 @@ normalize(Environment env, AstV *in0)
       {
         Ast *item0 = in->items[id];
         switch (item0->cat)
-        {// todo: well this has to be inline because we pass env by value.
+        {// todo: this has to be inline because we pass env by value. Might
+         // actually be cleaner, but we need to sync with "buildExpession".
           case AC_Rewrite:
-          {
-            // rewrites, don't care
-          } break;
+          {} break;
 
           case AC_Let:
           {
             Let *item = castAst(item0, Let);
-            env.stack->args[env.stack->arg_count++] = normalize(env, item->rhs);
+            env.stack->args[env.stack->arg_count++] = (normalize(env, item->rhs));
           } break;
 
           case AC_Function:
           {
             Function  *item        = castAst(item0, Function);
-            Value     *signature_v = toValue(normalize(env, &item->signature->a));
+            Value     *signature_v = (normalize(env, &item->signature->a));
             FunctionV *funv        = newValue(arena, FunctionV, &item->a.token, signature_v);
             funv->a     = item;
             funv->stack = env.stack;
-            env.stack->args[env.stack->arg_count++] = &funv->v.a;
+            env.stack->args[env.stack->arg_count++] = &funv->v;
           } break;
 
           // todo screen the input
@@ -685,10 +700,19 @@ normalize(Environment env, AstV *in0)
       out0 = normalize(env, in->items[in->count-1]);
     } break;
 
+    case AC_Arrow:
+    {// we can't do anything here, so just store it off somewhere.
+      Arrow *in = castAst(in0, Arrow);
+      ArrowV *out = newValue(env.arena, ArrowV, &in->a.token, &builtins.Type->v);
+      out->a = in;
+      out->stack = env.stack;
+      out0 = &out->v.a;
+    } break;
+#endif
+
     case AC_ArrowV:
     case AC_FunctionV:
     case AC_StackRef:
-    case AC_DummyHole:
     case AC_Form:
     {
       out0 = in0;
@@ -699,30 +723,193 @@ normalize(Environment env, AstV *in0)
 
   if (out0)
   {
-    Ast *before_rewrite = out0;
-    out0 = &rewriteExpression(&env, toValue(out0))->a;
+    Value *before_rewrite = out0;
+    out0 = rewriteExpression(&env, out0);
     if (out0 != before_rewrite)
-      out0 = normalize(env, out0); // do another iteration
+      out0 = normalize(env, out0); // do another iteration (todo: WHY?
+                                   // rewriteExpression already did the loop)
+  }
 
-    // TODO: this hole is ruining my life!
-    if (out0 != &dummy_hole)
-      assert(isValue(out0));
+  if (global_debug_mode)
+  {
+    myprint("=> ");
+    myprint(out0);
+    myprint();
   }
 
   return out0;
 }
 
-inline Ast *
-normalize(MemoryArena *arena, Ast *in0)
+internal Value *
+normalize(MemoryArena *arena, Value *in0)
 {
   return normalize(newEnvironment(arena), in0);
+}
+
+internal Value *
+evaluate(Environment env, Ast *in0)
+{
+  Value *out0 = 0;
+  MemoryArena *arena = env.arena;
+
+  if (global_debug_mode)
+  {
+    myprint("evaluate: ");
+    myprint(in0);
+    myprint();
+  }
+
+  switch (in0->cat)
+  {
+    case AC_Variable:
+    {
+      Variable *in = castAst(in0, Variable);
+      assert(env.stack_offset >= 0);
+      assert(in->stack_delta >= 0);
+      s32 stack_delta = in->stack_delta + env.stack_offset;
+      Stack *stack = env.stack;
+      for (s32 delta = 0; delta < stack_delta; delta++)
+        stack = stack->outer;
+      if (!(in->id < stack->arg_count))
+      {
+        myprint(env.stack);
+        invalidCodePath;
+      }
+      out0 = stack->args[in->id];
+    } break;
+
+    case AC_Constant:
+    {
+      Constant *in = castAst(in0, Constant);
+      out0 = in->value;
+    } break;
+
+    case AC_Composite:
+    {
+      Composite *in = castAst(in0, Composite);
+
+      Value **norm_args = pushArray(arena, in->arg_count, Value*);
+      for (auto arg_id = 0;
+           arg_id < in->arg_count;
+           arg_id++)
+      {
+        Ast *in_arg = in->args[arg_id];
+        norm_args[arg_id] = evaluate(env, in_arg);
+      }
+
+      Value *norm_op = evaluate(env, in->op);
+      ArrowV *signature = castValue(norm_op->type, ArrowV);
+      Value *return_type = evaluate(env, signature->a->out_type);
+
+      CompositeV *out = newValue(env.arena, CompositeV, &in->a.token, return_type);
+      out->arg_count = in->arg_count;
+      out->op        = norm_op;
+      out->args      = norm_args;
+
+      // NOTE: the legendary eval-reduce loop
+      out0 = normalize(env, &out->v);
+    } break;
+
+    case AC_Fork:
+    {
+      Fork *in = castAst(in0, Fork);
+      Value *norm_subject = normalize(env, evaluate(env, in->subject));
+
+      Environment fork_env = env;
+      switch (norm_subject->cat)
+      {
+        case AC_Form:
+        {
+          Form *ctor = castAst(norm_subject, Form);
+          extendStack(&fork_env, 0, 0);
+          out0 = evaluate(fork_env, in->bodies[ctor->ctor_id]);
+        } break;
+
+        case AC_CompositeV:
+        {
+          CompositeV *subject = castAst(norm_subject, CompositeV);
+          if (Form *ctor = castAst(subject->op, Form))
+          {
+            Ast *body = in->bodies[ctor->ctor_id];
+            extendStack(&fork_env, subject->arg_count, subject->args);
+            out0 = evaluate(fork_env, body);
+          }
+        } break;
+
+        default:
+          // note: we fail if the fork is undetermined
+          out0 = 0;
+      }
+    } break;
+
+    case AC_Arrow:
+    {// we can't do anything here, so just store it off somewhere.
+      Arrow *in = castAst(in0, Arrow);
+      ArrowV *out = newValue(env.arena, ArrowV, &in->a.token, &builtins.Type->v);
+      out->a     = in;
+      out->stack = env.stack;
+      out0 = &out->v;
+    } break;
+
+    case AC_Sequence:
+    {
+      Sequence *in = castAst(in0, Sequence);
+      for (s32 id = 0; id < in->count-1; id++)
+      {
+        Ast *item0 = in->items[id];
+        switch (item0->cat)
+        {// todo: this has to be inline because we pass env by value. Might
+         // actually be cleaner, but we need to sync with "buildExpession".
+          case AC_Rewrite:
+          {} break;
+
+          case AC_Let:
+          {
+            Let *item = castAst(item0, Let);
+            env.stack->args[env.stack->arg_count++] = normalize(env, evaluate(env, item->rhs));
+          } break;
+
+          case AC_Function:
+          {
+            Function  *item        = castAst(item0, Function);
+            Value     *signature_v = evaluate(env, &item->signature->a);
+            FunctionV *funv        = newValue(arena, FunctionV, &item->a.token, signature_v);
+            funv->a     = item;
+            funv->stack = env.stack;
+            env.stack->args[env.stack->arg_count++] = &funv->v;
+          } break;
+
+          // todo screen the input
+          invalidDefaultCase;
+        }
+      }
+      out0 = evaluate(env, in->items[in->count-1]);
+    } break;
+
+    invalidDefaultCase;
+  }
+
+  if (global_debug_mode)
+  {
+    myprint(" => ");
+    myprint(out0);
+    myprint();
+  }
+
+  return out0;
+}
+
+internal Value *
+evaluate(MemoryArena *arena, Ast *in0)
+{
+  return evaluate(newEnvironment(arena), in0);
 }
 
 inline b32
 normalized(Environment env, Value *in)
 {
-  AstV *norm = normalize(env, &in->a);
-  return identicalB32(in, toValue(norm));
+  Value *norm = normalize(env, in);
+  return identicalB32(in, norm);
 }
 
 inline b32
@@ -754,9 +941,9 @@ addLocalBindings(Environment *env, s32 count, Token *names, Ast **types, b32 sho
   {
     if (should_build_types)
       types[id] = buildExpression(env, types[id], 0).ast;
-    Value    *type       = toValue(normalize(*env, types[id]));
+    Value    *type       = evaluate(*env, types[id]);
     StackRef *ref        = newValue(temp_arena, StackRef, names+id, type);
-    env->stack->args[id] = &ref->v.a;
+    env->stack->args[id] = &ref->v;
 
     ref->name        = names[id];
     ref->id          = id;
@@ -995,6 +1182,7 @@ precedenceOf(Token *op)
 
 typedef VARIABLE_TRANSFORMER(variable_transformer);
 
+#if 0
 // note: this makes a copy (todo: #mem don't copy if not necessary)
 // todo cheesing out on functions right now
 inline Ast *
@@ -1045,7 +1233,6 @@ transformVariables(Environment env, Ast *in0, variable_transformer *transformer,
   return out0;
 }
 
-#if 0
 VARIABLE_TRANSFORMER(abstractInstantiated)
 {
   (void) opt;
@@ -1082,6 +1269,7 @@ VARIABLE_TRANSFORMER(replaceCurrentLevelVariable)
     return &in->a;
 }
 
+#if 0
 // think of a function application
 internal Ast *
 replaceCurrentLevel(Environment env, Ast *in, Ast **args)
@@ -1090,6 +1278,7 @@ replaceCurrentLevel(Environment env, Ast *in, Ast **args)
   // assert(identicalB32(in->type, out->type));
   return out;
 }
+#endif
 
 inline void
 printRewrites(Environment env)
@@ -1117,15 +1306,15 @@ addRewrite(Environment *env, Value *lhs0, Value *rhs0)
   {
     b32 added = false;
 
-    if (CompositeV *lhs = castAst(lhs0, Composite))
-      if (CompositeV *rhs = castAst(rhs0, Composite))
+    if (CompositeV *lhs = castValue(lhs0, CompositeV))
+      if (CompositeV *rhs = castValue(rhs0, CompositeV))
     {
       if ((lhs->op->cat == AC_Form) &&
           (rhs->op->cat == AC_Form))
       {
-        assert(identicalB32(toValue(lhs->op), toValue(rhs->op)));
+        assert(identicalB32((lhs->op), (rhs->op)));
         for (s32 arg_id = 0; lhs->arg_count; arg_id++)
-          addRewrite(env, toValue(lhs->args[arg_id]), toValue(rhs->args[arg_id]));
+          addRewrite(env, (lhs->args[arg_id]), (rhs->args[arg_id]));
         added = true;
       }
     }
@@ -1160,6 +1349,7 @@ VARIABLE_TRANSFORMER(rebaseVariable)
   return &out->a;
 }
 
+#if 0
 inline Ast *
 rebaseDownExpr(MemoryArena *arena, Ast *in)
 {
@@ -1174,6 +1364,7 @@ rebaseUpExpr(MemoryArena *arena, Ast *in)
   s32 adjustment = -1;
   return transformVariables(newEnvironment(arena), in, rebaseVariable, &adjustment);
 }
+#endif
 
 inline void
 unwindStack(Environment *env)
@@ -1210,7 +1401,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       auto lookup = lookupLocalName(arena, env->bindings, &in0->token);
       if (lookup.found)
       {
-        Value *norm = toValue(normalize(*env, lookup.value));
+        Value *norm = evaluate(*env, lookup.value);
         out.ast  = lookup.value;
         out.type = norm->type;
       }
@@ -1234,7 +1425,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       Value *op_type;
       if ((in->op->cat == AC_Identifier) &&
           equal(in->op->token, "="))
-      {// todo: special mutations for equality
+      {// todo: special mutation sauce for equality
         should_build_op = false;
         assert(in->arg_count == 2);
         Ast **new_args = pushArray(arena, 3, Ast*);
@@ -1270,7 +1461,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
             Environment signature_env = *env;
             signature_env.arena = temp_arena;
             extendStack(&signature_env, in->arg_count, 0);
-            Ast **stack_frame = signature_env.stack->args;
+            Value **stack_frame = signature_env.stack->args;
             for (int arg_id = 0;
                  (arg_id < in->arg_count) && noError();
                  arg_id++)
@@ -1281,16 +1472,16 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
               else
               {
                 Ast *param_type = signature->a->param_types[arg_id];
-                Value *norm_param_type = toValue(normalize(signature_env, param_type));
+                Value *norm_param_type = evaluate(signature_env, param_type);
                 if (Expression build_arg = buildExpression(env, in->args[arg_id], norm_param_type))
                 {
                   in->args[arg_id] = build_arg.ast;
-                  stack_frame[arg_id] = normalize(*env, in->args[arg_id]);
+                  stack_frame[arg_id] = evaluate(*env, in->args[arg_id]);
                   if (norm_param_type == 0)
                   {
                     Variable *param_type_var = castAst(param_type, Variable);
                     assert(param_type_var->stack_delta == 0);
-                    stack_frame[param_type_var->id] = &build_arg.type->a;
+                    stack_frame[param_type_var->id] = build_arg.type;
 
                     // write back to the input ast. (TODO: doesn't actually work
                     // since we don't handle variables in the type)
@@ -1307,7 +1498,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
             {
               extendStack(env, in->arg_count, stack_frame);
               out.ast = in0;
-              out.type = toValue(normalize(*env, signature->a->return_type));
+              out.type = evaluate(*env, signature->a->out_type);
               unwindStack(env);
             }
           }
@@ -1351,7 +1542,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       {
         addLocalBinding(env->bindings, &in->lhs.a.token);
         in->rhs = build_rhs.ast;
-        env->stack->args[env->stack->arg_count++] = normalize(*env, in->rhs);
+        env->stack->args[env->stack->arg_count++] = evaluate(*env, in->rhs);
 
         out.ast  = in->rhs;
         out.type = build_rhs.type;
@@ -1371,7 +1562,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       {
         // note: store the built signature, maybe to display it later.
         in->signature = castAst(build_signature.ast, Arrow);
-        Value *signature_v = toValue(normalize(*env, &in->signature->a));
+        Value *signature_v = evaluate(*env, &in->signature->a);
         FunctionV *funv = newValue(arena, FunctionV, &in->a.token, signature_v);
         // note: we only need that funv there for the type.
         funv->a = &dummy_function_under_construction;
@@ -1381,7 +1572,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
         if (is_local)
         {// local context
           addLocalBinding(env->bindings, &in->a.token);
-          env->stack->args[env->stack->arg_count++] = &funv->v.a;
+          env->stack->args[env->stack->arg_count++] = &funv->v;
         }
         else
         {// global context
@@ -1393,7 +1584,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
           addLocalBindings(env, in->signature);
           assert(noError());
 
-          Value *expected_body_type = toValue(normalize(*env, in->signature->return_type));
+          Value *expected_body_type = evaluate(*env, in->signature->out_type);
           in->body = buildExpression(env, in->body, expected_body_type).ast;
           unwindBindingsAndStack(env);
         }
@@ -1405,7 +1596,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
         funv->stack = env->stack;
         if (is_local)
         {
-          env->stack->args[env->stack->arg_count++] = &funv->v.a;
+          env->stack->args[env->stack->arg_count++] = &funv->v;
         }
       }
     } break;
@@ -1413,13 +1604,14 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
     case AC_Rewrite:
     {
       Rewrite *in = castAst(in0, Rewrite);
+#if 0
       if (in->rhs)
       {
         Ast *lhs = in->lhs = buildExpression(env, in->lhs, 0).ast;
         Ast *rhs = in->rhs = buildExpression(env, in->rhs, 0).ast;
-        Value *norm_lhs_begin = toValue(normalize(*env, lhs));
+        Value *norm_lhs_begin = normalize(*env, lhs);
         Value *norm_lhs = norm_lhs_begin;
-        Value *norm_rhs = toValue(normalize(*env, rhs));
+        Value *norm_rhs = (normalize(*env, rhs));
         while (noError())
         {
           if (identicalB32(norm_lhs, norm_rhs))
@@ -1428,7 +1620,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
             break;
           }
           Value *before = norm_lhs;
-          norm_lhs = toValue(normalize(*env, &norm_lhs->a));
+          norm_lhs = (normalize(*env, &norm_lhs->a));
           if (identicalB32(norm_lhs, before))
           {
             parseError(in0, "failed to prove legitimacy of rewrite rule");
@@ -1436,24 +1628,24 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
         }
       }
       else
+#endif
       {
         if (Expression build_rewrite = buildExpression(env, in->lhs, 0))
         {
           in->lhs = build_rewrite.ast;
           b32 rule_valid = false;
-          Value *norm_rule0 = toValue(normalize(*env, &build_rewrite.type->a));
-          if (CompositeV *norm_rule = castValue(norm_rule0, CompositeV))
+          if (CompositeV *norm_rule = castValue(build_rewrite.type, CompositeV))
           {
-            if (norm_rule->op == &builtins.identical->v.a)
+            if (norm_rule->op == &builtins.identical->v)
             {
               rule_valid = true;
-              addRewrite(env, toValue(norm_rule->args[1]), toValue(norm_rule->args[2]));
+              addRewrite(env, (norm_rule->args[1]), (norm_rule->args[2]));
             }
           }
           if (!rule_valid)
           {
             parseError(in0, "invalid rewrite rule, can only be equality");
-            pushAttachment("got", &norm_rule0->a);
+            pushAttachment("got", &build_rewrite.type->a);
           }
         }
       }
@@ -1471,7 +1663,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       addLocalBindings(env, in->param_count, in->param_names, in->param_types, true);
       if (noError())
       {
-        in->return_type = buildExpression(env, in->return_type, 0).ast;
+        in->out_type = buildExpression(env, in->out_type, 0).ast;
       }
       unwindBindingsAndStack(env);
     } break;
@@ -1493,7 +1685,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
             ForkParameters  *correct_params = pushArray(arena, case_count, ForkParameters, true);
             Ast            **correct_bodies = pushArray(arena, case_count, Ast *, true);
             Value *common_type  = expected_type;
-            Value *norm_subject = toValue(normalize(*env, in->subject));
+            Value *norm_subject = evaluate(*env, in->subject);
             Environment *outer_env = env;
             for (s32 input_case_id = 0;
                  input_case_id < case_count && noError();
@@ -1528,15 +1720,15 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                   {
                     if (ArrowV *ctor_sig = castValue(ctor->v.type, ArrowV))
                     {
-                      if (identicalB32(&getFormOf(ctor_sig->a->return_type)->v,
+                      if (identicalB32(&getFormOf(ctor_sig->a->out_type)->v,
                                        &getFormOf(subject_type)->v))
                       {
                         if (param_count == ctor_sig->a->param_count)
                         {
                           addLocalBindings(&env, param_count, params->names, ctor_sig->a->param_types, false);
-                          Value *pattern_type = toValue(normalize(env, ctor_sig->a->return_type));
+                          Value *pattern_type = evaluate(env, ctor_sig->a->out_type);
                           CompositeV *pattern = newValue(temp_arena, CompositeV, &ctor->v.a.token, pattern_type);
-                          pattern->op        = &ctor->v.a;
+                          pattern->op        = &ctor->v;
                           pattern->arg_count = param_count;
                           pattern->args      = env.stack->args;
                           addRewrite(&env, norm_subject, &pattern->v);
@@ -1548,7 +1740,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                       {
                         parseError(ctor_token, "composite constructor has wrong return type");
                         pushAttachment("expected type", &subject_type->a);
-                        pushAttachment("got type", ctor_sig->a->return_type);
+                        pushAttachment("got type", ctor_sig->a->out_type);
                       }
                     }
                     else
@@ -1613,13 +1805,15 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
   {// one last typecheck if needed
     if (expected_type && should_check_type)
     {
-      Value *norm_expected = toValue(normalize(*env, &expected_type->a));
-      if (!identicalB32(norm_expected, out.type))
+      Value *norm_expected = normalize(*env, expected_type);
+      Value *norm_actual = normalize(*env, out.type);
+      if (!identicalB32(norm_expected, norm_actual))
       {
         parseError(in0, "actual type differs from expected type");
-        identicalB32(norm_expected, out.type);
+        global_debug_mode = true;
+        normalize(*env, expected_type);
         pushAttachment("expected", &norm_expected->a);
-        pushAttachment("got", &out.type->a);
+        pushAttachment("got", &norm_actual->a);
       }
     }
   }
@@ -2038,7 +2232,7 @@ parseArrowType(MemoryArena *arena)
     {
       out = newAst(arena, Arrow, &marking_token);
       out->param_count = param_count;
-      out->return_type = return_type;
+      out->out_type = return_type;
       out->param_names = param_names;
       out->param_types = param_types;
     }
@@ -2239,7 +2433,7 @@ parseConstructorDef(MemoryArena *arena, Form *out, Form *form, s32 ctor_id)
       {
         if (Ast *parsed_type = parseExpressionFull(arena).ast)
         {
-          Value *norm_type0 = toValue(normalize(arena, parsed_type));
+          Value *norm_type0 = evaluate(arena, parsed_type);
           b32 valid_type = false;
           if (Form *type = castValue(norm_type0, Form))
           {
@@ -2248,7 +2442,7 @@ parseConstructorDef(MemoryArena *arena, Form *out, Form *form, s32 ctor_id)
           }
           else if (ArrowV *type = castValue(norm_type0, ArrowV))
           {
-            if (getFormOf(type->a->return_type) == form)
+            if (getFormOf(type->a->out_type) == form)
               valid_type = true;
           }
 
@@ -2304,10 +2498,10 @@ parseTypedef(MemoryArena *arena)
         b32 valid_type = false;
         if (Expression type_parsing = parseExpressionFull(arena))
         {
-          Value *norm_type = toValue(normalize(arena, type_parsing.ast));
+          Value *norm_type = evaluate(arena, type_parsing.ast);
           if (ArrowV *arrow = castValue(norm_type, ArrowV))
           {
-            if (Constant *return_type = castAst(arrow->a->return_type, Constant))
+            if (Constant *return_type = castAst(arrow->a->out_type, Constant))
               if (return_type->value == &builtins.Set->v)
                 valid_type = true;
           }
@@ -2451,15 +2645,21 @@ parseTopLevel(EngineState *state)
       {
         switch (keyword)
         {
+          case Keyword_Breakhere:
+          {
+            breakhere;
+          } break;
+
           case Keyword_Typedef:
-              parseTypedef(arena);
-              break;
+          {
+            parseTypedef(arena);
+          } break;
 
           case Keyword_Print:
           {
             if (auto parsing = parseExpressionFull(temp_arena))
             {
-              Ast *reduced = normalize(temp_arena, parsing.ast);
+              Value *reduced = normalize(temp_arena, evaluate(temp_arena, parsing.ast));
               printAst(0, reduced, {.detailed=true});
               printToBuffer(0, ": ");
               printAst(0, &parsing.type->a, {});
@@ -2498,7 +2698,7 @@ parseTopLevel(EngineState *state)
               if (optionalChar(':'))
               {
                 if (Ast *type = parseExpression(temp_arena))
-                  expected_type = toValue(normalize(temp_arena, type));
+                  expected_type = evaluate(temp_arena, type);
               }
               if (noError())
                 buildExpressionGlobal(temp_arena, ast, expected_type);
@@ -2524,8 +2724,8 @@ parseTopLevel(EngineState *state)
             pushContextName("constant definition: CONSTANT := VALUE;");
             if (Ast *value = parseExpression(arena))
             {
-              Ast *norm = normalize(arena, value);
-              addGlobalBinding(name, toValue(norm));
+              Value *norm = evaluate(arena, value);
+              addGlobalBinding(name, norm);
               requireChar(';');
             }
           } break;

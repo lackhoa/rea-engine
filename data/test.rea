@@ -20,31 +20,29 @@ testLocalVariable :: (x: Nat) -> Nat
  }
 check truth: testLocalVariable(1) = 6;
 
-testCurrying :: (a: Nat) -> (b, c: Nat) -> a+(b+c) = (a+b)+c
+testCurrying :: (a: Nat) -> (b, c: Nat) -> (a+b)+c = a+(b+c)
 {
  fork a
  {
   s(a'):
-  out :: (b', c': Nat) -> a+b'+c' = (a+b')+c'
+  out :: (b', c': Nat) -> (a+b')+c' = a+b'+c'
   { plusAssociative(a, b', c') }
   out,
 
   0:
-  out :: (b, c: Nat) -> a + (b + c) = (a + b) + c
+  out :: (b, c: Nat) -> (a+b)+c = a+(b+c)
   { plusAssociative(a, b, c) }
   out,
   }
  }
-print testCurrying(1);
 
-testCurrying2 :: (a, b, c: Nat) -> a+(b+c) = (a+b)+c
+testCurrying2 :: (a, b, c: Nat) -> (a+b)+c = a+(b+c)
 {
- fun :: (b',c': Nat) -> a+(b'+c') = (a+b')+c'
+ fun :: (b',c': Nat) -> (a+b')+c' = a+(b'+c')
  { plusAssociative(a, b', c') }
 
  fun(b,c)
  }
-print testCurrying2(1,2,3);
 
 testCurrying3 :: (a: Nat) -> Nat
 {
@@ -53,3 +51,13 @@ testCurrying3 :: (a: Nat) -> Nat
  f(a)
  }
 check truth: testCurrying3(2) = 6;
+
+;; I can't see anything!
+;; mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*(b*c)
+;; {
+;;  fork a
+;;  {
+;;   0: truth,
+;;   s(a'): mulAssociative(a',b,c),
+;;   }
+;;  }
