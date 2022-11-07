@@ -69,7 +69,8 @@ newToken(const char *text)
 }
 
 struct Ast;
-struct ErrorAttachment { char *string; Ast *expression;};
+enum AttachmentType { AttachmentType_Ast, AttachmentType_Value, };
+struct ErrorAttachment { char *string; AttachmentType type; void *p; };
 
 struct ParseErrorData
 {
@@ -78,8 +79,8 @@ struct ParseErrorData
     s32          column;
     char        *context;
 
-    s32             attached_count;
-    ErrorAttachment attached[8];
+    s32             attachment_count;
+    ErrorAttachment attachments[8];
 };
 typedef ParseErrorData* ParseError;
 

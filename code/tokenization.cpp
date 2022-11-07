@@ -86,16 +86,19 @@ printCharToBufferRepeat(char *buffer, char c, s32 repeat)
 global_variable Tokenizer *global_tokenizer;
 
 inline void
-pushAttachment(Tokenizer *tk, char *string, Ast *exp)
+pushAttachment(char *string, Ast *ast)
 {
-    assert(tk->error->attached_count < arrayCount(tk->error->attached));
-    tk->error->attached[tk->error->attached_count++] = {string, exp};
+  ParseError error = global_tokenizer->error;
+  assert(error->attachment_count < arrayCount(error->attachments));
+  error->attachments[error->attachment_count++] = {string, AttachmentType_Ast, ast};
 }
 
 inline void
-pushAttachment(char *string, Ast *exp)
+pushAttachment(char *string, Value *value)
 {
-    pushAttachment(global_tokenizer, string, exp);
+  ParseError error = global_tokenizer->error;
+  assert(error->attachment_count < arrayCount(error->attachments));
+  error->attachments[error->attachment_count++] = {string, AttachmentType_Value, value};
 }
 
 internal void

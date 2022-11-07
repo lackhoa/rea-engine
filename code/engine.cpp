@@ -233,7 +233,7 @@ introduce(Environment *env, s32 count, Token *names, Ast **types_ast, s32 depth_
   for (s32 id = 0; id < count; id++)
   {
     types[id] = (evaluate(*env, types_ast[id]));
-    StackRef *ref    = newValue(temp_arena, StackRef, names+id, types[id]);
+    StackRef *ref    = newValue(temp_arena, StackRef, types[id]);
     ref->name        = names[id];
     ref->id          = id;
     ref->stack_depth = env->stack->depth;
@@ -622,7 +622,7 @@ normalize(Environment env, Value *in0)
         ArrowV *signature = castValue(norm_op->type, ArrowV);
         Value *return_type = evaluate(env, signature->a->out_type);
 
-        CompositeV *out = newValue(env.arena, CompositeV, &in->v.a.token, return_type);
+        CompositeV *out = newValue(env.arena, CompositeV, return_type);
         out->arg_count = in->arg_count;
         out->op        = norm_op;
         out->args      = norm_args;
@@ -801,7 +801,7 @@ evaluate(Environment env, Ast *in0)
       ArrowV *signature = castValue(norm_op->type, ArrowV);
       Value *return_type = evaluate(env, signature->a->out_type);
 
-      CompositeV *out = newValue(env.arena, CompositeV, &in->a.token, return_type);
+      CompositeV *out = newValue(env.arena, CompositeV, return_type);
       out->arg_count = in->arg_count;
       out->op        = norm_op;
       out->args      = norm_args;
@@ -845,7 +845,7 @@ evaluate(Environment env, Ast *in0)
     case AC_Arrow:
     {// we can't do anything here, so just store it off somewhere.
       Arrow *in = castAst(in0, Arrow);
-      ArrowV *out = newValue(env.arena, ArrowV, &in->a.token, &builtins.Type->v);
+      ArrowV *out = newValue(env.arena, ArrowV, &builtins.Type->v);
       out->a     = in;
       out->stack = env.stack;
       out0 = &out->v;
@@ -873,7 +873,8 @@ evaluate(Environment env, Ast *in0)
           {
             Function  *item        = castAst(item0, Function);
             Value     *signature_v = evaluate(env, &item->signature->a);
-            FunctionV *funv        = newValue(arena, FunctionV, &item->a.token, signature_v);
+            FunctionV *funv        = newValue(arena, FunctionV, signature_v);
+            funv->token = item->a.token;
             funv->a     = item;
             funv->stack = env.stack;
             env.stack->args[env.stack->arg_count++] = &funv->v;
@@ -942,7 +943,7 @@ addLocalBindings(Environment *env, s32 count, Token *names, Ast **types, b32 sho
     if (should_build_types)
       types[id] = buildExpression(env, types[id], 0).ast;
     Value    *type       = evaluate(*env, types[id]);
-    StackRef *ref        = newValue(temp_arena, StackRef, names+id, type);
+    StackRef *ref        = newValue(temp_arena, StackRef, type);
     env->stack->args[id] = &ref->v;
 
     ref->name        = names[id];
@@ -1112,22 +1113,22 @@ optionalChar(char c)
 internal Form *
 addBuiltinForm(MemoryArena *arena, char *name, Value *type, const char **ctor_names, s32 ctor_count)
 {
+  Form *form = newValue(arena, Form, type);
   Token form_name = newToken(name);
-  Form *form = newValue(arena, Form, &form_name, type);
 
   Form *ctors = pushArray(arena, ctor_count, Form);
   for (s32 ctor_id = 0; ctor_id < ctor_count; ctor_id++)
   {
     Form *ctor = ctors + ctor_id;
     Token ctor_name = newToken(ctor_names[ctor_id]);
-    initValue(&ctor->v, AC_Form, &ctor_name, &form->v);
-    initForm(ctor, ctor_id);
+    initValue(&ctor->v, AC_Form, &form->v);
+    initForm(ctor, &ctor_name, ctor_id);
     if (!addGlobalBinding(&ctor_name, &ctor->v))
       invalidCodePath;
   }
 
-  initForm(form, ctor_count, ctors, getNextFormId());
-  if (!addGlobalBinding(&form_name, &form->v))
+  initForm(form, &form_name, ctor_count, ctors, getNextFormId());
+  if (!addGlobalBinding(&form->token, &form->v))
     invalidCodePath;
 
   return form;
@@ -1285,9 +1286,9 @@ printRewrites(Environment env)
 {
   for (RewriteRule *rewrite = env.rewrite; rewrite; rewrite = rewrite->next)
   {
-    printAst(0, &rewrite->lhs->a, {});
+    printValue(0, rewrite->lhs, {});
     printToBuffer(0, " => ");
-    printAst(0, &rewrite->rhs->a, {});
+    printValue(0, rewrite->rhs, {});
     if (rewrite->next)
       printToBuffer(0, ", ");
   }
@@ -1508,7 +1509,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
         else
         {
           parseError(in->op, "operator must have an arrow type");
-          pushAttachment("got type", &op_type->a);
+          pushAttachment("got type", op_type);
         }
       }
     } break;
@@ -1563,9 +1564,10 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
         // note: store the built signature, maybe to display it later.
         in->signature = castAst(build_signature.ast, Arrow);
         Value *signature_v = evaluate(*env, &in->signature->a);
-        FunctionV *funv = newValue(arena, FunctionV, &in->a.token, signature_v);
+        FunctionV *funv = newValue(arena, FunctionV, signature_v);
         // note: we only need that funv there for the type.
         funv->a = &dummy_function_under_construction;
+        funv->token = in->a.token;
 
         // note: add binding first to support recursion
         b32 is_local = (bool)env->bindings;
@@ -1645,7 +1647,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
           if (!rule_valid)
           {
             parseError(in0, "invalid rewrite rule, can only be equality");
-            pushAttachment("got", &build_rewrite.type->a);
+            pushAttachment("got", build_rewrite.type);
           }
         }
       }
@@ -1712,8 +1714,8 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                     else
                     {
                       parseError(ctor_token, "constructor of wrong type");
-                      pushAttachment("expected type", &subject_type->a);
-                      pushAttachment("got type", &ctor->v.type->a);
+                      pushAttachment("expected type", subject_type);
+                      pushAttachment("got type", ctor->v.type);
                     }
                   }
                   else
@@ -1727,7 +1729,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                         {
                           addLocalBindings(&env, param_count, params->names, ctor_sig->a->param_types, false);
                           Value *pattern_type = evaluate(env, ctor_sig->a->out_type);
-                          CompositeV *pattern = newValue(temp_arena, CompositeV, &ctor->v.a.token, pattern_type);
+                          CompositeV *pattern = newValue(temp_arena, CompositeV, pattern_type);
                           pattern->op        = &ctor->v;
                           pattern->arg_count = param_count;
                           pattern->args      = env.stack->args;
@@ -1739,14 +1741,14 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                       else
                       {
                         parseError(ctor_token, "composite constructor has wrong return type");
-                        pushAttachment("expected type", &subject_type->a);
+                        pushAttachment("expected type", subject_type);
                         pushAttachment("got type", ctor_sig->a->out_type);
                       }
                     }
                     else
                     {
                       parseError(ctor_token, "expected a composite constructor");
-                      pushAttachment("got type", &ctor_sig->v.a);
+                      pushAttachment("got type", &ctor_sig->v);
                     }
                   }
 
@@ -1755,7 +1757,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                     if (correct_bodies[ctor->ctor_id])
                     {
                       parseError(in->parsing->bodies[input_case_id], "fork case handled twice");
-                      pushAttachment("constructor", &ctor->v.a);
+                      pushAttachment("constructor", &ctor->v);
                     }
                     else
                     {
@@ -1793,7 +1795,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
         else
         {
           parseError(in->subject, "cannot fork expression of type");
-          pushAttachment("type", &subject_type->a);
+          pushAttachment("type", subject_type);
         }
       }
     } break;
@@ -1812,8 +1814,8 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
         parseError(in0, "actual type differs from expected type");
         global_debug_mode = true;
         normalize(*env, expected_type);
-        pushAttachment("expected", &norm_expected->a);
-        pushAttachment("got", &norm_actual->a);
+        pushAttachment("expected", norm_expected);
+        pushAttachment("got", norm_actual);
       }
     }
   }
@@ -2448,8 +2450,8 @@ parseConstructorDef(MemoryArena *arena, Form *out, Form *form, s32 ctor_id)
 
           if (valid_type)
           {
-            initValue(&out->v, AC_Form, &ctor_token, norm_type0);
-            initForm(out, ctor_id);
+            initValue(&out->v, AC_Form, norm_type0);
+            initForm(out, &ctor_token, ctor_id);
           }
           else
           {
@@ -2463,8 +2465,8 @@ parseConstructorDef(MemoryArena *arena, Form *out, Form *form, s32 ctor_id)
         // default type is the form itself
         if (form->v.type == &builtins.Set->v)
         {
-          initValue(&out->v, AC_Form, &ctor_token, &form->v);
-          initForm(out, ctor_id);
+          initValue(&out->v, AC_Form, &form->v);
+          initForm(out, &ctor_token, ctor_id);
         }
         else
           parseError(&ctor_token, "constructors must construct a set member");
@@ -2513,7 +2515,7 @@ parseTypedef(MemoryArena *arena)
           else
           {
             parseError(type_parsing.ast, "form has invalid type");
-            pushAttachment("type", &norm_type->a);
+            pushAttachment("type", norm_type);
           }
         }
       }
@@ -2526,8 +2528,8 @@ parseTypedef(MemoryArena *arena)
         if (noError(&tk_copy))
         {
           Form *ctors = pushArray(arena, expected_ctor_count, Form);
-          initValue(&form->v, AC_Form, &form_name, type);
-          initForm(form, expected_ctor_count, ctors, getNextFormId());
+          initValue(&form->v, AC_Form, type);
+          initForm(form, &form_name, expected_ctor_count, ctors, getNextFormId());
           s32 parsed_ctor_count = 0;
           for (s32 stop = 0;
                !stop && noError();)
@@ -2660,9 +2662,9 @@ parseTopLevel(EngineState *state)
             if (auto parsing = parseExpressionFull(temp_arena))
             {
               Value *reduced = normalize(temp_arena, evaluate(temp_arena, parsing.ast));
-              printAst(0, reduced, {.detailed=true});
+              printValue(0, reduced, {.detailed=true});
               printToBuffer(0, ": ");
-              printAst(0, &parsing.type->a, {});
+              printValue(0, parsing.type, {});
               myprint();
             }
             requireChar(';');
@@ -2674,7 +2676,7 @@ parseTopLevel(EngineState *state)
             {
               printAst(0, parsing.ast, {.detailed=true});
               printToBuffer(0, ": ");
-              printAst(0, &parsing.type->a, {});
+              printValue(0, parsing.type, {});
               myprint();
             }
             requireChar(';');
@@ -2793,17 +2795,28 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
              error->context,
              error->message.base);
 
-      if (error->attached_count > 0)
+      if (error->attachment_count > 0)
       {
         printf("\n");
         for (int attached_id = 0;
-             attached_id < error->attached_count;
+             attached_id < error->attachment_count;
              attached_id++)
         {
-          auto attachment = error->attached[attached_id];
+          auto attachment = error->attachments[attached_id];
           printf("%s: ", attachment.string);
-          printAst(0, attachment.expression, {});
-          if (attached_id != error->attached_count-1) 
+          switch (attachment.type)
+          {
+            case AttachmentType_Ast:
+            {
+              printAst(0, (Ast*)attachment.p, {});
+            } break;
+
+            case AttachmentType_Value:
+            {
+              printValue(0, (Value*)attachment.p, {});
+            } break;
+          }
+          if (attached_id != error->attachment_count-1) 
             printf("\n");
         }
       }

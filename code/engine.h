@@ -106,7 +106,7 @@ newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
 b32 identicalB32(Value *lhs, Value *rhs);
 
 #define castAst(exp, Cat) ((exp)->cat == AC_##Cat ? (Cat*)(exp) : 0)
-#define castValue(exp, Cat) ((isValue(AC_##Cat) && (exp)->a.cat == AC_##Cat) ? (Cat*)(exp) : 0)
+#define castValue(exp, Cat) ((isValue(AC_##Cat) && (exp)->cat == AC_##Cat) ? (Cat*)(exp) : 0)
 
 struct Identifier
 {
@@ -277,40 +277,33 @@ extendBindings(MemoryArena *arena, LocalBindings *outer)
 
 struct Value
 {
-  union
-  {
-    struct {
-      AstCategory cat;
-      Token       token;
-    };
-    Ast a;
-  };
+  AstCategory cat;
   Value *type;
 };
 
 inline void
-initValue(Value *in, AstCategory cat, Token *token, Value *type)
+initValue(Value *in, AstCategory cat, Value *type)
 {
   assert(isValue(cat));
-  in->a.cat   = cat;
-  in->a.token = *token;
-  in->type    = type;
+  in->cat  = cat;
+  in->type = type;
 }
 
 inline Value *
-newValue_(MemoryArena *arena, AstCategory cat, Token *token, Value *type, size_t size)
+newValue_(MemoryArena *arena, AstCategory cat, Value *type, size_t size)
 {
   Value *out = (Value *)pushSize(arena, size, true);
-  initValue(out, cat, token, type);
+  initValue(out, cat, type);
   return out;
 }
 
-#define newValue(arena, cat, token, type)                        \
-  ((cat *) newValue_(arena, AC_##cat, token, type, sizeof(cat)))
+#define newValue(arena, cat, type)                        \
+  ((cat *) newValue_(arena, AC_##cat, type, sizeof(cat)))
 
 struct Form
 {
   Value v;
+  Token token;
 
   s32  ctor_id;
 
@@ -319,18 +312,20 @@ struct Form
 };
 
 inline void
-initForm(Form *in, s32 ctor_count, Form *ctors, s32 ctor_id)
+initForm(Form *in, Token *token, s32 ctor_count, Form *ctors, s32 ctor_id)
 {
-  in->v.a.cat    = AC_Form;
+  in->v.cat      = AC_Form;
+  in->token      = *token;
   in->ctor_count = ctor_count;
   in->ctors      = ctors;
   in->ctor_id    = ctor_id;
 }
 
 inline void
-initForm(Form *in, s32 ctor_id)
+initForm(Form *in, Token *token, s32 ctor_id)
 {
-  in->v.a.cat    = AC_Form;
+  in->v.cat      = AC_Form;
+  in->token      = *token;
   in->ctor_id    = ctor_id;
   in->ctor_count = 0;
   in->ctors      = 0;
@@ -348,6 +343,7 @@ struct FunctionV
 {
   Value v;
 
+  Token     token;
   Function *a;
   Stack    *stack;
 };
