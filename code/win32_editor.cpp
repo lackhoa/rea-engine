@@ -1,5 +1,4 @@
 #include <windows.h>
-#include <winnt.h>
 
 #include "utils.h"
 #include "platform.h"
@@ -340,7 +339,6 @@ void *platformVirtualAlloc(void *base_address, size_t size)
   return out;
 }
 
-#include <stdio.h>
 int main()
 {
     int code = 0;

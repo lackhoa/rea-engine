@@ -7,17 +7,29 @@
 #include "rea_globals.h"
 #include "print.cpp"
 
-#define TRANSITION 1
+#if REA_INTERNAL
+#  define INTERNAL_ERROR global_tokenizer->error
+#else
+#  define INTERNAL_ERROR false
+#endif
+s32 global_variable debug_indentation;
+inline void
+debugIndent()
+{
+  debug_indentation++;
+  for (s32 id = 0; id < debug_indentation; id++)
+    myprint(" ");
+}
 
-global_variable b32 global_debug_mode;
+inline void
+debugDedent()
+{
+  for (s32 id = 0; id < debug_indentation; id++)
+    myprint(" ");
+  debug_indentation--;
+}
+
 #define NULL_WHEN_ERROR(name) if (noError()) {assert(name);} else {name = {};}
-
-// Important: all parsing must be aborted when the tokenizer encounters error.
-
-#define VARIABLE_MATCHER(name) \
-  b32 name(Environment env, Variable *in, void* opt)
-
-typedef VARIABLE_MATCHER(variable_matcher);
 
 // todo: #speed copying values around
 inline void
@@ -38,142 +50,6 @@ extendStack(Environment *env, s32 arg_count, Value **args, s32 depth_override=0)
 
   env->stack = stack;
 }
-
-inline void
-myprint(char *str)
-{
-  printToBuffer(0, str);
-}
-
-#if 0
-internal b32
-searchVariable(Environment env, Ast *in, variable_matcher *matcher, void *opt)
-{
-  b32 found = false;
-  switch (in->cat)
-  {
-    case AC_Variable:
-    {
-      Variable *var = castAst(in, Variable);
-      found = matcher(env, var, opt);
-  } break;
-
-    case AC_Fork:
-    {
-      Fork *fork = castAst(in, Fork);
-      if (searchVariable(env, fork->subject, matcher, opt))
-        found = true;
-      else
-      {
-        for (s32 case_id = 0; case_id < fork->case_count; case_id++)
-        {
-          env.stack_offset++;
-          if (searchVariable(env, fork->bodies[case_id], matcher, opt))
-          {
-            found = true;
-            break;
-          }
-        }
-      }
-    } break;
-
-    case AC_Composite:
-    {
-      auto app = castAst(in, Composite);
-      if (searchVariable(env, app->op, matcher, opt))
-        found = true;
-      else
-      {
-        for (int arg_id = 0; arg_id < app->arg_count; arg_id++)
-        {
-          if (searchVariable(env, app->args[arg_id], matcher, opt))
-          {
-            found = true;
-            break;
-          }
-        }
-      }
-    } break;
-
-    case AC_Arrow:
-    {
-      auto arrow = castAst(in, Arrow);
-      env.stack_offset++;
-      if (searchVariable(env, arrow->return_type, matcher, opt))
-        found = true;
-      else
-      {
-        for (int param_id = 0;
-             param_id < arrow->param_count;
-             param_id++)
-        {
-          // we only wanna search the types, since we probably don't care about
-          // the parameters.
-          if (searchVariable(env, arrow->param_types[param_id], matcher, opt))
-          {
-            found = true;
-            break;
-          }
-        }
-      }
-    }
-  }
-  return found;
-}
-
-VARIABLE_MATCHER(isAnyVariable)
-{
-  (void) opt; (void) in; (void) env;
-  return true;
-}
-
-inline b32
-hasAnyVariable(Ast *in)
-{
-  Environment env = newEnvironment(temp_arena);
-  return searchVariable(env, in, isAnyVariable, 0);
-}
-#endif
-
-#if 0
-VARIABLE_MATCHER(isFreeVariable)
-{
-  (void) opt;
-  return (in->stack_delta >= env.stack_offset) && (in->stack_depth == 0);
-}
-
-inline b32
-hasFreeVariable(Ast *in)
-{
-  Environment env = newEnvironment(temp_arena);
-  return searchVariable(env, in, isFreeVariable, 0);
-}
-
-VARIABLE_MATCHER(isInstantiatedVariable)
-{
-  (void) opt; (void) env;
-  return in->stack_depth != 0;
-}
-
-inline b32
-hasInstantiated(Ast *in)
-{
-  Environment env = newEnvironment(temp_arena);
-  return searchVariable(env, in, isInstantiatedVariable, 0);
-}
-
-VARIABLE_MATCHER(isDeepVariable)
-{
-  (void) opt;
-  return in->stack_depth > env.stack_depth;
-}
-
-inline b32
-hasDeepVariable(Environment env, Ast *in)
-{
-  return searchVariable(env, in, isDeepVariable, 0);
-}
-#endif
 
 inline b32
 identicalB32(Value *lhs, Value *rhs)
@@ -303,9 +179,6 @@ identicalTrinary(Value *lhs0, Value *rhs0) // TODO: turn the args into values
           s32 l_depth = getStackDepth(lhs->stack);
           s32 r_depth = getStackDepth(rhs->stack);
           s32 new_depth = maximum(l_depth, r_depth)+1;
-          // s32 rl_stack_delta = r_depth - l_depth;
-          // s32 l_stack_offset = (rl_stack_delta >= 0) ? rl_stack_delta : 0;
-          // s32 r_stack_offset = (rl_stack_delta >= 0) ? 0 : -rl_stack_delta;
           Environment lenv = newEnvironment(temp_arena);
           Environment renv = newEnvironment(temp_arena);
           lenv.stack = lhs->stack;
@@ -508,8 +381,9 @@ normalize(Environment env, Value *in0)
   Value *out0 = {};
   MemoryArena *arena = env.arena;
 
-  if (global_debug_mode)
+  if (INTERNAL_ERROR)
   {
+    debugIndent();
     myprint("normalize: ");
     myprint(in0);
     myprint();
@@ -521,11 +395,8 @@ normalize(Environment env, Value *in0)
     case AC_Variable:
     {
       Variable *in = castAst(in0, Variable);
-      assert(env.stack_offset >= 0);
-      assert(in->stack_delta >= 0);
-      s32 stack_delta = in->stack_delta + env.stack_offset;
       Stack *stack = env.stack;
-      for (s32 delta = 0; delta < stack_delta; delta++)
+      for (s32 delta = 0; delta < in->stack_delta ; delta++)
         stack = stack->outer;
       if (!(in->id < stack->arg_count))
       {
@@ -541,35 +412,6 @@ normalize(Environment env, Value *in0)
       Constant *in = castAst(in0, Constant);
       out0 = in->value;
     } break;
-
-#if !TRANSITION
-    case AC_Composite:
-    {
-      Composite *in = castAst(in0, Composite);
-
-      Value **norm_args = pushArray(arena, in->arg_count, Value*);
-      for (auto arg_id = 0;
-           arg_id < in->arg_count;
-           arg_id++)
-      {
-        Ast *in_arg = in->args[arg_id];
-        norm_args[arg_id] = (normalize(env, in_arg));
-      }
-
-      Value *norm_op = (normalize(env, in->op));
-      ArrowV *signature = castValue(norm_op->type, ArrowV);
-      Value *return_type = (normalize(env, signature->a->out_type));
-
-      CompositeV *out = newValue(env.arena, CompositeV, &in->a.token, return_type);
-      out->arg_count = in->arg_count;
-      out->op        = norm_op;
-      out->args      = norm_args;
-
-      out0 = &out->v.a;
-
-      out0 = normalize(env, out0);
-    } break;
-#endif
 
     case AC_CompositeV:
     {
@@ -632,84 +474,6 @@ normalize(Environment env, Value *in0)
       assert(out0->cat);
     } break;
 
-#if !TRANSITION
-    case AC_Fork:
-    {
-      Fork *in = castAst(in0, Fork);
-      Ast *norm_subject = normalize(env, in->subject);
-
-      Environment fork_env = env;
-      switch (norm_subject->cat)
-      {
-        case AC_Form:
-        {
-          Form *ctor = castAst(norm_subject, Form);
-          extendStack(&fork_env, 0, 0);
-          out0 = normalize(fork_env, in->bodies[ctor->ctor_id]);
-        } break;
-
-        case AC_CompositeV:
-        {
-          CompositeV *subject = castAst(norm_subject, CompositeV);
-          if (Form *ctor = castAst(subject->op, Form))
-          {
-            Ast *body = in->bodies[ctor->ctor_id];
-            extendStack(&fork_env, subject->arg_count, subject->args);
-            out0 = normalize(fork_env, body);
-          }
-        } break;
-
-        default:
-          // note: we fail if the fork is undetermined
-          out0 = 0;
-      }
-    } break;
-
-    case AC_Sequence:
-    {
-      Sequence *in = castAst(in0, Sequence);
-      for (s32 id = 0; id < in->count-1; id++)
-      {
-        Ast *item0 = in->items[id];
-        switch (item0->cat)
-        {// todo: this has to be inline because we pass env by value. Might
-         // actually be cleaner, but we need to sync with "buildExpession".
-          case AC_Rewrite:
-          {} break;
-
-          case AC_Let:
-          {
-            Let *item = castAst(item0, Let);
-            env.stack->args[env.stack->arg_count++] = (normalize(env, item->rhs));
-          } break;
-
-          case AC_Function:
-          {
-            Function  *item        = castAst(item0, Function);
-            Value     *signature_v = (normalize(env, &item->signature->a));
-            FunctionV *funv        = newValue(arena, FunctionV, &item->a.token, signature_v);
-            funv->a     = item;
-            funv->stack = env.stack;
-            env.stack->args[env.stack->arg_count++] = &funv->v;
-          } break;
-
-          // todo screen the input
-          invalidDefaultCase;
-        }
-      }
-      out0 = normalize(env, in->items[in->count-1]);
-    } break;
-
-    case AC_Arrow:
-    {// we can't do anything here, so just store it off somewhere.
-      Arrow *in = castAst(in0, Arrow);
-      ArrowV *out = newValue(env.arena, ArrowV, &in->a.token, &builtins.Type->v);
-      out->a = in;
-      out->stack = env.stack;
-      out0 = &out->v.a;
-    } break;
-#endif
-
     case AC_ArrowV:
     case AC_FunctionV:
     case AC_StackRef:
@@ -730,8 +494,9 @@ normalize(Environment env, Value *in0)
                                    // rewriteExpression already did the loop)
   }
 
-  if (global_debug_mode)
+  if (INTERNAL_ERROR)
   {
+    debugDedent();
     myprint("=> ");
     myprint(out0);
     myprint();
@@ -752,8 +517,9 @@ evaluate(Environment env, Ast *in0)
   Value *out0 = 0;
   MemoryArena *arena = env.arena;
 
-  if (global_debug_mode)
+  if (INTERNAL_ERROR)
   {
+    debugIndent();
     myprint("evaluate: ");
     myprint(in0);
     myprint();
@@ -764,11 +530,8 @@ evaluate(Environment env, Ast *in0)
     case AC_Variable:
     {
       Variable *in = castAst(in0, Variable);
-      assert(env.stack_offset >= 0);
-      assert(in->stack_delta >= 0);
-      s32 stack_delta = in->stack_delta + env.stack_offset;
       Stack *stack = env.stack;
-      for (s32 delta = 0; delta < stack_delta; delta++)
+      for (s32 delta = 0; delta < in->stack_delta; delta++)
         stack = stack->outer;
       if (!(in->id < stack->arg_count))
       {
@@ -890,9 +653,10 @@ evaluate(Environment env, Ast *in0)
     invalidDefaultCase;
   }
 
-  if (global_debug_mode)
+  if (INTERNAL_ERROR)
   {
-    myprint(" => ");
+    debugDedent();
+    myprint("=> ");
     myprint(out0);
     myprint();
   }
@@ -1178,109 +942,6 @@ precedenceOf(Token *op)
   return out;
 }
 
-#define VARIABLE_TRANSFORMER(name)              \
-  Ast *name(Environment env, Variable *in, void *opt)
-
-typedef VARIABLE_TRANSFORMER(variable_transformer);
-
-#if 0
-// note: this makes a copy (todo: #mem don't copy if not necessary)
-// todo cheesing out on functions right now
-inline Ast *
-transformVariables(Environment env, Ast *in0, variable_transformer *transformer, void *opt)
-{
-  Ast *out0 = 0;
-  switch (in0->cat)
-  {
-    case AC_Variable:
-    {
-      Variable *in_var = castAst(in0, Variable);
-      out0 = transformer(env, in_var, opt);
-    } break;
-
-    case AC_Composite:
-    {
-      Composite *in  = castAst(in0, Composite);
-      Composite *out = copyStruct(env.arena, in);
-      out0 = &out->a;
-      out->op = transformVariables(env, in->op, transformer, opt);
-      allocateArray(env.arena, out->arg_count, out->args);
-      for (s32 arg_id = 0; arg_id < out->arg_count; arg_id++)
-      {
-        out->args[arg_id] = transformVariables(env, in->args[arg_id], transformer, opt);
-      }
-    } break;
-
-    case AC_Fork:
-    {
-      Fork *in_fork  = castAst(in0, Fork);
-      Fork *out_fork = copyStruct(env.arena, in_fork);
-      out0 = &out_fork->a;
-      out_fork->subject = transformVariables(env, in_fork->subject, transformer, opt);
-      allocateArray(env.arena, out_fork->case_count, out_fork->params);
-      env.stack_offset++;
-      for (s32 case_id = 0;
-           case_id < out_fork->case_count;
-           case_id++)
-      {
-        out_fork->params[case_id] = in_fork->params[case_id];
-        out_fork->bodies[case_id] = transformVariables(env, in_fork->bodies[case_id], transformer, opt);
-      }
-    } break;
-
-    default:
-        out0 = in0;
-  }
-  return out0;
-}
-
-VARIABLE_TRANSFORMER(abstractInstantiated)
-{
-  (void) opt;
-  Variable *out;
-  if (in->stack_depth)
-  {
-    assert(in->stack_depth);
-    out = copyStruct(env.arena, in);
-    out->stack_delta = env.stack_depth + env.stack_offset - in->stack_depth;
-    out->stack_depth = 0;
-  }
-  else
-  {
-    assert(in->stack_delta < env.stack_offset);
-    out = in;
-  }
-  return &out->h;
-}
-
-internal Ast *
-abstractExpression(Environment env, Ast *in)
-{
-  return transformVariables(env, in, abstractInstantiated, 0);
-}
-#endif
-
-// think of a function application
-VARIABLE_TRANSFORMER(replaceCurrentLevelVariable)
-{
-  Ast **args = (Ast **)opt;
-  if (env.stack_offset == in->stack_delta)
-    return args[in->id];
-  else
-    return &in->a;
-}
-
-#if 0
-// think of a function application
-internal Ast *
-replaceCurrentLevel(Environment env, Ast *in, Ast **args)
-{
-  Ast *out = transformVariables(env, in, replaceCurrentLevelVariable, args);
-  // assert(identicalB32(in->type, out->type));
-  return out;
-}
-#endif
-
 inline void
 printRewrites(Environment env)
 {
@@ -1335,37 +996,6 @@ addRewrite(Environment *env, Value *lhs0, Value *rhs0)
 #endif
   }
 }
-
-VARIABLE_TRANSFORMER(rebaseVariable)
-{
-  Variable *out = 0;
-  s32 *adjustment = (s32 *)opt;
-  if (in->stack_delta >= env.stack_offset)
-  {
-    out = copyStruct(env.arena, in);
-    out->stack_delta += *adjustment;
-  }
-  else
-    out = in;
-  return &out->a;
-}
-
-#if 0
-inline Ast *
-rebaseDownExpr(MemoryArena *arena, Ast *in)
-{
-  s32 adjustment = +1;
-  Ast *out = transformVariables(newEnvironment(arena), in, rebaseVariable, &adjustment);
-  return out;
-}
-
-inline Ast *
-rebaseUpExpr(MemoryArena *arena, Ast *in)
-{
-  s32 adjustment = -1;
-  return transformVariables(newEnvironment(arena), in, rebaseVariable, &adjustment);
-}
-#endif
 
 inline void
 unwindStack(Environment *env)
@@ -1606,49 +1236,22 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
     case AC_Rewrite:
     {
       Rewrite *in = castAst(in0, Rewrite);
-#if 0
-      if (in->rhs)
+      if (Expression build_rewrite = buildExpression(env, in->proof, 0))
       {
-        Ast *lhs = in->lhs = buildExpression(env, in->lhs, 0).ast;
-        Ast *rhs = in->rhs = buildExpression(env, in->rhs, 0).ast;
-        Value *norm_lhs_begin = normalize(*env, lhs);
-        Value *norm_lhs = norm_lhs_begin;
-        Value *norm_rhs = (normalize(*env, rhs));
-        while (noError())
+        in->proof = build_rewrite.ast;
+        b32 rule_valid = false;
+        if (CompositeV *norm_rule = castValue(build_rewrite.type, CompositeV))
         {
-          if (identicalB32(norm_lhs, norm_rhs))
+          if (norm_rule->op == &builtins.identical->v)
           {
-            addRewrite(env, norm_lhs_begin, norm_rhs);
-            break;
-          }
-          Value *before = norm_lhs;
-          norm_lhs = (normalize(*env, &norm_lhs->a));
-          if (identicalB32(norm_lhs, before))
-          {
-            parseError(in0, "failed to prove legitimacy of rewrite rule");
+            rule_valid = true;
+            addRewrite(env, (norm_rule->args[1]), (norm_rule->args[2]));
           }
         }
-      }
-      else
-#endif
-      {
-        if (Expression build_rewrite = buildExpression(env, in->lhs, 0))
+        if (!rule_valid)
         {
-          in->lhs = build_rewrite.ast;
-          b32 rule_valid = false;
-          if (CompositeV *norm_rule = castValue(build_rewrite.type, CompositeV))
-          {
-            if (norm_rule->op == &builtins.identical->v)
-            {
-              rule_valid = true;
-              addRewrite(env, (norm_rule->args[1]), (norm_rule->args[2]));
-            }
-          }
-          if (!rule_valid)
-          {
-            parseError(in0, "invalid rewrite rule, can only be equality");
-            pushAttachment("got", build_rewrite.type);
-          }
+          parseError(in0, "invalid rewrite rule, can only be equality");
+          pushAttachment("got", build_rewrite.type);
         }
       }
 
@@ -1812,7 +1415,6 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       if (!identicalB32(norm_expected, norm_actual))
       {
         parseError(in0, "actual type differs from expected type");
-        global_debug_mode = true;
         normalize(*env, expected_type);
         pushAttachment("expected", norm_expected);
         pushAttachment("got", norm_actual);
@@ -1867,22 +1469,7 @@ parseRewrite(MemoryArena *arena)
 {
   Token token = global_tokenizer->last_token;
   Rewrite *out = newAst(arena, Rewrite, &token);
-  if (Ast *lhs_or_proof = parseExpressionToAst(arena))
-  {
-    if (optionalCategory(TC_StrongArrow))
-    {
-      if (Ast *rhs = parseExpressionToAst(arena))
-      {
-        out->lhs = lhs_or_proof;
-        out->rhs = rhs;
-      }
-    }
-    else
-    {
-      out->lhs = lhs_or_proof;
-      out->rhs = 0;
-    }
-  }
+  out->proof = parseExpressionToAst(arena);
   NULL_WHEN_ERROR(out);
   return out;
 }

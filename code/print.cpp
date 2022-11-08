@@ -54,16 +54,7 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
       {
         Rewrite *in = castAst(in0, Rewrite);
         printToBuffer(buffer, "rewrite ");
-        if (in->rhs)
-        {
-          printAst(buffer, in->lhs, new_opt);
-          printToBuffer(buffer, " => ");
-          printAst(buffer, in->rhs, new_opt);
-        }
-        else
-        {
-          printAst(buffer, in->lhs, new_opt);
-        }
+        printAst(buffer, in->proof, new_opt);
       } break;
 
       case AC_Composite:
@@ -276,4 +267,10 @@ inline void
 myprint(int d)
 {
   printf("%d", d);
+}
+
+inline void
+myprint(char *c)
+{
+  printf("%s", c);
 }

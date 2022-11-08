@@ -209,7 +209,6 @@ struct Environment
   LocalBindings *bindings;
 
   Stack *stack;
-  s32    stack_offset;
 
   RewriteRule *rewrite;
 };
@@ -493,6 +492,5 @@ struct Expression
 struct Rewrite
 {
   Ast  a;
-  Ast *lhs;
-  Ast *rhs;
+  Ast *proof;
 };
