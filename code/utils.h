@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <ctype.h>
 #include <stdio.h>
 
 //
@@ -84,7 +85,7 @@ newArena(size_t cap, void *base)
 }
 
 inline u8 *
-getArenaNext(MemoryArena *arena)
+getNext(MemoryArena *arena)
 {
     u8 *out = arena->base + arena->used;
     return out;
@@ -291,7 +292,7 @@ equal(char *s1, char *s2)
 internal void
 printToBufferVA(MemoryArena *buffer, char *format, va_list arg_list)
 {
-    char *at = (char *)getArenaNext(buffer);
+    char *at = (char *)getNext(buffer);
     auto printed = vsprintf_s(at, (buffer->cap - buffer->used), format, arg_list);
     buffer->used += printed;
 }
@@ -306,11 +307,11 @@ printToBuffer(MemoryArena *buffer, char *format, ...)
 
   if (buffer)
   {
-    out = (char *)getArenaNext(buffer);
+    out = (char *)getNext(buffer);
     char *at = out;
     auto printed = vsprintf_s(at, (buffer->cap-1 - buffer->used), format, arg_list);
     buffer->used += printed;
-    buffer->base[buffer->used] = 0; // nil-termination
+    buffer->base[buffer->used++] = 0; // nil-termination
   }
   else
     vprintf_s(format, arg_list);
@@ -326,7 +327,7 @@ printToBuffer(MemoryArena *buffer, String s)
   char *out = 0;
   if (buffer)
   {
-    out = (char *)getArenaNext(buffer);
+    out = (char *)getNext(buffer);
     char *at = out;
     const char *c = s.chars;
     for (s32 index = 0; index < s.length; index++)
@@ -341,6 +342,29 @@ printToBuffer(MemoryArena *buffer, String s)
   return out;
 }
 
+#if 0
+inline char *
+printToBuffer(MemoryArena *buffer, char *s)
+{
+  char *out = 0;
+  if (buffer)
+  {
+    out = (char *)getNext(buffer);
+    char *at = out;
+    const char *c = s;
+    for (s32 index = 0; *c; index++)
+      *at++ = *c++;
+    *at = 0;
+    buffer->used = at - (char *)buffer->base;
+    assert(buffer->used <= buffer->cap);
+  }
+  else
+    printf("%s", s);
+
+  return out;
+}
+#endif
+
 inline b32
 belongsToArena(MemoryArena *arena, u8 *memory)
 {
@@ -349,3 +373,25 @@ belongsToArena(MemoryArena *arena, u8 *memory)
 
 #define maximum(a, b) ((a < b) ? b : a)
 #define minimum(a, b) ((a < b) ? a : b)
+
+#define forward_declare
+
+inline b32
+isSubstring(char *full, char* sub, b32 case_sensitive=true)
+{
+  b32 out = true;
+  if (sub && full)
+  {
+    for (char *f = full, *s = sub; *s && *f; s++, f++)
+    {
+      b32 equal = case_sensitive ? (*s != *f) : (tolower(*s) != tolower(*f));
+      if (equal)
+      {
+        if (*s)
+          out = false;
+        break;
+      }
+    }
+  }
+  return out;
+}

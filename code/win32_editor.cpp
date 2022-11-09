@@ -250,7 +250,7 @@ FilePath
 platformGetFileFullPath(MemoryArena* arena, char *file)
 {
     FilePath out;
-    out.path = (char *)getArenaNext(arena);
+    out.path = (char *)getNext(arena);
 
     char *file_part;
     DWORD length = GetFullPathNameA(file, (DWORD)getArenaFree(arena), out.path, &file_part);

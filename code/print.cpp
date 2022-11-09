@@ -11,7 +11,7 @@ printValue(MemoryArena *buffer, Value *in0, PrintOptions opt);
 internal char*
 printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
 {
-  char *out = buffer ? (char*)getArenaNext(buffer) : 0;
+  char *out = buffer ? (char*)getNext(buffer) : 0;
   if (in0 == &dummy_hole)
   {
     printToBuffer(buffer, "_");
@@ -151,7 +151,7 @@ printAst(MemoryArena *buffer, Ast *in0, PrintOptions opt)
 internal char*
 printValue(MemoryArena *buffer, Value *in0, PrintOptions opt)
 {
-  char *out = buffer ? (char*)getArenaNext(buffer) : 0;
+  char *out = buffer ? (char*)getNext(buffer) : 0;
   if (in0)
   {
     PrintOptions new_opt = opt;

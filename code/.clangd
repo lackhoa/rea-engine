@@ -1,6 +1,8 @@
+# note: clang compile command is run in the same dir as the source
 CompileFlags:
   Compiler: clang
   Add:
+    - -I../libs
     - -xc++
     - -ferror-limit=0
     - -DReaWindows

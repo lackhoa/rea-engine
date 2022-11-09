@@ -103,8 +103,6 @@ newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
 #define newAst(arena, cat, token)        \
   ((cat *) newAst_(arena, AC_##cat, token, sizeof(cat)))
 
-b32 identicalB32(Value *lhs, Value *rhs);
-
 #define castAst(exp, Cat) ((exp)->cat == AC_##Cat ? (Cat*)(exp) : 0)
 #define castValue(exp, Cat) ((isValue(AC_##Cat) && (exp)->cat == AC_##Cat) ? (Cat*)(exp) : 0)
 
@@ -232,9 +230,6 @@ newEnvironment(MemoryArena *arena)
   out.arena = arena;
   return out;
 }
-
-inline Ast *
-parseExpressionToAst(MemoryArena *arena);
 
 struct AstList
 {
@@ -494,3 +489,18 @@ struct Rewrite
   Ast  a;
   Ast *proof;
 };
+
+struct FileList
+{
+  char     *first_path;
+  char     *first_content;
+  FileList *next;
+};
+
+struct EngineState
+{
+  MemoryArena *arena;
+  FileList    *file_list;
+};
+
+#include "generated/engine_forward.h"

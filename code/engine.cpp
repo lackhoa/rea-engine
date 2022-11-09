@@ -692,9 +692,6 @@ addLocalBinding(LocalBindings *bindings, Token *key)
   return succeed;
 }
 
-internal Expression
-buildExpression(Environment *env, Ast *in0, Value *expected_type);
-
 inline b32
 addLocalBindings(Environment *env, s32 count, Token *names, Ast **types, b32 should_build_types)
 {
@@ -956,9 +953,6 @@ printRewrites(Environment env)
   myprint();
 }
 
-inline Ast *
-parseExpression(MemoryArena *arena);
-
 internal void
 addRewrite(Environment *env, Value *lhs0, Value *rhs0)
 {
@@ -1012,6 +1006,7 @@ unwindBindingsAndStack(Environment *env)
 
 // important: env can be modified, if the caller expects it.
 // beware: Usually we mutate in-place, but we may also allocate anew.
+forward_declare
 internal Expression
 buildExpression(Environment *env, Ast *in0, Value *expected_type)
 {
@@ -2002,6 +1997,7 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
   return out;
 }
 
+forward_declare
 inline Ast *
 parseExpressionToAst(MemoryArena *arena)
 {
@@ -2150,22 +2146,6 @@ parseTypedef(MemoryArena *arena)
   popContext();
 }
 
-struct FileList
-{
-  char     *first_path;
-  char     *first_content;
-  FileList *next;
-};
-
-struct EngineState
-{
-  MemoryArena *arena;
-  FileList    *file_list;
-};
-
-internal b32
-interpretFile(EngineState *state, FilePath input_path, b32 is_root_file = false);
-
 // NOTE: Main dispatch parse function
 internal void
 parseTopLevel(EngineState *state)
@@ -2213,7 +2193,7 @@ parseTopLevel(EngineState *state)
 
             if (!already_loaded)
             {
-              auto interp_result = interpretFile(state, full_path);
+              auto interp_result = interpretFile(state, full_path, false);
               if (!interp_result)
                 tokenError("failed loading file");
             }
@@ -2345,6 +2325,7 @@ parseTopLevel(EngineState *state)
   popContext();
 }
 
+forward_declare
 internal b32
 interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
 {
@@ -2513,7 +2494,7 @@ engineMain()
   size_t  temp_memory_size = megaBytes(2);
   temp_memory_base = platformVirtualAlloc(temp_memory_base, permanent_memory_size);
   MemoryArena temp_arena_ = newArena(temp_memory_size, temp_memory_base);
-  temp_arena       = &temp_arena_;
+  temp_arena              = &temp_arena_;
 
 #if 1
   if (!beginInterpreterSession(permanent_arena, "../data/basics.rea"))

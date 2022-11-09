@@ -66,14 +66,45 @@ parseExpression(EngineState *state, InstructionVector *instructions, Bindings *b
 }
 #endif
 
-struct Binding
-{};
-
-int foo()
+string Convert(const CXString& s)
 {
-    
+  string result = clang_getCString(s);
+  clang_disposeString(s);
+  return result;
 }
 
-int main()
+void print_function_prototype(CXCursor cursor)
 {
+    // TODO : Print data! 
+    auto type = clang_getCursorType(cursor);
+
+    auto function_name = Convert(clang_getCursorSpelling(cursor));
+    auto return_type   = Convert(clang_getTypeSpelling(clang_getResultType(type)));
+
+    int num_args = clang_Cursor_getNumArguments(cursor);
+    for (int i = 0; i < num_args; ++i)
+    {
+        auto arg_cursor = clang_Cursor_getArgument(cursor, i);
+        auto arg_name = Convert(clang_getCursorSpelling(arg_cursor));
+        if (arg_name.empty())
+        {
+            arg_name = "no name!";
+        }
+
+        auto arg_data_type = Convert(clang_getTypeSpelling(clang_getArgType(type, i)));
+    }
+}
+CXChildVisitResult functionVisitor(CXCursor cursor, CXCursor /* parent */, CXClientData /* clientData */)
+{
+    if (clang_Location_isFromMainFile(clang_getCursorLocation(cursor)) == 0)
+        return CXChildVisit_Continue;
+
+    CXCursorKind kind = clang_getCursorKind(cursor);
+    if ((kind == CXCursorKind::CXCursor_FunctionDecl || kind == CXCursorKind::CXCursor_CXXMethod || kind == CXCursorKind::CXCursor_FunctionTemplate || \
+         kind == CXCursorKind::CXCursor_Constructor))
+    {
+        print_function_prototype(cursor);
+    }
+
+    return CXChildVisit_Continue;
 }

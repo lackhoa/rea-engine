@@ -1,92 +1,11 @@
 #include <windows.h>
 #include <malloc.h>
 #include "utils.h"
+#include "clang-c/Index.h"
 
-// todo: does enum automatically increment???
-enum TokenCategory
-{
-  // 0-255 reserved for single-char ASCII types.
-  TC_Special       = 256,
-  TC_PairingOpen   = 257,
-  TC_PairingClose  = 258,
-  TC_Alphanumeric  = 259,
-  TC_StringLiteral = 261,
-};
-
-struct Token
-{
-  String        text;
-  s32           line;
-  s32           column;
-  TokenCategory cat;
-  operator String() { return text; }
-};
-
-struct Tokenizer
-{
-  char  *at;
-  Token  last_token;
-  s32    line;
-  s32    column;
-
-  String directory;
-};
-
-inline char
-nextChar(Tokenizer *tk)
-{
-  char out;
-  if (*tk->at)
-  {
-    out = *tk->at++;
-    if (out == '\n')
-    {
-      tk->line++;
-      tk->column = 1;
-    }
-    else
-      tk->column++;
-  }
-  else
-    out = 0;
-  return out;
-}
-
-internal void
-eatAllSpaces(Tokenizer *tk)
-{
-  b32 stop = false;
-  while ((*tk->at) && (!stop))
-  {
-    switch (*tk->at)
-    {
-      case '\n':
-      case '\t':
-      case ' ':
-      {
-        nextChar(tk);
-      } break;
-
-      case ';':
-      {
-        if (*(tk->at+1) == ';')
-        {
-          nextChar(tk);
-          nextChar(tk);
-          while ((*tk->at) && (*tk->at != '\n'))
-            nextChar(tk);
-        }
-        else
-        {
-          stop = true;
-        }
-      } break;
-
-      default:
-          stop = true;
-    }
-  }
-}
+global_variable MemoryArena *permanent_arena;
+global_variable MemoryArena *temp_arena;
+global_variable char *current_dir;
 
 inline char *
 readEntireFile(char *file_name)
@@ -220,12 +139,145 @@ getAllCppFilesInDirectory()
   return out;
 }
 
+inline char *
+printToBuffer(MemoryArena *buffer, CXString string)
+{
+  char *out = 0;
+  const char *cstring = clang_getCString(string);
+  if (cstring)
+  {
+    out = printToBuffer(buffer, (char *)cstring);
+    clang_disposeString(string);
+  }
+  return out;
+}
+
+struct LineList
+{
+  unsigned  line;
+  LineList *next;
+};
+
+struct State
+{
+  FILE     *out_file;
+  LineList *forward_declare_lines;
+};
+
+internal char *
+printFunctionSignature(MemoryArena *arena, CXCursor cursor)
+{
+  char *out = (char *)getNext(arena);
+
+  CXType type = clang_getCursorType(cursor);
+  printToBuffer(arena, clang_getTypeSpelling(clang_getResultType(type)));
+  arena->used--; printToBuffer(arena, " "); arena->used--;
+
+  printToBuffer(arena, clang_getCursorSpelling(cursor));
+  arena->used--;
+
+  printToBuffer(arena, "("); arena->used--;
+  int num_args = clang_Cursor_getNumArguments(cursor);
+  for (int i = 0; i < num_args; ++i)
+  {
+    CXCursor arg_cursor = clang_Cursor_getArgument(cursor, i);
+    printToBuffer(arena, clang_getTypeSpelling(clang_getArgType(type, i)));
+    arena->used--; printToBuffer(arena, " "); arena->used--;
+    printToBuffer(arena, clang_getCursorSpelling(arg_cursor));
+    arena->used--;
+    if (i != num_args-1)
+    {
+      printToBuffer(arena, ", "); arena->used--;
+    }
+  }
+  printToBuffer(arena, ");\n");
+
+  return out;
+}
+
 int main()
 {
-  FileList list = getAllCppFilesInDirectory();
-  for (s32 file_id = 0; file_id < list.count; file_id++)
+  MemoryArena temp_arena_ = newArena(megaBytes(8), (void *)teraBytes(3));
+  VirtualAlloc(temp_arena_.base, temp_arena_.cap, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
+  temp_arena = &temp_arena_;
+
+  MemoryArena permanent_arena_ = newArena(megaBytes(128), (void *)teraBytes(2));
+  VirtualAlloc(permanent_arena_.base, permanent_arena_.cap, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
+  permanent_arena = &permanent_arena_;
+
+  current_dir = (char *)getNext(permanent_arena);
+  permanent_arena->used += GetCurrentDirectory(permanent_arena->cap, (char *)permanent_arena->base);
+  *(permanent_arena->base + permanent_arena->used++) = 0;
+
+  // FileList list = getAllCppFilesInDirectory();
+  CXIndex index = clang_createIndex(0, 0);
+
+  CXTranslationUnit unit = clang_parseTranslationUnit(index, "engine.cpp", nullptr, 0, nullptr, 0, CXTranslationUnit_DetailedPreprocessingRecord);
+  CXCursor cursor = clang_getTranslationUnitCursor(unit);
+
+  State state = {};
+  if (fopen_s(&state.out_file, "generated/engine_forward.h", "w") == 0)
   {
-    readEntireFile(list.files[file_id]);
+    clang_visitChildren(
+      cursor,
+      [](CXCursor cursor, CXCursor parent, CXClientData client_data)
+      {
+        State *state = (State *)client_data;
+        (void)parent; (void)client_data;
+        TemporaryMemory temp_mem = beginTemporaryMemory(temp_arena);
+        CXSourceLocation location = clang_getCursorLocation(cursor);
+
+        unsigned line;
+        CXFile file;
+        clang_getExpansionLocation(location, &file, &line, 0, 0);
+
+        char *file_name = printToBuffer(temp_arena, clang_getFileName(file));
+        if (file_name)
+        {
+          CXString path_name0 = clang_File_tryGetRealPathName(file);
+          if (char *path_name = printToBuffer(temp_arena, path_name0))
+          {
+            if (isSubstring(path_name, current_dir, false))
+            {
+              CXString cursor_spelling0 = clang_getCursorSpelling(cursor);
+              CXCursorKind kind = clang_getCursorKind(cursor);
+
+              if (kind == CXCursor_MacroExpansion &&
+                  equal("forward_declare", printToBuffer(temp_arena, cursor_spelling0)))
+              {// a forward_declare annotation
+                LineList *new_lines = pushStruct(permanent_arena, LineList, true);
+                new_lines->line = line;
+                new_lines->next = state->forward_declare_lines;
+                state->forward_declare_lines = new_lines;
+              }
+
+              if (kind == CXCursor_FunctionDecl)
+              {// forward-declared the function if asked
+                for (LineList *lines = state->forward_declare_lines;
+                     lines;
+                     lines = lines->next)
+                {
+                  if (line > lines->line && line < lines->line+3)
+                  {
+#if 0
+                    printf("forward declare: %s\n", printToBuffer(temp_arena, cursor_spelling0));
+#endif
+                    char *signature = printFunctionSignature(temp_arena, cursor);
+                    fprintf(state->out_file, "%s", signature);
+                    break;
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        endTemporaryMemory(temp_mem);
+        return CXChildVisit_Continue;
+      },
+      &state);
+
+    fclose(state.out_file);
   }
   return 0;
 }
