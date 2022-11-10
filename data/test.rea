@@ -52,12 +52,24 @@ testCurrying3 :: (a: Nat) -> Nat
  }
 check truth: testCurrying3(2) = 6;
 
-;; I can't see anything!
-;; mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*(b*c)
-;; {
-;;  fork a
-;;  {
-;;   0: truth,
-;;   s(a'): mulAssociative(a',b,c),
-;;   }
-;;  }
+mulDistributive :: (a,b,c: Nat) -> a*c+b*c = (a+b)*c
+{
+ fork a
+ {0: truth,
+
+  s(a'):
+  rewrite mulDistributive(a', b, c);
+  rewrite plusAssociative(c, (a' * c), (b * c));
+  truth}
+ }
+
+mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*(b*c)
+{
+ fork a
+ {
+  0: truth,
+  s(a'):
+  rewrite left mulDistributive(b, (a' * b), c);
+  rewrite mulAssociative(a', b, c),
+  }
+ }

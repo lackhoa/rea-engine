@@ -31,7 +31,7 @@ debugDedent()
 
 #define NULL_WHEN_ERROR(name) if (noError()) {assert(name);} else {name = {};}
 
-// polymorphic function for both Composite and CompositeV
+// prints both Composite and CompositeV
 inline void
 printComposite(MemoryArena *buffer, void *in0, PrintOptions opt)
 {
@@ -39,19 +39,34 @@ printComposite(MemoryArena *buffer, void *in0, PrintOptions opt)
   s32    arg_count;
   void **args;
 
-  Ast *ast = (Ast *)in0;
+  Ast   *ast   = (Ast *)in0;
   Value *value = (Value *)in0;
   if (Composite *in = castAst(ast, Composite))
   {
     op        = in->op;
     arg_count = in->arg_count;
     args      = (void **)in->args;
+
+    if (Constant *op = castAst(in->op, Constant))
+    {
+      if (op->value == &builtins.equal->v)
+      {// #hack to ignore the first arg
+        args = args+1;
+        arg_count = 2;
+      }
+    }
   }
   else if (CompositeV *in = castAst(value, CompositeV))
   {
     op        = in->op;
     arg_count = in->arg_count;
     args      = (void **)in->args;
+
+    if (in->op == &builtins.equal->v)
+    {// #hack to ignore the first arg
+      args = args+1;
+      arg_count = 2;
+    }
   }
   else
   {
@@ -82,6 +97,7 @@ printComposite(MemoryArena *buffer, void *in0, PrintOptions opt)
   }
 }
 
+// note: prints both (built) ast and value
 forward_declare
 internal char *
 printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
@@ -99,6 +115,16 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
 
     switch (in0->cat)
     {
+      case AC_StackRef:
+      {
+        StackRef *in = castAst(in0, StackRef);
+#if 0
+        printToBuffer(buffer, "%.*s<%d>", in->name.length, in->name.chars, in->stack_depth);
+#else
+        printToBuffer(buffer, in->name);
+#endif
+      } break;
+
       case AC_Constant:
       {
         Constant *in = castAst(in0, Constant);
@@ -133,6 +159,7 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
         printAst(buffer, in->proof, new_opt);
       } break;
 
+      case AC_CompositeV:
       case AC_Composite:
       {
         printComposite(buffer, in0, new_opt);
@@ -159,7 +186,6 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
             } break;
 
             case AC_ArrowV:
-            case AC_Arrow:
             {
               printAst(buffer, &ctor->v, new_opt);
               printToBuffer(buffer, " ");
@@ -199,21 +225,6 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
         printToBuffer(buffer, ") -> ");
 
         printAst(buffer, in->out_type, new_opt);
-      } break;
-
-      case AC_StackRef:
-      {
-        StackRef *in = castAst(in0, StackRef);
-#if 1
-        printToBuffer(buffer, "%.*s<%d>", in->name.length, in->name.chars, in->stack_depth);
-#else
-        printToBuffer(buffer, in->name);
-#endif
-      } break;
-
-      case AC_CompositeV:
-      {
-        printComposite(buffer, in0, new_opt);
       } break;
 
       case AC_Form:
@@ -263,7 +274,6 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
         ArrowV *in = castAst(in0, ArrowV);
         printAst(buffer, &in->a->a, opt);
       } break;
-
 
       default:
       {
@@ -1477,7 +1487,10 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
           if (norm_rule->op == &builtins.equal->v)
           {
             rule_valid = true;
-            addRewrite(env, (norm_rule->args[1]), (norm_rule->args[2]));
+            if (in->right_to_left)
+              addRewrite(env, norm_rule->args[2], norm_rule->args[1]);
+            else
+              addRewrite(env, norm_rule->args[1], norm_rule->args[2]);
           }
         }
         if (!rule_valid)
@@ -1647,7 +1660,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       if (!identicalB32(norm_expected, norm_actual))
       {
         parseError(in0, "actual type differs from expected type");
-        normalize(*env, expected_type);
+        // normalize(*env, expected_type);
         pushAttachment("expected", norm_expected);
         pushAttachment("got", norm_actual);
       }
@@ -1696,16 +1709,6 @@ parseExpressionFull(MemoryArena *arena)
   return parseExpressionAndTypecheck(arena, 0, 0);
 }
 
-internal Rewrite *
-parseRewrite(MemoryArena *arena)
-{
-  Token token = global_tokenizer->last_token;
-  Rewrite *out = newAst(arena, Rewrite, &token);
-  out->proof = parseExpressionToAst(arena);
-  NULL_WHEN_ERROR(out);
-  return out;
-}
-
 inline Ast *
 parseSequence(MemoryArena *arena)
 {
@@ -1735,7 +1738,18 @@ parseSequence(MemoryArena *arena)
           // todo: do we really wanna constraint it to only appear in sequence?
           case Keyword_Rewrite:
           {
-            ast = &parseRewrite(arena)->a;
+            Rewrite *out = newAst(arena, Rewrite, &token);
+
+            out->right_to_left = false;
+            Token next = peekNext();
+            if (equal(next, "left"))
+            {
+              nextToken();
+              out->right_to_left = true;
+            }
+
+            out->proof = parseExpressionToAst(arena);
+            ast = &out->a;
           } break;
 
           default:

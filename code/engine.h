@@ -11,7 +11,8 @@ struct LocalBindings;
 // NOTE: Think of this like the function stack, we'll clean it every once in a while.
 global_variable MemoryArena *temp_arena;
  
-// this must contain both ast and values because "printComposite" requires it
+// Contains both ast and values because the print functions need to operate on
+// them both.
 enum AstCategory
 {
   AC_Null = 0,
@@ -488,6 +489,7 @@ struct Rewrite
 {
   Ast  a;
   Ast *proof;
+  b32 right_to_left;
 };
 
 struct FileList
