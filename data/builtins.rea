@@ -1,4 +1,4 @@
-typedef identical : (A: Set, a, b: A) -> Set
+typedef = : (A: Set, a, b: A) -> Set
 {
- refl: (A: Set, x: A) -> identical(A, x, x)
+ refl: (A: Set, x: A) -> =(A, x, x)
  }

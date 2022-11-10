@@ -703,7 +703,7 @@ normalize(Environment env, Value *in0)
         else
         {
           assert(norm_op->cat == AC_Form);
-          if (norm_op == &builtins.identical->v)
+          if (norm_op == &builtins.equal->v)
           {// special case for equality
             Value *lhs = norm_args[1];
             Value *rhs = norm_args[2];
@@ -1304,40 +1304,11 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
     {
       Composite *in = castAst(in0, Composite);
 
-      b32 should_build_op = true;
-      Value *op_type;
-      if ((in->op->cat == AC_Identifier) &&
-          equal(in->op->token, "="))
-      {// todo: special mutation sauce for equality
-        should_build_op = false;
-        assert(in->arg_count == 2);
-        Ast **new_args = pushArray(arena, 3, Ast*);
-        new_args[0] = &dummy_hole;
-        new_args[1] = in->args[0];
-        new_args[2] = in->args[1];
-        // note: this is just a temporary hack to have a constant expr as the
-        // operator, and not the whole form.
-        Token identical_token = in->op->token;
-        identical_token.text  = toString("identical");
-        Constant *identical = constantFromGlobalName(arena, &identical_token);
-        assert(identical);
-
-        in->op        = &identical->a;
-        in->arg_count = 3;
-        in->args      = new_args;
-        op_type = identical->value->type;
-      }
-
-      if (should_build_op)
+      if (Expression build_op = buildExpression(env, in->op, 0))
       {
-        Expression build_op = buildExpression(env, in->op, 0);
-        in->op  = build_op.ast;
-        op_type = build_op.type;
-      }
+        in->op = build_op.ast;
 
-      if (noError())
-      {
-        if (ArrowV *signature = castAst(op_type, ArrowV))
+        if (ArrowV *signature = castAst(build_op.type, ArrowV))
         {
           if (signature->a->param_count == in->arg_count)
           {
@@ -1400,7 +1371,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
         else
         {
           parseError(in->op, "operator must have an arrow type");
-          pushAttachment("got type", op_type);
+          pushAttachment("got type", build_op.type);
         }
       }
     } break;
@@ -1503,7 +1474,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
         b32 rule_valid = false;
         if (CompositeV *norm_rule = castAst(build_rewrite.type, CompositeV))
         {
-          if (norm_rule->op == &builtins.identical->v)
+          if (norm_rule->op == &builtins.equal->v)
           {
             rule_valid = true;
             addRewrite(env, (norm_rule->args[1]), (norm_rule->args[2]));
@@ -2203,7 +2174,6 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
   Ast *out = 0;
   if (seesArrowExpression())
   {
-    // todo wth is this?
     out = &parseArrowType(arena)->a;
   }
   else
@@ -2231,11 +2201,25 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
             opt1.min_precedence = precedence;
             if (Ast *recurse = parseExpressionToAstMain(arena, opt1))
             {
-              Ast **args = pushArray(arena, 2, Ast*);
-              args[0] = operand;
-              args[1] = recurse;
+              s32 arg_count;
+              Ast **args;
+              if (equal(op_token, "="))
+              {// todo: special notation sauce for equality
+                arg_count = 3;
+                args = pushArray(arena, arg_count, Ast*);
+                args[0] = &dummy_hole;
+                args[1] = operand;
+                args[2] = recurse;
+              }
+              else
+              {
+                arg_count = 2;
+                args = pushArray(arena, arg_count, Ast*);
+                args[0] = operand;
+                args[1] = recurse;
+              }
               Composite *new_operand = newAst(arena, Composite, &op_token);
-              initComposite(new_operand, &op->a, 2, args);
+              initComposite(new_operand, &op->a, arg_count, args);
               operand = &new_operand->a;
             }
           }
@@ -2702,7 +2686,7 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
     {// Equality
       b32 success = interpretFile(state, platformGetFileFullPath(arena, "../data/builtins.rea"), true);
       assert(success);
-      builtins.identical = castAst(lookupGlobalName("identical"), Form);
+      builtins.equal = castAst(lookupGlobalName("="), Form);
     }
   }
 

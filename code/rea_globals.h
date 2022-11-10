@@ -3,17 +3,6 @@
 #include "utils.h"
 #include "engine.h"
 
-struct Builtins
-{
-  Form *refl;
-  Form *identical;
-  Form *True;
-  Form *truth;
-  Form *False;
-  Form *Set;
-  Form *Type;
-};
-
 global_variable Builtins builtins;
 
 global_variable Ast dummy_hole = {.cat = AC_DummyHole};

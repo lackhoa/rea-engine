@@ -505,4 +505,15 @@ struct EngineState
 
 struct PrintOptions{b32 detailed; b32 print_type; void *parent;};
 
+struct Builtins
+{
+  Form *refl;
+  Form *equal;
+  Form *True;
+  Form *truth;
+  Form *False;
+  Form *Set;
+  Form *Type;
+};
+
 #include "generated/engine_forward.h"
