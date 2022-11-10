@@ -11,6 +11,7 @@ struct LocalBindings;
 // NOTE: Think of this like the function stack, we'll clean it every once in a while.
 global_variable MemoryArena *temp_arena;
  
+// this must contain both ast and values because "printComposite" requires it
 enum AstCategory
 {
   AC_Null = 0,
@@ -104,7 +105,6 @@ newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
   ((cat *) newAst_(arena, AC_##cat, token, sizeof(cat)))
 
 #define castAst(exp, Cat) ((exp)->cat == AC_##Cat ? (Cat*)(exp) : 0)
-#define castValue(exp, Cat) ((isValue(AC_##Cat) && (exp)->cat == AC_##Cat) ? (Cat*)(exp) : 0)
 
 struct Identifier
 {
@@ -502,5 +502,7 @@ struct EngineState
   MemoryArena *arena;
   FileList    *file_list;
 };
+
+struct PrintOptions{b32 detailed; b32 print_type; void *parent;};
 
 #include "generated/engine_forward.h"

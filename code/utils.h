@@ -395,3 +395,21 @@ isSubstring(char *full, char* sub, b32 case_sensitive=true)
   }
   return out;
 }
+
+inline void
+myprint()
+{
+  printToBuffer(0, "\n");
+}
+
+inline void
+myprint(int d)
+{
+  printf("%d", d);
+}
+
+inline void
+myprint(char *c)
+{
+  printf("%s", c);
+}
