@@ -73,3 +73,18 @@ mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*(b*c)
   rewrite mulAssociative(a', b, c),
   }
  }
+
+!= :: (_A: Set, a, b: _A) -> Type
+{
+ (E: a = b) -> False
+ }
+
+typedef Int : (sign: Bool, n: Nat) -> Set
+{
+ int: (sign: Bool, n: Nat) -> Int(sign, n)
+ }
+
+typedef Rat : (sign: Bool, a: Nat, b: Nat) -> Set
+{
+ rat: (sign: Bool, a: Nat, b: Nat, bnot0: b != 0) -> Rat(sign, a, b)
+ }

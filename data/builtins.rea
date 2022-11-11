@@ -1,4 +1,4 @@
-typedef = : (A: Set, a, b: A) -> Set
+typedef = : (_A: Set, a, b: _A) -> Set
 {
  refl: (A: Set, x: A) -> =(A, x, x)
  }

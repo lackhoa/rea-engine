@@ -49,8 +49,6 @@ struct Ast
   AstCategory cat;
   Token       token;
 };
-// nocheckin
-typedef Ast AstV;
 
 inline b32
 isValue(AstCategory cat)
@@ -238,18 +236,12 @@ struct AstList
   AstList *next;
 };
 
-// nocheckin: don't need the type
-struct LocalBindingValue
-{
-  s32  id;
-};
-
 struct LocalBinding
 {
-  s32                hash;
-  String             key;
-  LocalBindingValue  value;
-  LocalBinding      *next;
+  s32           hash;
+  String        key;
+  s32           value;
+  LocalBinding *next;
 };
 
 struct LocalBindings
@@ -410,6 +402,7 @@ struct Arrow
   s32     param_count;
   Token  *param_names;
   Ast   **param_types;
+  b32    *param_implied;
 };
 
 struct ArrowV

@@ -37,41 +37,52 @@ printComposite(MemoryArena *buffer, void *in0, PrintOptions opt)
 {
   void  *op;
   s32    arg_count;
-  void **args;
+  void **raw_args;
 
   Ast   *ast   = (Ast *)in0;
   Value *value = (Value *)in0;
+  ArrowV *op_type = 0;
   if (Composite *in = castAst(ast, Composite))
   {
-    op        = in->op;
-    arg_count = in->arg_count;
-    args      = (void **)in->args;
-
+    op = in->op;
+    raw_args = (void **)in->args;
     if (Constant *op = castAst(in->op, Constant))
     {
-      if (op->value == &builtins.equal->v)
-      {// #hack to ignore the first arg
-        args = args+1;
-        arg_count = 2;
-      }
+      op_type = castAst(op->value->type, ArrowV);
+      assert(op_type);
+    }
+    else
+    {
+      arg_count = in->arg_count;
     }
   }
   else if (CompositeV *in = castAst(value, CompositeV))
   {
-    op        = in->op;
-    arg_count = in->arg_count;
-    args      = (void **)in->args;
-
-    if (in->op == &builtins.equal->v)
-    {// #hack to ignore the first arg
-      args = args+1;
-      arg_count = 2;
-    }
+    op = in->op;
+    raw_args = (void **)in->args;
+    op_type = castAst(in->op->type, ArrowV);
+    assert(op_type);
   }
   else
   {
     invalidCodePath;
   }
+
+  void **args;
+  if (op_type)
+  {// print out unignored args only
+    args = pushArray(temp_arena, op_type->a->param_count, void*);
+    arg_count = 0;
+    for (s32 param_id = 0; param_id < op_type->a->param_count; param_id++)
+    {
+      if (!op_type->a->param_implied[param_id])
+      {
+        args[arg_count++] = raw_args[param_id];
+      }
+    }
+  }
+  else
+    args = raw_args;
 
   if (arg_count == 2)
   {// special path for infix operator
@@ -84,7 +95,7 @@ printComposite(MemoryArena *buffer, void *in0, PrintOptions opt)
     printToBuffer(buffer, ")");
   }
   else
-  {// normalize path
+  {// normal pre path
     printAst(buffer, op, opt);
     printToBuffer(buffer, "(");
     for (s32 arg_id = 0; arg_id < arg_count; arg_id++)
@@ -613,7 +624,7 @@ lookupNameCurrentFrame(LocalBindings *bindings, String key, b32 add_if_missing)
   }
   else if (add_if_missing)
   {
-    slot->key = key;
+    slot->key   = key;
     slot->value = {};
   }
 
@@ -954,7 +965,7 @@ addLocalBinding(LocalBindings *bindings, Token *key)
   else
   {
     succeed = true;
-    lookup.slot->value = LocalBindingValue{bindings->count++};
+    lookup.slot->value = bindings->count++;
   }
   return succeed;
 }
@@ -970,15 +981,21 @@ addLocalBindings(Environment *env, s32 count, Token *names, Ast **types, b32 sho
   {
     if (should_build_types)
       types[id] = buildExpression(env, types[id], 0).ast;
-    Value    *type       = evaluate(*env, types[id]);
-    StackRef *ref        = newValue(temp_arena, StackRef, type);
-    env->stack->args[id] = &ref->v;
+    else
+      assert(types[id]);
 
-    ref->name        = names[id];
-    ref->id          = id;
-    ref->stack_depth = env->stack->depth;
+    if (types[id])
+    {
+      Value    *type       = evaluate(*env, types[id]);
+      StackRef *ref        = newValue(temp_arena, StackRef, type);
+      env->stack->args[id] = &ref->v;
 
-    addLocalBinding(env->bindings, names + id);
+      ref->name        = names[id];
+      ref->id          = id;
+      ref->stack_depth = env->stack->depth;
+
+      addLocalBinding(env->bindings, names + id);
+    }
   }
   return noError();
 }
@@ -1039,7 +1056,7 @@ lookupLocalName(MemoryArena *arena, LocalBindings *bindings, Token *token)
     if (lookup.found)
     {
       found = true;
-      auto [id] = lookup.slot->value;
+      s32 id = lookup.slot->value;
       Variable *var = newAst(arena, Variable, token);
       initVariable(var, id);
       var->stack_delta = stack_delta;
@@ -1271,6 +1288,18 @@ unwindBindingsAndStack(Environment *env)
   unwindStack(env);
 }
 
+inline s32
+getExplicitParamCount(Arrow *in)
+{
+  s32 out = 0;
+  for (s32 param_id = 0; param_id < in->param_count; param_id++)
+  {
+    if (!in->param_implied[param_id])
+      out++;
+  }
+  return out;
+}
+
 // important: env can be modified, if the caller expects it.
 // beware: Usually we mutate in-place, but we may also allocate anew.
 forward_declare
@@ -1283,12 +1312,6 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
   MemoryArena *arena = env->arena;
   switch (in0->cat)
   {
-    // nocheckin: these cannot be standalone
-    case AC_DummyHole:
-    {
-      out.ast = in0;
-    } break;
-
     case AC_Identifier:
     {
       auto lookup = lookupLocalName(arena, env->bindings, &in0->token);
@@ -1318,9 +1341,39 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       {
         in->op = build_op.ast;
 
-        if (ArrowV *signature = castAst(build_op.type, ArrowV))
+        if (ArrowV *signaturev = castAst(build_op.type, ArrowV))
         {
-          if (signature->a->param_count == in->arg_count)
+          Arrow *signature = signaturev->a;
+          if (signature->param_count != in->arg_count)
+          {
+            s32 explicit_param_count = getExplicitParamCount(signature);
+            if (in->arg_count == explicit_param_count)
+            {
+              Ast **supplied_args = in->args;
+              in->arg_count = signature->param_count;
+              in->args      = pushArray(arena, signature->param_count, Ast*);
+              for (s32 param_id = 0, arg_id = 0;
+                   param_id < signature->param_count && noError();
+                   param_id++)
+              {
+                if (signature->param_implied[param_id])
+                {
+                  in->args[param_id] = &dummy_hole;
+                }
+                else
+                {
+                  assert(arg_id < explicit_param_count);
+                  in->args[param_id] = supplied_args[arg_id++];
+                }
+              }
+            }
+            else
+            {
+              parseError(&in0->token, "too few arguments supplied, expected at least %d", explicit_param_count);
+            }
+          }
+
+          if (noError())
           {
             Environment signature_env = *env;
             signature_env.arena = temp_arena;
@@ -1335,7 +1388,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                 stack_frame[arg_id] = 0;
               else
               {
-                Ast *param_type0 = signature->a->param_types[arg_id];
+                Ast *param_type0 = signature->param_types[arg_id];
                 Value *norm_param_type = evaluate(signature_env, param_type0);
                 if (Expression build_arg = buildExpression(env, in->args[arg_id], norm_param_type))
                 {
@@ -1371,12 +1424,10 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
             {
               extendStack(env, in->arg_count, stack_frame);
               out.ast = in0;
-              out.type = evaluate(*env, signature->a->out_type);
+              out.type = evaluate(*env, signature->out_type);
               unwindStack(env);
             }
           }
-          else
-            parseError(in0, "incorrect arg count: %d (signature expected %d)", in->arg_count, signature->a->param_count);
         }
         else
         {
@@ -1679,7 +1730,7 @@ buildExpressionGlobal(MemoryArena *arena, Ast *ast, Value *expected_type = 0)
 }
 
 inline Expression
-parseExpressionAndTypecheck(MemoryArena *arena, LocalBindings *bindings, Value *expected_type)
+parseExpression(MemoryArena *arena, LocalBindings *bindings, Value *expected_type)
 {
   Expression out = {};
   if (Ast *ast = parseExpressionToAst(arena))
@@ -1700,13 +1751,13 @@ parseExpressionAndTypecheck(MemoryArena *arena, LocalBindings *bindings, Value *
 inline Ast *
 parseExpression(MemoryArena *arena)
 {
-  return parseExpressionAndTypecheck(arena, 0, 0).ast;
+  return parseExpression(arena, 0, 0).ast;
 }
 
 inline Expression
 parseExpressionFull(MemoryArena *arena)
 {
-  return parseExpressionAndTypecheck(arena, 0, 0);
+  return parseExpression(arena, 0, 0);
 }
 
 inline Ast *
@@ -1721,7 +1772,7 @@ parseSequence(MemoryArena *arena)
   {
     // todo #speed make a way to rewind the state of the tokenizer
     Tokenizer tk_save = *global_tokenizer;
-    b32 commit = true;
+    b32 handled = false;
     Token token = nextToken();
     if (isExpressionEndMarker(&token))
     {
@@ -1738,6 +1789,7 @@ parseSequence(MemoryArena *arena)
           // todo: do we really wanna constraint it to only appear in sequence?
           case Keyword_Rewrite:
           {
+            handled = true;
             Rewrite *out = newAst(arena, Rewrite, &token);
 
             out->right_to_left = false;
@@ -1751,11 +1803,6 @@ parseSequence(MemoryArena *arena)
             out->proof = parseExpressionToAst(arena);
             ast = &out->a;
           } break;
-
-          default:
-          {
-            commit = false;
-          } break;
         }
       }
       else if (isIdentifier(&token))
@@ -1766,6 +1813,7 @@ parseSequence(MemoryArena *arena)
         {
           case TC_DoubleColon:
           {
+            handled = true;
             pushContextName("recursive let");
             Function *fun = parseFunction(arena, name);
             ast = &fun->a;
@@ -1774,6 +1822,7 @@ parseSequence(MemoryArena *arena)
 
           case TC_ColonEqual:
           {
+            handled = true;
             pushContextName("let");
             Ast *rhs = parseExpressionToAst(arena);
 
@@ -1784,17 +1833,12 @@ parseSequence(MemoryArena *arena)
 
             popContext();
           } break;
-
-          default:
-          {
-            commit = false;
-          } break;
         }
       }
 
       if (noError())
       {
-        if (commit) {assert(ast);}
+        if (handled) {assert(ast);}
         else
         {
           *global_tokenizer = tk_save;
@@ -1988,6 +2032,7 @@ parseArrowType(MemoryArena *arena)
   s32     param_count;
   Token  *param_names;
   Ast   **param_types;
+  b32    *param_implied;
   Token marking_token = peekNext();
   if (requireChar('('))
   {
@@ -1995,8 +2040,9 @@ parseArrowType(MemoryArena *arena)
     param_count = getCommaSeparatedListLength(&tk_copy);
     if (noError(&tk_copy))
     {
-      param_names = pushArray(arena, param_count, Token);
-      param_types = pushArray(arena, param_count, Ast*);
+      param_names   = pushArray(arena, param_count, Token);
+      param_types   = pushArray(arena, param_count, Ast*);
+      param_implied = pushArray(arena, param_count, b32, true);
 
       s32 parsed_param_count = 0;
       s32 typeless_run = 0;
@@ -2013,6 +2059,10 @@ parseArrowType(MemoryArena *arena)
         {
           s32 param_id = parsed_param_count++;
           param_names[param_id] = param_name_token;
+          if (param_name_token.text.chars[0] == '_')
+          {
+            param_implied[param_id] = true;
+          }
 
           if (optionalChar(':'))
           {
@@ -2064,10 +2114,11 @@ parseArrowType(MemoryArena *arena)
     if (Ast *return_type = parseExpressionToAst(arena))
     {
       out = newAst(arena, Arrow, &marking_token);
-      out->param_count = param_count;
       out->out_type = return_type;
-      out->param_names = param_names;
-      out->param_types = param_types;
+      out->param_count   = param_count;
+      out->param_names   = param_names;
+      out->param_types   = param_types;
+      out->param_implied = param_implied;
     }
   }
 
@@ -2217,6 +2268,7 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
             {
               s32 arg_count;
               Ast **args;
+#if 0
               if (equal(op_token, "="))
               {// todo: special notation sauce for equality
                 arg_count = 3;
@@ -2226,6 +2278,7 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
                 args[2] = recurse;
               }
               else
+#endif
               {
                 arg_count = 2;
                 args = pushArray(arena, arg_count, Ast*);
