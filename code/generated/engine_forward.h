@@ -2,7 +2,7 @@ void copyMemory(void * dst, void * src, size_t size);
 TemporaryMemory beginTemporaryMemory(MemoryArena * arena);
 ReadFileResult platformReadEntireFile(const char * file_name);
 char nextChar(Tokenizer * tk);
-u64 getNextSetId();
+SetId getNextSetId();
 char * printAst(MemoryArena * buffer, void * in_void, PrintOptions opt);
 Expression buildExpression(Environment * env, Ast * in0, Value * expected_type);
 Function * parseFunction(MemoryArena * arena, Token * name);

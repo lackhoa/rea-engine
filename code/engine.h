@@ -11,7 +11,7 @@ struct LocalBindings;
 
 // NOTE: Think of this like the function stack, we'll clean it every once in a while.
 global_variable MemoryArena *temp_arena;
- 
+
 // Contains both ast and values because the print functions need to operate on
 // them both.
 enum AstCategory
@@ -38,13 +38,15 @@ enum AstCategory
   AC_Accessor,
 
   // values subset
-  AC_CompositeV   = 0x80,
-  AC_ArrowV       = 0x81,
-  AC_Union  = 0x82,
-  AC_FunctionV    = 0x83,
-  AC_StackRef     = 0x84,
-  AC_AstWithStack = 0x85,
-  AC_AccessorV    = 0x86,
+  AC_CompositeV   ,
+  AC_ArrowV       ,
+  AC_FunctionV    ,
+  AC_StackRef     ,
+  AC_AccessorV    ,
+  AC_Enum,
+
+  // set subset
+  AC_Union        ,
 };
 
 struct Ast
@@ -52,35 +54,6 @@ struct Ast
   AstCategory cat;
   Token       token;
 };
-
-inline b32
-isValue(AstCategory cat)
-{
-  b32 out = (cat >> 7);
-  return out;
-}
-
-inline b32
-isValue(Ast *in0)
-{
-  return isValue(in0->cat);
-}
-
-inline Value *
-toValue(Ast *ast)
-{
-  if (ast)
-    assert(isValue(ast));
-  return (Value*) ast;
-}
-
-inline Value **
-toValues(Ast **asts, s32 count)
-{
-  for (s32 id = 0; id < count; id++)
-    assert(isValue(asts[id]));
-  return (Value **) asts;
-}
 
 inline Ast **
 toAsts(Value **values)
@@ -159,7 +132,7 @@ struct Fork
 {
   Ast a;
 
-  Union     *constructor;
+  Union           *union0;
   Ast             *subject;
   s32              case_count;
   ForkParameters  *params;
@@ -274,7 +247,6 @@ struct Value
 inline void
 initValue(Value *in, AstCategory cat, Value *type)
 {
-  assert(isValue(cat));
   in->cat  = cat;
   in->type = type;
 }
@@ -290,15 +262,44 @@ newValue_(MemoryArena *arena, AstCategory cat, Value *type, size_t size)
 #define newValue(arena, cat, type)                        \
   ((cat *) newValue_(arena, AC_##cat, type, sizeof(cat)))
 
-struct Union
+struct SetId
+{
+  u64 id;
+  operator u64() {return id;}
+};
+
+struct Enum
 {
   Value v;
+  u32   id;
+};
+
+struct Set
+{
+  Value v;
+  SetId set_id;
+};
+
+struct Union
+{
+  union
+  {
+    Value v;
+    Set   s;
+  };
+
   Token token;
 
-  u64 set_id;
+  s32     subset_count;
+  Union **subsets;
+};
 
-  s32    set_count;
-  Union *sets;
+struct Record
+{
+  Value v;
+  s32    member_count;
+  Token *member_names;
+  Ast   *member_types;
 };
 
 struct Function
@@ -468,14 +469,6 @@ struct Rewrite
   b32  right_to_left;
 };
 
-struct Record
-{
-  Value v;
-  s32    member_count;
-  Token *member_names;
-  Ast   *member_types;
-};
-
 struct Accessor
 {
   Ast    a;
@@ -508,7 +501,6 @@ struct PrintOptions{b32 detailed; b32 print_type; void *parent;};
 
 struct Builtins
 {
-  Union *refl;
   Union *equal;
   Union *True;
   Union *truth;

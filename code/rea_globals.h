@@ -8,10 +8,10 @@ global_variable Builtins builtins;
 global_variable Ast dummy_hole = {.cat = AC_DummyHole};
 global_variable Function dummy_function_under_construction;
 
-global_variable u64 global_next_form_id;
+global_variable u64 global_next_set_id;
 forward_declare
-inline u64
+inline SetId
 getNextSetId()
 {
-  return global_next_form_id++;
+  return SetId{global_next_set_id++};
 }

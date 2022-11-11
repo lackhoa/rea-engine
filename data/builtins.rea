@@ -1,3 +1,6 @@
+typedef True { truth }
+typedef False { }
+
 typedef = : (_A: Set, a, b: _A) -> Set
 {
  refl: (A: Set, x: A) -> =(A, x, x)
