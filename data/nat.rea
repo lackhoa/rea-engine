@@ -36,7 +36,7 @@ even :: (n : Nat) -> Bool
 {
  fork n
  {
-  0     : true,
+  0      : true,
   s(n69) : fork n69 {0 : false, s(n70) : even(n70)},
   }
  }
@@ -48,7 +48,7 @@ check truth: even(3) = false;
 {
  fork n
  {
-  0 : 0,
+  0     : 0,
   s(n1) : m + n1 * m,
   }
  }
@@ -59,10 +59,8 @@ check truth: 2*3 = 6;
 {
  fork n
  {
-  0 : 0,
-  s(n1) : fork(m) {0 : n,
-                   s(m1) : n1 - m1,
-                   },
+  0     : 0,
+  s(n1) : fork(m) {0 : n, s(m1) : n1 - m1}
   }
  }
 

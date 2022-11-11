@@ -152,6 +152,7 @@ printToBuffer(MemoryArena *buffer, CXString string)
   return out;
 }
 
+// todo: we need to record the file too, what a dumb oversight
 struct LineList
 {
   unsigned  line;

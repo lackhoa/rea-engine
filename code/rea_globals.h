@@ -9,8 +9,9 @@ global_variable Ast dummy_hole = {.cat = AC_DummyHole};
 global_variable Function dummy_function_under_construction;
 
 global_variable u64 global_next_form_id;
+forward_declare
 inline u64
-getNextFormId()
+getNextSetId()
 {
   return global_next_form_id++;
 }

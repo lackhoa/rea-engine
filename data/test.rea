@@ -74,17 +74,14 @@ mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*(b*c)
   }
  }
 
-!= :: (_A: Set, a, b: _A) -> Type
+;; / :: record {n,d: Nat, _dnot0: d != 0}
+typedef Rat
 {
- (E: a = b) -> False
+ / : (n,d: Nat, _dnot0: d != 0) -> Rat
  }
 
-typedef Int : (sign: Bool, n: Nat) -> Set
+;; todo operator overload
+rat_plus :: (a, b: Rat) -> Rat
 {
- int: (sign: Bool, n: Nat) -> Int(sign, n)
- }
-
-typedef Rat : (sign: Bool, a: Nat, b: Nat) -> Set
-{
- rat: (sign: Bool, a: Nat, b: Nat, bnot0: b != 0) -> Rat(sign, a, b)
+ (a.n * b.d + b.n * a.d) / (a.d * b.d)
  }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "platform.h"
 #include "utils.h"
 #include "memory.h"
 #include "tokenization.h"
@@ -34,14 +35,16 @@ enum AstCategory
   AC_Function,
   AC_Let,
   AC_Rewrite,
+  AC_Accessor,
 
   // values subset
   AC_CompositeV   = 0x80,
   AC_ArrowV       = 0x81,
-  AC_Form         = 0x82,
+  AC_Union  = 0x82,
   AC_FunctionV    = 0x83,
   AC_StackRef     = 0x84,
   AC_AstWithStack = 0x85,
+  AC_AccessorV    = 0x86,
 };
 
 struct Ast
@@ -143,8 +146,6 @@ struct ForkParameters
   Token *names;
 };
 
-struct Form;
-
 struct ForkParsing
 {
   Identifier      *ctors;
@@ -152,11 +153,13 @@ struct ForkParsing
   Ast            **bodies;
 };
 
+struct Union;
+
 struct Fork
 {
   Ast a;
 
-  Form            *form;
+  Union     *constructor;
   Ast             *subject;
   s32              case_count;
   ForkParameters  *params;
@@ -287,36 +290,16 @@ newValue_(MemoryArena *arena, AstCategory cat, Value *type, size_t size)
 #define newValue(arena, cat, type)                        \
   ((cat *) newValue_(arena, AC_##cat, type, sizeof(cat)))
 
-struct Form
+struct Union
 {
   Value v;
   Token token;
 
-  s32  ctor_id;
+  u64 set_id;
 
-  s32   ctor_count;
-  Form *ctors;
+  s32    set_count;
+  Union *sets;
 };
-
-inline void
-initForm(Form *in, Token *token, s32 ctor_count, Form *ctors, s32 ctor_id)
-{
-  in->v.cat      = AC_Form;
-  in->token      = *token;
-  in->ctor_count = ctor_count;
-  in->ctors      = ctors;
-  in->ctor_id    = ctor_id;
-}
-
-inline void
-initForm(Form *in, Token *token, s32 ctor_id)
-{
-  in->v.cat      = AC_Form;
-  in->token      = *token;
-  in->ctor_id    = ctor_id;
-  in->ctor_count = 0;
-  in->ctors      = 0;
-}
 
 struct Function
 {
@@ -427,43 +410,43 @@ struct GlobalBindings
     GlobalBindings *next;
 };
 
-inline Form *
+inline Union *
 getFormOf(Value *in0)
 {
-  Form *out = 0;
+  Union *out = 0;
   switch (in0->cat)
   {
     case AC_CompositeV:
     {
       CompositeV *in = castAst(in0, CompositeV);
-      out = castAst(in->op, Form);
+      out = castAst(in->op, Union);
     } break;
 
-    case AC_Form:
+    case AC_Union:
     {
-      out = castAst(in0, Form);
+      out = castAst(in0, Union);
     } break;
   }
   return out;
 }
 
-inline Form *
+inline Union *
 getFormOf(Ast *in0)
 {
-  Form *out = 0;
+  Union *out = 0;
   switch (in0->cat)
   {
     case AC_Composite:
     {
       if (Composite *in = castAst(in0, Composite))
         if (Constant *op = castAst(in->op, Constant))
-          out = castAst(op->value, Form);
+          out = castAst(op->value, Union);
     } break;
 
     case AC_Constant:
     {
       if (Constant *in = castAst(in0, Constant))
-        out = castAst(in->value, Form);
+        out = castAst(in->value, Union);
     } break;
 
     invalidDefaultCase;
@@ -482,7 +465,30 @@ struct Rewrite
 {
   Ast  a;
   Ast *proof;
-  b32 right_to_left;
+  b32  right_to_left;
+};
+
+struct Record
+{
+  Value v;
+  s32    member_count;
+  Token *member_names;
+  Ast   *member_types;
+};
+
+struct Accessor
+{
+  Ast    a;
+  Ast   *record;
+  Token  member;                // parsing information only
+  s32    param_id;              // after build phase
+};
+
+struct AccessorV
+{
+  Value  v;
+  Value *record;
+  s32    param_id;
 };
 
 struct FileList
@@ -502,13 +508,13 @@ struct PrintOptions{b32 detailed; b32 print_type; void *parent;};
 
 struct Builtins
 {
-  Form *refl;
-  Form *equal;
-  Form *True;
-  Form *truth;
-  Form *False;
-  Form *Set;
-  Form *Type;
+  Union *refl;
+  Union *equal;
+  Union *True;
+  Union *truth;
+  Union *False;
+  Union *Set;
+  Union *Type;
 };
 
 #include "generated/engine_forward.h"
