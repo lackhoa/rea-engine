@@ -10,4 +10,3 @@ typedef = : (_A: Set, a, b: _A) -> Set
 {
  (E: a = b) -> False
  }
-

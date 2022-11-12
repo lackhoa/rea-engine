@@ -1,7 +1,6 @@
 void copyMemory(void * dst, void * src, size_t size);
-TemporaryMemory beginTemporaryMemory(MemoryArena * arena);
+void endTemporaryMemory(TemporaryMemory temp);
 ReadFileResult platformReadEntireFile(const char * file_name);
-char nextChar(Tokenizer * tk);
 SetId getNextSetId();
 char * printAst(MemoryArena * buffer, void * in_void, PrintOptions opt);
 Expression buildExpression(Environment * env, Ast * in0, Value * expected_type);

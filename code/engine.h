@@ -240,8 +240,8 @@ extendBindings(MemoryArena *arena, LocalBindings *outer)
 
 struct Value
 {
-  AstCategory cat;
-  Value *type;
+  AstCategory  cat;
+  Value       *type;
 };
 
 inline void
@@ -268,16 +268,17 @@ struct SetId
   operator u64() {return id;}
 };
 
+struct Set
+{
+  Value v;
+  Token token;
+  SetId set_id;
+};
+
 struct Enum
 {
   Value v;
   u32   id;
-};
-
-struct Set
-{
-  Value v;
-  SetId set_id;
 };
 
 struct Union
@@ -288,11 +289,18 @@ struct Union
     Set   s;
   };
 
-  Token token;
+  s32  enum_count;
+  Enum enums;
 
-  s32     subset_count;
-  Union **subsets;
+  s32   subset_count;
+  Set **subsets;
 };
+
+inline Set **
+toSets(Union **unions)
+{
+  return (Set **)unions;
+}
 
 struct Record
 {
