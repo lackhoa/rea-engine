@@ -88,5 +88,13 @@ Rat :: union
 ;; todo operator overload
 rat_plus :: (a, b: Rat) -> Rat
 {
- (a.n * b.d + b.n * a.d) / (a.d * b.d)
+ fork a
+ {
+  /(an,ad,aproof): 
+  fork b
+  {
+   /(bn,bd,bproof):
+   /((a.n * b.d + b.n * a.d), (a.d * b.d), true)
+   }
+  }
  }

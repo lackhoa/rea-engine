@@ -424,7 +424,7 @@ introduce(Environment *env, s32 count, Token *names, Ast **types_ast, s32 depth_
   Value **types = pushArray(temp_arena, count, Value *);
   for (s32 id = 0; id < count; id++)
   {
-    types[id] = (evaluate(*env, types_ast[id]));
+    types[id] = evaluate(*env, types_ast[id]);
     StackRef *ref    = newValue(temp_arena, StackRef, types[id]);
     ref->name        = names[id];
     ref->id          = id;
@@ -790,6 +790,14 @@ normalize(Environment env, Value *in0)
       assert(out0->cat);
     } break;
 
+#if 0
+    case AC_AccessorV:
+    {
+      AccessorV *in = castAst(in0, AccessorV);
+      out0 = in->record->args[in->param_id];
+    } break;
+#endif
+
     case AC_BuiltinSet:
     case AC_BuiltinType:
     case AC_BuiltinEqual:
@@ -970,6 +978,13 @@ evaluate(Environment env, Ast *in0)
       out0 = evaluate(env, in->items[in->count-1]);
     } break;
 
+    case AC_Accessor:
+    {
+      Accessor *in = castAst(in0, Accessor);
+      CompositeV *recordv = castAst(evaluate(env, in->record), CompositeV);
+      out0 = recordv->args[in->param_id];
+    } break;
+
     invalidDefaultCase;
   }
 
@@ -980,6 +995,9 @@ evaluate(Environment env, Ast *in0)
     myprint(out0);
     myprint();
   }
+
+  if (out0)
+    out0 = normalize(env, out0);
 
   return out0;
 }
@@ -1429,7 +1447,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                  arg_id++)
             {
               if (in->args[arg_id] == &dummy_hole)
-                parseError(in->args[arg_id], "Cannot fill hole");
+                parseError(in0, "Cannot fill hole in expression");
             }
 
             if (noError())
@@ -1643,7 +1661,15 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                           CompositeV *pattern = newValue(temp_arena, CompositeV, pattern_type);
                           pattern->op        = &ctor->v;
                           pattern->arg_count = param_count;
+#if 1
                           pattern->args      = env.stack->args;
+#else
+                          pattern->args = pushArray(temp_arena, param_count, Value*);
+                          for(s32 arg_id=0; arg_id < param_count; arg_id++)
+                          {
+                            pattern->args[arg_id] = &newValue(temp_arena, AccessorV, evaluate(env, ctor_sig->a->param_types[arg_id]))->v;
+                          }
+#endif
                           addRewrite(&env, norm_subject, &pattern->v);
                         }
                         else
@@ -1714,31 +1740,59 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
     case AC_Accessor:
     {
       Accessor *in = castAst(in0, Accessor);
-      if (Expression record = buildExpression(env, in->record, 0))
+      if (Expression build_record = buildExpression(env, in->record, 0))
       {
-        in->record = record.ast;
-        if (ArrowV *record_typev = castAst(record.type, ArrowV))
+        Ast   *record   = build_record.ast;
+        Value *recordv0 = evaluate(*env, record);
+        if (CompositeV *recordv = castAst(recordv0, CompositeV))
         {
-          Arrow *record_type = record_typev->a;
-          for (s32 param_id = 0;
-               param_id < record_type->param_count && noError();
-               param_id++)
-          {
-            if (equal(record.ast->token, record_type->param_names[param_id]))
+          in->record = record;
+          Arrow *op_type = castAst(recordv->op->type, ArrowV)->a;
+          s32 param_count = op_type->param_count;
+          s32 param_id;
+          for (param_id=0; param_id < param_count; param_id++)
+          {// figure out the param id
+            if (equal(in->member, op_type->param_names[param_id]))
             {
               in->param_id = param_id;
-              out.ast  = &in->a;
-              todoIncomplete;  // I can't build this
-              // out.type = record_type->param_types[param_id];
+              out.ast = in0;
+              break;
             }
-            else
-              parseError(&record_type->a, "invalid member");
+          }
+
+          if (param_id == op_type->param_count)
+            tokenError(&in->member, "accessor has invalid member");
+          else
+          {// typing: curse you dependent type!
+            extendStack(env, param_count, recordv->args);
+            out.type = evaluate(*env, op_type->param_types[in->param_id]);
+#if 0
+            Value **stack_frame = env->stack->args;
+            for (s32 param_id=0; param_id < param_count; param_id++)
+            {
+              Value *param_type = evaluate(*env, op_type->param_types[param_id]);
+              if (param_id == in->param_id)
+              {
+                out.type = param_type;
+                break;
+              }
+              else
+              {
+                // todo: does this need to exist
+                AccessorV *paramv = newValue(temp_arena, AccessorV, param_type);
+                paramv->param_id = param_id;
+                paramv->record   = recordv;
+                stack_frame[param_id] = &paramv->v;
+              }
+            }
+#endif
+            unwindStack(env);
           }
         }
         else
         {
-          parseError(in->record, "cannot access member of this type");
-          pushAttachment("type", record.type);
+          parseError(record, "cannot access a non-record");
+          pushAttachment("record", recordv0);
         }
       }
     } break;
@@ -1762,7 +1816,12 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
     }
   }
 
-  NULL_WHEN_ERROR(out);
+  if (noError())
+  {
+    assert(out.ast && out.type);
+  }
+  else
+    out = {};
   return out;
 }
 
@@ -2866,7 +2925,7 @@ union astdbg
   FunctionV  FunctionV;
   StackRef   StackRef;
   Accessor   Accessor;
-  AccessorV  AccessorV;
+  // AccessorV  AccessorV;
 };
 
 int

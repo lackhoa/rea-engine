@@ -45,7 +45,6 @@ enum AstCategory
   AC_ArrowV,
   AC_FunctionV,
   AC_StackRef,
-  AC_AccessorV,
   AC_Enum,
 
   // set subset
@@ -480,6 +479,7 @@ struct Expression
 struct Rewrite
 {
   Ast  a;
+
   Ast *proof;
   b32  right_to_left;
 };
@@ -487,17 +487,21 @@ struct Rewrite
 struct Accessor
 {
   Ast    a;
+
   Ast   *record;
-  Token  member;                // parsing information only
+  Token  member;                // parsing info
   s32    param_id;              // after build phase
 };
 
+#if 0
 struct AccessorV
 {
   Value  v;
-  Value *record;
-  s32    param_id;
+
+  CompositeV *record;
+  s32         param_id;
 };
+#endif
 
 struct FileList
 {

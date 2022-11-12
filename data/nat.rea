@@ -3,15 +3,15 @@
 Nat :: union
 {
  0,
- s: (n1: Nat) -> Nat,
+ s: (p: Nat) -> Nat,
  }
 
 + :: (n, m: Nat) -> Nat
 {
  fork n
  {
-  0      : m,
-  s(n69) : s(n69 + m),
+  0     : m,
+  s(n') : s(n.p + m),
   }
  }
 

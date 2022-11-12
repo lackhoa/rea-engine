@@ -481,7 +481,7 @@ eatUntilMatchingPair(Tokenizer *tk)
   Token opening = tk->last_token;
   char  closing = getMatchingPair(&opening);
   assert(closing);
-  for (; !found && hasMore(tk);)
+  for (; !found && hasMore(tk); )
   {
     Token token = nextToken(tk);
     if (getMatchingPair(&token))
