@@ -315,6 +315,21 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
         printAst(buffer, &in->a->a, opt);
       } break;
 
+      case AC_BuiltinEqual:
+      {
+        printToBuffer(buffer, "=");
+      } break;
+
+      case AC_BuiltinSet:
+      {
+        printToBuffer(buffer, "Set");
+      } break;
+
+      case AC_BuiltinType:
+      {
+        printToBuffer(buffer, "Type");
+      } break;
+
       default:
       {
         printToBuffer(buffer, "<unimplemented category: %u>", in0->cat);
@@ -745,8 +760,7 @@ normalize(Environment env, Value *in0)
         }
         else
         {
-          assert(norm_op->cat == AC_Union);
-          if (norm_op == &builtins.equal->v)
+          if (norm_op == builtins.equal)
           {// special case for equality
             Value *lhs = norm_args[1];
             Value *rhs = norm_args[2];
@@ -756,6 +770,8 @@ normalize(Environment env, Value *in0)
             else if (compare == Trinary_False)
               out0 = &builtins.False->v;
           }
+          else
+            assert(norm_op->cat == AC_Union);
         }
       }
 
@@ -776,6 +792,7 @@ normalize(Environment env, Value *in0)
 
     case AC_BuiltinSet:
     case AC_BuiltinType:
+    case AC_BuiltinEqual:
     case AC_ArrowV:
     case AC_FunctionV:
     case AC_StackRef:
@@ -1536,7 +1553,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
         b32 rule_valid = false;
         if (CompositeV *norm_rule = castAst(build_rewrite.type, CompositeV))
         {
-          if (norm_rule->op == &builtins.equal->v)
+          if (norm_rule->op == builtins.equal)
           {
             rule_valid = true;
             if (in->right_to_left)
@@ -2821,26 +2838,20 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
       builtins.Set = newValue(arena, BuiltinSet, builtins.Type);
       if (!addGlobalBinding("Set", builtins.Set))
         invalidCodePath;
-
-#if 0
-      Token subset_name = newToken("Set");
-      Union *subset = subsets[0] = newValue(arena, Union, &builtins.Type->v);
-      initSetNocheckin(subset, &subset_name, 0);
-      if (!addGlobalBinding(&subset_name, &subset->v))
-        invalidCodePath;
-
-      builtins.Type->subset_count = subset_count;
-      builtins.Type->subsets      = toSets(subsets);
-#endif
     }
 
-    {// Equality
+    {// more builtins
       b32 success = interpretFile(state, platformGetFileFullPath(arena, "../data/builtins.rea"), true);
       assert(success);
+
+      ArrowV *equal_type = castAst(lookupGlobalName("equal_type"), ArrowV);
+      builtins.equal = newValue(arena, BuiltinEqual, &equal_type->v);
+      if (!addGlobalBinding("=", builtins.equal))
+        invalidCodePath;
+
       builtins.True  = castAst(lookupGlobalName("True"), Union);
       builtins.truth = castAst(lookupGlobalName("truth"), Union);
       builtins.False = castAst(lookupGlobalName("False"), Union);
-      builtins.equal = castAst(lookupGlobalName("="), Union);
     }
   }
 

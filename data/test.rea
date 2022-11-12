@@ -74,6 +74,11 @@ mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*(b*c)
   }
  }
 
+!= :: (_A: Set, a, b: _A) -> Type
+{
+ (E: a = b) -> False
+ }
+
 ;; / :: record {n,d: Nat, _dnot0: d != 0}
 typedef Rat
 {

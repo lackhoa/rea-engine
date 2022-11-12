@@ -37,19 +37,24 @@ enum AstCategory
   AC_Rewrite,
   AC_Accessor,
 
-  // values subset
-  AC_BuiltinSet ,
+  // value subset
+  AC_BuiltinSet,
   AC_BuiltinType,
-  AC_CompositeV ,
-  AC_ArrowV     ,
-  AC_FunctionV  ,
-  AC_StackRef   ,
-  AC_AccessorV  ,
-  AC_Enum       ,
+  AC_BuiltinEqual,
+  AC_CompositeV,
+  AC_ArrowV,
+  AC_FunctionV,
+  AC_StackRef,
+  AC_AccessorV,
+  AC_Enum,
 
   // set subset
-  AC_Union        ,
+  AC_Union,
 };
+
+typedef Value BuiltinType;
+typedef Value BuiltinSet;
+typedef Value BuiltinEqual;
 
 struct Ast
 {
@@ -245,8 +250,6 @@ struct Value
   AstCategory  cat;
   Value       *type;
 };
-typedef Value BuiltinType;
-typedef Value BuiltinSet;
 
 inline void
 initValue(Value *in, AstCategory cat, Value *type)
@@ -513,10 +516,10 @@ struct PrintOptions{b32 detailed; b32 print_type; void *parent;};
 
 struct Builtins
 {
-  Union *equal;
   Union *True;
   Union *truth;
   Union *False;
+  Value *equal;
   Value *Set;
   Value *Type;
 };
