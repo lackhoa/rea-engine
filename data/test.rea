@@ -80,7 +80,7 @@ mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*(b*c)
  }
 
 ;; / :: record {n,d: Nat, _dnot0: d != 0}
-typedef Rat
+Rat :: union
 {
  / : (n,d: Nat, _dnot0: d != 0) -> Rat
  }

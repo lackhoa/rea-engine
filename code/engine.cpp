@@ -1128,7 +1128,7 @@ constantFromGlobalName(MemoryArena *arena, Token *token)
 }
 
 inline b32
-requireChar(Tokenizer *tk, char c, char *reason = 0)
+requireChar(char c, char *reason = 0, Tokenizer *tk=global_tokenizer)
 {
   auto out = false;
   if (!reason)
@@ -1142,12 +1142,6 @@ requireChar(Tokenizer *tk, char c, char *reason = 0)
       parseError(tk, &token, "expected character '%c' (%s)", c, reason);
   }
   return out;
-}
-
-inline b32
-requireChar(char c, char *reason = 0)
-{
-  return requireChar(global_tokenizer, c, reason);
 }
 
 inline b32
@@ -1169,7 +1163,7 @@ optionalCategory(TokenCategory tc, Tokenizer *tk = global_tokenizer)
 {
   b32 out = false;
   if (hasMore())
-    if (peekNext(tk).cat == tc)
+    if (peekToken(tk).cat == tc)
     {
       out = true;
       nextToken();
@@ -1182,7 +1176,7 @@ inline b32
 optionalChar(Tokenizer *tk, char c)
 {
   b32 out = false;
-  Token token = peekNext(tk);
+  Token token = peekToken(tk);
   if (equal(&token, c))
   {
     out = true;
@@ -1822,7 +1816,6 @@ parseSequence(MemoryArena *arena)
   {
     // todo #speed make a way to rewind the state of the tokenizer
     Tokenizer tk_save = *global_tokenizer;
-    b32 handled = false;
     Token token = nextToken();
     if (isExpressionEndMarker(&token))
     {
@@ -1839,11 +1832,10 @@ parseSequence(MemoryArena *arena)
           // todo: do we really wanna constraint it to only appear in sequence?
           case Keyword_Rewrite:
           {
-            handled = true;
             Rewrite *out = newAst(arena, Rewrite, &token);
 
             out->right_to_left = false;
-            Token next = peekNext();
+            Token next = peekToken();
             if (equal(next, "left"))
             {
               nextToken();
@@ -1863,8 +1855,7 @@ parseSequence(MemoryArena *arena)
         {
           case TC_DoubleColon:
           {
-            handled = true;
-            pushContextName("recursive let");
+            pushContextName("function");
             Function *fun = parseFunction(arena, name);
             ast = &fun->a;
             popContext();
@@ -1872,7 +1863,6 @@ parseSequence(MemoryArena *arena)
 
           case TC_ColonEqual:
           {
-            handled = true;
             pushContextName("let");
             Ast *rhs = parseExpressionToAst(arena);
 
@@ -1886,14 +1876,10 @@ parseSequence(MemoryArena *arena)
         }
       }
 
-      if (noError())
+      if (noError() && !ast)
       {
-        if (handled) {assert(ast);}
-        else
-        {
-          *global_tokenizer = tk_save;
-          ast = parseExpressionToAst(arena);
-        }
+        *global_tokenizer = tk_save;
+        ast = parseExpressionToAst(arena);
       }
 
       if (noError())
@@ -2083,7 +2069,7 @@ parseArrowType(MemoryArena *arena, b32 is_record)
   Token  *param_names;
   Ast   **param_types;
   b32    *param_implied;
-  Token marking_token = peekNext();
+  Token marking_token = peekToken();
   char begin_arg_char = is_record ? '{' : '(';
   char end_arg_char   = is_record ? '}' : ')';
   if (requireChar(begin_arg_char))
@@ -2233,7 +2219,7 @@ parseOperand(MemoryArena *arena)
 
   if (hasMore())
   {
-    Token funcall = peekNext();
+    Token funcall = peekToken();
     if (equal(&funcall, '('))
     {// function call syntax, let's keep going
       nextToken();
@@ -2290,7 +2276,7 @@ seesArrowExpression()
 
   Tokenizer tk_ = *global_tokenizer;
   Tokenizer *tk = &tk_;
-  if (requireChar(tk, '('))
+  if (requireChar('(', "", tk))
   {
     if (eatUntilMatchingPair(tk))
     {
@@ -2317,7 +2303,7 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
       //     ^
       for (b32 stop = false; !stop && hasMore();)
       {
-        Token op_token = peekNext();
+        Token op_token = peekToken();
         if (equal(op_token, "."))
         {// member accessor
           nextToken();
@@ -2396,9 +2382,9 @@ parseUnionCase(MemoryArena *arena, Union *superset)
   pushContext;
 
   Value *out0;
-  Token ctor_token = nextToken();
-  s32 ctor_id = superset->subset_count++;
-  if (isIdentifier(&ctor_token))
+  Token tag = nextToken();
+  s32 subset_id = superset->subset_count++;
+  if (isIdentifier(&tag))
   {
     if (optionalChar(':'))
     {
@@ -2420,7 +2406,7 @@ parseUnionCase(MemoryArena *arena, Union *superset)
         if (valid_type)
         {
           Union *out = newValue(arena, Union, norm_type0);
-          initSetNocheckin(out, &ctor_token, ctor_id);
+          initSetNocheckin(out, &tag, subset_id);
           out0 = &out->v;
         }
         else
@@ -2436,19 +2422,19 @@ parseUnionCase(MemoryArena *arena, Union *superset)
       if (superset->v.type == builtins.Set)
       {
         Union *out = newValue(arena, Union, &superset->v);
-        initSetNocheckin(out, &ctor_token, ctor_id);
+        initSetNocheckin(out, &tag, subset_id);
         out0 = &out->v;
       }
       else
-        parseError(&ctor_token, "constructors must construct a set member");
+        parseError(&tag, "constructors must construct a set member");
     }
 
     if (noError())
     {
       if (out0)
       {
-        if (addGlobalBinding(&ctor_token, out0))
-          superset->subsets[ctor_id] = &castAst(out0, Union)->s;
+        if (addGlobalBinding(&tag, out0))
+          superset->subsets[subset_id] = &castAst(out0, Union)->s;
       }
       else
         invalidCodePath;
@@ -2461,77 +2447,73 @@ parseUnionCase(MemoryArena *arena, Union *superset)
 }
 
 internal void
-parseTypedef(MemoryArena *arena)
+parseUnion(MemoryArena *arena, Token *name)
 {
   pushContext;
 
-  Token form_name = nextToken();
-  if (isIdentifier(&form_name))
-  {
-    // NOTE: the type is in scope of its own constructor.
-    Value *type = builtins.Set;
-    if (optionalChar(':'))
-    {// type override
-      b32 valid_type = false;
-      if (Expression type_parsing = parseExpressionFull(arena))
+  // NOTE: the type is in scope of its own constructor.
+  Value *type = builtins.Set;
+  if (optionalChar(':'))
+  {// type override
+    b32 valid_type = false;
+    if (Expression type_parsing = parseExpressionFull(arena))
+    {
+      Value *norm_type = evaluate(arena, type_parsing.ast);
+      if (ArrowV *arrow = castAst(norm_type, ArrowV))
       {
-        Value *norm_type = evaluate(arena, type_parsing.ast);
-        if (ArrowV *arrow = castAst(norm_type, ArrowV))
-        {
-          if (Constant *return_type = castAst(arrow->a->out_type, Constant))
-            if (return_type->value == builtins.Set)
-              valid_type = true;
-        }
-        else if (norm_type == builtins.Set)
-          valid_type = true;
+        if (Constant *return_type = castAst(arrow->a->out_type, Constant))
+          if (return_type->value == builtins.Set)
+            valid_type = true;
+      }
+      else if (norm_type == builtins.Set)
+        valid_type = true;
 
-        if (valid_type)
-        {
-          type = norm_type;
-        }
-        else
-        {
-          parseError(type_parsing.ast, "form has invalid type");
-          pushAttachment("type", norm_type);
-        }
+      if (valid_type)
+      {
+        type = norm_type;
+      }
+      else
+      {
+        parseError(type_parsing.ast, "form has invalid type");
+        pushAttachment("type", norm_type);
       }
     }
+  }
 
-    if (noError())
+  if (noError())
+  {
+    Union *superset = newSet(arena, Union, name, type);
+    addGlobalBinding(name, &superset->v);
+
+    if (requireChar('{', "open typedef body"))
     {
-      Union *superset = newSet(arena, Union, &form_name, type);
-      addGlobalBinding(&form_name, &superset->v);
-
-      if (requireChar('{', "open typedef body"))
+      Tokenizer tk_copy = *global_tokenizer;
+      s32 expected_case_count = getCommaSeparatedListLength(&tk_copy);
+      // NOTE: init here for recursive definition
+      if (noError(&tk_copy))
       {
-        Tokenizer tk_copy = *global_tokenizer;
-        s32 expected_case_count = getCommaSeparatedListLength(&tk_copy);
-        // NOTE: init here for recursive definition
-        if (noError(&tk_copy))
+        Union **subsets = pushArray(arena, expected_case_count, Union*);
+        superset->subset_count = 0;
+        superset->subsets      = toSets(subsets);
+        while (noError())
         {
-          Union **subsets = pushArray(arena, expected_case_count, Union*);
-          superset->subset_count = 0;
-          superset->subsets      = toSets(subsets);
-          while (noError())
+          if (optionalChar('}'))
+            break;
+          else
           {
-            if (optionalChar('}'))
-              break;
-            else
+            parseUnionCase(arena, superset);
+            if (!optionalChar(','))
             {
-              parseUnionCase(arena, superset);
-              if (!optionalChar(','))
-              {
-                requireChar('}', "to end the typedef; or you might want a comma ',' to delimit constructors");
-                break;
-              }
+              requireChar('}', "to end the typedef; or you might want a comma ',' to delimit constructors");
+              break;
             }
           }
+        }
 
-          if (noError())
-          {
-            assert(superset->subset_count == expected_case_count);
-            assert(constantFromGlobalName(temp_arena, &form_name));
-          }
+        if (noError())
+        {
+          assert(superset->subset_count == expected_case_count);
+          assert(constantFromGlobalName(temp_arena, name));
         }
       }
     }
@@ -2619,11 +2601,6 @@ parseTopLevel(EngineState *state)
             breakhere;
           } break;
 
-          case Keyword_Typedef:
-          {
-            parseTypedef(arena);
-          } break;
-
           case Keyword_Print:
           {
             if (auto parsing = parseExpressionFull(temp_arena))
@@ -2677,7 +2654,7 @@ parseTopLevel(EngineState *state)
 
           default:
           {
-            parseError(&token, "invalid keyword at top-leve");
+            parseError(&token, "invalid keyword at top-level");
           } break;
         }
       }
@@ -2701,8 +2678,13 @@ parseTopLevel(EngineState *state)
 
           case TC_DoubleColon:
           {
-            Token after_double_colon = peekNext();
-            if (equal(after_double_colon, "record"))
+            Token after_dcolon = peekToken();
+            if (equal(after_dcolon, "union"))
+            {
+              nextToken();
+              parseUnion(arena, name);
+            }
+            else if (equal(after_dcolon, "record"))
             {
               nextToken();
               parseRecord(arena);

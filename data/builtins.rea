@@ -1,7 +1,7 @@
 equal_type := (_A: Set, a, b: _A) -> Set;
 
-typedef True { truth }
-typedef False { }
+True  :: union { truth }
+False :: union { }
 
 ;; typedef = : (_A: Set, a, b: _A) -> Set
 ;; {

@@ -1,4 +1,4 @@
-typedef Bool {false, true}
+Bool :: union {false, true}
 
 & :: (a, b: Bool) -> Bool
 {

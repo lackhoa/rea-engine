@@ -186,7 +186,7 @@ eatAllSpaces(Tokenizer *tk)
   }
 }
 
-// todo: #speed make this a hash table
+// todo: #speed use a hash table or something.
 inline Keyword
 matchKeyword(Token *token)
 {
@@ -362,7 +362,7 @@ nextToken(Tokenizer *tk = global_tokenizer)
 }
 
 inline Token
-peekNext(Tokenizer *tk = global_tokenizer)
+peekToken(Tokenizer *tk = global_tokenizer)
 {
     auto tk_copy = *tk;
     return nextToken(&tk_copy);
@@ -418,13 +418,11 @@ isIdentifier(Token *token)
 internal void
 parseErrorVA(s32 line, s32 column, char *format, va_list arg_list, Tokenizer *tk = global_tokenizer)
 {
-
-  assert(!tk->error);  // note: prevent parser from doing huge amount of
-  // useless work after failure (#speed).
+  assert(!tk->error);  // note: prevent parser from doing useless work after failure.
 
   auto arena = tk->error_arena;
   tk->error = pushStruct(arena, ParseErrorData, true);
-  tk->error->message = subArena(tk->error_arena, 256);
+  tk->error->message = subArena(tk->error_arena, 1024);
 
   printToBufferVA(&tk->error->message, format, arg_list);
 
@@ -442,56 +440,6 @@ parseError(Token *token, char *format, ...)
   parseErrorVA(token->line, token->column, format, arg_list);
   __crt_va_end(arg_list);
 }
-
-#if 0
-inline Token *
-getExpressionToken(Expression *in0)
-{
-  Token *out = 0;
-  switch (in0->cat)
-  {
-    case EC_Variable:
-    {
-      Variable *in = caste(in0, Variable);
-      out = &in->name;
-    } break;
-
-    case EC_Form:
-    {
-      Form *in = caste(in0, Form);
-      out = &in->name;
-    } break;
-
-    case EC_Function:
-    {
-      Function *in = caste(in0, Function);
-      out = &in->name;
-    } break;
-
-    case EC_Sequence:
-    {
-      Sequence *in = caste(in0, Sequence);
-      out = getExpressionToken(in->items[in->count-1]);
-    } break;
-
-    case EC_Application:
-    {
-      Application *in = caste(in0, Application);
-      out = getExpressionToken(in->op);
-    } break;
-
-    case EC_ArrowType:
-    {
-      ArrowType *in = caste(in0, ArrowType);
-      out = &in->token;
-    } break;
-
-    default:
-        todoIncomplete;
-  }
-  return out;
-}
-#endif
 
 internal void
 parseError(Ast *in, char *format, ...)

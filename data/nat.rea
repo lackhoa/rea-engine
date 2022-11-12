@@ -1,6 +1,6 @@
 #load "boolean.rea"
 
-typedef Nat
+Nat :: union
 {
  0,
  s: (n1: Nat) -> Nat,
