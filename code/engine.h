@@ -38,12 +38,14 @@ enum AstCategory
   AC_Accessor,
 
   // values subset
-  AC_CompositeV   ,
-  AC_ArrowV       ,
-  AC_FunctionV    ,
-  AC_StackRef     ,
-  AC_AccessorV    ,
-  AC_Enum,
+  AC_BuiltinSet ,
+  AC_BuiltinType,
+  AC_CompositeV ,
+  AC_ArrowV     ,
+  AC_FunctionV  ,
+  AC_StackRef   ,
+  AC_AccessorV  ,
+  AC_Enum       ,
 
   // set subset
   AC_Union        ,
@@ -243,6 +245,8 @@ struct Value
   AstCategory  cat;
   Value       *type;
 };
+typedef Value BuiltinType;
+typedef Value BuiltinSet;
 
 inline void
 initValue(Value *in, AstCategory cat, Value *type)
@@ -513,8 +517,8 @@ struct Builtins
   Union *True;
   Union *truth;
   Union *False;
-  Union *Set;
-  Union *Type;
+  Value *Set;
+  Value *Type;
 };
 
 #include "generated/engine_forward.h"

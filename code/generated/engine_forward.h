@@ -3,6 +3,8 @@ void endTemporaryMemory(TemporaryMemory temp);
 ReadFileResult platformReadEntireFile(const char * file_name);
 SetId getNextSetId();
 char * printAst(MemoryArena * buffer, void * in_void, PrintOptions opt);
+Value * normalize(Environment env, Value * in0);
+Value * evaluate(Environment env, Ast * in0);
 Expression buildExpression(Environment * env, Ast * in0, Value * expected_type);
 Function * parseFunction(MemoryArena * arena, Token * name);
 Ast * parseExpressionToAst(MemoryArena * arena);

@@ -270,7 +270,7 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
       case AC_Union:
       {
         Union *in = castAst(in0, Union);
-        if (opt.detailed && in != builtins.Type)
+        if (opt.detailed)
         {
           printToBuffer(buffer, in->s.token);
 
@@ -400,12 +400,6 @@ compareExpressionList(Value **lhs_list, Value **rhs_list, s32 count)
 
   return out;
 }
-
-internal Value *
-normalize(Environment env, Value *in0);
-
-internal Value *
-evaluate(Environment env, Ast *in0);
 
 internal Value **
 introduce(Environment *env, s32 count, Token *names, Ast **types_ast, s32 depth_override=0)
@@ -682,6 +676,7 @@ rewriteExpression(Environment *env, Value *in)
 }
 
 // todo #speed don't pass the Environment in wholesale?
+forward_declare
 internal Value *
 normalize(Environment env, Value *in0)
 {
@@ -698,7 +693,6 @@ normalize(Environment env, Value *in0)
 
   switch (in0->cat)
   {
-    // #done
     case AC_Variable:
     {
       Variable *in = castAst(in0, Variable);
@@ -713,7 +707,6 @@ normalize(Environment env, Value *in0)
       out0 = stack->args[in->id];
     } break;
 
-    // #done
     case AC_Constant:
     {
       Constant *in = castAst(in0, Constant);
@@ -781,6 +774,8 @@ normalize(Environment env, Value *in0)
       assert(out0->cat);
     } break;
 
+    case AC_BuiltinSet:
+    case AC_BuiltinType:
     case AC_ArrowV:
     case AC_FunctionV:
     case AC_StackRef:
@@ -818,6 +813,7 @@ normalize(MemoryArena *arena, Value *in0)
   return normalize(newEnvironment(arena), in0);
 }
 
+forward_declare
 internal Value *
 evaluate(Environment env, Ast *in0)
 {
@@ -915,7 +911,7 @@ evaluate(Environment env, Ast *in0)
     case AC_Arrow:
     {// we can't do anything here, so just store it off somewhere.
       Arrow *in = castAst(in0, Arrow);
-      ArrowV *out = newValue(env.arena, ArrowV, &builtins.Type->v);
+      ArrowV *out = newValue(env.arena, ArrowV, builtins.Type);
       out->a     = in;
       out->stack = env.stack;
       out0 = &out->v;
@@ -1564,7 +1560,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
     {
       Arrow *in = castAst(in0, Arrow);
       out.ast = in0;
-      out.type = &builtins.Type->v;
+      out.type = builtins.Type;
       // note: we build the types along with adding local bindings below.
       addLocalBindings(env, in->param_count, in->param_names, in->param_types, true);
       if (noError())
@@ -2420,7 +2416,7 @@ parseUnionCase(MemoryArena *arena, Union *superset)
     else
     {
       // default type is the form itself
-      if (superset->v.type == &builtins.Set->v)
+      if (superset->v.type == builtins.Set)
       {
         Union *out = newValue(arena, Union, &superset->v);
         initSetNocheckin(out, &ctor_token, ctor_id);
@@ -2456,7 +2452,7 @@ parseTypedef(MemoryArena *arena)
   if (isIdentifier(&form_name))
   {
     // NOTE: the type is in scope of its own constructor.
-    Value *type = &builtins.Set->v;
+    Value *type = builtins.Set;
     if (optionalChar(':'))
     {// type override
       b32 valid_type = false;
@@ -2466,10 +2462,10 @@ parseTypedef(MemoryArena *arena)
         if (ArrowV *arrow = castAst(norm_type, ArrowV))
         {
           if (Constant *return_type = castAst(arrow->a->out_type, Constant))
-            if (return_type->value == &builtins.Set->v)
+            if (return_type->value == builtins.Set)
               valid_type = true;
         }
-        else if (norm_type == &builtins.Set->v)
+        else if (norm_type == builtins.Set)
           valid_type = true;
 
         if (valid_type)
@@ -2816,12 +2812,17 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
 
     builtins = {};
     {// Type and Set
-      s32 subset_count = 1;
-      Token superset_name = newToken("Type");
-      builtins.Type = newSet(arena, Union, &superset_name, 0);
-      builtins.Type->v.type = &builtins.Type->v; // NOTE: circular types, might bite us
+      // Token superset_name = newToken("Type");
+      builtins.Type = newValue(arena, BuiltinType, 0);
+      builtins.Type->type = builtins.Type; // NOTE: circular types, might bite us
+      if (!addGlobalBinding("Type", builtins.Type))
+        invalidCodePath;
 
-      Union **subsets = pushArray(arena, subset_count, Union*);
+      builtins.Set = newValue(arena, BuiltinSet, builtins.Type);
+      if (!addGlobalBinding("Set", builtins.Set))
+        invalidCodePath;
+
+#if 0
       Token subset_name = newToken("Set");
       Union *subset = subsets[0] = newValue(arena, Union, &builtins.Type->v);
       initSetNocheckin(subset, &subset_name, 0);
@@ -2830,10 +2831,7 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
 
       builtins.Type->subset_count = subset_count;
       builtins.Type->subsets      = toSets(subsets);
-      if (!addGlobalBinding(&builtins.Type->s.token, &builtins.Type->v))
-        invalidCodePath;
-
-      builtins.Set  = castAst(lookupGlobalName("Set"), Union);
+#endif
     }
 
     {// Equality
