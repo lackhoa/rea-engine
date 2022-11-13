@@ -413,3 +413,9 @@ myprint(char *c)
 {
   printf("%s", c);
 }
+
+inline b32
+inArena(MemoryArena *arena, void *p)
+{
+  return ((u64)p >= (u64)arena->base && (u64)p < (u64)arena->base+arena->cap);
+}

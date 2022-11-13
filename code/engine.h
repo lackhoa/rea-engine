@@ -45,10 +45,11 @@ enum AstCategory
   AC_ArrowV,
   AC_FunctionV,
   AC_StackRef,
-  AC_Enum,
+  AC_AccessorV,
 
   // set subset
   AC_Union,
+  AC_Constructor,
 };
 
 typedef Value BuiltinType;
@@ -268,23 +269,17 @@ newValue_(MemoryArena *arena, AstCategory cat, Value *type, size_t size)
 #define newValue(arena, cat, type)                        \
   ((cat *) newValue_(arena, AC_##cat, type, sizeof(cat)))
 
-struct SetId
-{
-  u64 id;
-  operator u64() {return id;}
-};
-
 struct Set
 {
   Value v;
   Token token;
-  SetId set_id;
 };
 
-struct Enum
+struct Constructor
 {
   Value v;
-  u32   id;
+  Token name;
+  s32   id;
 };
 
 struct Union
@@ -295,11 +290,8 @@ struct Union
     Set   s;
   };
 
-  s32  enum_count;
-  Enum enums;
-
-  s32   subset_count;
-  Set **subsets;
+  s32   ctor_count;
+  Set **ctors;
 };
 
 inline Set **
@@ -493,7 +485,6 @@ struct Accessor
   s32    param_id;              // after build phase
 };
 
-#if 0
 struct AccessorV
 {
   Value  v;
@@ -501,7 +492,6 @@ struct AccessorV
   CompositeV *record;
   s32         param_id;
 };
-#endif
 
 struct FileList
 {
@@ -527,5 +517,4 @@ struct Builtins
   Value *Set;
   Value *Type;
 };
-
 #include "generated/engine_forward.h"

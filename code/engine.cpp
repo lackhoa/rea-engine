@@ -5,8 +5,9 @@
 #include "engine.h"
 #include "rea_globals.h"
 
+global_variable b32 global_debug_mode;
 #if REA_INTERNAL
-#  define INTERNAL_ERROR global_tokenizer->error
+#  define INTERNAL_ERROR global_tokenizer->error || global_debug_mode
 #else
 #  define INTERNAL_ERROR false
 #endif
@@ -35,7 +36,6 @@ initSet(Set *in, AstCategory cat, Token *token, Value *type)
 {
   initValue(&in->v, cat, type);
   in->token  = *token;
-  in->set_id = getNextSetId();
 }
 
 inline Set *
@@ -48,17 +48,6 @@ newSet_(MemoryArena *arena, size_t size, AstCategory cat, Token *token, Value *t
 
 #define newSet(arena, cat, ...)                     \
   ((cat *) newSet_(arena, sizeof(cat), AC_##cat, __VA_ARGS__))
-
-inline void
-initSetNocheckin(Union *in, Token *token, u64 set_id)
-{
-  in->v.cat    = AC_Union;
-  in->s.token  = *token;
-  in->s.set_id = SetId{set_id}; // todo set_id is used to distinguish branches in a
-                          // fork, which is now the wrong semantics.
-  in->subset_count = 0;
-  in->subsets      = 0;
-}
 
 // prints both Composite and CompositeV
 inline void
@@ -213,11 +202,11 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
         printToBuffer(buffer, " {");
         Union *form = in->union0;
         for (s32 ctor_id = 0;
-             ctor_id < form->subset_count;
+             ctor_id < form->ctor_count;
              ctor_id++)
         {
           ForkParameters *casev = in->params + ctor_id;
-          Set *subset = form->subsets[ctor_id];
+          Set *subset = form->ctors[ctor_id];
           switch (subset->v.type->cat)
           {// print pattern
             case AC_Union:
@@ -242,7 +231,7 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
 
           printToBuffer(buffer, ": ");
           printAst(buffer, in->bodies[ctor_id], new_opt);
-          if (ctor_id != form->subset_count-1)
+          if (ctor_id != form->ctor_count-1)
             printToBuffer(buffer, ", ");
         }
         printToBuffer(buffer, "}");
@@ -280,12 +269,12 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
             printAst(buffer, in->v.type, new_opt);
           }
 
-          if (in->subset_count)
+          if (in->ctor_count)
           {
             printToBuffer(buffer, " {");
-            for (s32 subset_id = 0; subset_id < in->subset_count; subset_id++)
+            for (s32 subset_id = 0; subset_id < in->ctor_count; subset_id++)
             {
-              Set *subset = in->subsets[subset_id];
+              Set *subset = in->ctors[subset_id];
               printToBuffer(buffer, subset->token);
               printToBuffer(buffer, ": ");
               printAst(buffer, subset->v.type, new_opt);
@@ -330,8 +319,32 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
         printToBuffer(buffer, "Type");
       } break;
 
+      case AC_Accessor:
+      {
+        Accessor *in = castAst(in0, Accessor);
+        printAst(buffer, in->record, new_opt);
+        printToBuffer(buffer, ".");
+        printToBuffer(buffer, in->member);
+      }
+
+      case AC_AccessorV:
+      {
+        AccessorV *in = castAst(in0, AccessorV);
+        printAst(buffer, in->record, new_opt);
+        printToBuffer(buffer, ".");
+        Arrow *op_type = castAst(in->record->op->type, ArrowV)->a;
+        printToBuffer(buffer, op_type->param_names[in->param_id]);
+      }
+
+      case AC_Constructor:
+      {
+        Constructor *in = castAst(in0, Constructor);
+        printToBuffer(buffer, in->name);
+      } break;
+
       default:
       {
+        __debugbreak();
         printToBuffer(buffer, "<unimplemented category: %u>", in0->cat);
       } break;
     }
@@ -478,12 +491,6 @@ identicalTrinary(Value *lhs0, Value *rhs0) // TODO: turn the args into values
           out = Trinary_True;
       } break;
 
-      case AC_Union:
-      {
-        out = (Trinary)(castAst(lhs0, Union)->s.set_id.id ==
-                        castAst(rhs0, Union)->s.set_id.id);
-      } break;
-
       case AC_ArrowV:
       {
         ArrowV* lhs = castAst(lhs0, ArrowV);
@@ -548,6 +555,25 @@ identicalTrinary(Value *lhs0, Value *rhs0) // TODO: turn the args into values
 
       case AC_FunctionV:
       {// we can compare the types to eliminate negatives, but we don't care.
+      } break;
+
+      case AC_Constructor:
+      {
+        Constructor *lhs = castAst(lhs0, Constructor);
+        Constructor *rhs = castAst(rhs0, Constructor);
+        assert(lhs->v.type == rhs->v.type);
+        out = (Trinary)(lhs->id == rhs->id);
+      } break;
+
+      case AC_AccessorV:
+      {
+        AccessorV *lhs = castAst(lhs0, AccessorV);
+        AccessorV *rhs = castAst(rhs0, AccessorV);
+        // NOTE: would loop forever if we did this
+        // if (identicalB32(&lhs->record->v, &rhs->record->v))
+        if (lhs->record == rhs->record)
+          if (lhs->param_id == rhs->param_id)
+            out = Trinary_True;
       } break;
 
       invalidDefaultCase;
@@ -771,7 +797,7 @@ normalize(Environment env, Value *in0)
               out0 = &builtins.False->v;
           }
           else
-            assert(norm_op->cat == AC_Union);
+            assert(norm_op->cat == AC_Constructor);
         }
       }
 
@@ -790,14 +816,29 @@ normalize(Environment env, Value *in0)
       assert(out0->cat);
     } break;
 
-#if 0
     case AC_AccessorV:
     {
       AccessorV *in = castAst(in0, AccessorV);
-      out0 = in->record->args[in->param_id];
-    } break;
+#if 0
+      Value *record = normalize(env, &in->record->v);
+      if (CompositeV *record_compositev = castAst(record, CompositeV))
+        out0 = record_compositev->args[in->param_id];
+      else if (record == in->record)
 #endif
+        // fingers crossed we're not gonna get any infinite loop
+        out0 = in->record->args[in->param_id];
+#if 0
+      else
+      {
+        AccessorV *out = copyStruct(arena, in);
+        out->record = record;
+        out0 = &out->v;
+      }
+#endif
+    } break;
 
+    // todo #speed most of these don't need rewriting.
+    case AC_Constructor:
     case AC_BuiltinSet:
     case AC_BuiltinType:
     case AC_BuiltinEqual:
@@ -817,8 +858,10 @@ normalize(Environment env, Value *in0)
     Value *before_rewrite = out0;
     out0 = rewriteExpression(&env, out0);
     if (out0 != before_rewrite)
-      out0 = normalize(env, out0); // do another iteration (todo: WHY?
-                                   // rewriteExpression already did the loop)
+      out0 = normalize(env, out0); // normalize again, because there might
+                                   // be new information not present at the time
+                                   // the rewrite rule was added (f.ex the op
+                                   // might be expanded now)
   }
 
   if (INTERNAL_ERROR)
@@ -909,19 +952,19 @@ evaluate(Environment env, Ast *in0)
       Environment fork_env = env;
       switch (norm_subject->cat)
       {
-        case AC_Union:
+        case AC_Constructor:
         {
-          Union *ctor = castAst(norm_subject, Union);
+          Constructor *ctor = castAst(norm_subject, Constructor);
           extendStack(&fork_env, 0, 0);
-          out0 = evaluate(fork_env, in->bodies[ctor->s.set_id]);
+          out0 = evaluate(fork_env, in->bodies[ctor->id]);
         } break;
 
         case AC_CompositeV:
         {
           CompositeV *subject = castAst(norm_subject, CompositeV);
-          if (Union *ctor = castAst(subject->op, Union))
+          if (Constructor *ctor = castAst(subject->op, Constructor))
           {
-            Ast *body = in->bodies[ctor->s.set_id];
+            Ast *body = in->bodies[ctor->id];
             extendStack(&fork_env, subject->arg_count, subject->args);
             out0 = evaluate(fork_env, body);
           }
@@ -1430,13 +1473,32 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                     assert(param_type->stack_delta == 0);
                     stack_frame[param_type->id] = build_arg.type;
 
-                    // write back to the input ast. (TODO: doesn't actually work
-                    // since we don't handle the case where there are variables
-                    // in the current arg's type)
+                    // write back to the input ast.
+                    Ast *synthetic0;
                     Token token = newToken("<synthetic>");
-                    Constant *synthetic = newAst(arena, Constant, &token);
-                    synthetic->value = build_arg.type;
-                    in->args[param_type->id] = &synthetic->a;
+                    switch (build_arg.type->cat)
+                    {
+                      // todo: almost correct, we need a full-fledged Value->Ast
+                      // function to be fully correct.
+                      case AC_StackRef:
+                      {
+                        StackRef *ref = castAst(build_arg.type, StackRef);
+                        Variable *synthetic = newAst(arena, Variable, &token);
+                        synthetic->stack_delta = env->stack->depth - ref->stack_depth;
+                        synthetic->id          = ref->id;
+                        synthetic0 = &synthetic->a;
+                      } break;
+
+                      case AC_Union:
+                      {
+                        Constant *synthetic = newAst(arena, Constant, &token);
+                        synthetic->value = build_arg.type;
+                        synthetic0 = &synthetic->a;
+                      } break;
+
+                      invalidDefaultCase;
+                    }
+                    in->args[param_type->id] = synthetic0;
                   }
                 }
               }
@@ -1611,12 +1673,12 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
 
         if (Union *form = castAst(subject_type, Union))
         {
-          if (form->subset_count == case_count)
+          if (form->ctor_count == case_count)
           {
             ForkParameters  *correct_params = pushArray(arena, case_count, ForkParameters, true);
             Ast            **correct_bodies = pushArray(arena, case_count, Ast *, true);
             Value *common_type  = expected_type;
-            Value *norm_subject = evaluate(*env, in->subject);
+            Value *subjectv = evaluate(*env, in->subject);
             Environment *outer_env = env;
             for (s32 input_case_id = 0;
                  input_case_id < case_count && noError();
@@ -1631,13 +1693,13 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
 
               if (Value *lookup = lookupGlobalName(ctor_token->text))
               {
-                if (Union *ctor = castAst(lookup, Union))
+                if (Constructor *ctor = castAst(lookup, Constructor))
                 {
                   if (param_count == 0)
                   {
                     if (identicalB32(ctor->v.type, subject_type)) 
                     {
-                      addRewrite(&env, norm_subject, &ctor->v);
+                      addRewrite(&env, subjectv, &ctor->v);
                       addLocalBindings(&env, 0, 0, 0, false);
                     }
                     else
@@ -1649,59 +1711,79 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                   }
                   else
                   {
-                    if (ArrowV *ctor_sig = castAst(ctor->v.type, ArrowV))
+                    if (ArrowV *ctor_sigv = castAst(ctor->v.type, ArrowV))
                     {
-                      if (identicalB32(&getFormOf(ctor_sig->a->out_type)->v,
+                      Arrow *ctor_sig = ctor_sigv->a;
+                      if (identicalB32(&getFormOf(ctor_sigv->a->out_type)->v,
                                        &getFormOf(subject_type)->v))
                       {
-                        if (param_count == ctor_sig->a->param_count)
+                        if (param_count == ctor_sig->param_count)
                         {
-                          addLocalBindings(&env, param_count, params->names, ctor_sig->a->param_types, false);
-                          Value *pattern_type = evaluate(env, ctor_sig->a->out_type);
+#if 0 // introduce path
+                          addLocalBindings(&env, param_count, params->names, ctor_sig->param_types, false);
+                          Value *pattern_type = evaluate(env, ctor_sig->out_type);
                           CompositeV *pattern = newValue(temp_arena, CompositeV, pattern_type);
                           pattern->op        = &ctor->v;
                           pattern->arg_count = param_count;
-#if 1
                           pattern->args      = env.stack->args;
-#else
-                          pattern->args = pushArray(temp_arena, param_count, Value*);
-                          for(s32 arg_id=0; arg_id < param_count; arg_id++)
+                          assert(pattern->args);
+#else // accessor path
+                          env.bindings = extendBindings(temp_arena, env.bindings);  // nocheckin: this is useless
+                          extendStack(&env, 0, 0);
+
+                          Environment ctor_env = env;
+                          extendStack(&ctor_env, 0, 0);
+                          // I guess we won't be needing any parameter in the output type.
+                          Value *pattern_type = evaluate(ctor_env, ctor_sig->out_type);
+                          CompositeV *pattern = newValue(temp_arena, CompositeV, pattern_type);
+                          pattern->args = ctor_env.stack->args;
+                          while (ctor_env.stack->arg_count < param_count)
                           {
-                            pattern->args[arg_id] = &newValue(temp_arena, AccessorV, evaluate(env, ctor_sig->a->param_types[arg_id]))->v;
+                            s32 param_id = ctor_env.stack->arg_count++;
+                            Value *param_type = evaluate(ctor_env, ctor_sig->param_types[param_id]);
+                            AccessorV *paramv = newValue(temp_arena, AccessorV, param_type);
+                            paramv->record   = pattern;
+                            paramv->param_id = param_id;
+                            pattern->args[param_id] = &paramv->v;
                           }
+
+                          pattern->op        = &ctor->v;
+                          pattern->arg_count = param_count;
 #endif
-                          addRewrite(&env, norm_subject, &pattern->v);
+
+
+                          addRewrite(&env, subjectv, &pattern->v);
                         }
                         else
-                          parseError(ctor_token, "pattern has wrong number of parameters (expected: %d, got: %d)", ctor_sig->a->param_count, param_count);
+                          parseError(ctor_token, "pattern has wrong number of parameters (expected: %d, got: %d)", ctor_sigv->a->param_count, param_count);
                       }
                       else
                       {
                         parseError(ctor_token, "composite constructor has wrong return type");
                         pushAttachment("expected type", subject_type);
-                        pushAttachment("got type", ctor_sig->a->out_type);
+                        pushAttachment("got type", ctor_sigv->a->out_type);
                       }
                     }
                     else
                     {
                       parseError(ctor_token, "expected a composite constructor");
-                      pushAttachment("got type", &ctor_sig->v);
+                      pushAttachment("got type", &ctor_sigv->v);
                     }
                   }
 
                   if (noError())
                   {
-                    if (correct_bodies[ctor->s.set_id])
+                    if (correct_bodies[ctor->id])
                     {
                       parseError(in->parsing->bodies[input_case_id], "fork case handled twice");
                       pushAttachment("constructor", &ctor->v);
                     }
                     else
                     {
-                      correct_params[ctor->s.set_id].count = param_count;
-                      correct_params[ctor->s.set_id].names = param_names;
+                      correct_params[ctor->id].count = param_count;
+                      correct_params[ctor->id].names = param_names;
                       Expression body = buildExpression(&env, in->parsing->bodies[input_case_id], common_type);
-                      correct_bodies[ctor->s.set_id] = body.ast;
+                      correct_bodies[ctor->id] = body.ast;
                       if (!common_type)
                         common_type = body.type;
                     }
@@ -1727,7 +1809,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
           }
           else
             parseError(&in->a, "wrong number of cases, expected: %d, got: %d",
-                       form->subset_count, in->case_count);
+                       form->ctor_count, in->case_count);
         }
         else
         {
@@ -1763,35 +1845,16 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
           if (param_id == op_type->param_count)
             tokenError(&in->member, "accessor has invalid member");
           else
-          {// typing: curse you dependent type!
+          {// typing
             extendStack(env, param_count, recordv->args);
             out.type = evaluate(*env, op_type->param_types[in->param_id]);
-#if 0
-            Value **stack_frame = env->stack->args;
-            for (s32 param_id=0; param_id < param_count; param_id++)
-            {
-              Value *param_type = evaluate(*env, op_type->param_types[param_id]);
-              if (param_id == in->param_id)
-              {
-                out.type = param_type;
-                break;
-              }
-              else
-              {
-                // todo: does this need to exist
-                AccessorV *paramv = newValue(temp_arena, AccessorV, param_type);
-                paramv->param_id = param_id;
-                paramv->record   = recordv;
-                stack_frame[param_id] = &paramv->v;
-              }
-            }
-#endif
             unwindStack(env);
           }
         }
         else
         {
           parseError(record, "cannot access a non-record");
+          evaluate(*env, record);
           pushAttachment("record", recordv0);
         }
       }
@@ -2442,7 +2505,7 @@ parseUnionCase(MemoryArena *arena, Union *superset)
 
   Value *out0;
   Token tag = nextToken();
-  s32 subset_id = superset->subset_count++;
+  s32 ctor_id = superset->ctor_count++;
   if (isIdentifier(&tag))
   {
     if (optionalChar(':'))
@@ -2464,8 +2527,9 @@ parseUnionCase(MemoryArena *arena, Union *superset)
 
         if (valid_type)
         {
-          Union *out = newValue(arena, Union, norm_type0);
-          initSetNocheckin(out, &tag, subset_id);
+          Constructor *out = newValue(arena, Constructor, norm_type0);
+          out->name = tag;
+          out->id  = ctor_id;
           out0 = &out->v;
         }
         else
@@ -2480,8 +2544,9 @@ parseUnionCase(MemoryArena *arena, Union *superset)
       // default type is the form itself
       if (superset->v.type == builtins.Set)
       {
-        Union *out = newValue(arena, Union, &superset->v);
-        initSetNocheckin(out, &tag, subset_id);
+        Constructor *out = newValue(arena, Constructor, &superset->v);
+        out->name = tag;
+        out->id  = ctor_id;
         out0 = &out->v;
       }
       else
@@ -2493,7 +2558,7 @@ parseUnionCase(MemoryArena *arena, Union *superset)
       if (out0)
       {
         if (addGlobalBinding(&tag, out0))
-          superset->subsets[subset_id] = &castAst(out0, Union)->s;
+          superset->ctors[ctor_id] = &castAst(out0, Union)->s;
       }
       else
         invalidCodePath;
@@ -2552,8 +2617,8 @@ parseUnion(MemoryArena *arena, Token *name)
       if (noError(&tk_copy))
       {
         Union **subsets = pushArray(arena, expected_case_count, Union*);
-        superset->subset_count = 0;
-        superset->subsets      = toSets(subsets);
+        superset->ctor_count = 0;
+        superset->ctors      = toSets(subsets);
         while (noError())
         {
           if (optionalChar('}'))
@@ -2571,7 +2636,7 @@ parseUnion(MemoryArena *arena, Token *name)
 
         if (noError())
         {
-          assert(superset->subset_count == expected_case_count);
+          assert(superset->ctor_count == expected_case_count);
           assert(constantFromGlobalName(temp_arena, name));
         }
       }

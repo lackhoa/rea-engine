@@ -1,7 +1,3 @@
-void copyMemory(void * dst, void * src, size_t size);
-void endTemporaryMemory(TemporaryMemory temp);
-ReadFileResult platformReadEntireFile(const char * file_name);
-SetId getNextSetId();
 char * printAst(MemoryArena * buffer, void * in_void, PrintOptions opt);
 Value * normalize(Environment env, Value * in0);
 Value * evaluate(Environment env, Ast * in0);

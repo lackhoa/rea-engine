@@ -6,7 +6,7 @@ testComplexFork :: (a, b: Nat) -> Nat
  fork a+b
  {
   0:    0,
-  s(n): n,
+  s(n): (a+b).p,
   }
  }
 check truth: testComplexFork(0, 0) = 0;
@@ -25,14 +25,14 @@ testCurrying :: (a: Nat) -> (b, c: Nat) -> (a+b)+c = a+(b+c)
  fork a
  {
   s(a'):
-  out :: (b', c': Nat) -> (a+b')+c' = a+b'+c'
+  out69 :: (b', c': Nat) -> (a+b')+c' = a+b'+c'
   { plusAssociative(a, b', c') }
-  out,
+  out69,
 
   0:
-  out :: (b, c: Nat) -> (a+b)+c = a+(b+c)
+  out70 :: (b, c: Nat) -> (a+b)+c = a+(b+c)
   { plusAssociative(a, b, c) }
-  out,
+  out70,
   }
  }
 
@@ -58,8 +58,8 @@ mulDistributive :: (a,b,c: Nat) -> a*c+b*c = (a+b)*c
  {0: truth,
 
   s(a'):
-  rewrite mulDistributive(a', b, c);
-  rewrite plusAssociative(c, (a' * c), (b * c));
+  rewrite mulDistributive(a.p, b, c);
+  rewrite plusAssociative(c, (a.p * c), (b * c));
   truth}
  }
 
@@ -69,8 +69,8 @@ mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*(b*c)
  {
   0: truth,
   s(a'):
-  rewrite left mulDistributive(b, (a' * b), c);
-  rewrite mulAssociative(a', b, c),
+  rewrite left mulDistributive(b, (a.p * b), c);
+  rewrite mulAssociative(a.p, b, c),
   }
  }
 
@@ -79,7 +79,6 @@ mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*(b*c)
  (E: a = b) -> False
  }
 
-;; / :: record {n,d: Nat, _dnot0: d != 0}
 Rat :: union
 {
  / : (n,d: Nat, _dnot0: d != 0) -> Rat
@@ -94,7 +93,7 @@ rat_plus :: (a, b: Rat) -> Rat
   fork b
   {
    /(bn,bd,bproof):
-   /((a.n * b.d + b.n * a.d), (a.d * b.d), true)
+   /((a.n * b.d + b.n * a.d), (a.d * b.d), a._dnot0)
    }
   }
  }
