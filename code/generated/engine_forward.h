@@ -1,3 +1,5 @@
+TemporaryMemory beginTemporaryMemory(MemoryArena * arena);
+char nextChar(Tokenizer * tk);
 char * printAst(MemoryArena * buffer, void * in_void, PrintOptions opt);
 Value * normalize(Environment env, Value * in0);
 Value * evaluate(Environment env, Ast * in0);

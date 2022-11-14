@@ -31,6 +31,7 @@ debugDedent()
 
 #define NULL_WHEN_ERROR(name) if (noError()) {assert(name);} else {name = {};}
 
+#if 0
 inline void
 initSet(Set *in, AstCategory cat, Token *token, Value *type)
 {
@@ -48,6 +49,7 @@ newSet_(MemoryArena *arena, size_t size, AstCategory cat, Token *token, Value *t
 
 #define newSet(arena, cat, ...)                     \
   ((cat *) newSet_(arena, sizeof(cat), AC_##cat, __VA_ARGS__))
+#endif
 
 // prints both Composite and CompositeV
 inline void
@@ -206,7 +208,7 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
              ctor_id++)
         {
           ForkParameters *casev = in->params + ctor_id;
-          Set *subset = form->ctors[ctor_id];
+          Constructor *subset = form->ctors + ctor_id;
           switch (subset->v.type->cat)
           {// print pattern
             case AC_Union:
@@ -261,7 +263,7 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
         Union *in = castAst(in0, Union);
         if (opt.detailed)
         {
-          printToBuffer(buffer, in->s.token);
+          printToBuffer(buffer, in->name);
 
           if (opt.print_type)
           {
@@ -272,10 +274,10 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
           if (in->ctor_count)
           {
             printToBuffer(buffer, " {");
-            for (s32 subset_id = 0; subset_id < in->ctor_count; subset_id++)
+            for (s32 ctor_id = 0; ctor_id < in->ctor_count; ctor_id++)
             {
-              Set *subset = in->ctors[subset_id];
-              printToBuffer(buffer, subset->token);
+              Constructor *subset = in->ctors + ctor_id;
+              printToBuffer(buffer, subset->name);
               printToBuffer(buffer, ": ");
               printAst(buffer, subset->v.type, new_opt);
             }
@@ -283,7 +285,7 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
           }
         }
         else
-          printToBuffer(buffer, in->s.token);
+          printToBuffer(buffer, in->name);
       } break;
 
       case AC_FunctionV:
@@ -819,22 +821,8 @@ normalize(Environment env, Value *in0)
     case AC_AccessorV:
     {
       AccessorV *in = castAst(in0, AccessorV);
-#if 0
-      Value *record = normalize(env, &in->record->v);
-      if (CompositeV *record_compositev = castAst(record, CompositeV))
-        out0 = record_compositev->args[in->param_id];
-      else if (record == in->record)
-#endif
-        // fingers crossed we're not gonna get any infinite loop
-        out0 = in->record->args[in->param_id];
-#if 0
-      else
-      {
-        AccessorV *out = copyStruct(arena, in);
-        out->record = record;
-        out0 = &out->v;
-      }
-#endif
+      // fingers crossed we're not gonna get any infinite loop
+      out0 = in->record->args[in->param_id];
     } break;
 
     // todo #speed most of these don't need rewriting.
@@ -1089,13 +1077,27 @@ addLocalBindings(Environment *env, s32 count, Token *names, Ast **types, b32 sho
 
     if (types[id])
     {
-      Value    *type       = evaluate(*env, types[id]);
-      StackRef *ref        = newValue(temp_arena, StackRef, type);
-      env->stack->args[id] = &ref->v;
+      Value *type0 = evaluate(*env, types[id]);
+      b32 make_ref = true;
+      if (Union *type = castAst(type0, Union))
+      {
+        if (type->ctor_count == 1)
+        {
+          make_ref = false;
+          s32 surplus_id = env->stack->arg_count++;
+          Constructor *ctor = type->ctors + 0;
+        }
+      }
 
-      ref->name        = names[id];
-      ref->id          = id;
-      ref->stack_depth = env->stack->depth;
+      if (make_ref)
+      {
+        StackRef *ref        = newValue(temp_arena, StackRef, type0);
+        env->stack->args[id] = &ref->v;
+
+        ref->name        = names[id];
+        ref->id          = id;
+        ref->stack_depth = env->stack->depth;
+      }
 
       addLocalBinding(env->bindings, names + id);
     }
@@ -1671,9 +1673,9 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
         in->subject = subject;
         s32 case_count = in->case_count;
 
-        if (Union *form = castAst(subject_type, Union))
+        if (Union *uni = castAst(subject_type, Union))
         {
-          if (form->ctor_count == case_count)
+          if (uni->ctor_count == case_count)
           {
             ForkParameters  *correct_params = pushArray(arena, case_count, ForkParameters, true);
             Ast            **correct_bodies = pushArray(arena, case_count, Ast *, true);
@@ -1719,7 +1721,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                       {
                         if (param_count == ctor_sig->param_count)
                         {
-#if 0 // introduce path
+#if 1 // introduce path
                           addLocalBindings(&env, param_count, params->names, ctor_sig->param_types, false);
                           Value *pattern_type = evaluate(env, ctor_sig->out_type);
                           CompositeV *pattern = newValue(temp_arena, CompositeV, pattern_type);
@@ -1799,7 +1801,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
             if (noError())
             {
               in->a.cat   = AC_Fork;
-              in->union0    = form;
+              in->union0    = uni;
               in->params  = correct_params;
               in->bodies  = correct_bodies;
 
@@ -1809,7 +1811,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
           }
           else
             parseError(&in->a, "wrong number of cases, expected: %d, got: %d",
-                       form->ctor_count, in->case_count);
+                       uni->ctor_count, in->case_count);
         }
         else
         {
@@ -2499,38 +2501,37 @@ parseExpressionToAst(MemoryArena *arena)
 }
 
 internal void
-parseUnionCase(MemoryArena *arena, Union *superset)
+parseUnionCase(MemoryArena *arena, Union *uni)
 {
   pushContext;
 
-  Value *out0;
+  s32 ctor_id = uni->ctor_count++;
+  Constructor *out = uni->ctors + ctor_id;
   Token tag = nextToken();
-  s32 ctor_id = superset->ctor_count++;
   if (isIdentifier(&tag))
   {
     if (optionalChar(':'))
-    {
+    {// constructor with custom type (not sure if we need it)
       if (Ast *parsed_type = parseExpressionFull(arena).ast)
       {
         Value *norm_type0 = evaluate(arena, parsed_type);
+        initValue(&out->v, AC_Constructor, norm_type0);
         b32 valid_type = false;
         if (Union *type = castAst(norm_type0, Union))
         {
-          if (type == superset)
+          if (type == uni)
             valid_type = true;
         }
         else if (ArrowV *type = castAst(norm_type0, ArrowV))
         {
-          if (getFormOf(type->a->out_type) == superset)
+          if (getFormOf(type->a->out_type) == uni)
             valid_type = true;
         }
 
         if (valid_type)
         {
-          Constructor *out = newValue(arena, Constructor, norm_type0);
           out->name = tag;
-          out->id  = ctor_id;
-          out0 = &out->v;
+          out->id   = ctor_id;
         }
         else
         {
@@ -2540,29 +2541,19 @@ parseUnionCase(MemoryArena *arena, Union *superset)
       }
     }
     else
-    {
-      // default type is the form itself
-      if (superset->v.type == builtins.Set)
+    {// constructor as a sole tag
+      if (uni->v.type == builtins.Set)
       {
-        Constructor *out = newValue(arena, Constructor, &superset->v);
+        initValue(&out->v, AC_Constructor, &uni->v);
         out->name = tag;
-        out->id  = ctor_id;
-        out0 = &out->v;
+        out->id   = ctor_id;
       }
       else
         parseError(&tag, "constructors must construct a set member");
     }
 
     if (noError())
-    {
-      if (out0)
-      {
-        if (addGlobalBinding(&tag, out0))
-          superset->ctors[ctor_id] = &castAst(out0, Union)->s;
-      }
-      else
-        invalidCodePath;
-    }
+      addGlobalBinding(&tag, &out->v);
   }
   else
     tokenError("expected an identifier as constructor name");
@@ -2606,26 +2597,25 @@ parseUnion(MemoryArena *arena, Token *name)
 
   if (noError())
   {
-    Union *superset = newSet(arena, Union, name, type);
-    addGlobalBinding(name, &superset->v);
+    Union *uni = newValue(arena, Union, type);
+    uni->name = *name;
+    addGlobalBinding(name, &uni->v);
 
     if (requireChar('{', "open typedef body"))
     {
       Tokenizer tk_copy = *global_tokenizer;
-      s32 expected_case_count = getCommaSeparatedListLength(&tk_copy);
+      s32 expected_ctor_count = getCommaSeparatedListLength(&tk_copy);
       // NOTE: init here for recursive definition
       if (noError(&tk_copy))
       {
-        Union **subsets = pushArray(arena, expected_case_count, Union*);
-        superset->ctor_count = 0;
-        superset->ctors      = toSets(subsets);
+        uni->ctors = pushArray(arena, expected_ctor_count, Constructor);
         while (noError())
         {
           if (optionalChar('}'))
             break;
           else
           {
-            parseUnionCase(arena, superset);
+            parseUnionCase(arena, uni);
             if (!optionalChar(','))
             {
               requireChar('}', "to end the typedef; or you might want a comma ',' to delimit constructors");
@@ -2636,7 +2626,7 @@ parseUnion(MemoryArena *arena, Token *name)
 
         if (noError())
         {
-          assert(superset->ctor_count == expected_case_count);
+          assert(uni->ctor_count == expected_ctor_count);
           assert(constantFromGlobalName(temp_arena, name));
         }
       }
@@ -2843,7 +2833,8 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
 {
   MemoryArena *arena = state->arena;
   b32 success = true;
-#if 0
+#define REA_PROFILE 0
+#if REA_PROFILE
   auto begin_time = platformGetWallClock(arena);
 #endif
 
@@ -2903,17 +2894,27 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
       printf("\n");
     }
 
-#if 0
-    auto compile_time = platformGetSecondsElapsed(begin_time, platformGetWallClock(arena));
-    printf("Compile time for file %s: %fs\n", file_path, compile_time);
-    printf("----------------\n");
+    if (is_root_file)
+    {
+#if REA_PROFILE
+      auto compile_time = platformGetSecondsElapsed(begin_time, platformGetWallClock(arena));
+      printf("Compile time for file %s: %fs\n", input_path.file, compile_time);
+      printf("----------------\n");
+#else
+      if (success)
+      {
+        printf("Interpreted file %s\n", input_path.file);
+        printf("----------------\n");
+      }
 #endif
+    }
 
     global_tokenizer = old_tokenizer;
   }
   else
   {
-    printf("Failed to read input file %s\n", input_path.file);
+    if (is_root_file)
+      printf("Failed to read input file %s\n", input_path.file);
     success = false;
   }
 
@@ -2947,7 +2948,7 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
     }
 
     {// more builtins
-      b32 success = interpretFile(state, platformGetFileFullPath(arena, "../data/builtins.rea"), true);
+      b32 success = interpretFile(state, platformGetFileFullPath(arena, "../data/builtins.rea"), false);
       assert(success);
 
       ArrowV *equal_type = castAst(lookupGlobalName("equal_type"), ArrowV);

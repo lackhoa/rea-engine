@@ -269,11 +269,13 @@ newValue_(MemoryArena *arena, AstCategory cat, Value *type, size_t size)
 #define newValue(arena, cat, type)                        \
   ((cat *) newValue_(arena, AC_##cat, type, sizeof(cat)))
 
+#if 0
 struct Set
 {
   Value v;
   Token token;
 };
+#endif
 
 struct Constructor
 {
@@ -284,21 +286,12 @@ struct Constructor
 
 struct Union
 {
-  union
-  {
-    Value v;
-    Set   s;
-  };
+  Value v;
+  Token name;
 
-  s32   ctor_count;
-  Set **ctors;
+  s32          ctor_count;
+  Constructor *ctors;
 };
-
-inline Set **
-toSets(Union **unions)
-{
-  return (Set **)unions;
-}
 
 struct Record
 {
