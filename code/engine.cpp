@@ -31,26 +31,6 @@ debugDedent()
 
 #define NULL_WHEN_ERROR(name) if (noError()) {assert(name);} else {name = {};}
 
-#if 0
-inline void
-initSet(Set *in, AstCategory cat, Token *token, Value *type)
-{
-  initValue(&in->v, cat, type);
-  in->token  = *token;
-}
-
-inline Set *
-newSet_(MemoryArena *arena, size_t size, AstCategory cat, Token *token, Value *type)
-{
-  Set *out = (Set *)pushSize(arena, size, true);
-  initSet(out, cat, token, type);
-  return out;
-}
-
-#define newSet(arena, cat, ...)                     \
-  ((cat *) newSet_(arena, sizeof(cat), AC_##cat, __VA_ARGS__))
-#endif
-
 // prints both Composite and CompositeV
 inline void
 printComposite(MemoryArena *buffer, void *in0, PrintOptions opt)
@@ -368,11 +348,11 @@ myprint(Ast *in0)
   printAst(0, in0, {});
 }
 
-// todo: #speed copying values around
 inline void
 extendStack(Environment *env, s32 arg_count, Value **args, s32 depth_override=0)
 {
   Stack *stack = pushStruct(temp_arena, Stack);
+  // todo: this "depth_override" should be set implicitly since almost nobody needs it.
   stack->depth = depth_override ? depth_override : (getStackDepth(env->stack) + 1);
   stack->outer = env->stack;
   assert(arg_count <= arrayCount(stack->args));
@@ -380,7 +360,7 @@ extendStack(Environment *env, s32 arg_count, Value **args, s32 depth_override=0)
   if (args)
   {
     for (s32 arg_id = 0; arg_id < arg_count; arg_id++)
-    {
+    {// todo: #speed copying values around
       stack->args[arg_id] = args[arg_id];
     }
   }
@@ -431,36 +411,6 @@ compareExpressionList(Value **lhs_list, Value **rhs_list, s32 count)
   return out;
 }
 
-internal Value **
-introduce(Environment *env, s32 count, Token *names, Ast **types_ast, s32 depth_override=0)
-{
-  assert(count < arrayCount(env->stack->args));
-  extendStack(env, count, 0, depth_override);
-  Value **types = pushArray(temp_arena, count, Value *);
-  for (s32 id = 0; id < count; id++)
-  {
-    types[id] = evaluate(*env, types_ast[id]);
-    StackRef *ref    = newValue(temp_arena, StackRef, types[id]);
-    ref->name        = names[id];
-    ref->id          = id;
-    ref->stack_depth = env->stack->depth;
-    env->stack->args[id] = &ref->v;
-  }
-  return env->stack->args;
-}
-
-internal Value **
-introduce(Environment *env, Arrow *signature)
-{
-  return introduce(env, signature->param_count, signature->param_names, signature->param_types);
-}
-
-internal Value **
-introduce(Environment *env, ArrowV *signature, s32 depth_override=0)
-{
-  return introduce(env, signature->a->param_count, signature->a->param_names, signature->a->param_types, depth_override);
-}
-
 internal Trinary
 identicalTrinary(Value *lhs0, Value *rhs0) // TODO: turn the args into values
 {
@@ -495,28 +445,30 @@ identicalTrinary(Value *lhs0, Value *rhs0) // TODO: turn the args into values
 
       case AC_ArrowV:
       {
-        ArrowV* lhs = castAst(lhs0, ArrowV);
-        ArrowV* rhs = castAst(rhs0, ArrowV);
+        ArrowV* lhsv = castAst(lhs0, ArrowV);
+        Arrow *lhs = lhsv->a;
+        ArrowV* rhsv = castAst(rhs0, ArrowV);
+        Arrow *rhs = rhsv->a;
 
-        s32 param_count = lhs->a->param_count;
-        if (rhs->a->param_count == param_count)
+        s32 param_count = lhs->param_count;
+        if (rhs->param_count == param_count)
         {
-          s32 l_depth = getStackDepth(lhs->stack);
-          s32 r_depth = getStackDepth(rhs->stack);
+          s32 l_depth = getStackDepth(lhsv->stack);
+          s32 r_depth = getStackDepth(rhsv->stack);
           s32 new_depth = maximum(l_depth, r_depth)+1;
           Environment lenv = newEnvironment(temp_arena);
           Environment renv = newEnvironment(temp_arena);
-          lenv.stack = lhs->stack;
-          renv.stack = rhs->stack;
-          introduce(&lenv, lhs, new_depth);
-          introduce(&renv, rhs, new_depth);
+          lenv.stack = lhsv->stack;
+          renv.stack = rhsv->stack;
+          introduce(&lenv, lhs->param_count, lhs->param_names, lhs->param_types, IntroduceOptions{.depth_override=new_depth});
+          introduce(&renv, rhs->param_count, rhs->param_names, rhs->param_types, IntroduceOptions{.depth_override=new_depth});
 
           Value **lnorm_param_types = pushArray(temp_arena, param_count, Value*);
           Value **rnorm_param_types = pushArray(temp_arena, param_count, Value*);
           for (s32 param_id = 0; param_id < param_count; param_id++)
           {
-            lnorm_param_types[param_id] = (evaluate(lenv, lhs->a->param_types[param_id]));
-            rnorm_param_types[param_id] = (evaluate(renv, rhs->a->param_types[param_id]));
+            lnorm_param_types[param_id] = (evaluate(lenv, lhs->param_types[param_id]));
+            rnorm_param_types[param_id] = (evaluate(renv, rhs->param_types[param_id]));
           }
           Trinary compare_param_types = compareExpressionList(lnorm_param_types, rnorm_param_types, param_count);
           if (compare_param_types == Trinary_False)
@@ -525,8 +477,8 @@ identicalTrinary(Value *lhs0, Value *rhs0) // TODO: turn the args into values
           }
           else if (compare_param_types == Trinary_True)
           {
-            Value *lnorm_return_type = evaluate(lenv, lhs->a->out_type);
-            Value *rnorm_return_type = evaluate(renv, rhs->a->out_type);
+            Value *lnorm_return_type = evaluate(lenv, lhs->out_type);
+            Value *rnorm_return_type = evaluate(renv, rhs->out_type);
 
             out = identicalTrinary(lnorm_return_type, rnorm_return_type);
           }
@@ -1061,16 +1013,18 @@ addLocalBinding(LocalBindings *bindings, Token *key)
   return succeed;
 }
 
+forward_declare
 inline b32
-addLocalBindings(Environment *env, s32 count, Token *names, Ast **types, b32 should_build_types)
+introduce(Environment *env, s32 count, Token *names, Ast **types, IntroduceOptions opt)
 {
-  env->bindings = extendBindings(temp_arena, env->bindings);
-  // todo: #cutnpaste from "introduce", hopefully can collapse it because we'll
-  // merge typecheck with build phase later.
-  extendStack(env, count, 0);
+  if (opt.add_bindings)
+    env->bindings = extendBindings(temp_arena, env->bindings);
+
+  // todo: #cutnpaste from "introduce"
+  extendStack(env, count, 0, opt.depth_override);
   for (s32 id = 0; id < count && noError(); id++)
   {
-    if (should_build_types)
+    if (opt.build_types)
       types[id] = buildExpression(env, types[id], 0).ast;
     else
       assert(types[id]);
@@ -1083,9 +1037,14 @@ addLocalBindings(Environment *env, s32 count, Token *names, Ast **types, b32 sho
       {
         if (type->ctor_count == 1)
         {
+#if 0
           make_ref = false;
           s32 surplus_id = env->stack->arg_count++;
-          Constructor *ctor = type->ctors + 0;
+          Constructor *sole_ctor = type->ctors + 0;
+          // todo: darn I have to introduce new values for the fields, which is
+          // a recursive thing.
+          CompositeV *record = newValue(temp_arena, CompositeV);
+#endif
         }
       }
 
@@ -1099,16 +1058,11 @@ addLocalBindings(Environment *env, s32 count, Token *names, Ast **types, b32 sho
         ref->stack_depth = env->stack->depth;
       }
 
-      addLocalBinding(env->bindings, names + id);
+      if (opt.add_bindings)
+        addLocalBinding(env->bindings, names + id);
     }
   }
   return noError();
-}
-
-inline b32
-addLocalBindings(Environment *env, Arrow *signature)
-{
-  return addLocalBindings(env, signature->param_count, signature->param_names, signature->param_types, false);
 }
 
 inline Value *
@@ -1600,9 +1554,8 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
 
         if (noError())
         {
-          addLocalBindings(env, in->signature);
+          introduce(env, in->signature->param_count, in->signature->param_names, in->signature->param_types, IntroduceOptions{.add_bindings=true});
           assert(noError());
-
           Value *expected_body_type = evaluate(*env, in->signature->out_type);
           in->body = buildExpression(env, in->body, expected_body_type).ast;
           unwindBindingsAndStack(env);
@@ -1654,8 +1607,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       Arrow *in = castAst(in0, Arrow);
       out.ast = in0;
       out.type = builtins.Type;
-      // note: we build the types along with adding local bindings below.
-      addLocalBindings(env, in->param_count, in->param_names, in->param_types, true);
+      introduce(env, in->param_count, in->param_names, in->param_types, IntroduceOptions{.add_bindings=true, .build_types=true});
       if (noError())
       {
         in->out_type = buildExpression(env, in->out_type, 0).ast;
@@ -1702,7 +1654,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                     if (identicalB32(ctor->v.type, subject_type)) 
                     {
                       addRewrite(&env, subjectv, &ctor->v);
-                      addLocalBindings(&env, 0, 0, 0, false);
+                      introduce(&env, 0, 0, 0, IntroduceOptions{.add_bindings=true});
                     }
                     else
                     {
@@ -1722,7 +1674,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                         if (param_count == ctor_sig->param_count)
                         {
 #if 1 // introduce path
-                          addLocalBindings(&env, param_count, params->names, ctor_sig->param_types, false);
+                          introduce(&env, param_count, params->names, ctor_sig->param_types, IntroduceOptions{.add_bindings=true});
                           Value *pattern_type = evaluate(env, ctor_sig->out_type);
                           CompositeV *pattern = newValue(temp_arena, CompositeV, pattern_type);
                           pattern->op        = &ctor->v;

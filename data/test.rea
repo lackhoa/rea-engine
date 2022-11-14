@@ -97,3 +97,5 @@ rat_plus :: (a, b: Rat) -> Rat
    }
   }
  }
+
+testRatArrow :: (r: Rat) -> r.d != 0 { r._dnot0 }

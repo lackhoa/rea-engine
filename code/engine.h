@@ -510,4 +510,12 @@ struct Builtins
   Value *Set;
   Value *Type;
 };
+
+struct IntroduceOptions
+{
+  b32 add_bindings;
+  b32 build_types;
+  s32 depth_override;
+};
+
 #include "generated/engine_forward.h"
