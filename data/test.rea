@@ -84,6 +84,14 @@ Rat :: union
  / : (n,d: Nat, _dnot0: d != 0) -> Rat
  }
 
+testRatArrow :: (r: Rat) -> r.d != 0 { r._dnot0 }
+
+testRatArrow2 :: () -> (a: Rat) -> (a.d = a.d)
+{
+ out :: (b: Rat) -> (b.d = b.d) {truth}
+ out
+ }
+
 ;; todo operator overload
 rat_plus :: (a, b: Rat) -> Rat
 {
@@ -97,5 +105,3 @@ rat_plus :: (a, b: Rat) -> Rat
    }
   }
  }
-
-testRatArrow :: (r: Rat) -> r.d != 0 { r._dnot0 }

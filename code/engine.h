@@ -56,7 +56,7 @@ typedef Value BuiltinType;
 typedef Value BuiltinSet;
 typedef Value BuiltinEqual;
 
-struct  Ast
+struct Ast
 {
   AstCategory cat;
   Token       token;
@@ -150,7 +150,7 @@ struct Fork
 {
   Ast a;
 
-  Union           *union0;
+  Union           *uni;
   Ast             *subject;
   s32              case_count;
   ForkParameters  *params;
@@ -188,7 +188,7 @@ struct Stack
 {
   Stack *outer;
   s32    depth;
-  s32    arg_count;
+  s32    count;
   Value *args[32];              // todo: compute this cap
 };
 
@@ -247,12 +247,13 @@ struct LocalBindings
 };
 
 inline LocalBindings *
-extendBindings(MemoryArena *arena, LocalBindings *outer)
+extendBindings(MemoryArena *arena, Environment *env)
 {
   LocalBindings *out = pushStruct(arena, LocalBindings, true);
-  out->next  = outer;
+  out->next  = env->bindings;
   out->arena = arena;
   out->count = 0;
+  env->bindings = out;
   return out;
 }
 
@@ -528,11 +529,12 @@ struct Builtins
   Value *Type;
 };
 
+#if 0
 struct IntroduceOptions
 {
   b32 add_bindings;
   b32 build_types;
-  s32 depth_override;
 };
+#endif
 
 #include "generated/engine_forward.h"
