@@ -1,4 +1,5 @@
 #load "boolean.rea"
+#load "nat.rea"
 
 check True: Set;
 print =;
@@ -46,3 +47,64 @@ dependentTypeTest :: (T: Type, A: T, a: A) -> (a = a)
  truth
  }
 check dependentTypeTest(Set, Bool, true): True;
+
+testComplexFork :: (a, b: Nat) -> Nat
+{
+ fork a+b
+ {
+  0:    0,
+  s(n): (a+b).p,
+  }
+ }
+check truth: testComplexFork(0, 0) = 0;
+check truth: testComplexFork(1, 1) = 1;
+
+testLocalVariable :: (x: Nat) -> Nat
+{
+ a := 3;
+ b := 2;
+ a + x + b;
+ }
+check truth: testLocalVariable(1) = 6;
+
+testCurrying :: (a: Nat) -> (b, c: Nat) -> (a+b)+c = a+(b+c)
+{
+ fork a
+ {
+  s(a'):
+  out69 :: (b', c': Nat) -> (a+b')+c' = a+b'+c'
+  { plusAssociative(a, b', c') }
+  out69,
+
+  0:
+  out70 :: (b, c: Nat) -> (a+b)+c = a+(b+c)
+  { plusAssociative(a, b, c) }
+  out70,
+  }
+ }
+
+testCurrying2 :: (a, b, c: Nat) -> (a+b)+c = a+(b+c)
+{
+ fun :: (b',c': Nat) -> (a+b')+c' = a+(b'+c')
+ { plusAssociative(a, b', c') }
+
+ fun(b,c)
+ }
+
+#should_fail
+testCurrying2Fail :: (a, b, c: Nat) -> (a+b)+c = a+(b+c)
+{
+ fun :: (c',b': Nat) -> (a+b')+c' = a+(b'+c')
+ { plusAssociative(a, b', c') }
+
+ fun(b,c)
+ }
+#should_fail off
+
+testCurrying3 :: (a: Nat) -> Nat
+{
+ b := 3;
+ f :: (n: Nat) -> Nat { n*b }
+ f(a)
+ }
+check truth: testCurrying3(2) = 6;

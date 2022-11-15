@@ -121,7 +121,13 @@ popContext(Tokenizer *tk = global_tokenizer)
 inline b32
 hasMore(Tokenizer *tk = global_tokenizer)
 {
-    return ((*tk->at != 0) && (!tk->error));
+  return ((*tk->at != 0) && (!tk->error));
+}
+
+inline void
+wipeError(Tokenizer *tk = global_tokenizer)
+{
+  tk->error = 0;
 }
 
 inline b32
@@ -207,20 +213,18 @@ matchKeyword(Token *token)
   return out;
 }
 
-// todo: #speed hash table
+// todo: #speed use hash table
 inline MetaDirective
 matchMetaDirective(Token *token)
 {
     auto out = (MetaDirective)0;
     if (token->cat == TC_Alphanumeric)
     {
-        for (int i = 1;
-             i < arrayCount(metaDirectives);
-             i++)
+        for (int id = 1; id < arrayCount(metaDirectives); id++)
         {
-            if (equal(token, metaDirectives[i]))
+            if (equal(token, metaDirectives[id]))
             {
-                out = (MetaDirective)(i);
+                out = (MetaDirective)(id);
                 break;
             }
         }

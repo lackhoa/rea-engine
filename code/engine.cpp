@@ -223,7 +223,8 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
               }
             } break;
 
-            invalidDefaultCase;
+            default:
+              invalidCodePath;
           }
 
           printToBuffer(buffer, ": ");
@@ -545,6 +546,11 @@ identicalTrinary(Value *lhs0, Value *rhs0) // TODO: turn the args into values
         if (lhs->record == rhs->record)
           if (lhs->param_id == rhs->param_id)
             out = Trinary_True;
+      } break;
+
+      case AC_Union:
+      {
+        out = Trinary_Unknown;
       } break;
 
       invalidDefaultCase;
@@ -1149,6 +1155,9 @@ introduce(Environment *env, Token *name, Ast *type)
     ref->id          = env->stack->count-1;  // not a crucial value, moving forward
     ref->stack_depth = env->stack->depth;
   }
+
+  if (env->bindings)
+    addLocalBinding(env->bindings, name);
 }
 
 #if 0
@@ -1679,7 +1688,6 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
           for (s32 id=0; id < in->signature->param_count && noError(); id++)
           {
             introduce(env, in->signature->param_names+id, in->signature->param_types[id]);
-            addLocalBinding(env->bindings, in->signature->param_names+id);
           }
           assert(noError());
 
@@ -1737,7 +1745,6 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
         Ast *param_type = in->param_types[id] = buildExpression(env, in->param_types[id], 0).ast;
         if (param_type)
           introduce(env, in->param_names+id, param_type);
-        addLocalBinding(env->bindings, in->param_names+id);
       }
 
       if (noError())
@@ -1808,7 +1815,6 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                           for (s32 id = 0; id < param_count && noError(); id++)
                           {
                             introduce(&env, params->names+id, ctor_sig->a->param_types[id]);
-                            addLocalBinding(env.bindings, params->names+id);
                           }
 
                           Value *pattern_type = evaluate(env, ctor_sig->a->out_type);
@@ -2033,6 +2039,10 @@ parseSequence(MemoryArena *arena)
             out->proof = parseExpressionToAst(arena);
             ast = &out->a;
           } break;
+
+          default:
+          {// falls through to expression parser
+          } break;
         }
       }
       else if (isIdentifier(&token))
@@ -2061,6 +2071,8 @@ parseSequence(MemoryArena *arena)
 
             popContext();
           } break;
+
+          default: {};
         }
       }
 
@@ -2704,6 +2716,7 @@ parseTopLevel(EngineState *state)
 {
   pushContext;
   MemoryArena *arena = state->arena;
+  b32 should_fail_active = false;
 
   while (hasMore())
   {
@@ -2718,7 +2731,12 @@ parseTopLevel(EngineState *state)
       token = nextToken();
       switch (MetaDirective directive = matchMetaDirective(&token))
       {
-        case MetaDirective_Load:
+        case MetaDirective_Null_:
+        {
+          tokenError("unknown meta directive");
+        } break;
+
+        case MetaDirective_load:
         {
           pushContextName("#load");
           auto file = nextToken();
@@ -2753,10 +2771,19 @@ parseTopLevel(EngineState *state)
           popContext();
         } break;
 
-        default:
+        case MetaDirective_should_fail:
         {
-          tokenError("unknown meta directive");
+          Token maybe_off = peekToken();
+          if (equal(maybe_off, "off"))
+          {
+            nextToken();
+            should_fail_active = false;
+          }
+          else
+            should_fail_active = true;
         } break;
+
+        invalidDefaultCase;
       }
     }
     else
@@ -2878,6 +2905,10 @@ parseTopLevel(EngineState *state)
 #if CLEAN_TEMPORARY_MEMORY
     endTemporaryMemory(top_level_temp);
 #endif
+
+    if (!noError())
+      if (should_fail_active)
+        wipeError(global_tokenizer);
   }
 
   popContext();

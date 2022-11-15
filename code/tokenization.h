@@ -42,11 +42,12 @@ enum MetaDirective
 {
     MetaDirective_Null_,
 
-    MetaDirective_Load,
+    MetaDirective_load,
+    MetaDirective_should_fail,
 
     MetaDirective_Count_,
 };
-const char *metaDirectives[] = {"", "load"};
+const char *metaDirectives[] = {"", "load", "should_fail"};
 
 struct Token
 {
