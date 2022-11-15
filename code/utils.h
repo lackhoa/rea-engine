@@ -178,7 +178,6 @@ copySize(MemoryArena *arena, void *src, size_t size)
 #define copyStructNoCast(arena, src) copySize(arena, src, sizeof(*(src)))
 #define copyArray(arena, count, src) (mytypeof(src)) copySize(arena, src, count*sizeof(*(src)))
 
-
 inline b32
 inRange(s32 min, s32 val, s32 max)
 {

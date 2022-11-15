@@ -31,6 +31,18 @@ debugDedent()
 
 #define NULL_WHEN_ERROR(name) if (noError()) {assert(name);} else {name = {};}
 
+inline b32
+paramImplied(Arrow *arrow, s32 param_id)
+{
+  return arrow->param_names[param_id].text.chars[0] == '_';
+}
+
+inline b32
+paramImplied(ArrowV *arrow, s32 param_id)
+{
+  return arrow->a->param_names[param_id].text.chars[0] == '_';
+}
+
 // prints both Composite and CompositeV
 inline void
 printComposite(MemoryArena *buffer, void *in0, PrintOptions opt)
@@ -75,7 +87,7 @@ printComposite(MemoryArena *buffer, void *in0, PrintOptions opt)
     arg_count = 0;
     for (s32 param_id = 0; param_id < op_type->a->param_count; param_id++)
     {
-      if (!op_type->a->param_implied[param_id])
+      if (!paramImplied(op_type, param_id))
       {
         args[arg_count++] = raw_args[param_id];
       }
@@ -139,7 +151,10 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
       case AC_Constant:
       {
         Constant *in = castAst(in0, Constant);
-        printToBuffer(buffer, in->a.token);
+        if (in->is_synthetic)
+          printAst(buffer, in->value, opt);
+        else
+          printToBuffer(buffer, in->a.token);
       } break;
 
       case AC_Variable:
@@ -283,7 +298,7 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
       case AC_ArrowV:
       {
         ArrowV *in = castAst(in0, ArrowV);
-        printAst(buffer, &in->a->a, opt);
+        printAst(buffer, in->a, opt);
       } break;
 
       case AC_BuiltinEqual:
@@ -314,8 +329,8 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
         AccessorV *in = castAst(in0, AccessorV);
         printAst(buffer, in->record, new_opt);
         printToBuffer(buffer, ".");
-        Arrow *op_type = castAst(in->record->op->type, ArrowV)->a;
-        printToBuffer(buffer, op_type->param_names[in->param_id]);
+        ArrowV *op_type = castAst(in->record->op->type, ArrowV);
+        printToBuffer(buffer, op_type->a->param_names[in->param_id]);
       }
 
       case AC_Constructor:
@@ -445,30 +460,25 @@ identicalTrinary(Value *lhs0, Value *rhs0) // TODO: turn the args into values
 
       case AC_ArrowV:
       {
-        ArrowV* lhsv = castAst(lhs0, ArrowV);
-        Arrow *lhs = lhsv->a;
-        ArrowV* rhsv = castAst(rhs0, ArrowV);
-        Arrow *rhs = rhsv->a;
+        ArrowV* lhs = castAst(lhs0, ArrowV);
+        ArrowV* rhs = castAst(rhs0, ArrowV);
 
-        s32 param_count = lhs->param_count;
-        if (rhs->param_count == param_count)
+        s32 param_count = lhs->a->param_count;
+        if (rhs->a->param_count == param_count)
         {
-          s32 l_depth = getStackDepth(lhsv->stack);
-          s32 r_depth = getStackDepth(rhsv->stack);
-          s32 new_depth = maximum(l_depth, r_depth)+1;
+          s32 new_depth = maximum(lhs->stack_depth, rhs->stack_depth)+1;
           Environment lenv = newEnvironment(temp_arena);
           Environment renv = newEnvironment(temp_arena);
-          lenv.stack = lhsv->stack;
-          renv.stack = rhsv->stack;
-          introduce(&lenv, lhs->param_count, lhs->param_names, lhs->param_types, IntroduceOptions{.depth_override=new_depth});
-          introduce(&renv, rhs->param_count, rhs->param_names, rhs->param_types, IntroduceOptions{.depth_override=new_depth});
+          introduce(&lenv, lhs->a->param_count, lhs->a->param_names, lhs->a->param_types, IntroduceOptions{.depth_override=new_depth});
+          introduce(&renv, rhs->a->param_count, rhs->a->param_names, rhs->a->param_types, IntroduceOptions{.depth_override=new_depth});
 
           Value **lnorm_param_types = pushArray(temp_arena, param_count, Value*);
           Value **rnorm_param_types = pushArray(temp_arena, param_count, Value*);
           for (s32 param_id = 0; param_id < param_count; param_id++)
           {
-            lnorm_param_types[param_id] = (evaluate(lenv, lhs->param_types[param_id]));
-            rnorm_param_types[param_id] = (evaluate(renv, rhs->param_types[param_id]));
+            // NOTE: this is unnecessary
+            lnorm_param_types[param_id] = evaluate(lenv, lhs->a->param_types[param_id]);
+            rnorm_param_types[param_id] = evaluate(renv, rhs->a->param_types[param_id]);
           }
           Trinary compare_param_types = compareExpressionList(lnorm_param_types, rnorm_param_types, param_count);
           if (compare_param_types == Trinary_False)
@@ -477,8 +487,8 @@ identicalTrinary(Value *lhs0, Value *rhs0) // TODO: turn the args into values
           }
           else if (compare_param_types == Trinary_True)
           {
-            Value *lnorm_return_type = evaluate(lenv, lhs->out_type);
-            Value *rnorm_return_type = evaluate(renv, rhs->out_type);
+            Value *lnorm_return_type = evaluate(lenv, lhs->a->out_type);
+            Value *rnorm_return_type = evaluate(renv, rhs->a->out_type);
 
             out = identicalTrinary(lnorm_return_type, rnorm_return_type);
           }
@@ -782,7 +792,7 @@ normalize(Environment env, Value *in0)
     case AC_BuiltinSet:
     case AC_BuiltinType:
     case AC_BuiltinEqual:
-    case AC_ArrowV:
+    case AC_ArrowV:  // todo: technically we can normalize ArrowV if we want
     case AC_FunctionV:
     case AC_StackRef:
     case AC_Union:
@@ -819,6 +829,88 @@ internal Value *
 normalize(MemoryArena *arena, Value *in0)
 {
   return normalize(newEnvironment(arena), in0);
+}
+
+inline Ast *
+replaceFreeVars(Environment *env, Ast *in0, s32 stack_offset)
+{
+  Ast *out0 = 0;
+  switch (in0->cat)
+  {
+    case AC_Variable:
+    {
+      Variable *in = castAst(in0, Variable);
+      s32 stack_delta = in->stack_delta - stack_offset;
+      if (stack_delta >= 0)
+      {
+        Stack *stack = env->stack;
+        for (s32 delta = 0; delta < stack_delta ; delta++)
+          stack = stack->outer;
+        if (in->id >= stack->arg_count)
+        {
+          myprint(env->stack);
+          invalidCodePath;
+        }
+        Constant *out = newSyntheticConstant(env->arena, stack->args[in->id]);
+        out0 = &out->a;
+      }
+      else
+        out0 = in0;
+    } break;
+
+    case AC_Constant:
+    {
+      out0 = in0;
+    } break;
+
+    case AC_Composite:
+    {
+      Composite *in = castAst(in0, Composite);
+      Composite *out = copyStruct(env->arena, in);
+      out->op   = replaceFreeVars(env, in->op, stack_offset);
+      out->args = pushArray(env->arena, in->arg_count, Ast*);
+      for (s32 arg_id = 0; arg_id < in->arg_count; arg_id++)
+      {
+        out->args[arg_id] = replaceFreeVars(env, in->args[arg_id], stack_offset);
+      }
+      out0 = &out->a;
+    } break;
+
+    case AC_Arrow:
+    {
+      Arrow *in = castAst(in0, Arrow);
+      Arrow *out = copyStruct(env->arena, in);
+      stack_offset++;
+      out->out_type    = replaceFreeVars(env, in->out_type, stack_offset);
+      out->param_types = pushArray(env->arena, in->param_count, Ast*);
+      for (s32 param_id = 0; param_id < in->param_count; param_id++)
+      {
+        out->param_types[param_id] = replaceFreeVars(env, in->param_types[param_id], stack_offset);
+      }
+      out0 = &out->a;
+    } break;
+
+    case AC_Accessor:
+    {
+      Accessor *in = castAst(in0, Accessor);
+      Accessor *out = copyStruct(env->arena, in);
+      out->record = replaceFreeVars(env, in->record, stack_offset);
+      out0 = &out->a;
+    } break;
+
+    case AC_Rewrite:
+    case AC_Let:
+    case AC_Function:
+    case AC_Sequence:
+    case AC_Fork:
+    {
+      todoIncomplete;
+    } break;
+
+    invalidDefaultCase;
+  }
+  assert(out0);
+  return out0;
 }
 
 forward_declare
@@ -917,11 +1009,11 @@ evaluate(Environment env, Ast *in0)
     } break;
 
     case AC_Arrow:
-    {// we can't do anything here, so just store it off somewhere.
-      Arrow *in = castAst(in0, Arrow);
+    {
+      // Arrow  *in  = castAst(in0, Arrow);
       ArrowV *out = newValue(env.arena, ArrowV, builtins.Type);
-      out->a     = in;
-      out->stack = env.stack;
+      out->stack_depth = getStackDepth(env.stack);
+      out->a = castAst(replaceFreeVars(&env, in0, 0), Arrow);
       out0 = &out->v;
     } break;
 
@@ -1323,7 +1415,19 @@ getExplicitParamCount(Arrow *in)
   s32 out = 0;
   for (s32 param_id = 0; param_id < in->param_count; param_id++)
   {
-    if (!in->param_implied[param_id])
+    if (!paramImplied(in, param_id))
+      out++;
+  }
+  return out;
+}
+
+inline s32
+getExplicitParamCount(ArrowV *in)
+{
+  s32 out = 0;
+  for (s32 param_id = 0; param_id < in->a->param_count; param_id++)
+  {
+    if (!paramImplied(in, param_id))
       out++;
   }
   return out;
@@ -1336,7 +1440,7 @@ internal Expression
 buildExpression(Environment *env, Ast *in0, Value *expected_type)
 {
   Expression out = {};
-  b32 should_check_type = true;
+  b32 should_check_type = (b32)expected_type;
 
   MemoryArena *arena = env->arena;
   switch (in0->cat)
@@ -1370,22 +1474,21 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       {
         in->op = build_op.ast;
 
-        if (ArrowV *signaturev = castAst(build_op.type, ArrowV))
+        if (ArrowV *signature = castAst(build_op.type, ArrowV))
         {
-          Arrow *signature = signaturev->a;
-          if (signature->param_count != in->arg_count)
+          if (signature->a->param_count != in->arg_count)
           {
             s32 explicit_param_count = getExplicitParamCount(signature);
             if (in->arg_count == explicit_param_count)
             {
               Ast **supplied_args = in->args;
-              in->arg_count = signature->param_count;
-              in->args      = pushArray(arena, signature->param_count, Ast*);
+              in->arg_count = signature->a->param_count;
+              in->args      = pushArray(arena, signature->a->param_count, Ast*);
               for (s32 param_id = 0, arg_id = 0;
-                   param_id < signature->param_count && noError();
+                   param_id < signature->a->param_count && noError();
                    param_id++)
               {
-                if (signature->param_implied[param_id])
+                if (paramImplied(signature, param_id))
                 {
                   in->args[param_id] = &dummy_hole;
                 }
@@ -1417,7 +1520,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                 stack_frame[arg_id] = 0;
               else
               {
-                Ast *param_type0 = signature->param_types[arg_id];
+                Ast *param_type0 = signature->a->param_types[arg_id];
                 Value *norm_param_type = evaluate(signature_env, param_type0);
                 if (Expression build_arg = buildExpression(env, in->args[arg_id], norm_param_type))
                 {
@@ -1431,24 +1534,22 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
 
                     // write back to the input ast.
                     Ast *synthetic0;
-                    Token token = newToken("<synthetic>");
                     switch (build_arg.type->cat)
                     {
-                      // todo: almost correct, we need a full-fledged Value->Ast
-                      // function to be fully correct.
+                      // todo: #incomplete structurally sound, but we need a
+                      // full-fledged "Value to Ast" function.
                       case AC_StackRef:
                       {
                         StackRef *ref = castAst(build_arg.type, StackRef);
-                        Variable *synthetic = newAst(arena, Variable, &token);
+                        Variable *synthetic = newAst(arena, Variable, &ref->name);
+                        synthetic0 = &synthetic->a;
                         synthetic->stack_delta = env->stack->depth - ref->stack_depth;
                         synthetic->id          = ref->id;
-                        synthetic0 = &synthetic->a;
                       } break;
 
                       case AC_Union:
                       {
-                        Constant *synthetic = newAst(arena, Constant, &token);
-                        synthetic->value = build_arg.type;
+                        Constant *synthetic = newSyntheticConstant(arena, build_arg.type);
                         synthetic0 = &synthetic->a;
                       } break;
 
@@ -1472,7 +1573,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
             {
               extendStack(env, in->arg_count, stack_frame);
               out.ast = in0;
-              out.type = evaluate(*env, signature->out_type);
+              out.type = evaluate(*env, signature->a->out_type);
               unwindStack(env);
             }
           }
@@ -1665,17 +1766,16 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                   }
                   else
                   {
-                    if (ArrowV *ctor_sigv = castAst(ctor->v.type, ArrowV))
+                    if (ArrowV *ctor_sig = castAst(ctor->v.type, ArrowV))
                     {
-                      Arrow *ctor_sig = ctor_sigv->a;
-                      if (identicalB32(&getFormOf(ctor_sigv->a->out_type)->v,
+                      if (identicalB32(&getFormOf(ctor_sig->a->out_type)->v,
                                        &getFormOf(subject_type)->v))
                       {
-                        if (param_count == ctor_sig->param_count)
+                        if (param_count == ctor_sig->a->param_count)
                         {
 #if 1 // introduce path
-                          introduce(&env, param_count, params->names, ctor_sig->param_types, IntroduceOptions{.add_bindings=true});
-                          Value *pattern_type = evaluate(env, ctor_sig->out_type);
+                          introduce(&env, param_count, params->names, ctor_sig->a->param_types, IntroduceOptions{.add_bindings=true});
+                          Value *pattern_type = evaluate(env, ctor_sig->a->out_type);
                           CompositeV *pattern = newValue(temp_arena, CompositeV, pattern_type);
                           pattern->op        = &ctor->v;
                           pattern->arg_count = param_count;
@@ -1709,19 +1809,19 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                           addRewrite(&env, subjectv, &pattern->v);
                         }
                         else
-                          parseError(ctor_token, "pattern has wrong number of parameters (expected: %d, got: %d)", ctor_sigv->a->param_count, param_count);
+                          parseError(ctor_token, "pattern has wrong number of parameters (expected: %d, got: %d)", ctor_sig->a->param_count, param_count);
                       }
                       else
                       {
                         parseError(ctor_token, "composite constructor has wrong return type");
                         pushAttachment("expected type", subject_type);
-                        pushAttachment("got type", ctor_sigv->a->out_type);
+                        pushAttachment("got type", ctor_sig->a->out_type);
                       }
                     }
                     else
                     {
                       parseError(ctor_token, "expected a composite constructor");
-                      pushAttachment("got type", &ctor_sigv->v);
+                      pushAttachment("got type", &ctor_sig->v);
                     }
                   }
 
@@ -1783,12 +1883,12 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
         if (CompositeV *recordv = castAst(recordv0, CompositeV))
         {
           in->record = record;
-          Arrow *op_type = castAst(recordv->op->type, ArrowV)->a;
-          s32 param_count = op_type->param_count;
+          ArrowV *op_type = castAst(recordv->op->type, ArrowV);
+          s32 param_count = op_type->a->param_count;
           s32 param_id;
           for (param_id=0; param_id < param_count; param_id++)
           {// figure out the param id
-            if (equal(in->member, op_type->param_names[param_id]))
+            if (equal(in->member, op_type->a->param_names[param_id]))
             {
               in->param_id = param_id;
               out.ast = in0;
@@ -1796,12 +1896,12 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
             }
           }
 
-          if (param_id == op_type->param_count)
+          if (param_id == op_type->a->param_count)
             tokenError(&in->member, "accessor has invalid member");
           else
           {// typing
             extendStack(env, param_count, recordv->args);
-            out.type = evaluate(*env, op_type->param_types[in->param_id]);
+            out.type = evaluate(*env, op_type->a->param_types[in->param_id]);
             unwindStack(env);
           }
         }
@@ -1819,7 +1919,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
 
   if (noError())
   {// one last typecheck if needed
-    if (expected_type && should_check_type)
+    if (should_check_type)
     {
       Value *norm_expected = normalize(*env, expected_type);
       Value *norm_actual = normalize(*env, out.type);
@@ -2144,7 +2244,6 @@ parseArrowType(MemoryArena *arena, b32 is_record)
   s32     param_count;
   Token  *param_names;
   Ast   **param_types;
-  b32    *param_implied;
   Token marking_token = peekToken();
   char begin_arg_char = is_record ? '{' : '(';
   char end_arg_char   = is_record ? '}' : ')';
@@ -2156,7 +2255,6 @@ parseArrowType(MemoryArena *arena, b32 is_record)
     {
       param_names   = pushArray(arena, param_count, Token);
       param_types   = pushArray(arena, param_count, Ast*);
-      param_implied = pushArray(arena, param_count, b32, true);
 
       s32 parsed_param_count = 0;
       s32 typeless_run = 0;
@@ -2173,10 +2271,6 @@ parseArrowType(MemoryArena *arena, b32 is_record)
         {
           s32 param_id = parsed_param_count++;
           param_names[param_id] = param_name_token;
-          if (param_name_token.text.chars[0] == '_')
-          {
-            param_implied[param_id] = true;
-          }
 
           if (optionalChar(':'))
           {
@@ -2234,10 +2328,9 @@ parseArrowType(MemoryArena *arena, b32 is_record)
         {
           out = newAst(arena, Arrow, &marking_token);
           out->out_type = return_type;
-          out->param_count   = param_count;
-          out->param_names   = param_names;
-          out->param_types   = param_types;
-          out->param_implied = param_implied;
+          out->param_count = param_count;
+          out->param_names = param_names;
+          out->param_types = param_types;
         }
       }
     }
@@ -2245,10 +2338,9 @@ parseArrowType(MemoryArena *arena, b32 is_record)
     {
       out = newAst(arena, Arrow, &marking_token);
       out->out_type = 0;
-      out->param_count   = param_count;
-      out->param_names   = param_names;
-      out->param_types   = param_types;
-      out->param_implied = param_implied;
+      out->param_count = param_count;
+      out->param_names = param_names;
+      out->param_types = param_types;
     }
   }
 
@@ -2805,6 +2897,10 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
     Tokenizer *old_tokenizer = global_tokenizer;
     global_tokenizer         = tk;
 
+    if (is_root_file)
+    {
+      printf("Interpreting file %s...\n", input_path.file);
+    }
     parseTopLevel(state);
     if (ParseError error = tk->error)
     {
@@ -2851,14 +2947,8 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
 #if REA_PROFILE
       auto compile_time = platformGetSecondsElapsed(begin_time, platformGetWallClock(arena));
       printf("Compile time for file %s: %fs\n", input_path.file, compile_time);
-      printf("----------------\n");
-#else
-      if (success)
-      {
-        printf("Interpreted file %s\n", input_path.file);
-        printf("----------------\n");
-      }
 #endif
+      printf("----------------\n");
     }
 
     global_tokenizer = old_tokenizer;

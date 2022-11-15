@@ -47,7 +47,7 @@ enum AstCategory
   AC_StackRef,
   AC_AccessorV,
 
-  // set subset
+  // set subset (inherit from value)
   AC_Union,
   AC_Constructor,
 };
@@ -56,7 +56,7 @@ typedef Value BuiltinType;
 typedef Value BuiltinSet;
 typedef Value BuiltinEqual;
 
-struct Ast
+struct  Ast
 {
   AstCategory cat;
   Token       token;
@@ -112,7 +112,18 @@ struct Constant
 {
   Ast    a;
   Value *value;
+  b32    is_synthetic;
 };
+
+inline Constant *
+newSyntheticConstant(MemoryArena *arena, Value *value)
+{
+  Token token = newToken("<synthetic>");
+  Constant *out = newAst(arena, Constant, &token);
+  out->is_synthetic = true;
+  out->value        = value;
+  return out;
+}
 
 inline void
 initConstant(Constant *in, Value *value)
@@ -338,9 +349,9 @@ struct StackRef
 {
   Value v;
 
-  String name;
-  s32    id;
-  s32    stack_depth;
+  Token name;
+  s32   id;
+  s32   stack_depth;
 };
 
 struct Composite
@@ -385,16 +396,22 @@ struct Arrow
   s32     param_count;
   Token  *param_names;
   Ast   **param_types;
-  b32    *param_implied;
 };
 
+// NOTE: pretty sad that we can't just typedef this to "Arrow"
 struct ArrowV
 {
   Value v;
-  Arrow *a;      // since we already hold pointer to the stack, which is
-                 // transient, we might as well pointer to the ast.
-  Stack *stack;  // value only
+
+  Arrow *a;
+  s32    stack_depth;
 };
+
+inline s32
+getParamCount(Arrow *in)
+{
+  return in->param_count;
+}
 
 struct GlobalBinding
 {
