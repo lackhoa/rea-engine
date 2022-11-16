@@ -442,7 +442,7 @@ compareExpressionList(Value **lhs_list, Value **rhs_list, s32 count)
 }
 
 internal Trinary
-identicalTrinary(Value *lhs0, Value *rhs0) // TODO: turn the args into values
+identicalTrinary(Value *lhs0, Value *rhs0)
 {
 #if 0
   if (global_debug_mode)
@@ -591,46 +591,35 @@ myprint(Stack *stack)
 
 global_variable GlobalBindings *global_bindings;
 
-struct LookupName { GlobalBinding* slot; b32 found; };
-
-internal LookupName
-lookupNameCurrentFrame(GlobalBindings *bindings, String key)
+internal GlobalBinding *
+lookupGlobalNameSlot(String key)
 {
+  // :global-bindings-zero-at-startup
   GlobalBinding *slot = 0;
-  b32 found = false;
-  u32 hash = stringHash(key) % arrayCount(bindings->table);
-  slot = bindings->table + hash;
-  b32 first_slot_valid = slot->key.length;
+  u32 hash = stringHash(key) % arrayCount(global_bindings->table);
+  slot = global_bindings->table + hash;
+  b32 first_slot_valid = slot->key.length == 0;
   if (first_slot_valid)
   {
-    b32 stop = false;
-    while (!stop)
+    while (true)
     {
       if (equal(slot->key, key))
-      {
-        stop = true;
-        found = true;
-      }
-      else if (slot->next)
-        slot = slot->next;
+        break;
+      else if (slot->next_hash_slot)
+        slot = slot->next_hash_slot;
       else
       {
-        stop = true;
-        allocate(bindings->arena, slot->next);
-        slot = slot->next;
-        slot->key  = key;
-        slot->next = 0;
+        slot->next_hash_slot = pushStruct(permanent_arena, GlobalBinding, true);
+        slot = slot->next_hash_slot;
+        slot->key = key;
+        break;
       }
     }
   }
   else
-  {
     slot->key = key;
-    slot->value = {};
-  }
 
-  LookupName out = { slot, found };
-  return out;
+  return slot;
 }
 
 struct LookupLocalName { LocalBinding* slot; b32 found; };
@@ -1212,64 +1201,41 @@ introduceOnStack(Environment *env, Token *name, Ast *type)
     addLocalBinding(env->bindings, name);
 }
 
-#if 0
-forward_declare
-inline b32
-introduceAll(Environment *env, s32 count, Token *names, Ast **types, IntroduceOptions opt)
+inline GlobalBinding *
+lookupGlobalName(Token *token)
 {
-  if (opt.add_bindings)
-    extendBindings(temp_arena, env);
-  addStackFrame(env);
-
-  for (s32 id = 0; id < count && noError(); id++)
+  GlobalBinding *slot = lookupGlobalNameSlot(token->text);
+  if (slot->count == 0)
   {
-    assert(types[id]);
-    if (opt.build_types)
-      types[id] = buildExpression(env, types[id], 0).ast;
-
-    if (types[id])
-    {
-      introduce(env, names+id, types[id]);
-      if (opt.add_bindings)
-        addLocalBinding(env->bindings, names + id);
-    }
-  }
-  return noError();
-}
-#endif
-
-inline Value *
-lookupGlobalName(char *name)
-{
-  return lookupNameCurrentFrame(global_bindings, toString(name)).slot->value;
-}
-
-inline Value *
-lookupGlobalName(String name)
-{
-  return lookupNameCurrentFrame(global_bindings, name).slot->value;
-}
-
-inline b32
-addGlobalBinding(Token *token, Value *value)
-{
-  auto lookup = lookupNameCurrentFrame(global_bindings, token->text);
-  b32 succeed = true;
-  if (lookup.found)
-  {
-    succeed = false;
-    parseError(token, "redefinition");
+    parseError(token, "identifier not bound in global scope");
+    return 0;
   }
   else
-    lookup.slot->value = value;
-  return succeed;
+    return slot;
 }
 
-inline b32
+inline Value *
+lookupBuiltinGlobalName(char *name)
+{
+  Token token = newToken(name);
+  GlobalBinding *slot = lookupGlobalName(&token);
+  assert(slot->count == 1);
+  return slot->values[0];
+}
+
+inline void
+addGlobalBinding(Token *token, Value *value)
+{
+  GlobalBinding *slot = lookupGlobalNameSlot(token->text);
+  slot->values[slot->count++] = value;
+  assert(slot->count < arrayCount(slot->values));
+}
+
+inline void
 addGlobalBinding(char *key, Value *value)
 {
   Token token = newToken(key);
-  return addGlobalBinding(&token, value);
+  addGlobalBinding(&token, value);
 }
 
 struct LookupNameRecursive { Ast *value; b32 found; };
@@ -1308,11 +1274,16 @@ inline Constant *
 constantFromGlobalName(MemoryArena *arena, Token *token)
 {
   Constant *out = 0;
-  auto lookup = lookupNameCurrentFrame(global_bindings, token->text);
-  if (lookup.found)
+  GlobalBinding *slot = lookupGlobalName(token);
+  if (slot)
   {
-    out = newAst(arena, Constant, token);
-    initConstant(out, lookup.slot->value);
+    if (slot->count == 1)
+    {
+      out = newAst(arena, Constant, token);
+      initConstant(out, slot->values[0]);
+    }
+    else
+      todoIncomplete;  // nocheckin
   }
   return out;
 }
@@ -1843,9 +1814,11 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
               Token *param_names = params->names;
               s32    param_count = params->count;
 
-              if (Value *lookup = lookupGlobalName(ctor_token->text))
+              if (GlobalBinding *lookup = lookupGlobalName(ctor_token))
               {
-                if (Constructor *ctor = castAst(lookup, Constructor))
+                if (lookup->count != 1)
+                  todoIncomplete;  // nocheckin
+                if (Constructor *ctor = castAst(lookup->values[0], Constructor))
                 {
                   if (param_count == 0)
                   {
@@ -1923,8 +1896,6 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                 else
                   parseError(ctor_token, "expected constructor");
               }
-              else
-                parseError(ctor_token, "undefined identifier");
             }
 
             if (noError())
@@ -3083,34 +3054,30 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
   state->arena = arena;
 
   {
-    global_bindings = pushStruct(arena, GlobalBindings);
-    global_bindings->arena = arena;
+    global_bindings = pushStruct(arena, GlobalBindings);  // :global-bindings-zero-at-startup
 
     builtins = {};
     {// Type and Set
       // Token superset_name = newToken("Type");
       builtins.Type = newValue(arena, BuiltinType, 0);
       builtins.Type->type = builtins.Type; // NOTE: circular types, might bite us
-      if (!addGlobalBinding("Type", builtins.Type))
-        invalidCodePath;
+      addGlobalBinding("Type", builtins.Type);
 
       builtins.Set = newValue(arena, BuiltinSet, builtins.Type);
-      if (!addGlobalBinding("Set", builtins.Set))
-        invalidCodePath;
+      addGlobalBinding("Set", builtins.Set);
     }
 
     {// more builtins
       b32 success = interpretFile(state, platformGetFileFullPath(arena, "../data/builtins.rea"), false);
       assert(success);
 
-      ArrowV *equal_type = castAst(lookupGlobalName("equal_type"), ArrowV);
+      ArrowV *equal_type = castAst(lookupBuiltinGlobalName("equal_type"), ArrowV);
       builtins.equal = newValue(arena, BuiltinEqual, &equal_type->v);
-      if (!addGlobalBinding("=", builtins.equal))
-        invalidCodePath;
+      addGlobalBinding("=", builtins.equal);
 
-      builtins.True  = castAst(lookupGlobalName("True"), Union);
-      builtins.truth = castAst(lookupGlobalName("truth"), Union);
-      builtins.False = castAst(lookupGlobalName("False"), Union);
+      builtins.True  = castAst(lookupBuiltinGlobalName("True"), Union);
+      builtins.truth = castAst(lookupBuiltinGlobalName("truth"), Union);
+      builtins.False = castAst(lookupBuiltinGlobalName("False"), Union);
     }
   }
 
@@ -3165,7 +3132,7 @@ engineMain()
   size_t  permanent_memory_size = megaBytes(256);
   permanent_memory_base = platformVirtualAlloc(permanent_memory_base, permanent_memory_size);
   MemoryArena  permanent_arena_ = newArena(permanent_memory_size, permanent_memory_base);
-  MemoryArena *permanent_arena  = &permanent_arena_;
+  permanent_arena  = &permanent_arena_;
 
   void   *temp_memory_base = (void*)teraBytes(3);
   size_t  temp_memory_size = megaBytes(2);

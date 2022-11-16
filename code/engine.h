@@ -11,6 +11,7 @@ struct LocalBindings;
 
 // NOTE: Think of this like the function stack, we'll clean it every once in a while.
 global_variable MemoryArena *temp_arena;
+global_variable MemoryArena *permanent_arena;
 
 // Contains both ast and values because the print functions need to operate on
 // them both.
@@ -415,24 +416,17 @@ toArrow(Value *value)
   return &castAst(value, ArrowV)->arrow;
 }
 
-inline s32
-getParamCount(Arrow *in)
-{
-  return in->param_count;
-}
-
 struct GlobalBinding
 {
-    String         key;
-    Value         *value;
-    GlobalBinding *next;
+  String         key;
+  s32            count;
+  Value *(values[8]);           // todo: #grow
+  GlobalBinding *next_hash_slot;
 };
 
-struct GlobalBindings
+struct GlobalBindings  // :global-bindings-zero-at-startup
 {
-    MemoryArena    *arena;
-    GlobalBinding   table[1024];
-    GlobalBindings *next;
+    GlobalBinding table[1024];
 };
 
 inline Union *

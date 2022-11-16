@@ -28,8 +28,14 @@ testRatArrow2 :: () -> (a: RatTest) -> (a.d = a.d)
  out
  }
 
-rat_plus :: (a, b: RatTest) -> RatTest
+ratPlus :: (a, b: RatTest) -> RatTest
 {
  /((a.n * b.d + b.n * a.d), (a.d * b.d),
    multiplicationBetweenPositives (a.d,b.d,a._dnot0,b._dnot0))
+ }
+
+Positive :: union
+{
+ 1,
+ s: (p: Positive) -> Positive,
  }
