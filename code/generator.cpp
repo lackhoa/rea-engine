@@ -172,26 +172,24 @@ printFunctionSignature(MemoryArena *arena, CXCursor cursor)
 
   CXType type = clang_getCursorType(cursor);
   printToBuffer(arena, clang_getTypeSpelling(clang_getResultType(type)));
-  arena->used--; printToBuffer(arena, " "); arena->used--;
+  printToBuffer(arena, " ");
 
   printToBuffer(arena, clang_getCursorSpelling(cursor));
-  arena->used--;
 
-  printToBuffer(arena, "("); arena->used--;
+  printToBuffer(arena, "(");
   int num_args = clang_Cursor_getNumArguments(cursor);
   for (int i = 0; i < num_args; ++i)
   {
     CXCursor arg_cursor = clang_Cursor_getArgument(cursor, i);
     printToBuffer(arena, clang_getTypeSpelling(clang_getArgType(type, i)));
-    arena->used--; printToBuffer(arena, " "); arena->used--;
+    printToBuffer(arena, " ");
     printToBuffer(arena, clang_getCursorSpelling(arg_cursor));
-    arena->used--;
     if (i != num_args-1)
     {
-      printToBuffer(arena, ", "); arena->used--;
+      printToBuffer(arena, ", ");
     }
   }
-  printToBuffer(arena, ");\n");
+  printToBuffer(arena, ");\n\0");
 
   return out;
 }

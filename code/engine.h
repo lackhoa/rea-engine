@@ -45,6 +45,7 @@ enum AstCategory
   AC_ArrowV,
   AC_FunctionV,
   AC_StackRef,
+  AC_HeapValue,
   AC_AccessorV,
 
   // set subset (inherit from value)
@@ -355,6 +356,13 @@ struct StackRef
   s32   stack_depth;
 };
 
+struct HeapValue
+{
+  Value v;
+
+  String name;
+};
+
 struct Composite
 {
   Ast   a;
@@ -408,6 +416,16 @@ struct ArrowV
   s32    stack_depth;
 };
 
+inline Arrow *
+toArrow(Value *value)
+{
+  if (ArrowV *arrowv = castAst(value, ArrowV))
+  {
+    return arrowv->a;
+  }
+  return 0;
+}
+
 inline s32
 getParamCount(Arrow *in)
 {
@@ -431,21 +449,22 @@ struct GlobalBindings
 inline Union *
 getFormOf(Value *in0)
 {
-  Union *out = 0;
   switch (in0->cat)
   {
     case AC_CompositeV:
     {
       CompositeV *in = castAst(in0, CompositeV);
-      out = castAst(in->op, Union);
+      return castAst(in->op, Union);
     } break;
 
     case AC_Union:
     {
-      out = castAst(in0, Union);
+      return castAst(in0, Union);
     } break;
+
+    default:
+      return 0;
   }
-  return out;
 }
 
 inline Union *

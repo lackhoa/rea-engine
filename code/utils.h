@@ -310,7 +310,7 @@ printToBuffer(MemoryArena *buffer, char *format, ...)
     char *at = out;
     auto printed = vsprintf_s(at, (buffer->cap-1 - buffer->used), format, arg_list);
     buffer->used += printed;
-    buffer->base[buffer->used++] = 0; // nil-termination
+    buffer->base[buffer->used] = 0; // nil-termination
   }
   else
     vprintf_s(format, arg_list);

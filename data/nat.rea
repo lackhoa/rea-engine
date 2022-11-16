@@ -102,3 +102,26 @@ plusAssociative :: (a, b, c: Nat) -> (a+b)+c = a+(b+c)
   s(a'): rewrite plusAssociative(a.p, b, c); truth,
   }
  }
+
+mulDistributive :: (a,b,c: Nat) -> a*c+b*c = (a+b)*c
+{
+ fork a
+ {0: truth,
+
+  s(a'):
+  rewrite mulDistributive(a.p, b, c);
+  rewrite plusAssociative(c, (a.p * c), (b * c));
+  truth}
+ }
+
+mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*(b*c)
+{
+ fork a
+ {
+  0: truth,
+  s(a'):
+  rewrite left mulDistributive(b, (a.p * b), c);
+  rewrite mulAssociative(a.p, b, c),
+  }
+ }
+

@@ -340,6 +340,12 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
         printToBuffer(buffer, in->name);
       } break;
 
+      case AC_HeapValue:
+      {
+        HeapValue *in = castAst(in0, HeapValue);
+        printToBuffer(buffer, in->name);
+      } break;
+
       default:
       {
         __debugbreak();
@@ -487,7 +493,7 @@ identicalTrinary(Value *lhs0, Value *rhs0) // TODO: turn the args into values
             if (identicalB32(evaluate(env, lhs->a->param_types[id]),
                              evaluate(env, rhs->a->param_types[id])))
             {
-              introduce(&env, lhs->a->param_names+id, lhs->a->param_types[id]);
+              introduceOnStack(&env, lhs->a->param_names+id, lhs->a->param_types[id]);
             }
             else
             {
@@ -548,6 +554,7 @@ identicalTrinary(Value *lhs0, Value *rhs0) // TODO: turn the args into values
             out = Trinary_True;
       } break;
 
+      case AC_HeapValue:
       case AC_Union:
       {
         out = Trinary_Unknown;
@@ -809,6 +816,7 @@ normalize(Environment env, Value *in0)
     case AC_FunctionV:
     case AC_StackRef:
     case AC_Union:
+    case AC_HeapValue:
     {
       out0 = in0;
     } break;
@@ -946,10 +954,11 @@ evaluate(Environment env, Ast *in0)
     case AC_Variable:
     {
       Variable *in = castAst(in0, Variable);
+      assert(in->stack_delta >= 0 && in->id >= 0);
       Stack *stack = env.stack;
       for (s32 delta = 0; delta < in->stack_delta; delta++)
         stack = stack->outer;
-      if (!(in->id < stack->count))
+      if (in->id >= stack->count)
       {
         myprint(env.stack);
         invalidCodePath;
@@ -1116,45 +1125,86 @@ addLocalBinding(LocalBindings *bindings, Token *key)
   return succeed;
 }
 
-forward_declare
-inline void
-introduce(Environment *env, Token *name, Ast *type)
+inline Constructor *
+getSoleConstructor(Value *type)
 {
-  Value *type0 = evaluate(*env, type);
-  b32 make_ref = true;
-#if 0
-  if (Union *type = castAst(type0, Union))
+  if (Union *uni = castAst(type, Union))
   {
-    if (type->ctor_count == 1)
+    if (uni->ctor_count == 1)
+      // sole constructor
+      return uni->ctors + 0;
+  }
+  return 0;
+}
+
+inline Value *
+introduceOnHeap(Environment *env, String base_name, Constructor *ctor)
+{
+  Value *out = 0;
+  if (Arrow *ctor_sig = toArrow(ctor->v.type))
+  {
+    s32 param_count = ctor_sig->param_count;
+    Value *record_type = evaluate(*env, ctor_sig->out_type);
+    CompositeV *record = newValue(temp_arena, CompositeV, record_type);
+    record->op        = &ctor->v;
+    record->arg_count = param_count;
+    Environment sig_env = *env;
     {
-      s32 starting_field_id = env->stack->count;
-      Constructor *sole_ctor = type->ctors + 0;
-      if (ArrowV *ctor_sig = castAst(sole_ctor->v.type, ArrowV))
+      Environment *env = &sig_env;
+      addStackFrame(env);
+      for (s32 field_id=0; field_id < param_count; field_id++)
       {
-        make_ref = false;
-        opt.build_types  = false;
-        opt.add_bindings = false;
-        introduce(env, ctor_sig->a->param_count, ctor_sig->a->param_names, ctor_sig->a->param_types, opt);
-        Value *record_type = evaluate(*env, ctor_sig->a->out_type);
-        CompositeV *record = newValue(temp_arena, CompositeV, record_type);
-        record->op        = &sole_ctor->v;
-        record->arg_count = ctor_sig->a->param_count;
-        record->args      = env->stack->args + starting_field_id;
-        env->stack->args[id] = &record->v;
+        size_t original_used = temp_arena->used;
+        char *field_name_chars = printToBuffer(temp_arena, base_name);
+        printToBuffer(temp_arena, ".");
+        printToBuffer(temp_arena, ctor_sig->param_names[field_id]);
+        // todo: hack to get the string length back, so clunky.
+        String field_name = String{field_name_chars, (s32)(temp_arena->used - original_used)};
+
+        Value *field_type = evaluate(*env, ctor_sig->param_types[field_id]);
+        if (Constructor *field_ctor = getSoleConstructor(field_type))
+        {
+          Value *intro = introduceOnHeap(env, field_name, field_ctor);
+          addStackValue(env, intro);
+        }
+        else
+        {
+          HeapValue *value = newValue(temp_arena, HeapValue, field_type);
+          value->name = field_name;
+          addStackValue(env, &value->v);
+        }
       }
+      record->args = env->stack->args;
+      out = &record->v;
     }
   }
-#endif
-
-  if (make_ref)
-  {
-    StackRef *ref = newValue(temp_arena, StackRef, type0);
-    addStackValue(env, &ref->v);
-
-    ref->name        = *name;
-    ref->id          = env->stack->count-1;  // not a crucial value, moving forward
-    ref->stack_depth = env->stack->depth;
+  else
+  {// rare case: weird type with single enum
+    assert(ctor->v.type->cat == AC_Union);
+    out = &ctor->v;
   }
+  return out;
+}
+
+forward_declare
+inline void
+introduceOnStack(Environment *env, Token *name, Ast *type)
+{
+  Value *typev = evaluate(*env, type);
+  Value *intro;
+  if (Constructor *type_ctor = getSoleConstructor(typev))
+  {
+    intro = introduceOnHeap(env, name->text, type_ctor);
+  }
+  else
+  {
+    StackRef *ref    = newValue(temp_arena, StackRef, typev);
+    ref->name        = *name;
+    ref->id          = env->stack->count;  // :stack-ref-id-has-significance
+    ref->stack_depth = env->stack->depth;
+    intro = &ref->v;
+  }
+  addStackValue(env, intro);
 
   if (env->bindings)
     addLocalBinding(env->bindings, name);
@@ -1311,7 +1361,7 @@ optionalCategory(TokenCategory tc, Tokenizer *tk = global_tokenizer)
 }
 
 inline b32
-optionalChar(Tokenizer *tk, char c)
+optionalChar(char c, Tokenizer *tk=global_tokenizer)
 {
   b32 out = false;
   Token token = peekToken(tk);
@@ -1324,9 +1374,16 @@ optionalChar(Tokenizer *tk, char c)
 }
 
 inline b32
-optionalChar(char c)
+optionalString(char *str, Tokenizer *tk=global_tokenizer)
 {
-  return optionalChar(global_tokenizer, c);
+  b32 out = false;
+  Token token = peekToken(tk);
+  if (equal(&token, str))
+  {
+    out = true;
+    nextToken(tk);
+  }
+  return out;
 }
 
 struct OptionalU32 { b32 success; u32 value; };
@@ -1572,7 +1629,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                         Variable *synthetic = newAst(arena, Variable, &ref->name);
                         synthetic0 = &synthetic->a;
                         synthetic->stack_delta = env->stack->depth - ref->stack_depth;
-                        synthetic->id          = ref->id;
+                        synthetic->id          = ref->id;  // :stack-ref-id-has-significance
                       } break;
 
                       case AC_Union:
@@ -1581,7 +1638,8 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                         synthetic0 = &synthetic->a;
                       } break;
 
-                      invalidDefaultCase;
+                      default:
+                        todoIncomplete;
                     }
                     in->args[param_type->id] = synthetic0;
                   }
@@ -1687,7 +1745,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
           extendBindings(temp_arena, env);
           for (s32 id=0; id < in->signature->param_count && noError(); id++)
           {
-            introduce(env, in->signature->param_names+id, in->signature->param_types[id]);
+            introduceOnStack(env, in->signature->param_names+id, in->signature->param_types[id]);
           }
           assert(noError());
 
@@ -1744,7 +1802,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       {
         Ast *param_type = in->param_types[id] = buildExpression(env, in->param_types[id], 0).ast;
         if (param_type)
-          introduce(env, in->param_names+id, param_type);
+          introduceOnStack(env, in->param_names+id, param_type);
       }
 
       if (noError())
@@ -1814,7 +1872,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                           addStackFrame(&env);
                           for (s32 id = 0; id < param_count && noError(); id++)
                           {
-                            introduce(&env, params->names+id, ctor_sig->a->param_types[id]);
+                            introduceOnStack(&env, params->names+id, ctor_sig->a->param_types[id]);
                           }
 
                           Value *pattern_type = evaluate(env, ctor_sig->a->out_type);
@@ -1901,26 +1959,31 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
         if (CompositeV *recordv = castAst(recordv0, CompositeV))
         {
           in->record = record;
-          ArrowV *op_type = castAst(recordv->op->type, ArrowV);
-          s32 param_count = op_type->a->param_count;
-          s32 param_id;
-          for (param_id=0; param_id < param_count; param_id++)
+          Arrow *op_type = toArrow(recordv->op->type);
+          s32 param_count = op_type->param_count;
+          b32 valid_param_name = false;
+          for (s32 param_id=0; param_id < param_count; param_id++)
           {// figure out the param id
-            if (equal(in->member, op_type->a->param_names[param_id]))
+            if (equal(in->member, op_type->param_names[param_id]))
             {
               in->param_id = param_id;
               out.ast = in0;
+              valid_param_name = true;
               break;
             }
           }
 
-          if (param_id == op_type->a->param_count)
-            tokenError(&in->member, "accessor has invalid member");
-          else
+          if (valid_param_name)
           {// typing
             extendStack(env, param_count, recordv->args);
-            out.type = evaluate(*env, op_type->a->param_types[in->param_id]);
+            out.type = evaluate(*env, op_type->param_types[in->param_id]);
             unwindStack(env);
+          }
+          else
+          {
+            tokenError(&in->member, "accessor has invalid member");
+            pushAttachment("expected a member of constructor", recordv->op);
+            pushAttachment("in type", op_type->out_type);
           }
         }
         else
@@ -2773,14 +2836,13 @@ parseTopLevel(EngineState *state)
 
         case MetaDirective_should_fail:
         {
-          Token maybe_off = peekToken();
-          if (equal(maybe_off, "off"))
-          {
-            nextToken();
+          if (optionalString("off"))
             should_fail_active = false;
-          }
           else
+          {
             should_fail_active = true;
+            tokenError(&token, "#should_fail activated");
+          }
         } break;
 
         invalidDefaultCase;
@@ -2906,9 +2968,13 @@ parseTopLevel(EngineState *state)
     endTemporaryMemory(top_level_temp);
 #endif
 
-    if (!noError())
-      if (should_fail_active)
+    if (should_fail_active)
+    {
+      if (noError())
+        tokenError(&token, "#should_fail active but didn't fail");
+      else
         wipeError(global_tokenizer);
+    }
   }
 
   popContext();

@@ -5,28 +5,6 @@
 check truth: true = false;
 #should_fail off
 
-mulDistributive :: (a,b,c: Nat) -> a*c+b*c = (a+b)*c
-{
- fork a
- {0: truth,
-
-  s(a'):
-  rewrite mulDistributive(a.p, b, c);
-  rewrite plusAssociative(c, (a.p * c), (b * c));
-  truth}
- }
-
-mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*(b*c)
-{
- fork a
- {
-  0: truth,
-  s(a'):
-  rewrite left mulDistributive(b, (a.p * b), c);
-  rewrite mulAssociative(a.p, b, c),
-  }
- }
-
 != :: (_A: Set, a, b: _A) -> Type
 {
  (E: a = b) -> False
@@ -35,6 +13,16 @@ mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*(b*c)
 Rat :: union
 {
  / : (n,d: Nat, _dnot0: d != 0) -> Rat
+ }
+
+BigStruct :: union
+{
+ makeBigStruct : (r: Rat) -> BigStruct
+ }
+
+testBigStruct :: (big : BigStruct) -> (big.r.d != 0)
+{
+ big.r._dnot0
  }
 
 testRatArrow :: (r: Rat) -> r.d != 0 { r._dnot0 }
@@ -48,14 +36,5 @@ testRatArrow2 :: () -> (a: Rat) -> (a.d = a.d)
 ;; todo operator overload
 rat_plus :: (a, b: Rat) -> Rat
 {
- fork a
- {
-  /(an,ad,aproof): 
-  fork b
-  {
-   /(bn,bd,bproof):
-   /((a.n * b.d + b.n * a.d), (a.d * b.d), a._dnot0)
-   }
-  }
+ /((a.n * b.d + b.n * a.d), (a.d * b.d), a._dnot0)
  }
-
