@@ -6,4 +6,4 @@
 global_variable Builtins builtins;
 
 global_variable Ast dummy_hole = {.cat = AC_DummyHole};
-global_variable Function dummy_function_under_construction;
+global_variable Ast dummy_function_under_construction;

@@ -88,6 +88,7 @@ newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
   ((cat *) newAst_(arena, AC_##cat, token, sizeof(cat)))
 
 #define castAst(exp, Cat) ((exp)->cat == AC_##Cat ? (Cat*)(exp) : 0)
+#define polyAst(exp, Cat, Cat2) (((exp)->cat == AC_##Cat || (exp)->cat == AC_##Cat2) ? (Cat*)(exp) : 0)
 
 struct Identifier
 {
@@ -282,14 +283,6 @@ newValue_(MemoryArena *arena, AstCategory cat, Value *type, size_t size)
 #define newValue(arena, cat, type)                        \
   ((cat *) newValue_(arena, AC_##cat, type, sizeof(cat)))
 
-#if 0
-struct Set
-{
-  Value v;
-  Token token;
-};
-#endif
-
 struct Constructor
 {
   Value v;
@@ -306,27 +299,24 @@ struct Union
   Constructor *ctors;
 };
 
-struct Record
-{
-  Value v;
-  s32    member_count;
-  Token *member_names;
-  Ast   *member_types;
-};
-
 struct Function
-{
-  Ast   a;
-
-  Ast   *body;
-  Arrow *signature;
+#define EMBED_FUNCTION                          \
+{                                               \
+  Ast    a;                                     \
+  Ast   *body;                                  \
+  Arrow *signature;                             \
 };
+EMBED_FUNCTION
 
 struct FunctionV
 {
   Value v;
 
-  Function *a;
+  union
+  {
+    Function function;
+    struct   EMBED_FUNCTION;
+  };
   Stack    *stack;
 };
 
@@ -416,7 +406,7 @@ struct ArrowV
     Arrow arrow;
     struct EMBED_ARROW
   };
-  s32    stack_depth;
+  s32 stack_depth;
 };
 
 inline Arrow *
@@ -446,7 +436,7 @@ struct GlobalBindings
 };
 
 inline Union *
-getFormOf(Value *in0)
+getUnionOf(Value *in0)
 {
   switch (in0->cat)
   {
@@ -509,7 +499,7 @@ struct Accessor
 {
   Ast    a;
 
-  Ast   *record;
+  Ast   *record;                // in parse phase we can't tell if the op is a constructor
   Token  member;                // parsing info
   s32    param_id;              // after build phase
 };

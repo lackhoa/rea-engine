@@ -56,7 +56,7 @@ printComposite(MemoryArena *buffer, void *in0, PrintOptions opt)
   ArrowV *op_type = 0;
   if (Composite *in = castAst(ast, Composite))
   {
-    op = in->op;
+    op       = in->op;
     raw_args = (void **)in->args;
     if (Constant *op = castAst(in->op, Constant))
     {
@@ -64,15 +64,13 @@ printComposite(MemoryArena *buffer, void *in0, PrintOptions opt)
       assert(op_type);
     }
     else
-    {
       arg_count = in->arg_count;
-    }
   }
   else if (CompositeV *in = castAst(value, CompositeV))
   {
-    op = in->op;
+    op       = in->op;
     raw_args = (void **)in->args;
-    op_type = castAst(in->op->type, ArrowV);
+    op_type  = castAst(in->op->type, ArrowV);
     assert(op_type);
   }
   else
@@ -287,11 +285,11 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
       case AC_FunctionV:
       {
         FunctionV *in = castAst(in0, FunctionV);
-        printToBuffer(buffer, in->a->a.token);
+        printToBuffer(buffer, in->a.token);
         if (opt.detailed)
         {
           printToBuffer(buffer, " { ");
-          printAst(buffer, in->a->body, new_opt);
+          printAst(buffer, in->body, new_opt);
           printToBuffer(buffer, " }");
         }
       } break;
@@ -752,37 +750,32 @@ normalize(Environment env, Value *in0)
       }
 
       Value *norm_op = normalize(env, in->op);
-      // todo: we don't expand if there is any free variable. (eg for arrow
-      // types this would not normalize the return type).
-      // if (env.stack_offset == 0)
+      if (norm_op->cat == AC_FunctionV)
+      {// Function application
+        FunctionV *funv = castAst(norm_op, FunctionV);
+        if (funv->body != &dummy_function_under_construction)
+        {
+          Environment fun_env = env;
+          fun_env.stack = funv->stack;
+          extendStack(&fun_env, in->arg_count, norm_args);
+          // note: evaluation might fail, in which case we back out.
+          out0 = evaluate(fun_env, funv->body);
+        }
+      }
+      else
       {
-        if (norm_op->cat == AC_FunctionV)
-        {// Function application
-          FunctionV *funv = castAst(norm_op, FunctionV);
-          if (funv->a != (Function *)&dummy_function_under_construction)
-          {
-            Environment fun_env = env;
-            fun_env.stack = funv->stack;
-            extendStack(&fun_env, in->arg_count, norm_args);
-            // note: evaluation might fail, in which case we back out.
-            out0 = evaluate(fun_env, funv->a->body);
-          }
+        if (norm_op == builtins.equal)
+        {// special case for equality
+          Value *lhs = norm_args[1];
+          Value *rhs = norm_args[2];
+          Trinary compare = identicalTrinary(lhs, rhs);
+          if (compare == Trinary_True)
+            out0 = &builtins.True->v;
+          else if (compare == Trinary_False)
+            out0 = &builtins.False->v;
         }
         else
-        {
-          if (norm_op == builtins.equal)
-          {// special case for equality
-            Value *lhs = norm_args[1];
-            Value *rhs = norm_args[2];
-            Trinary compare = identicalTrinary(lhs, rhs);
-            if (compare == Trinary_True)
-              out0 = &builtins.True->v;
-            else if (compare == Trinary_False)
-              out0 = &builtins.False->v;
-          }
-          else
-            assert(norm_op->cat == AC_Constructor);
-        }
+          assert(norm_op->cat == AC_Constructor);
       }
 
       if (!out0)
@@ -803,7 +796,6 @@ normalize(Environment env, Value *in0)
     case AC_AccessorV:
     {
       AccessorV *in = castAst(in0, AccessorV);
-      // fingers crossed we're not gonna get any infinite loop
       out0 = in->record->args[in->param_id];
     } break;
 
@@ -1061,8 +1053,8 @@ evaluate(Environment env, Ast *in0)
             Function  *item        = castAst(item0, Function);
             Value     *signature_v = evaluate(env, &item->signature->a);
             FunctionV *funv        = newValue(arena, FunctionV, signature_v);
-            funv->a     = item;
-            funv->stack = env.stack;
+            funv->function = *item;
+            funv->stack    = env.stack;
             addStackValue(&env, &funv->v);
           } break;
 
@@ -1085,8 +1077,8 @@ evaluate(Environment env, Ast *in0)
       Function *in = castAst(in0, Function);
       Value *signature = evaluate(env, &in->signature->a);
       FunctionV *out = newValue(env.arena, FunctionV, signature);
-      out->a     = in;
-      out->stack = env.stack;
+      out->function = *in;
+      out->stack    = env.stack;
     }
     break;
 
@@ -1734,7 +1726,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
         FunctionV *funv = newValue(arena, FunctionV, signature_v);
         // note: we only need that funv there for the type.
         // todo: this function wouldn't have name, so would cause problem for debugging.
-        funv->a = &dummy_function_under_construction;
+        funv->body = &dummy_function_under_construction;
 
         // note: add binding first to support recursion
         b32 is_local = (bool)env->bindings;
@@ -1765,8 +1757,8 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
         out.ast  = in0;
         out.type = signature_v;
 
-        funv->a     = in;
-        funv->stack = env->stack;
+        funv->function = *in;
+        funv->stack    = env->stack;
       }
     } break;
 
@@ -1871,9 +1863,9 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                   else
                   {
                     if (ArrowV *ctor_sig = castAst(ctor->v.type, ArrowV))
-                    {
+                    {// NOTE: we still support the weird inductive proposition thingie.
                       if (identicalB32(&getFormOf(ctor_sig->out_type)->v,
-                                       &getFormOf(subject_type)->v))
+                                       &getUnionOf(subject_type)->v))
                       {
                         if (param_count == ctor_sig->param_count)
                         {
