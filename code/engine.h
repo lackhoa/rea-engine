@@ -326,7 +326,6 @@ struct FunctionV
 {
   Value v;
 
-  Token     token;
   Function *a;
   Stack    *stack;
 };

@@ -5,19 +5,14 @@
 check truth: true = false;
 #should_fail off
 
-!= :: (_A: Set, a, b: _A) -> Type
+RatTest :: union
 {
- (E: a = b) -> False
- }
-
-Rat :: union
-{
- / : (n,d: Nat, _dnot0: d != 0) -> Rat
+ / : (n,d: Nat, _dnot0: d != 0) -> RatTest
  }
 
 BigStruct :: union
 {
- makeBigStruct : (r: Rat) -> BigStruct
+ makeBigStruct : (r: RatTest) -> BigStruct
  }
 
 testBigStruct :: (big : BigStruct) -> (big.r.d != 0)
@@ -25,16 +20,16 @@ testBigStruct :: (big : BigStruct) -> (big.r.d != 0)
  big.r._dnot0
  }
 
-testRatArrow :: (r: Rat) -> r.d != 0 { r._dnot0 }
+testRatArrow :: (r: RatTest) -> r.d != 0 { r._dnot0 }
 
-testRatArrow2 :: () -> (a: Rat) -> (a.d = a.d)
+testRatArrow2 :: () -> (a: RatTest) -> (a.d = a.d)
 {
- out :: (b: Rat) -> (b.d = b.d) {truth}
+ out :: (b: RatTest) -> (b.d = b.d) {truth}
  out
  }
 
-;; todo operator overload
-rat_plus :: (a, b: Rat) -> Rat
+rat_plus :: (a, b: RatTest) -> RatTest
 {
- /((a.n * b.d + b.n * a.d), (a.d * b.d), a._dnot0)
+ /((a.n * b.d + b.n * a.d), (a.d * b.d),
+   multiplicationBetweenPositives(a.d,b.d,a._dnot0,b._dnot0))
  }

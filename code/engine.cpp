@@ -7,7 +7,7 @@
 
 global_variable b32 global_debug_mode;
 #if REA_INTERNAL
-#  define INTERNAL_ERROR global_tokenizer->error || global_debug_mode
+#  define INTERNAL_ERROR global_debug_mode
 #else
 #  define INTERNAL_ERROR false
 #endif
@@ -287,7 +287,7 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
       case AC_FunctionV:
       {
         FunctionV *in = castAst(in0, FunctionV);
-        printToBuffer(buffer, in->token);
+        printToBuffer(buffer, in->a->a.token);
         if (opt.detailed)
         {
           printToBuffer(buffer, " { ");
@@ -323,7 +323,7 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
         printAst(buffer, in->record, new_opt);
         printToBuffer(buffer, ".");
         printToBuffer(buffer, in->member);
-      }
+      } break;
 
       case AC_AccessorV:
       {
@@ -407,10 +407,10 @@ identicalB32(Value *lhs, Value *rhs)
 }
 
 inline b32
-isCompositeForm(Value *in0)
+isConstructor(Value *in0)
 {
-  if (Composite *in = castAst(in0, Composite))
-    return castAst(in->op, Union) != 0;
+  if (CompositeV *in = castAst(in0, CompositeV))
+    return in->op->cat == AC_Constructor;
   else
     return false;
 }
@@ -563,8 +563,8 @@ identicalTrinary(Value *lhs0, Value *rhs0) // TODO: turn the args into values
       invalidDefaultCase;
     }
   }
-  else if (((lhs0->cat == AC_Union) && isCompositeForm(rhs0)) ||
-           ((rhs0->cat == AC_Union) && isCompositeForm(lhs0)))
+  else if (((lhs0->cat == AC_Constructor) && isConstructor(rhs0)) ||
+           ((rhs0->cat == AC_Constructor) && isConstructor(lhs0)))
   {
     out = Trinary_False;
   }
@@ -1060,7 +1060,6 @@ evaluate(Environment env, Ast *in0)
             Function  *item        = castAst(item0, Function);
             Value     *signature_v = evaluate(env, &item->signature->a);
             FunctionV *funv        = newValue(arena, FunctionV, signature_v);
-            funv->token = item->a.token;
             funv->a     = item;
             funv->stack = env.stack;
             addStackValue(&env, &funv->v);
@@ -1079,6 +1078,16 @@ evaluate(Environment env, Ast *in0)
       CompositeV *recordv = castAst(evaluate(env, in->record), CompositeV);
       out0 = recordv->args[in->param_id];
     } break;
+
+    case AC_Function:
+    {
+      Function *in = castAst(in0, Function);
+      Value *signature = evaluate(env, &in->signature->a);
+      FunctionV *out = newValue(env.arena, FunctionV, signature);
+      out->a     = in;
+      out->stack = env.stack;
+    }
+    break;
 
     invalidDefaultCase;
   }
@@ -1415,7 +1424,7 @@ precedenceOf(Token *op)
   // TODO: implement for real
   if (equal(op, "->"))
     out = 40;
-  if (equal(op, "="))
+  if (equal(op, "=") || equal(op, "!="))
     out = 50;
   else if (equal(op, "&")
            || equal(op, "*"))
@@ -1712,7 +1721,6 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
     {// NOTE: both local and global function.
       Function *in = castAst(in0, Function);
 
-      assert(!expected_type);
       char *debug_name = "+";
       if (equal(in->a.token, debug_name))
         breakhere;
@@ -1724,8 +1732,8 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
         Value *signature_v = evaluate(*env, &in->signature->a);
         FunctionV *funv = newValue(arena, FunctionV, signature_v);
         // note: we only need that funv there for the type.
+        // todo: this function wouldn't have name, so would cause problem for debugging.
         funv->a = &dummy_function_under_construction;
-        funv->token = in->a.token;
 
         // note: add binding first to support recursion
         b32 is_local = (bool)env->bindings;
@@ -2007,7 +2015,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       if (!identicalB32(norm_expected, norm_actual))
       {
         parseError(in0, "actual type differs from expected type");
-        // normalize(*env, expected_type);
+        normalize(*env, expected_type);
         pushAttachment("expected", norm_expected);
         pushAttachment("got", norm_actual);
       }
@@ -3174,12 +3182,6 @@ engineMain()
 
 #if 1
   if (!beginInterpreterSession(permanent_arena, "../data/basics.rea"))
-    success = false;
-  resetZeroArena(permanent_arena);
-#endif
-
-#if 1
-  if (!beginInterpreterSession(permanent_arena, "../data/nat.rea"))
     success = false;
   resetZeroArena(permanent_arena);
 #endif
