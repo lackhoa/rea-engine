@@ -152,17 +152,17 @@ printToBuffer(MemoryArena *buffer, CXString string)
   return out;
 }
 
-// todo: we need to record the file too, what a dumb oversight
-struct LineList
+struct LocationList
 {
-  unsigned  line;
-  LineList *next;
+  unsigned      line;
+  char         *file_name;
+  LocationList *next;
 };
 
 struct State
 {
-  FILE     *out_file;
-  LineList *forward_declare_lines;
+  FILE         *out_file;
+  LocationList *forward_declare_locations;
 };
 
 internal char *
@@ -230,9 +230,10 @@ int main()
         CXFile file;
         clang_getExpansionLocation(location, &file, &line, 0, 0);
 
-        char *file_name = printToBuffer(temp_arena, clang_getFileName(file));
-        if (file_name)
+        CXChildVisitResult child_visit_result = CXChildVisit_Continue;
+        if (char *file_name = printToBuffer(temp_arena, clang_getFileName(file)))
         {
+          temp_arena->used++;
           CXString path_name0 = clang_File_tryGetRealPathName(file);
           if (char *path_name = printToBuffer(temp_arena, path_name0))
           {
@@ -241,38 +242,50 @@ int main()
               CXString cursor_spelling0 = clang_getCursorSpelling(cursor);
               CXCursorKind kind = clang_getCursorKind(cursor);
 
-              if (kind == CXCursor_MacroExpansion &&
-                  equal("forward_declare", printToBuffer(temp_arena, cursor_spelling0)))
-              {// a forward_declare annotation
-                LineList *new_lines = pushStruct(permanent_arena, LineList, true);
-                new_lines->line = line;
-                new_lines->next = state->forward_declare_lines;
-                state->forward_declare_lines = new_lines;
-              }
-
-              if (kind == CXCursor_FunctionDecl)
-              {// forward-declared the function if asked
-                for (LineList *lines = state->forward_declare_lines;
-                     lines;
-                     lines = lines->next)
-                {
-                  if (line > lines->line && line < lines->line+3)
+              switch (kind)
+              {
+                case CXCursor_MacroExpansion:
+                {// check for annotations
+                  char *cursor_spelling = printToBuffer(temp_arena, cursor_spelling0);
+                  if (equal("forward_declare", cursor_spelling))
                   {
-#if 0
-                    printf("forward declare: %s\n", printToBuffer(temp_arena, cursor_spelling0));
-#endif
-                    char *signature = printFunctionSignature(temp_arena, cursor);
-                    fprintf(state->out_file, "%s", signature);
-                    break;
+                    LocationList *locations = pushStruct(permanent_arena, LocationList, true);
+                    locations->line      = line;
+                    locations->next      = state->forward_declare_locations;
+                    locations->file_name = printToBuffer(permanent_arena, file_name);
+                    permanent_arena->used++;
+                    state->forward_declare_locations = locations;
                   }
-                }
+                } break;
+
+                case CXCursor_FunctionDecl:
+                {
+                  for (LocationList *lines = state->forward_declare_locations;
+                       lines;
+                       lines = lines->next)
+                  {
+                    b32 match_line = (line > lines->line && line < lines->line+3);
+                    b32 match_file = equal(file_name, lines->file_name);
+                    if (match_line && match_file)
+                    {// function was asked to be forward-declared
+#if 0
+                      printf("forward declare: %s\n", printToBuffer(temp_arena, cursor_spelling0));
+#endif
+                      char *signature = printFunctionSignature(temp_arena, cursor);
+                      fprintf(state->out_file, "%s", signature);
+                      break;
+                    }
+                  }
+                } break;
+
+                default: break;
               }
             }
           }
         }
 
         endTemporaryMemory(temp_mem);
-        return CXChildVisit_Continue;
+        return child_visit_result;
       },
       &state);
 

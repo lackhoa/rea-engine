@@ -31,5 +31,5 @@ testRatArrow2 :: () -> (a: RatTest) -> (a.d = a.d)
 rat_plus :: (a, b: RatTest) -> RatTest
 {
  /((a.n * b.d + b.n * a.d), (a.d * b.d),
-   multiplicationBetweenPositives(a.d,b.d,a._dnot0,b._dnot0))
+   multiplicationBetweenPositives (a.d,b.d,a._dnot0,b._dnot0))
  }

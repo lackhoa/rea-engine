@@ -397,32 +397,32 @@ initComposite(Composite *app, Ast *op, s32 arg_count, Ast **args)
 }
 
 struct Arrow
-{
-  Ast   a;
+#define EMBED_ARROW                             \
+  {                                             \
+    Ast     a;                                  \
+    Ast    *out_type;                           \
+    s32     param_count;                        \
+    Token  *param_names;                        \
+    Ast   **param_types;                        \
+  };
+EMBED_ARROW
 
-  Ast *out_type;
-  s32     param_count;
-  Token  *param_names;
-  Ast   **param_types;
-};
-
-// NOTE: pretty sad that we can't just typedef this to "Arrow"
 struct ArrowV
 {
   Value v;
 
-  Arrow *a;
+  union embed
+  {
+    Arrow arrow;
+    struct EMBED_ARROW
+  };
   s32    stack_depth;
 };
 
 inline Arrow *
 toArrow(Value *value)
 {
-  if (ArrowV *arrowv = castAst(value, ArrowV))
-  {
-    return arrowv->a;
-  }
-  return 0;
+  return &castAst(value, ArrowV)->arrow;
 }
 
 inline s32

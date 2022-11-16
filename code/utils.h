@@ -263,29 +263,28 @@ toString(const char *c)
 inline b32
 equal(char *s1, char *s2)
 {
-    b32 out = true;
-    char *c1 = s1;
-    char *c2 = s2;
-    b32 stop = false;
-    while (!stop)
+  b32 out = true;
+  char *c1 = s1;
+  char *c2 = s2;
+  while (true)
+  {
+    if (*c1 != *c2)
     {
-        if (*c1 != *c2)
-        {
-            out = false;
-            stop = true;
-        }
-        else
-        {
-            if (*c1 == 0)
-                stop = true;
-            else
-            {
-                c1++;
-                c2++;
-            }
-        }
+      out = false;
+      break;
     }
-    return out;
+    else
+    {
+      if (*c1 == 0)
+        break;
+      else
+      {
+        c1++;
+        c2++;
+      }
+    }
+  }
+  return out;
 }
 
 internal void
@@ -373,7 +372,9 @@ belongsToArena(MemoryArena *arena, u8 *memory)
 #define maximum(a, b) ((a < b) ? b : a)
 #define minimum(a, b) ((a < b) ? a : b)
 
+// bunch of metaprogramming tags
 #define forward_declare
+#define embed
 
 inline b32
 isSubstring(char *full, char* sub, b32 case_sensitive=true)
