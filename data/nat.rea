@@ -138,11 +138,11 @@ multiplicationBetweenPositives :: (a,b: Nat, a_positive: a != 0, b_positive: b !
   {
    0: a_positive(truth),
 
-   s(a'):
+   s:
    fork b
    {
     0: b_positive(truth),
-    s(b'): e
+    s: e
     }
    }
   }

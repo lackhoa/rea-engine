@@ -5,6 +5,7 @@
 // todo: does enum automatically increment???
 enum TokenCategory
 {
+  TC_Colon         = ':',
   // 0-255 reserved for single-char ASCII types.
   TC_Special       = 256,
   TC_PairingOpen   = 257,
@@ -70,7 +71,13 @@ newToken(const char *text)
 }
 
 struct Ast;
-enum AttachmentType { AttachmentType_Ast, AttachmentType_Value, };
+enum AttachmentType
+{
+  AttachmentType_Ast,
+  AttachmentType_Value,
+  AttachmentType_Token,
+  AttachmentType_TypeMatcher,
+};
 struct ErrorAttachment { char *string; AttachmentType type; void *p; };
 
 struct ParseErrorData

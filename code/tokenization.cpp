@@ -85,20 +85,31 @@ printCharToBufferRepeat(char *buffer, char c, s32 repeat)
 
 global_variable Tokenizer *global_tokenizer;
 
-inline void
-pushAttachment(char *string, Ast *ast)
+inline void pushAttachmentVoid(char *string, AttachmentType type, void *p)
 {
   ParseError error = global_tokenizer->error;
   assert(error->attachment_count < arrayCount(error->attachments));
-  error->attachments[error->attachment_count++] = {string, AttachmentType_Ast, ast};
+  error->attachments[error->attachment_count++] = {string, type, p};
 }
 
-inline void
-pushAttachment(char *string, Value *value)
+inline void pushAttachment(char *string, Token *token)
 {
-  ParseError error = global_tokenizer->error;
-  assert(error->attachment_count < arrayCount(error->attachments));
-  error->attachments[error->attachment_count++] = {string, AttachmentType_Value, value};
+  pushAttachmentVoid(string, AttachmentType_Token, token);
+}
+
+inline void pushAttachment(char *string, Ast *ast)
+{
+  pushAttachmentVoid(string, AttachmentType_Ast, ast);
+}
+
+inline void pushAttachment(char *string, Value *value)
+{
+  pushAttachmentVoid(string, AttachmentType_Value, value);
+}
+
+inline void pushAttachment(char *string, Matcher *matcher)
+{
+  pushAttachmentVoid(string, AttachmentType_TypeMatcher, matcher);
 }
 
 internal void

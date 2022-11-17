@@ -59,9 +59,18 @@ typedef Value BuiltinSet;
 typedef Value BuiltinEqual;
 
 struct Ast
-{
-  AstCategory cat;
-  Token       token;
+#define EMBED_AST_                              \
+{                                               \
+  AstCategory cat;                              \
+  Token       token;                            \
+};
+EMBED_AST_
+
+#define EMBED_AST                               \
+union                                           \
+{                                               \
+  Ast a;                                        \
+  struct EMBED_AST_                             \
 };
 
 inline Ast **
@@ -93,7 +102,7 @@ newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
 
 struct Identifier
 {
-  Ast a;
+  EMBED_AST
 };
 
 struct Variable
@@ -126,12 +135,6 @@ newSyntheticConstant(MemoryArena *arena, Value *value)
   out->is_synthetic = true;
   out->value        = value;
   return out;
-}
-
-inline void
-initConstant(Constant *in, Value *value)
-{
-  in->value = value;
 }
 
 struct ForkParameters
@@ -178,7 +181,7 @@ enum Trinary
 };
 
 internal Trinary
-identicalTrinary(Value *lhs, Value *rhs);
+equalTrinary(Value *lhs, Value *rhs);
 
 struct RewriteRule
 {
@@ -286,9 +289,10 @@ newValue_(MemoryArena *arena, AstCategory cat, Value *type, size_t size)
 
 struct Constructor
 {
-  Value v;
-  Token name;
-  s32   id;
+  Value  v;
+  Union *uni;
+  Token  name;
+  s32    id;
 };
 
 struct Union
@@ -429,6 +433,7 @@ struct GlobalBindings  // :global-bindings-zero-at-startup
     GlobalBinding table[1024];
 };
 
+#if 0
 inline Union *
 getUnionOf(Value *in0)
 {
@@ -449,6 +454,7 @@ getUnionOf(Value *in0)
       return 0;
   }
 }
+#endif
 
 inline Union *
 getFormOf(Ast *in0)
@@ -531,12 +537,26 @@ struct Builtins
   Value *Type;
 };
 
-#if 0
-struct IntroduceOptions
+enum MatcherCategory
 {
-  b32 add_bindings;
-  b32 build_types;
+  MC_Exact,
+  MC_OutType,
 };
-#endif
+
+struct Matcher
+{// the all-0 value happens to be the unknown, which is totally planned.
+  MatcherCategory cat;
+  union
+  {
+    Value *Exact;
+    Value *OutType;
+  };
+  operator bool() { return (cat == MC_Exact) && (Exact == 0); }
+};
+
+inline Matcher exactMatch(Value *value)
+{
+  return Matcher{.cat=MC_Exact, .Exact=value};
+}
 
 #include "generated/engine_forward.h"

@@ -6,11 +6,6 @@
 #include "rea_globals.h"
 
 global_variable b32 global_debug_mode;
-#if REA_INTERNAL
-#  define INTERNAL_ERROR global_debug_mode
-#else
-#  define INTERNAL_ERROR false
-#endif
 
 s32 global_variable debug_indentation;
 inline void
@@ -399,9 +394,9 @@ extendStack(Environment *env, s32 arg_count, Value **args)
 }
 
 inline b32
-identicalB32(Value *lhs, Value *rhs)
+equalB32(Value *lhs, Value *rhs)
 {
-  return identicalTrinary(lhs, rhs) == Trinary_True;
+  return equalTrinary(lhs, rhs) == Trinary_True;
 }
 
 inline b32
@@ -425,7 +420,7 @@ compareExpressionList(Value **lhs_list, Value **rhs_list, s32 count)
   {
     auto lhs = lhs_list[id];
     auto rhs = rhs_list[id];
-    auto compare = identicalTrinary(lhs, rhs);
+    auto compare = equalTrinary(lhs, rhs);
     if (compare == Trinary_Unknown)
       unknown_found = true;
     if (compare == Trinary_False)
@@ -442,7 +437,7 @@ compareExpressionList(Value **lhs_list, Value **rhs_list, s32 count)
 }
 
 internal Trinary
-identicalTrinary(Value *lhs0, Value *rhs0)
+equalTrinary(Value *lhs0, Value *rhs0)
 {
 #if 0
   if (global_debug_mode)
@@ -488,7 +483,7 @@ identicalTrinary(Value *lhs0, Value *rhs0)
           b32 type_mismatch = false;
           for (s32 id = 0; id < param_count; id++)
           {
-            if (identicalB32(evaluate(env, lhs->param_types[id]),
+            if (equalB32(evaluate(env, lhs->param_types[id]),
                              evaluate(env, rhs->param_types[id])))
             {
               introduceOnStack(&env, lhs->param_names+id, lhs->param_types[id]);
@@ -501,7 +496,7 @@ identicalTrinary(Value *lhs0, Value *rhs0)
           }
           if (!type_mismatch)
           {
-            out = identicalTrinary(evaluate(env, lhs->out_type),
+            out = equalTrinary(evaluate(env, lhs->out_type),
                                    evaluate(env, rhs->out_type));
           }
         }
@@ -514,7 +509,7 @@ identicalTrinary(Value *lhs0, Value *rhs0)
         CompositeV *lhs = castAst(lhs0, CompositeV);
         CompositeV *rhs = castAst(rhs0, CompositeV);
 
-        Trinary op_compare = identicalTrinary((lhs->op), (rhs->op));
+        Trinary op_compare = equalTrinary((lhs->op), (rhs->op));
         if ((op_compare == Trinary_False) &&
             (lhs->op->cat == AC_Union) &&
             (rhs->op->cat == AC_Union))
@@ -678,7 +673,7 @@ rewriteExpression(Environment *env, Value *in)
        rewrite && !out;
        rewrite = rewrite->next)
   {
-    if (identicalB32(in, rewrite->lhs))
+    if (equalB32(in, rewrite->lhs))
       out = rewrite->rhs;
   }
   if (!out)
@@ -695,7 +690,7 @@ normalize(Environment env, Value *in0)
   Value *out0 = {};
   MemoryArena *arena = env.arena;
 
-  if (INTERNAL_ERROR)
+  if (global_debug_mode)
   {
     debugIndent();
     myprint("normalize: ");
@@ -757,7 +752,7 @@ normalize(Environment env, Value *in0)
         {// special case for equality
           Value *lhs = norm_args[1];
           Value *rhs = norm_args[2];
-          Trinary compare = identicalTrinary(lhs, rhs);
+          Trinary compare = equalTrinary(lhs, rhs);
           if (compare == Trinary_True)
             out0 = &builtins.True->v;
           else if (compare == Trinary_False)
@@ -816,7 +811,7 @@ normalize(Environment env, Value *in0)
                                    // might be expanded now)
   }
 
-  if (INTERNAL_ERROR)
+  if (global_debug_mode)
   {
     debugDedent();
     myprint("=> ");
@@ -922,7 +917,7 @@ evaluate(Environment env, Ast *in0)
   Value *out0 = 0;
   MemoryArena *arena = env.arena;
 
-  if (INTERNAL_ERROR)
+  if (global_debug_mode)
   {
     debugIndent();
     myprint("evaluate: ");
@@ -985,7 +980,7 @@ evaluate(Environment env, Ast *in0)
       Value *norm_subject = normalize(env, evaluate(env, in->subject));
 
       switch (norm_subject->cat)
-      {
+      {// note: we fail if the fork is undetermined
         case AC_Constructor:
         {
           Constructor *ctor = castAst(norm_subject, Constructor);
@@ -997,14 +992,11 @@ evaluate(Environment env, Ast *in0)
           CompositeV *subject = castAst(norm_subject, CompositeV);
           if (Constructor *ctor = castAst(subject->op, Constructor))
           {
-            Ast *body = in->bodies[ctor->id];
-            extendStack(&env, subject->arg_count, subject->args);
-            out0 = evaluate(env, body);
+            out0 = evaluate(env, in->bodies[ctor->id]);
           }
         } break;
 
         default:
-          // note: we fail if the fork is undetermined
           out0 = 0;
       }
     } break;
@@ -1074,7 +1066,7 @@ evaluate(Environment env, Ast *in0)
     invalidDefaultCase;
   }
 
-  if (INTERNAL_ERROR)
+  if (global_debug_mode)
   {
     debugDedent();
     myprint("=> ");
@@ -1098,7 +1090,7 @@ inline b32
 normalized(Environment env, Value *in)
 {
   Value *norm = normalize(env, in);
-  return identicalB32(in, norm);
+  return equalB32(in, norm);
 }
 
 inline b32
@@ -1207,7 +1199,9 @@ lookupGlobalName(Token *token)
   GlobalBinding *slot = lookupGlobalNameSlot(token->text);
   if (slot->count == 0)
   {
-    parseError(token, "identifier not bound in global scope");
+    // note: assume that if the code gets here, then the identifier isn't in
+    // local scope either.
+    parseError(token, "identifier not found");
     return 0;
   }
   else
@@ -1227,12 +1221,13 @@ inline void
 addGlobalBinding(Token *token, Value *value)
 {
   GlobalBinding *slot = lookupGlobalNameSlot(token->text);
+  // nocheckin: check for type conflict
   slot->values[slot->count++] = value;
   assert(slot->count < arrayCount(slot->values));
 }
 
 inline void
-addGlobalBinding(char *key, Value *value)
+addBuiltinGlobalBinding(char *key, Value *value)
 {
   Token token = newToken(key);
   addGlobalBinding(&token, value);
@@ -1267,24 +1262,6 @@ lookupLocalName(MemoryArena *arena, LocalBindings *bindings, Token *token)
 
   LookupNameRecursive out = { expr, found };
   if (found) {assert(expr);}
-  return out;
-}
-
-inline Constant *
-constantFromGlobalName(MemoryArena *arena, Token *token)
-{
-  Constant *out = 0;
-  GlobalBinding *slot = lookupGlobalName(token);
-  if (slot)
-  {
-    if (slot->count == 1)
-    {
-      out = newAst(arena, Constant, token);
-      initConstant(out, slot->values[0]);
-    }
-    else
-      todoIncomplete;  // nocheckin
-  }
   return out;
 }
 
@@ -1422,7 +1399,7 @@ addRewrite(Environment *env, Value *lhs0, Value *rhs0)
 {
   assert(normalized(*env, lhs0));
   assert(normalized(*env, rhs0));
-  if (!identicalB32(lhs0, rhs0))
+  if (!equalB32(lhs0, rhs0))
   {
     b32 added = false;
 
@@ -1432,7 +1409,7 @@ addRewrite(Environment *env, Value *lhs0, Value *rhs0)
       if ((lhs->op->cat == AC_Union) &&
           (rhs->op->cat == AC_Union))
       {
-        assert(identicalB32((lhs->op), (rhs->op)));
+        assert(equalB32((lhs->op), (rhs->op)));
         for (s32 arg_id = 0; lhs->arg_count; arg_id++)
           addRewrite(env, (lhs->args[arg_id]), (rhs->args[arg_id]));
         added = true;
@@ -1492,21 +1469,78 @@ getExplicitParamCount(ArrowV *in)
   return out;
 }
 
+inline b32 matchType(Environment *env, Matcher matcher, Value *type)
+{
+  b32 out = false;
+  switch (matcher.cat)
+  {
+    case MC_Exact:
+    {
+      if (matcher.Exact)
+      {
+        Value *norm_expected = normalize(*env, matcher.Exact);
+        out = equalB32(type, norm_expected);
+      }
+      else
+        out = true;
+    } break;
+
+    case MC_OutType:
+    {// nocheckin
+      out = false;
+    } break;
+  }
+  return out;
+}
+
+internal Value *
+selectMatchingGlobalValue(Environment *env, Matcher matcher, Token *name)
+{
+  Value *out = 0;
+  if (GlobalBinding *slot = lookupGlobalName(name))
+  {
+    for (s32 value_id = 0; value_id < slot->count; value_id++)
+    {
+      Value *slot_value = slot->values[value_id];
+      // todo: #speed not happy about the repeated normalization within.
+      if (matchType(env, matcher, slot_value->type))
+      {
+        if (out)
+        {// ambiguous
+          parseError(name, "ambiguous global name (todo: print out candidates)");
+          break;
+        }
+        else
+          out = slot_value;
+      }
+    }
+    if (!out)
+    {
+      parseError(name, "found no global with required type");
+      Matcher *matcher_copy = copyStruct(temp_arena, &matcher);
+      pushAttachment("type", matcher_copy);
+    }
+  }
+  return out;
+}
+
 // important: env can be modified, if the caller expects it.
 // beware: Usually we mutate in-place, but we may also allocate anew.
 forward_declare
 internal Expression
-buildExpression(Environment *env, Ast *in0, Value *expected_type)
+buildExpression(Environment *env, Ast *in0, Matcher matcher)
 {
   Expression out = {};
-  b32 should_check_type = (b32)expected_type;
+
+  b32 should_check_type = true;
 
   MemoryArena *arena = env->arena;
   switch (in0->cat)
   {
     case AC_Identifier:
     {
-      auto lookup = lookupLocalName(arena, env->bindings, &in0->token);
+      Token *name = &in0->token;
+      LookupNameRecursive lookup = lookupLocalName(arena, env->bindings, name);
       if (lookup.found)
       {
         Value *norm = evaluate(*env, lookup.value);
@@ -1515,19 +1549,27 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       }
       else
       {
-        if (Constant *constant = constantFromGlobalName(arena, &in0->token))
+        Constant *constant = newAst(arena, Constant, name);
+        if (Value *value = selectMatchingGlobalValue(env, matcher, name))
         {
+          should_check_type = false;
+          constant->value = value;
           out.ast  = &constant->a;
           out.type = constant->value->type;
         }
-        else
-          parseError(in0, "unbound identifier in expression");
       }
     } break;
 
     case AC_Composite:
     {
       Composite *in = castAst(in0, Composite);
+
+      Matcher op_matcher = {};
+      if (matcher.cat == MC_Exact)
+      {
+        op_matcher.cat     = MC_OutType;
+        op_matcher.OutType = matcher.Exact;
+      }
 
       if (Expression build_op = buildExpression(env, in->op, 0))
       {
@@ -1559,8 +1601,8 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
               }
             }
             else
-            {
-              parseError(&in0->token, "too few arguments supplied, expected at least %d", explicit_param_count);
+            {// note: there might either be too many or too few  arguments
+              parseError(&in0->token, "argument count does not match the number of explicit parameters (expected %d)", explicit_param_count);
             }
           }
 
@@ -1605,6 +1647,8 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                         synthetic->id          = ref->id;  // :stack-ref-id-has-significance
                       } break;
 
+                      case AC_BuiltinSet:
+                      case AC_BuiltinType:
                       case AC_Union:
                       {
                         Constant *synthetic = newSyntheticConstant(arena, build_arg.type);
@@ -1660,7 +1704,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       {
         buildExpression(&env, in->items[item_id], 0);
       }
-      Expression last = buildExpression(&env, in->items[in->count-1], expected_type);
+      Expression last = buildExpression(&env, in->items[in->count-1], matcher);
       in->items[in->count-1] = last.ast;
 
       out.type = last.type;
@@ -1687,7 +1731,10 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
 
       char *debug_name = "+";
       if (equal(in->a.token, debug_name))
+      {
+        // global_debug_mode = true;
         breakhere;
+      }
 
       if (auto build_signature = buildExpression(env, &in->signature->a, 0))
       {
@@ -1800,79 +1847,73 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
           {
             ForkParameters  *correct_params = pushArray(arena, case_count, ForkParameters, true);
             Ast            **correct_bodies = pushArray(arena, case_count, Ast *, true);
-            Value *common_type  = expected_type;
             Value *subjectv = evaluate(*env, in->subject);
             Environment *outer_env = env;
+
+            if (case_count == 0)
+            {
+              if (!(matcher.cat == MC_Exact && matcher.Exact))
+                parseError(in0, "please annotate empty fork with type information");
+            }
+
             for (s32 input_case_id = 0;
                  input_case_id < case_count && noError();
                  input_case_id++)
             {
               Environment env = *outer_env;
-              Token *ctor_token = &in->parsing->ctors[input_case_id].a.token;
+              // bookmark: here we need to run the ctor token lookup through the
+              // type matcher, just like we did in the identifier case (in fact
+              // we could make it an identifier, but that'd be redundant I think)
+              Token *ctor_token = &in->parsing->ctors[input_case_id].token;
 
+#if 0
               ForkParameters *params = in->parsing->params + input_case_id;
               Token *param_names = params->names;
               s32    param_count = params->count;
+#endif
 
               if (GlobalBinding *lookup = lookupGlobalName(ctor_token))
               {
-                if (lookup->count != 1)
-                  todoIncomplete;  // nocheckin
-                if (Constructor *ctor = castAst(lookup->values[0], Constructor))
-                {
-                  if (param_count == 0)
+                Constructor *ctor = 0;
+                b32 ctor_is_atomic = true;
+                for (s32 lookup_id=0;
+                     lookup_id < lookup->count && !ctor;
+                     lookup_id++)
+                {// trying to find the intended constructor of this type, from
+                 // the global pool of values.
+                  if (Constructor *candidate = castAst(lookup->values[lookup_id], Constructor))
                   {
-                    if (identicalB32(ctor->v.type, subject_type)) 
+                    if (equalB32(candidate->v.type, subject_type)) 
                     {
-                      addRewrite(&env, subjectv, &ctor->v);
+                      ctor = candidate;
                     }
                     else
-                    {
-                      parseError(ctor_token, "constructor of wrong type");
-                      pushAttachment("expected type", subject_type);
-                      pushAttachment("got type", ctor->v.type);
+                    {// NOTE: rn we DON'T support the weird inductive proposition thingie.
+                      if (ArrowV *ctor_sig = castAst(candidate->v.type, ArrowV))
+                      {
+                        if (Constant *constant = castAst(ctor_sig->out_type, Constant))
+                        {
+                          if (equalB32(constant->value, subject_type))
+                          {
+                            ctor_is_atomic = false;
+                            ctor = candidate;
+                          }
+                        }
+                      }
                     }
+                  }
+                }
+
+                if (ctor)
+                {
+                  if (ctor_is_atomic)
+                  {
+                    addRewrite(&env, subjectv, &ctor->v);
                   }
                   else
                   {
-                    if (ArrowV *ctor_sig = castAst(ctor->v.type, ArrowV))
-                    {// NOTE: we still support the weird inductive proposition thingie.
-                      if (identicalB32(&getFormOf(ctor_sig->out_type)->v,
-                                       &getUnionOf(subject_type)->v))
-                      {
-                        if (param_count == ctor_sig->param_count)
-                        {
-                          extendBindings(temp_arena, &env);
-                          addStackFrame(&env);
-                          for (s32 id = 0; id < param_count && noError(); id++)
-                          {
-                            introduceOnStack(&env, params->names+id, ctor_sig->param_types[id]);
-                          }
-
-                          Value *pattern_type = evaluate(env, ctor_sig->out_type);
-                          CompositeV *pattern = newValue(temp_arena, CompositeV, pattern_type);
-                          pattern->op        = &ctor->v;
-                          pattern->arg_count = param_count;
-                          pattern->args      = env.stack->args;
-                          assert(pattern->args);
-
-                          addRewrite(&env, subjectv, &pattern->v);
-                        }
-                        else
-                          parseError(ctor_token, "pattern has wrong number of parameters (expected: %d, got: %d)", ctor_sig->param_count, param_count);
-                      }
-                      else
-                      {
-                        parseError(ctor_token, "composite constructor has wrong return type");
-                        pushAttachment("expected type", subject_type);
-                        pushAttachment("got type", ctor_sig->out_type);
-                      }
-                    }
-                    else
-                    {
-                      parseError(ctor_token, "expected a composite constructor");
-                      pushAttachment("got type", &ctor_sig->v);
-                    }
+                    Value *record = introduceOnHeap(&env, subject->token, ctor);
+                    addRewrite(&env, subjectv, record);
                   }
 
                   if (noError())
@@ -1884,29 +1925,31 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                     }
                     else
                     {
+#if 0
                       correct_params[ctor->id].count = param_count;
                       correct_params[ctor->id].names = param_names;
-                      Expression body = buildExpression(&env, in->parsing->bodies[input_case_id], common_type);
+#endif
+                      Expression body = buildExpression(&env, in->parsing->bodies[input_case_id], matcher);
                       correct_bodies[ctor->id] = body.ast;
-                      if (!common_type)
-                        common_type = body.type;
+                      // whatever the matcher was before, we wanna upgrade it to an exact match.
+                      matcher = exactMatch(body.type);
                     }
                   }
                 }
                 else
-                  parseError(ctor_token, "expected constructor");
+                  parseError(ctor_token, "expected a constructor");
               }
             }
 
             if (noError())
             {
               in->a.cat  = AC_Fork;
-              in->uni = uni;
+              in->uni    = uni;
               in->params = correct_params;
               in->bodies = correct_bodies;
 
               out.ast  = in0;
-              out.type = common_type;
+              out.type = matcher.Exact;
             }
           }
           else
@@ -1972,17 +2015,14 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
 
   if (noError())
   {// one last typecheck if needed
-    if (should_check_type)
+    Value *norm_actual = normalize(*env, out.type);
+    if (should_check_type
+        && (!matchType(env, matcher, norm_actual)))
     {
-      Value *norm_expected = normalize(*env, expected_type);
-      Value *norm_actual = normalize(*env, out.type);
-      if (!identicalB32(norm_expected, norm_actual))
-      {
-        parseError(in0, "actual type differs from expected type");
-        normalize(*env, expected_type);
-        pushAttachment("expected", norm_expected);
-        pushAttachment("got", norm_actual);
-      }
+      parseError(in0, "actual type differs from expected type");
+      Matcher *matcher_copy = copyStruct(arena, &matcher);
+      pushAttachment("expected", matcher_copy);
+      pushAttachment("got", norm_actual);
     }
   }
 
@@ -1993,6 +2033,16 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
   else
     out = {};
   return out;
+}
+
+forward_declare
+internal Expression
+buildExpression(Environment *env, Ast *in0, Value *expected_type)
+{
+  Matcher matcher;
+  matcher.cat     = MC_Exact;
+  matcher.OutType = expected_type;
+  return buildExpression(env, in0, matcher);
 }
 
 inline Expression
@@ -2728,10 +2778,7 @@ parseUnion(MemoryArena *arena, Token *name)
         }
 
         if (noError())
-        {
           assert(uni->ctor_count == expected_ctor_count);
-          assert(constantFromGlobalName(temp_arena, name));
-        }
       }
     }
   }
@@ -2926,6 +2973,23 @@ parseTopLevel(EngineState *state)
             }
           } break;
 
+          case ':':
+          {
+            if (Expression parse_type = parseExpressionFull(arena))
+            {
+              if (requireCategory(TC_ColonEqual, "require :=, syntax: name : type := value"))
+              {
+                Value *type = evaluate(arena, parse_type.ast);
+                if (Expression parse_value = parseExpression(arena, 0, type))
+                {
+                  Value *value = evaluate(arena, parse_value.ast);
+                  addGlobalBinding(name, value);
+                  requireChar(';');
+                }
+              }
+            }
+          } break;
+
           default:
           {
             tokenError("unexpected token");
@@ -3015,6 +3079,29 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
             {
               printAst(0, (Value*)attachment.p, {});
             } break;
+
+            case AttachmentType_Token:
+            {
+              Token *token = (Token*)attachment.p;
+              printToBuffer(0, token->text);
+            } break;
+
+            case AttachmentType_TypeMatcher:
+            {
+              Matcher *matcher = (Matcher *)attachment.p;
+              switch (matcher->cat)
+              {
+                case MC_Exact:
+                {
+                  printAst(0, matcher->Exact, {});
+                } break;
+
+                case MC_OutType:
+                {
+                  printAst(0, matcher->OutType, {});
+                } break;
+              }
+            } break;
           }
           if (attached_id != error->attachment_count-1) 
             printf("\n");
@@ -3061,10 +3148,10 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
       // Token superset_name = newToken("Type");
       builtins.Type = newValue(arena, BuiltinType, 0);
       builtins.Type->type = builtins.Type; // NOTE: circular types, might bite us
-      addGlobalBinding("Type", builtins.Type);
+      addBuiltinGlobalBinding("Type", builtins.Type);
 
       builtins.Set = newValue(arena, BuiltinSet, builtins.Type);
-      addGlobalBinding("Set", builtins.Set);
+      addBuiltinGlobalBinding("Set", builtins.Set);
     }
 
     {// more builtins
@@ -3073,7 +3160,7 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
 
       ArrowV *equal_type = castAst(lookupBuiltinGlobalName("equal_type"), ArrowV);
       builtins.equal = newValue(arena, BuiltinEqual, &equal_type->v);
-      addGlobalBinding("=", builtins.equal);
+      addBuiltinGlobalBinding("=", builtins.equal);
 
       builtins.True  = castAst(lookupBuiltinGlobalName("True"), Union);
       builtins.truth = castAst(lookupBuiltinGlobalName("truth"), Union);
