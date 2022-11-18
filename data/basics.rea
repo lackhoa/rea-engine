@@ -67,21 +67,23 @@ testLocalVariable :: (x: Nat) -> Nat
  }
 check truth: testLocalVariable(1) = 6;
 
-testCurrying :: (a: Nat) -> (b, c: Nat) -> (a+b)+c = a+(b+c)
+#should_fail
+testCurryingWeird :: (a: Nat) -> (b, c: Nat) -> (a+b)+c = a+(b+c)
 {
  fork a
  {
   ++:
-  out69 :: (b', c': Nat) -> (a+b')+c' = a+b'+c'
-  { addAssociative(a, b', c') }
-  out69,
+  ;; NOTE: the "a.p" is the weird part, which depends on rewrite rule to work,
+  ;; and we need to support it.
+  out :: (b',c': Nat) -> (a.p+b')+c' = a.p+b'+c'
+  { addAssociative(a.p, b', c') },
 
   0:
-  out70 :: (b, c: Nat) -> (a+b)+c = a+(b+c)
+  out :: (b, c: Nat) -> (a+b)+c = a+b+c
   { addAssociative(a, b, c) }
-  out70,
   }
  }
+#should_fail off
 
 testCurrying2 :: (a, b, c: Nat) -> (a+b)+c = a+(b+c)
 {

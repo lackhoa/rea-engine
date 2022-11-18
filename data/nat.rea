@@ -94,12 +94,12 @@ addCommutative :: (n, m: Nat) -> (n + m = m + n)
   }
  }
 
-addAssociative :: (a, b, c: Nat) -> (a+b)+c = a+(b+c)
+addAssociative :: (a, b, c: Nat) -> (a+b)+c = a+b+c
 {
  fork a
  {
-  0    : truth,
-  ++(a'): rewrite addAssociative(a.p, b, c); truth,
+  0 : truth,
+  ++: rewrite addAssociative(a.p, b, c); truth,
   }
  }
 
@@ -114,7 +114,7 @@ mulDistributive :: (a,b,c: Nat) -> a*c+b*c = (a+b)*c
   truth}
  }
 
-mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*(b*c)
+mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*b*c
 {
  fork a
  {

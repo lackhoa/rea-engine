@@ -121,7 +121,7 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
 {
   Ast *in0 = (Ast *)in_void;
   char *out = buffer ? (char*)getNext(buffer) : 0;
-  if (in0 == &dummy_hole)
+  if (in0 == dummy_hole)
   {
     printToBuffer(buffer, "_");
   }
@@ -400,16 +400,6 @@ equalB32(Value *lhs, Value *rhs)
   return equalTrinary(lhs, rhs) == Trinary_True;
 }
 
-#if 0
-inline b32
-equalNormalized(Environment *env, Value *lhs, Value *rhs)
-{
-  Value *lhs_norm = normalize(*env, lhs);
-  Value *rhs_norm = normalize(*env, rhs);
-  return equal(lhs_norm, rhs_norm) == Trinary_True;
-}
-#endif
-
 inline b32
 isConstructor(Value *in0)
 {
@@ -495,7 +485,7 @@ equalTrinary(Value *lhs0, Value *rhs0)
           for (s32 id = 0; id < param_count; id++)
           {
             if (equalB32(evaluate(env, lhs->param_types[id]),
-                             evaluate(env, rhs->param_types[id])))
+                         evaluate(env, rhs->param_types[id])))
             {
               introduceOnStack(&env, lhs->param_names+id, lhs->param_types[id]);
             }
@@ -794,11 +784,12 @@ normalize(Environment env, Value *in0)
     } break;
 
     // todo #speed most of these don't need rewriting.
+    case AC_ArrowV:
+    case AC_DummyHole:
     case AC_Constructor:
     case AC_BuiltinSet:
     case AC_BuiltinType:
     case AC_BuiltinEqual:
-    case AC_ArrowV:  // todo: technically we can normalize ArrowV if we want
     case AC_FunctionV:
     case AC_StackRef:
     case AC_Union:
@@ -858,7 +849,8 @@ replaceFreeVars(Environment *env, Ast *in0, s32 stack_offset)
           myprint(env->stack);
           invalidCodePath;
         }
-        Constant *out = newSyntheticConstant(env->arena, stack->args[in->id]);
+        Value *norm_stack_value = normalize(*env, stack->args[in->id]);
+        Constant *out = newSyntheticConstant(env->arena, norm_stack_value);
         out0 = &out->a;
       }
       else
@@ -1163,6 +1155,8 @@ evaluateMain(Environment env, Ast *in0, b32 expect_failure)
       Accessor *in = castAst(in0, Accessor);
       if (Value *record0 = evaluateMain(env, in->record, expect_failure))
       {
+        // note: it has to be a record, otw we wouldn't know what type to
+        // return.
         CompositeV *record = castAst(record0, CompositeV);
         out0 = record->args[in->param_id];
       }
@@ -1522,8 +1516,10 @@ printRewrites(Environment env)
 internal void
 addRewrite(Environment *env, Value *lhs0, Value *rhs0)
 {
+#if REA_DIAGNOSTICS
   assert(normalized(*env, lhs0));
   assert(normalized(*env, rhs0));
+#endif
   if (!equalB32(lhs0, rhs0))
   {
     b32 added = false;
@@ -1594,60 +1590,27 @@ getExplicitParamCount(ArrowV *in)
   return out;
 }
 
-#if 0
 inline b32
-matchType(Environment *env, Matcher matcher, Value *norm_actual)
+matchType(Value *actual, Value *expected)
 {
-  b32 out = false;
-  switch (matcher.cat)
-  {
-    case MC_Unknown:
-    {
-      out = true;
-    } break;
-
-    case MC_Exact:
-    {
-      Value *norm_expected = normalize(*env, matcher.Exact);
-      out = equalB32(norm_actual, norm_expected);
-    } break;
-
-    case MC_OutType:
-    {
-      Value *norm_expected = normalize(*env, matcher.OutType);
-      if (ArrowV *arrow = castAst(norm_actual, ArrowV))
-      {
-        // todo: we are chickening out on the dependent type... would need
-        // a full solver to figure out what's going on at that point.
-        // Set up a fake stack frame, that we know isn't gonna be used.
-        addStackFrame(env);
-        env->stack->count = arrow->param_count;
-        if (!hasFreeVars(env, arrow->out_type, 0))
-        {
-          // todo: #speed too much normalization happens here
-          if (Value *norm_out = evaluate(*env, arrow->out_type))
-            out = equalB32(norm_out, norm_expected);
-          unwindStack(env);
-        }
-      }
-    } break;
-  }
-  return out;
+  if (expected == dummy_holev)
+    return true;
+  else
+    return equalB32(actual, expected);
 }
-#endif
 
 internal Value *
 selectMatchingGlobalValue(Environment *env, Value *expected_type, Token *name)
 {
   Value *out = 0;
-  Value *norm_expected = (expected_type) ? normalize(*env, expected_type) : 0;
+  Value *norm_expected = normalize(*env, expected_type);
   if (GlobalBinding *slot = lookupGlobalName(name))
   {
     for (s32 value_id = 0; value_id < slot->count; value_id++)
     {
       Value *slot_value = slot->values[value_id];
       // todo: #speed not happy about the repeated normalization within.
-      if (!norm_expected || equalB32(slot_value->type, norm_expected))
+      if (matchType(slot_value->type, norm_expected))
       {
         if (out)
         {// ambiguous
@@ -1673,7 +1636,8 @@ forward_declare internal Expression
 buildExpression(Environment *env, Ast *in0, Value *expected_type)
 {
   Expression out = {};
-  b32 should_check_type = (bool)expected_type;
+  assert(expected_type);
+  b32 should_check_type = (expected_type != dummy_holev);
   MemoryArena *arena = env->arena;
 
   switch (in0->cat)
@@ -1705,7 +1669,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
     {
       Composite *in = castAst(in0, Composite);
 
-      if (Expression build_op = buildExpression(env, in->op, 0))
+      if (Expression build_op = buildExpression(env, in->op, dummy_holev))
       {
         in->op = build_op.ast;
 
@@ -1725,7 +1689,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
               {
                 if (paramImplied(signature, param_id))
                 {
-                  in->args[param_id] = &dummy_hole;
+                  in->args[param_id] = dummy_hole;
                 }
                 else
                 {
@@ -1750,17 +1714,18 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                  arg_id++)
             {// Typecheck/inference for the arguments. todo: the hole stuff is
               // kinda hard-coded only for the equality.
-              if (in->args[arg_id] == &dummy_hole)
-                addStackValue(&signature_env, 0);
+              if (in->args[arg_id] == dummy_hole)
+                addStackValue(&signature_env, dummy_holev);
               else
               {
                 Ast *param_type0 = signature->param_types[arg_id];
-                Value *expected_arg_type = evaluateMain(signature_env, param_type0, true);
+                Value *expected_arg_type = evaluate(signature_env, param_type0);
                 if (Expression build_arg = buildExpression(env, in->args[arg_id], expected_arg_type))
                 {
                   in->args[arg_id] = build_arg.ast;
-                  addStackValue(&signature_env, evaluate(*env, in->args[arg_id]));
-                  if (expected_arg_type == 0)
+                  // bookmark: evaluating the same value here...
+                  addStackValue(&signature_env, evaluate(*env, build_arg.ast));
+                  if (expected_arg_type == dummy_holev)
                   {
                     Variable *param_type = castAst(param_type0, Variable);
                     assert(param_type->stack_delta == 0);
@@ -1770,8 +1735,9 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                     Ast *synthetic0;
                     switch (build_arg.type->cat)
                     {
-                      // todo: #incomplete structurally sound, but we need a
-                      // full-fledged "Value to Ast" function.
+                      // todo: #incomplete we need a full-fledged "Value to Ast"
+                      // function. HOWEVER that still wouldn't work for
+                      // heap-introduced values.
                       case AC_StackRef:
                       {
                         StackRef *ref = castAst(build_arg.type, StackRef);
@@ -1802,7 +1768,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                  arg_id < in->arg_count && noError();
                  arg_id++)
             {
-              if (in->args[arg_id] == &dummy_hole)
+              if (in->args[arg_id] == dummy_hole)
                 parseError(in0, "Cannot fill hole in expression");
             }
 
@@ -1836,7 +1802,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
            (item_id < in->count-1) && noError();
            item_id++)
       {
-        buildExpression(&env, in->items[item_id], 0);
+        buildExpression(&env, in->items[item_id], dummy_holev);
       }
       Expression last = buildExpression(&env, in->items[in->count-1], expected_type);
       in->items[in->count-1] = last.ast;
@@ -1848,7 +1814,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
     case AC_Let:
     {
       Let *in = castAst(in0, Let);
-      if (Expression build_rhs = buildExpression(env, in->rhs, 0))
+      if (Expression build_rhs = buildExpression(env, in->rhs, dummy_holev))
       {
         addLocalBinding(env->bindings, &in->lhs.a.token);
         in->rhs = build_rhs.ast;
@@ -1870,7 +1836,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
         breakhere;
       }
 
-      if (auto build_signature = buildExpression(env, &in->signature->a, 0))
+      if (auto build_signature = buildExpression(env, &in->signature->a, dummy_holev))
       {
         // note: store the built signature, maybe to display it later.
         in->signature = castAst(build_signature.ast, Arrow);
@@ -1896,7 +1862,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
         {
           addStackFrame(env);
           extendBindings(temp_arena, env);
-          for (s32 id=0; id < in->signature->param_count && noError(); id++)
+          for (s32 id=0; id < in->signature->param_count; id++)
           {
             introduceOnStack(env, in->signature->param_names+id, in->signature->param_types[id]);
           }
@@ -1917,7 +1883,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
     case AC_Rewrite:
     {
       Rewrite *in = castAst(in0, Rewrite);
-      if (Expression build_rewrite = buildExpression(env, in->proof, 0))
+      if (Expression build_rewrite = buildExpression(env, in->proof, dummy_holev))
       {
         in->proof = build_rewrite.ast;
         b32 rule_valid = false;
@@ -1953,14 +1919,14 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       extendBindings(temp_arena, env);
       for (s32 id=0; id < in->param_count && noError(); id++)
       {
-        Ast *param_type = in->param_types[id] = buildExpression(env, in->param_types[id], 0).ast;
+        Ast *param_type = in->param_types[id] = buildExpression(env, in->param_types[id], dummy_holev).ast;
         if (param_type)
           introduceOnStack(env, in->param_names+id, param_type);
       }
 
       if (noError())
       {
-        in->out_type = buildExpression(env, in->out_type, 0).ast;
+        in->out_type = buildExpression(env, in->out_type, dummy_holev).ast;
       }
       unwindBindingsAndStack(env);
     } break;
@@ -1970,7 +1936,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       should_check_type = false;
       IncompleteFork *in = castAst(in0, IncompleteFork);
 
-      if (auto [subject, subject_type] = buildExpression(env, in->subject, 0))
+      if (auto [subject, subject_type] = buildExpression(env, in->subject, dummy_holev))
       {
         in->subject = subject;
         s32 case_count = in->case_count;
@@ -1990,6 +1956,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                 parseError(in0, "please annotate empty fork with type information");
             }
 
+            Value *common_type = expected_type;
             for (s32 input_case_id = 0;
                  input_case_id < case_count && noError();
                  input_case_id++)
@@ -2063,10 +2030,10 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                       correct_params[ctor->id].count = param_count;
                       correct_params[ctor->id].names = param_names;
 #endif
-                      Expression body = buildExpression(&env, in->parsing->bodies[input_case_id], expected_type);
+                      Expression body = buildExpression(&env, in->parsing->bodies[input_case_id], common_type);
                       correct_bodies[ctor->id] = body.ast;
-                      // whatever the matcher was before, we wanna upgrade it to an exact match.
-                      expected_type = body.type;
+                      if (common_type == dummy_holev)
+                        common_type = body.type;
                     }
                   }
                 }
@@ -2083,7 +2050,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
               in->bodies = correct_bodies;
 
               out.ast  = in0;
-              out.type = expected_type;
+              out.type = common_type;
             }
           }
           else
@@ -2101,7 +2068,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
     case AC_Accessor:
     {
       Accessor *in = castAst(in0, Accessor);
-      if (Expression build_record = buildExpression(env, in->record, 0))
+      if (Expression build_record = buildExpression(env, in->record, dummy_holev))
       {
         Ast   *record   = build_record.ast;
         Value *recordv0 = evaluate(*env, record);
@@ -2151,7 +2118,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
   {// one last typecheck if needed
     Value *norm_actual   = normalize(*env, out.type);
     Value *norm_expected = normalize(*env, expected_type);
-    if (!equalB32(norm_actual, norm_expected))
+    if (!matchType(norm_actual, norm_expected))
     {
       parseError(in0, "actual type differs from expected type");
       pushAttachment("got", norm_actual);
@@ -2169,7 +2136,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
 }
 
 inline Expression
-buildExpressionGlobal(MemoryArena *arena, Ast *ast, Value *expected_type = 0)
+buildExpressionGlobal(MemoryArena *arena, Ast *ast, Value *expected_type=dummy_holev)
 {
   Environment env = newEnvironment(arena);
   return buildExpression(&env, ast, expected_type);
@@ -2197,13 +2164,13 @@ parseExpression(MemoryArena *arena, LocalBindings *bindings, Value *expected_typ
 inline Ast *
 parseExpression(MemoryArena *arena)
 {
-  return parseExpression(arena, 0, 0).ast;
+  return parseExpression(arena, 0, dummy_holev).ast;
 }
 
 inline Expression
 parseExpressionFull(MemoryArena *arena)
 {
-  return parseExpression(arena, 0, 0);
+  return parseExpression(arena, 0, dummy_holev);
 }
 
 inline Ast *
@@ -2605,7 +2572,7 @@ parseOperand(MemoryArena *arena)
   {
     if (equal(&token1, '_'))
       // todo: this doesn't preserve identifier location
-      out = &dummy_hole;
+      out = dummy_hole;
     else
       out = &(newAst(arena, Identifier, &token1))->a;
   }
