@@ -1594,6 +1594,7 @@ getExplicitParamCount(ArrowV *in)
   return out;
 }
 
+#if 0
 inline b32
 matchType(Environment *env, Matcher matcher, Value *norm_actual)
 {
@@ -1633,18 +1634,20 @@ matchType(Environment *env, Matcher matcher, Value *norm_actual)
   }
   return out;
 }
+#endif
 
 internal Value *
-selectMatchingGlobalValue(Environment *env, Matcher matcher, Token *name)
+selectMatchingGlobalValue(Environment *env, Value *expected_type, Token *name)
 {
   Value *out = 0;
+  Value *norm_expected = (expected_type) ? normalize(*env, expected_type) : 0;
   if (GlobalBinding *slot = lookupGlobalName(name))
   {
     for (s32 value_id = 0; value_id < slot->count; value_id++)
     {
       Value *slot_value = slot->values[value_id];
       // todo: #speed not happy about the repeated normalization within.
-      if (matchType(env, matcher, slot_value->type))
+      if (!norm_expected || equalB32(slot_value->type, norm_expected))
       {
         if (out)
         {// ambiguous
@@ -1657,9 +1660,8 @@ selectMatchingGlobalValue(Environment *env, Matcher matcher, Token *name)
     }
     if (!out)
     {
-      parseError(name, "found no global with required type");
-      Matcher *matcher_copy = copyStruct(temp_arena, &matcher);
-      pushAttachment("type", matcher_copy);
+      parseError(name, "found no global matching expected type");
+      pushAttachment("expected_type", norm_expected);
     }
   }
   return out;
@@ -1668,10 +1670,10 @@ selectMatchingGlobalValue(Environment *env, Matcher matcher, Token *name)
 // important: env can be modified, if the caller expects it.
 // beware: Usually we mutate in-place, but we may also allocate anew.
 forward_declare internal Expression
-buildExpression(Environment *env, Ast *in0, Matcher matcher)
+buildExpression(Environment *env, Ast *in0, Value *expected_type)
 {
   Expression out = {};
-  b32 should_check_type = true;
+  b32 should_check_type = (bool)expected_type;
   MemoryArena *arena = env->arena;
 
   switch (in0->cat)
@@ -1689,7 +1691,7 @@ buildExpression(Environment *env, Ast *in0, Matcher matcher)
       else
       {
         Constant *constant = newAst(arena, Constant, name);
-        if (Value *value = selectMatchingGlobalValue(env, matcher, name))
+        if (Value *value = selectMatchingGlobalValue(env, expected_type, name))
         {
           should_check_type = false;
           constant->value = value;
@@ -1703,14 +1705,7 @@ buildExpression(Environment *env, Ast *in0, Matcher matcher)
     {
       Composite *in = castAst(in0, Composite);
 
-      Matcher op_matcher = {};
-      if (matcher.cat == MC_Exact)
-      {
-        op_matcher.cat     = MC_OutType;
-        op_matcher.OutType = matcher.Exact;
-      }
-
-      if (Expression build_op = buildExpression(env, in->op, op_matcher))
+      if (Expression build_op = buildExpression(env, in->op, 0))
       {
         in->op = build_op.ast;
 
@@ -1843,7 +1838,7 @@ buildExpression(Environment *env, Ast *in0, Matcher matcher)
       {
         buildExpression(&env, in->items[item_id], 0);
       }
-      Expression last = buildExpression(&env, in->items[in->count-1], matcher);
+      Expression last = buildExpression(&env, in->items[in->count-1], expected_type);
       in->items[in->count-1] = last.ast;
 
       out.type = last.type;
@@ -1865,7 +1860,7 @@ buildExpression(Environment *env, Ast *in0, Matcher matcher)
     } break;
 
     case AC_Function:
-    {// NOTE: both local and global function.
+    {// NOTE: common builder for both local and global function.
       Function *in = castAst(in0, Function);
 
       char *debug_name = "+";
@@ -1991,7 +1986,7 @@ buildExpression(Environment *env, Ast *in0, Matcher matcher)
 
             if (case_count == 0)
             {
-              if (!(matcher.cat == MC_Exact && matcher.Exact))
+              if (!expected_type)
                 parseError(in0, "please annotate empty fork with type information");
             }
 
@@ -2068,10 +2063,10 @@ buildExpression(Environment *env, Ast *in0, Matcher matcher)
                       correct_params[ctor->id].count = param_count;
                       correct_params[ctor->id].names = param_names;
 #endif
-                      Expression body = buildExpression(&env, in->parsing->bodies[input_case_id], matcher);
+                      Expression body = buildExpression(&env, in->parsing->bodies[input_case_id], expected_type);
                       correct_bodies[ctor->id] = body.ast;
                       // whatever the matcher was before, we wanna upgrade it to an exact match.
-                      matcher = exactMatch(body.type);
+                      expected_type = body.type;
                     }
                   }
                 }
@@ -2088,7 +2083,7 @@ buildExpression(Environment *env, Ast *in0, Matcher matcher)
               in->bodies = correct_bodies;
 
               out.ast  = in0;
-              out.type = matcher.Exact;
+              out.type = expected_type;
             }
           }
           else
@@ -2152,16 +2147,15 @@ buildExpression(Environment *env, Ast *in0, Matcher matcher)
     invalidDefaultCase;
   }
 
-  if (noError())
+  if (noError() && should_check_type)
   {// one last typecheck if needed
-    Value *norm_actual = normalize(*env, out.type);
-    if (should_check_type
-        && (!matchType(env, matcher, norm_actual)))
+    Value *norm_actual   = normalize(*env, out.type);
+    Value *norm_expected = normalize(*env, expected_type);
+    if (!equalB32(norm_actual, norm_expected))
     {
       parseError(in0, "actual type differs from expected type");
-      Matcher *matcher_copy = copyStruct(arena, &matcher);
-      pushAttachment("expected", matcher_copy);
       pushAttachment("got", norm_actual);
+      pushAttachment("expected", norm_expected);
     }
   }
 
@@ -2172,19 +2166,6 @@ buildExpression(Environment *env, Ast *in0, Matcher matcher)
   else
     out = {};
   return out;
-}
-
-forward_declare
-internal Expression
-buildExpression(Environment *env, Ast *in0, Value *expected_type)
-{
-  Matcher matcher = {};
-  if (expected_type)
-  {
-    matcher.cat = MC_Exact;
-    matcher.OutType = expected_type;
-  }
-  return buildExpression(env, in0, matcher);
 }
 
 inline Expression
