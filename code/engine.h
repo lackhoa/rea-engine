@@ -483,7 +483,7 @@ getFormOf(Ast *in0)
 struct Expression
 {
   Ast   *ast;
-  Value *type;
+  Value *value;
   operator bool() { return (bool)ast; }
 };
 
@@ -530,7 +530,7 @@ struct PrintOptions{b32 detailed; b32 print_type; void *parent;};
 struct Builtins
 {
   Union *True;
-  Union *truth;
+  Constructor *truth;
   Union *False;
   Value *equal;
   Value *Set;
