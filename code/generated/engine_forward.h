@@ -1,5 +1,6 @@
 char * printAst(MemoryArena * buffer, void * in_void, PrintOptions opt);
 Value * normalize(Environment env, Value * in0);
+Value * evaluateMain(Environment env, Ast * in0, b32 expect_failure);
 Value * evaluate(Environment env, Ast * in0);
 void introduceOnStack(Environment * env, Token * name, Ast * type);
 Expression buildExpression(Environment * env, Ast * in0, Matcher matcher);

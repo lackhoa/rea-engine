@@ -4,6 +4,7 @@
 #include "tokenization.cpp"
 #include "engine.h"
 #include "rea_globals.h"
+#include <stdint.h>
 
 global_variable b32 global_debug_mode;
 
@@ -399,6 +400,16 @@ equalB32(Value *lhs, Value *rhs)
   return equalTrinary(lhs, rhs) == Trinary_True;
 }
 
+#if 0
+inline b32
+equalNormalized(Environment *env, Value *lhs, Value *rhs)
+{
+  Value *lhs_norm = normalize(*env, lhs);
+  Value *rhs_norm = normalize(*env, rhs);
+  return equal(lhs_norm, rhs_norm) == Trinary_True;
+}
+#endif
+
 inline b32
 isConstructor(Value *in0)
 {
@@ -682,11 +693,10 @@ rewriteExpression(Environment *env, Value *in)
   return out;
 }
 
-// todo #speed don't pass the Environment in wholesale?
-forward_declare
-internal Value *
-normalize(Environment env, Value *in0)
+forward_declare internal Value *
+normalize(Environment env, Value *in0) 
 {
+  // todo #speed don't pass the Environment in wholesale?
   Value *out0 = {};
   MemoryArena *arena = env.arena;
 
@@ -730,7 +740,7 @@ normalize(Environment env, Value *in0)
            arg_id++)
       {
         Value *in_arg = in->args[arg_id];
-        norm_args[arg_id] = (normalize(env, in_arg));
+        norm_args[arg_id] = normalize(env, in_arg);
       }
 
       Value *norm_op = normalize(env, in->op);
@@ -743,7 +753,7 @@ normalize(Environment env, Value *in0)
           fun_env.stack = funv->stack;
           extendStack(&fun_env, in->arg_count, norm_args);
           // note: evaluation might fail, in which case we back out.
-          out0 = evaluate(fun_env, funv->body);
+          out0 = evaluateMain(fun_env, funv->body, true);
         }
       }
       else
@@ -910,10 +920,84 @@ replaceFreeVars(Environment *env, Ast *in0, s32 stack_offset)
   return out0;
 }
 
-forward_declare
-internal Value *
-evaluate(Environment env, Ast *in0)
+inline b32
+hasFreeVars(Environment *env, Ast *in0, s32 stack_offset)
 {
+  switch (in0->cat)
+  {
+    case AC_Variable:
+    {
+      Variable *in = castAst(in0, Variable);
+      s32 stack_delta = in->stack_delta - stack_offset;
+      if (stack_delta >= 0)
+      {
+        Stack *stack = env->stack;
+        for (s32 delta = 0; delta < stack_delta; delta++)
+          stack = stack->outer;
+        if (in->id >= stack->count)
+        {
+          myprint(env->stack);
+          invalidCodePath;
+        }
+        return true;
+      }
+    } break;
+
+    case AC_Composite:
+    {
+      Composite *in = castAst(in0, Composite);
+      if (hasFreeVars(env, in->op, stack_offset))
+        return true;
+      for (s32 arg_id = 0; arg_id < in->arg_count; arg_id++)
+      {
+        if (hasFreeVars(env, in->args[arg_id], stack_offset))
+          return true;
+      }
+    } break;
+
+    case AC_Arrow:
+    {
+      Arrow *in = castAst(in0, Arrow);
+      stack_offset++;
+      if (hasFreeVars(env, in->out_type, stack_offset))
+        return true;
+      for (s32 param_id = 0; param_id < in->param_count; param_id++)
+      {
+        if (hasFreeVars(env, in->param_types[param_id], stack_offset))
+          return true;
+      }
+    } break;
+
+    case AC_Accessor:
+    {
+      Accessor *in = castAst(in0, Accessor);
+      return hasFreeVars(env, in->record, stack_offset);
+    } break;
+
+    case AC_Constant:
+    {
+      return false;
+    } break;
+
+    case AC_Rewrite:
+    case AC_Let:
+    case AC_Function:
+    case AC_Sequence:
+    case AC_Fork:
+    {
+      todoIncomplete;
+    } break;
+
+    invalidDefaultCase;
+  }
+  return false;
+}
+
+forward_declare internal Value *
+evaluateMain(Environment env, Ast *in0, b32 expect_failure)
+{
+  // this function may fail due to a fork that cannot continue, or the caller
+  // expects some arrow type to not have any dependency on its parameters
   Value *out0 = 0;
   MemoryArena *arena = env.arena;
 
@@ -934,12 +1018,16 @@ evaluate(Environment env, Ast *in0)
       Stack *stack = env.stack;
       for (s32 delta = 0; delta < in->stack_delta; delta++)
         stack = stack->outer;
-      if (in->id >= stack->count)
+
+      if (in->id < stack->count)
+      {
+        out0 = stack->args[in->id];
+      }
+      else
       {
         myprint(env.stack);
         invalidCodePath;
       }
-      out0 = stack->args[in->id];
     } break;
 
     case AC_Constant:
@@ -953,51 +1041,66 @@ evaluate(Environment env, Ast *in0)
       Composite *in = castAst(in0, Composite);
 
       Value **norm_args = pushArray(arena, in->arg_count, Value*);
+      b32 failed = false;
       for (auto arg_id = 0;
            arg_id < in->arg_count;
            arg_id++)
       {
         Ast *in_arg = in->args[arg_id];
-        norm_args[arg_id] = evaluate(env, in_arg);
+        if (Value *arg = evaluateMain(env, in_arg, expect_failure))
+          norm_args[arg_id] = arg;
+        else
+        {
+          failed = true;
+          break;
+        }
       }
 
-      Value *norm_op = evaluate(env, in->op);
-      ArrowV *signature = castAst(norm_op->type, ArrowV);
-      Value *return_type = evaluate(env, signature->out_type);
+      if (!failed)
+      {
+        if (Value *norm_op = evaluateMain(env, in->op, expect_failure))
+        {
+          ArrowV *signature = castAst(norm_op->type, ArrowV);
+          if (Value *return_type = evaluateMain(env, signature->out_type, expect_failure))
+          {
+            CompositeV *out = newValue(env.arena, CompositeV, return_type);
+            out->arg_count = in->arg_count;
+            out->op        = norm_op;
+            out->args      = norm_args;
 
-      CompositeV *out = newValue(env.arena, CompositeV, return_type);
-      out->arg_count = in->arg_count;
-      out->op        = norm_op;
-      out->args      = norm_args;
-
-      // NOTE: the legendary eval-reduce loop
-      out0 = normalize(env, &out->v);
+            // NOTE: the legendary eval-reduce loop
+            out0 = normalize(env, &out->v);
+            
+          }
+        }
+      }
     } break;
 
     case AC_Fork:
     {
       Fork *in = castAst(in0, Fork);
-      Value *norm_subject = normalize(env, evaluate(env, in->subject));
-
-      switch (norm_subject->cat)
-      {// note: we fail if the fork is undetermined
-        case AC_Constructor:
-        {
-          Constructor *ctor = castAst(norm_subject, Constructor);
-          out0 = evaluate(env, in->bodies[ctor->id]);
-        } break;
-
-        case AC_CompositeV:
-        {
-          CompositeV *subject = castAst(norm_subject, CompositeV);
-          if (Constructor *ctor = castAst(subject->op, Constructor))
+      if (Value *subject = evaluateMain(env, in->subject, expect_failure))
+      {
+        switch (subject->cat)
+        {// note: we fail if the fork is undetermined
+          case AC_Constructor:
           {
-            out0 = evaluate(env, in->bodies[ctor->id]);
-          }
-        } break;
+            Constructor *ctor = castAst(subject, Constructor);
+            out0 = evaluateMain(env, in->bodies[ctor->id], expect_failure);
+          } break;
 
-        default:
-          out0 = 0;
+          case AC_CompositeV:
+          {
+            CompositeV *record = castAst(subject, CompositeV);
+            if (Constructor *ctor = castAst(record->op, Constructor))
+            {
+              out0 = evaluateMain(env, in->bodies[ctor->id], expect_failure);
+            }
+          } break;
+
+          default:
+            out0 = 0;
+        }
       }
     } break;
 
@@ -1014,7 +1117,8 @@ evaluate(Environment env, Ast *in0)
     case AC_Sequence:
     {
       Sequence *in = castAst(in0, Sequence);
-      for (s32 id = 0; id < in->count-1; id++)
+      b32 failed = false;
+      for (s32 id = 0;  (id < in->count-1) && !failed;  id++)
       {
         Ast *item0 = in->items[id];
         switch (item0->cat)
@@ -1026,40 +1130,53 @@ evaluate(Environment env, Ast *in0)
           case AC_Let:
           {
             Let *item = castAst(item0, Let);
-            addStackValue(&env, normalize(env, evaluate(env, item->rhs)));
+            if (Value *rhs = evaluateMain(env, item->rhs, expect_failure))
+              addStackValue(&env, rhs);
+            else
+              failed = true;
           } break;
 
           case AC_Function:
           {
             Function  *item        = castAst(item0, Function);
-            Value     *signature_v = evaluate(env, &item->signature->a);
-            FunctionV *funv        = newValue(arena, FunctionV, signature_v);
-            funv->function = *item;
-            funv->stack    = env.stack;
-            addStackValue(&env, &funv->v);
+            if (Value *signature_v = evaluateMain(env, &item->signature->a, expect_failure))
+            {
+              FunctionV *funv = newValue(arena, FunctionV, signature_v);
+              funv->function = *item;
+              funv->stack    = env.stack;
+              addStackValue(&env, &funv->v);
+            }
+            else
+              failed = true;
           } break;
 
           // todo screen the input
           invalidDefaultCase;
         }
       }
-      out0 = evaluate(env, in->items[in->count-1]);
+      if (!failed)
+        out0 = evaluateMain(env, in->items[in->count-1], expect_failure);
     } break;
 
     case AC_Accessor:
     {
       Accessor *in = castAst(in0, Accessor);
-      CompositeV *recordv = castAst(evaluate(env, in->record), CompositeV);
-      out0 = recordv->args[in->param_id];
+      if (Value *record0 = evaluateMain(env, in->record, expect_failure))
+      {
+        CompositeV *record = castAst(record0, CompositeV);
+        out0 = record->args[in->param_id];
+      }
     } break;
 
     case AC_Function:
     {
       Function *in = castAst(in0, Function);
-      Value *signature = evaluate(env, &in->signature->a);
-      FunctionV *out = newValue(env.arena, FunctionV, signature);
-      out->function = *in;
-      out->stack    = env.stack;
+      if (Value *signature = evaluateMain(env, &in->signature->a, expect_failure))
+      {
+        FunctionV *out = newValue(env.arena, FunctionV, signature);
+        out->function = *in;
+        out->stack    = env.stack;
+      }
     }
     break;
 
@@ -1076,8 +1193,16 @@ evaluate(Environment env, Ast *in0)
 
   if (out0)
     out0 = normalize(env, out0);
+  else
+    assert(expect_failure);
 
   return out0;
+}
+
+forward_declare internal Value *
+evaluate(Environment env, Ast *in0)
+{
+  return evaluateMain(env, in0, false);
 }
 
 internal Value *
@@ -1469,25 +1594,41 @@ getExplicitParamCount(ArrowV *in)
   return out;
 }
 
-inline b32 matchType(Environment *env, Matcher matcher, Value *type)
+inline b32
+matchType(Environment *env, Matcher matcher, Value *norm_actual)
 {
   b32 out = false;
   switch (matcher.cat)
   {
+    case MC_Unknown:
+    {
+      out = true;
+    } break;
+
     case MC_Exact:
     {
-      if (matcher.Exact)
-      {
-        Value *norm_expected = normalize(*env, matcher.Exact);
-        out = equalB32(type, norm_expected);
-      }
-      else
-        out = true;
+      Value *norm_expected = normalize(*env, matcher.Exact);
+      out = equalB32(norm_actual, norm_expected);
     } break;
 
     case MC_OutType:
-    {// nocheckin
-      out = false;
+    {
+      Value *norm_expected = normalize(*env, matcher.OutType);
+      if (ArrowV *arrow = castAst(norm_actual, ArrowV))
+      {
+        // todo: we are chickening out on the dependent type... would need
+        // a full solver to figure out what's going on at that point.
+        // Set up a fake stack frame, that we know isn't gonna be used.
+        addStackFrame(env);
+        env->stack->count = arrow->param_count;
+        if (!hasFreeVars(env, arrow->out_type, 0))
+        {
+          // todo: #speed too much normalization happens here
+          if (Value *norm_out = evaluate(*env, arrow->out_type))
+            out = equalB32(norm_out, norm_expected);
+          unwindStack(env);
+        }
+      }
     } break;
   }
   return out;
@@ -1526,15 +1667,13 @@ selectMatchingGlobalValue(Environment *env, Matcher matcher, Token *name)
 
 // important: env can be modified, if the caller expects it.
 // beware: Usually we mutate in-place, but we may also allocate anew.
-forward_declare
-internal Expression
+forward_declare internal Expression
 buildExpression(Environment *env, Ast *in0, Matcher matcher)
 {
   Expression out = {};
-
   b32 should_check_type = true;
-
   MemoryArena *arena = env->arena;
+
   switch (in0->cat)
   {
     case AC_Identifier:
@@ -1571,7 +1710,7 @@ buildExpression(Environment *env, Ast *in0, Matcher matcher)
         op_matcher.OutType = matcher.Exact;
       }
 
-      if (Expression build_op = buildExpression(env, in->op, 0))
+      if (Expression build_op = buildExpression(env, in->op, op_matcher))
       {
         in->op = build_op.ast;
 
@@ -1621,12 +1760,12 @@ buildExpression(Environment *env, Ast *in0, Matcher matcher)
               else
               {
                 Ast *param_type0 = signature->param_types[arg_id];
-                Value *norm_param_type = evaluate(signature_env, param_type0);
-                if (Expression build_arg = buildExpression(env, in->args[arg_id], norm_param_type))
+                Value *expected_arg_type = evaluateMain(signature_env, param_type0, true);
+                if (Expression build_arg = buildExpression(env, in->args[arg_id], expected_arg_type))
                 {
                   in->args[arg_id] = build_arg.ast;
                   addStackValue(&signature_env, evaluate(*env, in->args[arg_id]));
-                  if (norm_param_type == 0)
+                  if (expected_arg_type == 0)
                   {
                     Variable *param_type = castAst(param_type0, Variable);
                     assert(param_type->stack_delta == 0);
@@ -2039,9 +2178,12 @@ forward_declare
 internal Expression
 buildExpression(Environment *env, Ast *in0, Value *expected_type)
 {
-  Matcher matcher;
-  matcher.cat     = MC_Exact;
-  matcher.OutType = expected_type;
+  Matcher matcher = {};
+  if (expected_type)
+  {
+    matcher.cat = MC_Exact;
+    matcher.OutType = expected_type;
+  }
   return buildExpression(env, in0, matcher);
 }
 
@@ -3091,6 +3233,11 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
               Matcher *matcher = (Matcher *)attachment.p;
               switch (matcher->cat)
               {
+                case MC_Unknown:
+                {
+                  printToBuffer(0, "<any type>");
+                };
+
                 case MC_Exact:
                 {
                   printAst(0, matcher->Exact, {});
@@ -3098,6 +3245,7 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
 
                 case MC_OutType:
                 {
+                  printf("? -> ");
                   printAst(0, matcher->OutType, {});
                 } break;
               }

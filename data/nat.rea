@@ -3,7 +3,7 @@
 Nat :: union
 {
  0,
- s: (p: Nat) -> Nat,
+ ++: (p: Nat) -> Nat,
  }
 
 + :: (n, m: Nat) -> Nat
@@ -11,16 +11,16 @@ Nat :: union
  fork n
  {
   0     : m,
-  s(n') : s(n.p + m),
+  ++(n') : ++(n.p + m),
   }
  }
 
-1 := s(0);
-2 := s(1);
-3 := s(2);
-4 := s(3);
-5 := s(4);
-6 := s(5);
+1 := ++(0);
+2 := ++(1);
+3 := ++(2);
+4 := ++(3);
+5 := ++(4);
+6 := ++(5);
 check truth: 1 + 2 = 3;
 
 pred :: (n : Nat) -> Nat
@@ -28,7 +28,7 @@ pred :: (n : Nat) -> Nat
  fork n
  {
   0 : 0,
-  s(n) : n
+  ++(n) : n
   }
  }
 
@@ -37,7 +37,7 @@ even :: (n : Nat) -> Bool
  fork n
  {
   0      : true,
-  s(n69) : fork n.p {0 : false, s(n70) : even(n.p.p)},
+  ++(n69) : fork n.p {0 : false, ++(n70) : even(n.p.p)},
   }
  }
 
@@ -49,7 +49,7 @@ check truth: even(3) = false;
  fork n
  {
   0     : 0,
-  s(n1) : m + n.p * m,
+  ++(n1) : m + n.p * m,
   }
  }
 
@@ -60,7 +60,7 @@ check truth: 2*3 = 6;
  fork n
  {
   0     : 0,
-  s(n1) : fork(m) {0 : n, s(m1) : n.p - m.p}
+  ++(n1) : fork(m) {0 : n, ++(m1) : n.p - m.p}
   }
  }
 
@@ -72,16 +72,16 @@ plusIdRight :: (n: Nat) -> n + 0 = n
  fork n
  {
   0      : truth,
-  s(n69) : rewrite plusIdRight(n.p); truth,
+  ++(n69) : rewrite plusIdRight(n.p); truth,
   }
  }
 
-plusSRight :: (n, m: Nat) -> n + s(m) = s(n+m)
+plusSRight :: (n, m: Nat) -> n + ++(m) = ++(n+m)
 {
  fork n
  {
   0    : truth,
-  s(n'): rewrite plusSRight(n.p, m); truth,
+  ++(n'): rewrite plusSRight(n.p, m); truth,
   }
  }
 
@@ -90,7 +90,7 @@ plusCommutative :: (n, m: Nat) -> (n + m = m + n)
  fork n
  {
   0    : rewrite plusIdRight(m); truth,
-  s(n1): rewrite plusCommutative(n.p, m); rewrite plusSRight(m, n.p); truth,
+  ++(n1): rewrite plusCommutative(n.p, m); rewrite plusSRight(m, n.p); truth,
   }
  }
 
@@ -99,7 +99,7 @@ plusAssociative :: (a, b, c: Nat) -> (a+b)+c = a+(b+c)
  fork a
  {
   0    : truth,
-  s(a'): rewrite plusAssociative(a.p, b, c); truth,
+  ++(a'): rewrite plusAssociative(a.p, b, c); truth,
   }
  }
 
@@ -108,7 +108,7 @@ mulDistributive :: (a,b,c: Nat) -> a*c+b*c = (a+b)*c
  fork a
  {0: truth,
 
-  s(a'):
+  ++(a'):
   rewrite mulDistributive(a.p, b, c);
   rewrite plusAssociative(c, (a.p * c), (b * c));
   truth}
@@ -119,7 +119,7 @@ mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*(b*c)
  fork a
  {
   0: truth,
-  s(a'):
+  ++(a'):
   rewrite left mulDistributive(b, (a.p * b), c);
   rewrite mulAssociative(a.p, b, c),
   }
@@ -138,11 +138,11 @@ multiplicationBetweenPositives :: (a,b: Nat, a_positive: a != 0, b_positive: b !
   {
    0: a_positive(truth),
 
-   s:
+   ++:
    fork b
    {
     0: b_positive(truth),
-    s: e
+    ++: e
     }
    }
   }

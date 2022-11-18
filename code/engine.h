@@ -539,12 +539,13 @@ struct Builtins
 
 enum MatcherCategory
 {
+  MC_Unknown,
   MC_Exact,
   MC_OutType,
 };
 
 struct Matcher
-{// the all-0 value happens to be the unknown, which is totally planned.
+{
   MatcherCategory cat;
   union
   {

@@ -36,7 +36,7 @@ ratPlus :: (a, b: RatTest) -> RatTest
 Positive :: union
 {
  1,
- s: (p: Positive) -> Positive,
+ ++: (p: Positive) -> Positive,
  }
 
-2 : Positive := s(1);
+2 : Positive := ++(1);

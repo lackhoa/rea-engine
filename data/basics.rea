@@ -53,7 +53,7 @@ testComplexFork :: (a, b: Nat) -> Nat
  fork a+b
  {
   0:    0,
-  s(n): (a+b).p,
+  ++(n): (a+b).p,
   }
  }
 check truth: testComplexFork(0, 0) = 0;
@@ -71,7 +71,7 @@ testCurrying :: (a: Nat) -> (b, c: Nat) -> (a+b)+c = a+(b+c)
 {
  fork a
  {
-  s(a'):
+  ++:
   out69 :: (b', c': Nat) -> (a+b')+c' = a+b'+c'
   { plusAssociative(a, b', c') }
   out69,
