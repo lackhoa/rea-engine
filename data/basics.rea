@@ -32,7 +32,7 @@ andWithFalse :: (a: Bool) -> (a & false = false)
   }
  }
 
-andCommutative :: (a, b, c: Bool) -> (a & (b & c) = (a & b) & c)
+andAssociative :: (a, b, c: Bool) -> ((a & b) & c = a & b & c)
 {
  fork a
  {
@@ -40,7 +40,7 @@ andCommutative :: (a, b, c: Bool) -> (a & (b & c) = (a & b) & c)
   true : truth,
   }
  }
-check andCommutative(true, false, true) : (true & (false & true) = (true & false) & true);
+check andAssociative(true, false, true) : ((true & false) & true = true & false & true);
 
 dependentTypeTest :: (T: Type, A: T, a: A) -> (a = a)
 {
@@ -73,12 +73,12 @@ testCurrying :: (a: Nat) -> (b, c: Nat) -> (a+b)+c = a+(b+c)
  {
   ++:
   out69 :: (b', c': Nat) -> (a+b')+c' = a+b'+c'
-  { plusAssociative(a, b', c') }
+  { addAssociative(a, b', c') }
   out69,
 
   0:
   out70 :: (b, c: Nat) -> (a+b)+c = a+(b+c)
-  { plusAssociative(a, b, c) }
+  { addAssociative(a, b, c) }
   out70,
   }
  }
@@ -86,7 +86,7 @@ testCurrying :: (a: Nat) -> (b, c: Nat) -> (a+b)+c = a+(b+c)
 testCurrying2 :: (a, b, c: Nat) -> (a+b)+c = a+(b+c)
 {
  fun :: (b',c': Nat) -> (a+b')+c' = a+(b'+c')
- { plusAssociative(a, b', c') }
+ { addAssociative(a, b', c') }
 
  fun(b,c)
  }
@@ -95,7 +95,7 @@ testCurrying2 :: (a, b, c: Nat) -> (a+b)+c = a+(b+c)
 testCurrying2Fail :: (a, b, c: Nat) -> (a+b)+c = a+(b+c)
 {
  fun :: (c',b': Nat) -> (a+b')+c' = a+(b'+c')
- { plusAssociative(a, b', c') }
+ { addAssociative(a, b', c') }
 
  fun(b,c)
  }
