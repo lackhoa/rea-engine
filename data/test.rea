@@ -27,16 +27,31 @@ testRatArrow2 :: () -> (a: RatTest) -> (a.d = a.d)
  out :: (b: RatTest) -> (b.d = b.d) {truth}
  }
 
-ratPlus :: (a, b: RatTest) -> RatTest
++ :: (a, b: RatTest) -> RatTest
 {
  /((a.n * b.d + b.n * a.d), (a.d * b.d),
-   multiplicationBetweenPositives (a.d,b.d,a._dnot0,b._dnot0))
+   multiplyPos(a.d, b.d, a._dnot0, b._dnot0))
  }
 
-Positive :: union
+Pos :: union
 {
  1,
- ++: (p: Positive) -> Positive,
+ ++: (p: Pos) -> Pos,
  }
 
-2 : Positive := ++(1);
++ :: (a, b: Pos) -> Pos
+{
+ fork a
+ {
+  1: ++(b),
+  ++: ++(a.p+b)
+  }
+ }
+
+2 : Pos := ++(1);
+3 : Pos := ++(2);
+check 1+2: Nat;
+check 1+2: Pos;
+;; #should_fail
+;; check 1+2: RatTest;
+;; #should_fail off

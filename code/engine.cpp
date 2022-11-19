@@ -210,23 +210,28 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
 #endif
       } break;
 
+      case AC_Identifier:
+      {
+        printToBuffer(buffer, in0->token);
+      } break;
+
       case AC_Constant:
       {
         Constant *in = castAst(in0, Constant);
         if (in->is_synthetic)
           printAst(buffer, in->value, opt);
         else
+        {
+          // printToBuffer(buffer, "<c>");
           printToBuffer(buffer, in->a.token);
+        }
       } break;
 
       case AC_Variable:
       {
         Variable *in = castAst(in0, Variable);
-#if 0
-        printToBuffer(buffer, "%.*s[%d]", in->name.length, in->name.chars, in->stack_delta);
-#else
+        // printToBuffer(buffer, "%.*s[%d]", in->name.length, in->name.chars, in->stack_delta);
         printToBuffer(buffer, in->a.token);
-#endif
       } break;
 
       case AC_Sequence:
@@ -264,7 +269,6 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
              ctor_id < form->ctor_count;
              ctor_id++)
         {
-          ForkParameters *casev = in->params + ctor_id;
           Constructor *subset = form->ctors + ctor_id;
           switch (subset->v.type->cat)
           {// print pattern
@@ -280,7 +284,6 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
               ArrowV *signature = castAst(subset->v.type, ArrowV);
               for (s32 param_id = 0; param_id < signature->param_count; param_id++)
               {
-                printToBuffer(buffer, casev->names[param_id]);
                 printToBuffer(buffer, " ");
               }
             } break;
@@ -410,8 +413,8 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
 
       default:
       {
-        __debugbreak();
         printToBuffer(buffer, "<unimplemented category: %u>", in0->cat);
+        invalidCodePath;
       } break;
     }
   }
@@ -1391,11 +1394,17 @@ addBuiltinGlobalBinding(char *key, Value *value)
   addGlobalBinding(&token, value);
 }
 
-struct LookupLocalName { b32 found; s32 stack_delta; s32 var_id; };
+struct LookupLocalName {
+  b32 found;
+  s32 stack_delta;
+  s32 var_id;
+  operator bool() {return found;}
+};
 
 inline LookupLocalName
-lookupLocalName(LocalBindings *bindings, Token *token)
+lookupLocalName(Environment *env, Token *token)
 {
+  LocalBindings *bindings = env->bindings;
   LookupLocalName out = {};
   for (s32 stack_delta = 0;
        bindings;
@@ -1604,41 +1613,14 @@ matchType(Value *actual, Value *expected)
     return equalB32(actual, expected);
 }
 
-internal Value *
-selectMatchingGlobalValue(Environment *env, Value *expected_type, Token *name)
-{
-  Value *out = 0;
-  Value *norm_expected = normalize(*env, expected_type);
-  if (GlobalBinding *slot = lookupGlobalName(name))
-  {
-    for (s32 value_id = 0; value_id < slot->count; value_id++)
-    {
-      Value *slot_value = slot->values[value_id];
-      // todo: #speed not happy about the repeated normalization within.
-      if (matchType(slot_value->type, norm_expected))
-      {
-        if (out)
-        {// ambiguous
-          parseError(name, "ambiguous global name (todo: print out candidates)");
-          break;
-        }
-        else
-          out = slot_value;
-      }
-    }
-    if (!out)
-    {
-      parseError(name, "found no global matching expected type");
-      pushAttachment("expected_type", norm_expected);
-    }
-  }
-  return out;
-}
+
 
 #if 0
 inline ValueArray
 resolveIdentifier(Environment *env, Identifier *in)
 {
+  // NOTE: this function should return the possible values for an identifier, so
+  // the typechecker has something to work with.
   ValueArray out = {};
   Token *name = &in->token;
   LookupLocalName lookup = lookupLocalName(env->bindings, name);
@@ -1664,11 +1646,129 @@ resolveIdentifier(Environment *env, Identifier *in)
 }
 #endif
 
-// important: env can be modified, if the caller expects it.
-// beware: Usually we mutate in-place, but we may also allocate anew.
+internal Ast *
+deepCopy(MemoryArena *arena, Ast *in0)
+{
+  Ast *out0 = 0;
+  switch (in0->cat)
+  {
+    case AC_DummyHole:
+    case AC_Identifier:
+    {
+      out0 = in0;
+    } break;
+
+    case AC_Fork:
+    {
+      Fork *in = castAst(in0, Fork);
+      Fork *out = copyStruct(arena, in);
+      out->subject = deepCopy(arena, in->subject);
+      allocateArray(arena, in->case_count, out->bodies);
+      for (s32 id=0; id < in->case_count; id++)
+      {
+        out->bodies[id] = deepCopy(arena, in->bodies[id]);
+      }
+      out0 = &out->a;
+    } break;
+
+    case AC_Sequence:
+    {
+      Sequence *in = castAst(in0, Sequence);
+      Sequence *out = copyStruct(arena, in);
+      allocateArray(arena, out->count, out->items);
+      for (s32 id=0; id < in->count; id++)
+      {
+        out->items[id] = deepCopy(arena, in->items[id]);
+      }
+      out0 = &out->a;
+    } break;
+
+    case AC_Composite:
+    {
+      Composite *in = castAst(in0, Composite);
+      Composite *out = copyStruct(arena, in);
+      out->op = deepCopy(arena, in->op);
+      allocateArray(arena, out->arg_count, out->args);
+      for (s32 id=0; id < in->arg_count; id++)
+      {
+        out->args[id] = deepCopy(arena, in->args[id]);
+      }
+      out0 = &out->a;
+    } break;
+
+    case AC_Arrow:
+    {
+      Arrow *in = castAst(in0, Arrow);
+      Arrow *out = copyStruct(arena, in);
+      out->out_type = deepCopy(arena, in->out_type);
+      allocateArray(arena, out->param_count, out->param_types);
+      for (s32 id=0; id < in->param_count; id++)
+      {
+        out->param_types[id] = deepCopy(arena, in->param_types[id]);
+      }
+      out0 = &out->a;
+    } break;
+
+    case AC_Function:
+    {
+      Function *in = castAst(in0, Function);
+      Function *out = copyStruct(arena, in);
+      out->signature = castAst(deepCopy(arena, &in->signature->a), Arrow);
+      out->body      = deepCopy(arena, in->body);
+      out0 = &out->a;
+    } break;
+
+    case AC_Let:
+    {
+      Let *in = castAst(in0, Let);
+      Let *out = copyStruct(arena, in);
+      out->rhs = deepCopy(arena, in->rhs);
+      out0 = &out->a;
+    } break;
+
+    case AC_Rewrite:
+    {
+      Rewrite *in = castAst(in0, Rewrite);
+      Rewrite *out = copyStruct(arena, in);
+      out->proof = deepCopy(arena, in->proof);
+      out0 = &out->a;
+    } break;
+
+    case AC_Accessor:
+    {
+      Accessor *in = castAst(in0, Accessor);
+      Accessor *out = copyStruct(arena, in);
+      out->record = deepCopy(arena, in->record);
+      out0 = &out->a;
+    } break;
+
+    default:
+      todoIncomplete;
+  }
+  return out0;
+}
+
+inline GlobalBinding *
+getOverloads(Environment *env, Ast *in0)
+{
+  if (Identifier *in = castAst(in0, Identifier))
+  {
+    if (lookupLocalName(env, &in->token))
+      return 0;
+    else if (GlobalBinding *slot = lookupGlobalNameSlot(in->token))
+    {
+      if (slot->count > 1)
+        return slot;
+    }
+  }
+  return 0;
+}
+
 forward_declare internal Expression
 buildExpression(Environment *env, Ast *in0, Value *expected_type)
 {
+  // important: env can be modified, if the caller expects it.
+  // beware: Usually we mutate in-place, but we may also allocate anew.
   Expression out = {};
   assert(expected_type);
   b32 should_check_type = (expected_type != dummy_holev);
@@ -1676,11 +1776,19 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
 
   switch (in0->cat)
   {
+    case AC_Constant:
+    {
+      // this case can happen if we retry.
+      Constant *in = castAst(in0, Constant);
+      out.ast   = in0;
+      out.value = in->value;
+    } break;
+
     case AC_Identifier:
     {
+      // NOTE: do not mutate input since we wanna retry on failure.
       Token *name = &in0->token;
-      LookupLocalName local = lookupLocalName(env->bindings, name);
-      if (local.found)
+      if (LookupLocalName local = lookupLocalName(env, name))
       {
         Variable *var    = newAst(arena, Variable, &in0->token);
         var->id          = local.var_id;
@@ -1692,7 +1800,34 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       else
       {
         Constant *constant = newAst(arena, Constant, name);
-        if (Value *value = selectMatchingGlobalValue(env, expected_type, name))
+
+        Value *value = 0;
+        Value *norm_expected = normalize(*env, expected_type);
+        if ((out.globals = lookupGlobalName(name)))
+        {
+          for (s32 value_id = 0; value_id < out.globals->count; value_id++)
+          {
+            Value *slot_value = out.globals->values[value_id];
+            // todo: #speed not happy about the repeated normalization within.
+            if (matchType(slot_value->type, norm_expected))
+            {
+              if (value)
+              {// ambiguous
+                parseError(name, "not enough type information to disambiguate global name");
+                break;
+              }
+              else
+                value = slot_value;
+            }
+          }
+          if (!value)
+          {
+            parseError(name, "found no global matching expected type");
+            pushAttachment("expected_type", norm_expected);
+          }
+        }
+
+        if (value)
         {
           should_check_type = false;
           constant->value = value;
@@ -1706,17 +1841,30 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
     {
       Composite *in = castAst(in0, Composite);
 
-#if 0
-      if (in->op->cat == AC_Identifier)
+      if (GlobalBinding *overloads = getOverloads(env, in->op))
       {
-        ValueArray array = resolveIdentifier(env, castAst(in->op, Identifier));
-        if (array.count == 1)
+        // NOTE: pre-empt operator overloads.
+        // play with op.globals to figure out the output type;
+        // we'd have to pretty much build, typecheck and evaluate the whole thing.
+        // todo #mem
+        for (s32 candidate_id=0; candidate_id < overloads->count; candidate_id++)
         {
-        }
-      }
-#endif
+          Constant *constant = newAst(arena, Constant, &in->op->token);
+          constant->value    = overloads->values[candidate_id];
 
-      if (Expression op = buildExpression(env, in->op, dummy_holev))
+          Composite *in_copy = castAst(deepCopy(arena, in0), Composite);
+          in_copy->op = &constant->a;
+
+          // myprint("deep copy: "); myprint(in0); myprint(" => "); myprint(&in_copy->a); myprint();
+
+          out = buildExpression(env, &in_copy->a, expected_type);
+          if (out) break;
+          else wipeError();
+        }
+        if (!out)
+          parseError(in->op, "cannot find suitable function overload");
+      }
+      else if (Expression op = buildExpression(env, in->op, dummy_holev))
       {
         in->op = op.ast;
 
@@ -1980,10 +2128,10 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       out.value = evaluate(*env, in0);
     } break;
 
-    case AC_IncompleteFork:
+    case AC_Fork:
     {
       should_check_type = false;
-      IncompleteFork *in = castAst(in0, IncompleteFork);
+      Fork *in = castAst(in0, Fork);
 
       if (Expression subject = buildExpression(env, in->subject, dummy_holev))
       {
@@ -1994,8 +2142,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
         {
           if (uni->ctor_count == case_count)
           {
-            ForkParameters  *correct_params = pushArray(arena, case_count, ForkParameters, true);
-            Ast            **correct_bodies = pushArray(arena, case_count, Ast *, true);
+            Ast **correct_bodies = pushArray(arena, case_count, Ast *, true);
             Value *subjectv = evaluate(*env, in->subject);
             Environment *outer_env = env;
 
@@ -2015,12 +2162,6 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
               // type matcher, just like we did in the identifier case (in fact
               // we could make it an identifier, but that'd be redundant I think)
               Token *ctor_token = &in->parsing->ctors[input_case_id].token;
-
-#if 0
-              ForkParameters *params = in->parsing->params + input_case_id;
-              Token *param_names = params->names;
-              s32    param_count = params->count;
-#endif
 
               if (GlobalBinding *lookup = lookupGlobalName(ctor_token))
               {
@@ -2070,12 +2211,12 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                   {
                     if (correct_bodies[ctor->id])
                     {
-                      parseError(in->parsing->bodies[input_case_id], "fork case handled twice");
+                      parseError(in->bodies[input_case_id], "fork case handled twice");
                       pushAttachment("constructor", &ctor->v);
                     }
                     else
                     {
-                      Expression body = buildExpression(&env, in->parsing->bodies[input_case_id], common_type);
+                      Expression body = buildExpression(&env, in->bodies[input_case_id], common_type);
                       correct_bodies[ctor->id] = body.ast;
                       if (common_type == dummy_holev)
                         common_type = body.value->type;
@@ -2091,7 +2232,6 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
             {
               in->a.cat  = AC_Fork;
               in->uni    = uni;
-              in->params = correct_params;
               in->bodies = correct_bodies;
 
               out.ast   = in0;
@@ -2176,7 +2316,10 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
     assert(out.ast && out.value);
   }
   else
-    out = {};
+  {
+    out.ast   = 0;
+    out.value = 0;
+  }
   return out;
 }
 
@@ -2382,12 +2525,12 @@ parseFunction(MemoryArena *arena, Token *name)
   return out;
 }
 
-internal IncompleteFork *
+internal Fork *
 parseFork(MemoryArena *arena)
 {
   pushContext;
 
-  IncompleteFork *out = 0;
+  Fork *out = 0;
   Token token = global_tokenizer->last_token;
   Ast *subject = parseExpressionToAst(arena);
   if (requireChar('{', "to open the typedef body"))
@@ -2397,9 +2540,8 @@ parseFork(MemoryArena *arena)
     if (noError(&tk_copy))
     {
       ForkParsing *parsing = pushStruct(temp_arena, ForkParsing);
-      Ast **bodies   = parsing->bodies = pushArray(temp_arena, case_count, Ast*);
+      Ast **bodies = pushArray(temp_arena, case_count, Ast*);
       allocateArray(temp_arena, case_count, parsing->ctors);
-      allocateArray(temp_arena, case_count, parsing->params);
 
       s32 actual_case_count = 0;
       for (b32 stop = false;
@@ -2416,29 +2558,12 @@ parseFork(MemoryArena *arena)
             if (Identifier *ctor = castAst(pattern0, Identifier))
             {
               parsing->ctors[input_case_id]  = *ctor;
-              parsing->params[input_case_id] = {};
             }
             else if (Composite *pattern = castAst(pattern0, Composite))
             {
-              s32 param_count = pattern->arg_count;
               if ((ctor = castAst(pattern->op, Identifier)))
               {
                 parsing->ctors[input_case_id] = *ctor;
-
-                ForkParameters *params = parsing->params + input_case_id;
-                params->count = param_count;
-                allocateArray(temp_arena, param_count, params->names);
-                for (s32 param_id = 0;
-                     param_id < param_count && noError();
-                     param_id++)
-                {
-                  if (Identifier *param = castAst(pattern->args[param_id], Identifier))
-                  {
-                    params->names[param_id] = param->a.token;
-                  }
-                  else
-                    parseError(pattern->args[param_id], "expected pattern variable");
-                }
               }
               else
                 parseError(&pattern->a, "expected constructor");
@@ -2466,10 +2591,11 @@ parseFork(MemoryArena *arena)
       if (noError())
       {
         assert(case_count == actual_case_count);
-        out = newAst(arena, IncompleteFork, &token);
+        out = newAst(arena, Fork, &token);
         out->a.token    = token;
         out->subject    = subject;
         out->case_count = case_count;
+        out->bodies     = bodies;
         out->parsing    = parsing;
       }
     }

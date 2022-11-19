@@ -17,3 +17,21 @@ Bool :: union {false, true}
   false: b,
   }
  }
+
+andWithFalse :: (a: Bool) -> (a & false = false)
+{
+ fork a
+ {
+  false: truth,
+  true: truth,
+  }
+ }
+
+andAssociative :: (a, b, c: Bool) -> ((a & b) & c = a & b & c)
+{
+ fork a
+ {
+  false: truth,
+  true : truth,
+  }
+ }

@@ -23,23 +23,6 @@ testAbstraction :: (a, b: Bool) -> Bool
   }
  }
 
-andWithFalse :: (a: Bool) -> (a & false = false)
-{
- fork a
- {
-  false: truth,
-  true: truth,
-  }
- }
-
-andAssociative :: (a, b, c: Bool) -> ((a & b) & c = a & b & c)
-{
- fork a
- {
-  false: truth,
-  true : truth,
-  }
- }
 check andAssociative(true, false, true) : ((true & false) & true = true & false & true);
 
 dependentTypeTest :: (T: Type, A: T, a: A) -> (a = a)

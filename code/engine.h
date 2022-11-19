@@ -23,7 +23,6 @@ enum AstCategory
 
   // result after initial parsing
   AC_Identifier,
-  AC_IncompleteFork,
 
   // result after building
   AC_Variable,
@@ -145,9 +144,8 @@ struct ForkParameters
 
 struct ForkParsing
 {
-  Identifier      *ctors;
-  ForkParameters  *params;
-  Ast            **bodies;
+  Identifier  *ctors;
+  Ast        **bodies;
 };
 
 struct Union;
@@ -156,16 +154,14 @@ struct Fork
 {
   Ast a;
 
-  Union           *uni;
-  Ast             *subject;
-  s32              case_count;
-  ForkParameters  *params;
-  Ast            **bodies;
+  Union  *uni;
+  Ast    *subject;
+  s32     case_count;
+  Ast   **bodies;
 
   // temporary parsing data
   ForkParsing *parsing;
 };
-typedef Fork IncompleteFork;
 
 struct ParseExpressionOptions
 {
@@ -329,16 +325,8 @@ struct Let
 {
   Ast a;
 
-  Identifier  lhs;
+  Identifier  lhs;  // todo: can just be a token
   Ast        *rhs;
-};
-
-struct RecursiveLet
-{
-  Ast a;
-
-  Identifier  lhs;
-  Function   *rhs;
 };
 
 struct StackRef
@@ -486,7 +474,7 @@ struct Expression
   Value *value;
   operator bool() { return (bool)ast; }
 
-  Value **possible_constants;
+  GlobalBinding *globals;  // in case it fails, we can still work it out
 };
 
 struct Rewrite
@@ -563,6 +551,12 @@ inline Matcher exactMatch(Value *value)
 }
 
 struct ValueArray
+{
+  s32    count;
+  Value *items;
+};
+
+struct AstArray
 {
   s32    count;
   Value *items;

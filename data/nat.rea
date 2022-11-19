@@ -130,7 +130,7 @@ mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*b*c
  (E: a = b) -> False
  }
 
-multiplicationBetweenPositives :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
+multiplyPos :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
 {
  out :: (e: a*b = 0) -> False
  {
