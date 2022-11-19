@@ -655,10 +655,10 @@ lookupGlobalNameSlot(String key)
   return slot;
 }
 
-struct LookupLocalName { LocalBinding* slot; b32 found; };
+struct LookupCurrentFrame { LocalBinding* slot; b32 found; };
 
-internal LookupLocalName
-lookupNameCurrentFrame(LocalBindings *bindings, String key, b32 add_if_missing)
+internal LookupCurrentFrame
+lookupCurrentFrame(LocalBindings *bindings, String key, b32 add_if_missing)
 {
   LocalBinding *slot = 0;
   b32 found = false;
@@ -696,7 +696,7 @@ lookupNameCurrentFrame(LocalBindings *bindings, String key, b32 add_if_missing)
     slot->value = {};
   }
 
-  LookupLocalName out = { slot, found };
+  LookupCurrentFrame out = { slot, found };
   return out;
 }
 
@@ -1254,7 +1254,7 @@ normalized(Environment env, Value *in)
 inline b32
 addLocalBinding(LocalBindings *bindings, Token *key)
 {
-  auto lookup = lookupNameCurrentFrame(bindings, key->text, true);
+  auto lookup = lookupCurrentFrame(bindings, key->text, true);
   b32 succeed = false;
   if (lookup.found)
     parseError(key, "reused parameter name");
@@ -1391,35 +1391,28 @@ addBuiltinGlobalBinding(char *key, Value *value)
   addGlobalBinding(&token, value);
 }
 
-struct LookupNameRecursive { Ast *value; b32 found; };
+struct LookupLocalName { b32 found; s32 stack_delta; s32 var_id; };
 
-inline LookupNameRecursive
-lookupLocalName(MemoryArena *arena, LocalBindings *bindings, Token *token)
+inline LookupLocalName
+lookupLocalName(LocalBindings *bindings, Token *token)
 {
-  Ast *expr = {};
-  b32 found = false;
-
+  LookupLocalName out = {};
   for (s32 stack_delta = 0;
        bindings;
        stack_delta++)
   {
-    LookupLocalName lookup = lookupNameCurrentFrame(bindings, token->text, false);
+    LookupCurrentFrame lookup = lookupCurrentFrame(bindings, token->text, false);
     if (lookup.found)
     {
-      found = true;
-      s32 id = lookup.slot->value;
-      Variable *var = newAst(arena, Variable, token);
-      initVariable(var, id);
-      var->stack_delta = stack_delta;
-      expr = &var->a;
+      out.found       = true;
+      out.var_id          = lookup.slot->value;
+      out.stack_delta = stack_delta;
       break;
     }
     else
       bindings = bindings->next;
   }
 
-  LookupNameRecursive out = { expr, found };
-  if (found) {assert(expr);}
   return out;
 }
 
@@ -1642,6 +1635,35 @@ selectMatchingGlobalValue(Environment *env, Value *expected_type, Token *name)
   return out;
 }
 
+#if 0
+inline ValueArray
+resolveIdentifier(Environment *env, Identifier *in)
+{
+  ValueArray out = {};
+  Token *name = &in->token;
+  LookupLocalName lookup = lookupLocalName(env->bindings, name);
+  if (lookup.found)
+  {
+    Value *norm = evaluate(*env, lookup.ast);
+    out.count = 1;
+    allocateArray(out.items, out.count);
+    out.items[0] = lookup.value;
+  }
+  else
+  {
+    Constant *constant = newAst(arena, Constant, name);
+    if (Value *value = selectMatchingGlobalValue(env, expected_type, name))
+    {
+      should_check_type = false;
+      constant->value = value;
+      out.ast   = &constant->a;
+      out.value = constant->value;
+    }
+  }
+  return out;
+}
+#endif
+
 // important: env can be modified, if the caller expects it.
 // beware: Usually we mutate in-place, but we may also allocate anew.
 forward_declare internal Expression
@@ -1657,12 +1679,15 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
     case AC_Identifier:
     {
       Token *name = &in0->token;
-      LookupNameRecursive lookup = lookupLocalName(arena, env->bindings, name);
-      if (lookup.found)
+      LookupLocalName local = lookupLocalName(env->bindings, name);
+      if (local.found)
       {
-        Value *norm = evaluate(*env, lookup.value);
-        out.ast   = lookup.value;
-        out.value = norm;
+        Variable *var    = newAst(arena, Variable, &in0->token);
+        var->id          = local.var_id;
+        var->stack_delta = local.stack_delta;
+
+        out.ast   = &var->a;
+        out.value = evaluate(*env, out.ast);
       }
       else
       {
@@ -1680,6 +1705,16 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
     case AC_Composite:
     {
       Composite *in = castAst(in0, Composite);
+
+#if 0
+      if (in->op->cat == AC_Identifier)
+      {
+        ValueArray array = resolveIdentifier(env, castAst(in->op, Identifier));
+        if (array.count == 1)
+        {
+        }
+      }
+#endif
 
       if (Expression op = buildExpression(env, in->op, dummy_holev))
       {

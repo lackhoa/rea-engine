@@ -485,6 +485,8 @@ struct Expression
   Ast   *ast;
   Value *value;
   operator bool() { return (bool)ast; }
+
+  Value **possible_constants;
 };
 
 struct Rewrite
@@ -559,5 +561,11 @@ inline Matcher exactMatch(Value *value)
 {
   return Matcher{.cat=MC_Exact, .Exact=value};
 }
+
+struct ValueArray
+{
+  s32    count;
+  Value *items;
+};
 
 #include "generated/engine_forward.h"
