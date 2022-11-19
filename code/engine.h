@@ -19,38 +19,41 @@ enum AstCategory
 {
   AC_Null = 0,
 
-  AC_DummyHole,                 // hole left in for type-checking
+  // hole left in for type-checking
+  AC_DummyHole,
 
   // result after initial parsing
   AC_Identifier,
 
-  // result after building
+  // Expression
   AC_Variable,
   AC_Constant,
-
-  AC_Fork,
-  AC_Sequence,
   AC_Composite,
   AC_Arrow,
-  AC_Function,
-  AC_Let,
-  AC_Rewrite,
   AC_Accessor,
 
-  // value subset
-  AC_BuiltinSet,
-  AC_BuiltinType,
-  AC_BuiltinEqual,
-  AC_CompositeV,
-  AC_ArrowV,
-  AC_FunctionV,
-  AC_StackRef,
-  AC_HeapValue,
-  AC_AccessorV,
+  // in "sequence" context only, not general expressions.
+  AC_Sequence,
+  AC_Fork,
+  AC_Rewrite,
+  AC_FunctionDecl,
+  AC_Let,
+};
 
-  // set subset (inherit from value)
-  AC_Union,
-  AC_Constructor,
+enum ValueCategory
+{
+  VC_Null,
+  VC_BuiltinSet   ,
+  VC_BuiltinType  ,
+  VC_BuiltinEqual ,
+  VC_CompositeV   ,
+  VC_ArrowV       ,
+  VC_FunctionV    ,
+  VC_StackValue   ,
+  VC_HeapValue    ,
+  VC_AccessorV    ,
+  VC_Union        ,
+  VC_Constructor  ,
 };
 
 typedef Value BuiltinType;
@@ -98,6 +101,8 @@ newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
 
 #define castAst(exp, Cat) ((exp)->cat == AC_##Cat ? (Cat*)(exp) : 0)
 #define polyAst(exp, Cat, Cat2) (((exp)->cat == AC_##Cat || (exp)->cat == AC_##Cat2) ? (Cat*)(exp) : 0)
+
+#define castValue(exp, Cat) ((exp)->cat == VC_##Cat ? (Cat*)(exp) : 0)
 
 struct Identifier
 {
@@ -194,8 +199,7 @@ struct Stack
   Value *args[32];              // todo: compute this cap
 };
 
-// just jam everything in here!
-// used in normalization, typechecking, etc.
+// used in normalization, build/typecheck, etc.
 struct Environment
 {
   MemoryArena *arena;
@@ -261,19 +265,19 @@ extendBindings(MemoryArena *arena, Environment *env)
 
 struct Value
 {
-  AstCategory  cat;
-  Value       *type;
+  ValueCategory  cat;
+  Value         *type;
 };
 
 inline void
-initValue(Value *in, AstCategory cat, Value *type)
+initValue(Value *in, ValueCategory cat, Value *type)
 {
   in->cat  = cat;
   in->type = type;
 }
 
 inline Value *
-newValue_(MemoryArena *arena, AstCategory cat, Value *type, size_t size)
+newValue_(MemoryArena *arena, ValueCategory cat, Value *type, size_t size)
 {
   Value *out = (Value *)pushSize(arena, size, true);
   initValue(out, cat, type);
@@ -281,7 +285,7 @@ newValue_(MemoryArena *arena, AstCategory cat, Value *type, size_t size)
 }
 
 #define newValue(arena, cat, type)                        \
-  ((cat *) newValue_(arena, AC_##cat, type, sizeof(cat)))
+  ((cat *) newValue_(arena, VC_##cat, type, sizeof(cat)))
 
 struct Constructor
 {
@@ -300,7 +304,7 @@ struct Union
   Constructor *ctors;
 };
 
-struct Function
+struct FunctionDecl
 #define EMBED_FUNCTION                          \
 {                                               \
   Ast    a;                                     \
@@ -315,7 +319,7 @@ struct FunctionV
 
   union
   {
-    Function function;
+    FunctionDecl function;
     struct   EMBED_FUNCTION;
   };
   Stack    *stack;
@@ -325,11 +329,11 @@ struct Let
 {
   Ast a;
 
-  Identifier  lhs;  // todo: can just be a token
-  Ast        *rhs;
+  Token  lhs;
+  Ast   *rhs;
 };
 
-struct StackRef
+struct StackValue
 {
   Value v;
 
@@ -405,7 +409,7 @@ struct ArrowV
 inline Arrow *
 toArrow(Value *value)
 {
-  return &castAst(value, ArrowV)->arrow;
+  return &castValue(value, ArrowV)->arrow;
 }
 
 struct GlobalBinding
@@ -454,13 +458,13 @@ getFormOf(Ast *in0)
     {
       if (Composite *in = castAst(in0, Composite))
         if (Constant *op = castAst(in->op, Constant))
-          out = castAst(op->value, Union);
+          out = castValue(op->value, Union);
     } break;
 
     case AC_Constant:
     {
       if (Constant *in = castAst(in0, Constant))
-        out = castAst(in->value, Union);
+        out = castValue(in->value, Union);
     } break;
 
     invalidDefaultCase;

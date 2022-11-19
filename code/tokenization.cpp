@@ -439,7 +439,7 @@ parseErrorVA(s32 line, s32 column, char *format, va_list arg_list, Tokenizer *tk
   tk->error = pushStruct(arena, ParseErrorData, true);
   tk->error->message = subArena(tk->error_arena, 1024);
 
-  printToBufferVA(&tk->error->message, format, arg_list);
+  printVA(&tk->error->message, format, arg_list);
 
   tk->error->line   = line;
   tk->error->column = column;
@@ -479,8 +479,8 @@ internal void
 tokenError(Token *token, char *message, Tokenizer *tk = global_tokenizer)
 {
   parseError(token, message, tk);
-  printToBuffer(&tk->error->message, ": ");
-  printToBuffer(&tk->error->message, token->text);
+  print(&tk->error->message, ": ");
+  print(&tk->error->message, token->text);
 }
 
 internal void

@@ -1,9 +1,11 @@
-char * printAst(MemoryArena * buffer, void * in_void, PrintOptions opt);
+char * print(MemoryArena * buffer, Ast * in0, PrintOptions opt);
+char * print(MemoryArena * buffer, Value * in0, PrintOptions opt);
+char * print(MemoryArena * buffer, void * in0, b32 is_value, PrintOptions opt);
 Value * normalize(Environment env, Value * in0);
 Value * evaluateMain(Environment env, Ast * in0, b32 expect_failure);
 Value * evaluate(Environment env, Ast * in0);
 void introduceOnStack(Environment * env, Token * name, Ast * type);
 Expression buildExpression(Environment * env, Ast * in0, Value * expected_type);
-Function * parseFunction(MemoryArena * arena, Token * name);
+FunctionDecl * parseFunction(MemoryArena * arena, Token * name);
 Ast * parseExpressionToAst(MemoryArena * arena);
 b32 interpretFile(EngineState * state, FilePath input_path, b32 is_root_file);

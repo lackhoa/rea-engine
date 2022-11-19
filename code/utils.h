@@ -288,7 +288,7 @@ equal(char *s1, char *s2)
 }
 
 internal void
-printToBufferVA(MemoryArena *buffer, char *format, va_list arg_list)
+printVA(MemoryArena *buffer, char *format, va_list arg_list)
 {
     char *at = (char *)getNext(buffer);
     auto printed = vsprintf_s(at, (buffer->cap - buffer->used), format, arg_list);
@@ -296,7 +296,7 @@ printToBufferVA(MemoryArena *buffer, char *format, va_list arg_list)
 }
 
 internal char *
-printToBuffer(MemoryArena *buffer, char *format, ...)
+print(MemoryArena *buffer, char *format, ...)
 {
   char *out = 0;
 
@@ -320,7 +320,7 @@ printToBuffer(MemoryArena *buffer, char *format, ...)
 }
 
 inline char *
-printToBuffer(MemoryArena *buffer, String s)
+print(MemoryArena *buffer, String s)
 {
   char *out = 0;
   if (buffer)
@@ -342,7 +342,7 @@ printToBuffer(MemoryArena *buffer, String s)
 
 #if 0
 inline char *
-printToBuffer(MemoryArena *buffer, char *s)
+print(MemoryArena *buffer, char *s)
 {
   char *out = 0;
   if (buffer)
@@ -399,7 +399,7 @@ isSubstring(char *full, char* sub, b32 case_sensitive=true)
 inline void
 myprint()
 {
-  printToBuffer(0, "\n");
+  print(0, "\n");
 }
 
 inline void

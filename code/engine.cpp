@@ -26,24 +26,24 @@ myprint(RewriteRule *rewrite)
 {
   for (; rewrite; rewrite = rewrite->next)
   {
-    printAst(0, rewrite->lhs, {});
-    printToBuffer(0, " => ");
-    printAst(0, rewrite->rhs, {});
+    print(0, rewrite->lhs, {});
+    print(0, " => ");
+    print(0, rewrite->rhs, {});
     if (rewrite->next)
-      printToBuffer(0, ", ");
+      print(0, ", ");
   }
 }
 
 inline void
 myprint(Value *in0)
 {
-  printAst(0, in0, {});
+  print(0, in0, {});
 }
 
 inline void
 myprint(Ast *in0)
 {
-  printAst(0, in0, {});
+  print(0, in0, {});
 }
 
 inline void
@@ -109,7 +109,7 @@ paramImplied(ArrowV *arrow, s32 param_id)
 
 // prints both Composite and CompositeV
 inline void
-printComposite(MemoryArena *buffer, void *in0, PrintOptions opt)
+printComposite(MemoryArena *buffer, void *in0, b32 is_value, PrintOptions opt)
 {
   void  *op;
   s32    arg_count;
@@ -118,28 +118,26 @@ printComposite(MemoryArena *buffer, void *in0, PrintOptions opt)
   Ast   *ast   = (Ast *)in0;
   Value *value = (Value *)in0;
   ArrowV *op_type = 0;
-  if (Composite *in = castAst(ast, Composite))
+  if (is_value)
   {
+    CompositeV *in = castValue(value, CompositeV);
     op       = in->op;
     raw_args = (void **)in->args;
-    if (Constant *op = castAst(in->op, Constant))
-    {
-      op_type = castAst(op->value->type, ArrowV);
-      assert(op_type);
-    }
-    else
-      arg_count = in->arg_count;
-  }
-  else if (CompositeV *in = castAst(value, CompositeV))
-  {
-    op       = in->op;
-    raw_args = (void **)in->args;
-    op_type  = castAst(in->op->type, ArrowV);
+    op_type  = castValue(in->op->type, ArrowV);
     assert(op_type);
   }
   else
   {
-    invalidCodePath;
+    Composite *in = castAst(ast, Composite);
+    op       = in->op;
+    raw_args = (void **)in->args;
+    if (Constant *op = castAst(in->op, Constant))
+    {
+      op_type = castValue(op->value->type, ArrowV);
+      assert(op_type);
+    }
+    else
+      arg_count = in->arg_count;
   }
 
   void **args;
@@ -160,38 +158,35 @@ printComposite(MemoryArena *buffer, void *in0, PrintOptions opt)
 
   if (arg_count == 2)
   {// special path for infix operator
-    printToBuffer(buffer, "(");
-    printAst(buffer, args[0], opt);
-    printToBuffer(buffer, " ");
-    printAst(buffer, op, opt);
-    printToBuffer(buffer, " ");
-    printAst(buffer, args[1], opt);
-    printToBuffer(buffer, ")");
+    print(buffer, "(");
+    print(buffer, args[0], is_value, opt);
+    print(buffer, " ");
+    print(buffer, op, is_value, opt);
+    print(buffer, " ");
+    print(buffer, args[1], is_value, opt);
+    print(buffer, ")");
   }
   else
   {// normal pre path
-    printAst(buffer, op, opt);
-    printToBuffer(buffer, "(");
+    print(buffer, op, is_value, opt);
+    print(buffer, "(");
     for (s32 arg_id = 0; arg_id < arg_count; arg_id++)
     {
-      printAst(buffer, args[arg_id], opt);
+      print(buffer, args[arg_id], is_value, opt);
       if (arg_id < arg_count-1)
-        printToBuffer(buffer, ", ");
+        print(buffer, ", ");
     }
-    printToBuffer(buffer, ")");
+    print(buffer, ")");
   }
 }
 
-// note: prints both (built) ast and value
-forward_declare
-internal char *
-printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
+forward_declare internal char *
+print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
 {
-  Ast *in0 = (Ast *)in_void;
   char *out = buffer ? (char*)getNext(buffer) : 0;
   if (in0 == dummy_hole)
   {
-    printToBuffer(buffer, "_");
+    print(buffer, "_");
   }
   else if (in0)
   {
@@ -200,38 +195,28 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
 
     switch (in0->cat)
     {
-      case AC_StackRef:
-      {
-        StackRef *in = castAst(in0, StackRef);
-#if 0
-        printToBuffer(buffer, "%.*s<%d>", in->name.length, in->name.chars, in->stack_depth);
-#else
-        printToBuffer(buffer, in->name);
-#endif
-      } break;
-
       case AC_Identifier:
       {
-        printToBuffer(buffer, in0->token);
+        print(buffer, in0->token);
       } break;
 
       case AC_Constant:
       {
         Constant *in = castAst(in0, Constant);
         if (in->is_synthetic)
-          printAst(buffer, in->value, opt);
+          print(buffer, in->value, opt);
         else
         {
-          // printToBuffer(buffer, "<c>");
-          printToBuffer(buffer, in->a.token);
+          // print(buffer, "<c>");
+          print(buffer, in->a.token);
         }
       } break;
 
       case AC_Variable:
       {
         Variable *in = castAst(in0, Variable);
-        // printToBuffer(buffer, "%.*s[%d]", in->name.length, in->name.chars, in->stack_delta);
-        printToBuffer(buffer, in->a.token);
+        // print(buffer, "%.*s[%d]", in->name.length, in->name.chars, in->stack_delta);
+        print(buffer, in->a.token);
       } break;
 
       case AC_Sequence:
@@ -239,31 +224,30 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
         Sequence *in = castAst(in0, Sequence);
         for (s32 id = 0; id < in->count; id++)
         {
-          printAst(buffer, in->items[id], new_opt);
+          print(buffer, in->items[id], new_opt);
           if (id < in->count-1)
-            printToBuffer(buffer, "; ");
+            print(buffer, "; ");
         }
       } break;
 
       case AC_Rewrite:
       {
         Rewrite *in = castAst(in0, Rewrite);
-        printToBuffer(buffer, "rewrite ");
-        printAst(buffer, in->proof, new_opt);
+        print(buffer, "rewrite ");
+        print(buffer, in->proof, new_opt);
       } break;
 
-      case AC_CompositeV:
       case AC_Composite:
       {
-        printComposite(buffer, in0, new_opt);
+        printComposite(buffer, in0, false, new_opt);
       } break;
 
       case AC_Fork:
       {
         Fork *in = castAst(in0, Fork);
-        printToBuffer(buffer, "fork ");
-        printAst(buffer, in->subject, new_opt);
-        printToBuffer(buffer, " {");
+        print(buffer, "fork ");
+        print(buffer, in->subject, new_opt);
+        print(buffer, " {");
         Union *form = in->uni;
         for (s32 ctor_id = 0;
              ctor_id < form->ctor_count;
@@ -272,19 +256,19 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
           Constructor *subset = form->ctors + ctor_id;
           switch (subset->v.type->cat)
           {// print pattern
-            case AC_Union:
+            case VC_Union:
             {
-              printAst(buffer, &subset->v, new_opt);
+              print(buffer, &subset->v, new_opt);
             } break;
 
-            case AC_ArrowV:
+            case VC_ArrowV:
             {
-              printAst(buffer, &subset->v, new_opt);
-              printToBuffer(buffer, " ");
-              ArrowV *signature = castAst(subset->v.type, ArrowV);
+              print(buffer, &subset->v, new_opt);
+              print(buffer, " ");
+              ArrowV *signature = castValue(subset->v.type, ArrowV);
               for (s32 param_id = 0; param_id < signature->param_count; param_id++)
               {
-                printToBuffer(buffer, " ");
+                print(buffer, " ");
               }
             } break;
 
@@ -292,135 +276,182 @@ printAst(MemoryArena *buffer, void *in_void, PrintOptions opt)
               invalidCodePath;
           }
 
-          printToBuffer(buffer, ": ");
-          printAst(buffer, in->bodies[ctor_id], new_opt);
+          print(buffer, ": ");
+          print(buffer, in->bodies[ctor_id], new_opt);
           if (ctor_id != form->ctor_count-1)
-            printToBuffer(buffer, ", ");
+            print(buffer, ", ");
         }
-        printToBuffer(buffer, "}");
+        print(buffer, "}");
       } break;
 
       case AC_Arrow:
       {
         Arrow *in = castAst(in0, Arrow);
-        printToBuffer(buffer, "(");
+        print(buffer, "(");
         for (int param_id = 0;
              param_id < in->param_count;
              param_id++)
         {
-          printToBuffer(buffer, in->param_names[param_id]);
-          printToBuffer(buffer, ": ");
-          printAst(buffer, in->param_types[param_id], new_opt);
+          print(buffer, in->param_names[param_id]);
+          print(buffer, ": ");
+          print(buffer, in->param_types[param_id], new_opt);
           if (param_id < in->param_count-1)
-            printToBuffer(buffer, ", ");
+            print(buffer, ", ");
         }
-        printToBuffer(buffer, ") -> ");
+        print(buffer, ") -> ");
 
-        printAst(buffer, in->out_type, new_opt);
-      } break;
-
-      case AC_Union:
-      {
-        Union *in = castAst(in0, Union);
-        if (opt.detailed)
-        {
-          printToBuffer(buffer, in->name);
-
-          if (opt.print_type)
-          {
-            printToBuffer(buffer, ": ");
-            printAst(buffer, in->v.type, new_opt);
-          }
-
-          if (in->ctor_count)
-          {
-            printToBuffer(buffer, " {");
-            for (s32 ctor_id = 0; ctor_id < in->ctor_count; ctor_id++)
-            {
-              Constructor *subset = in->ctors + ctor_id;
-              printToBuffer(buffer, subset->name);
-              printToBuffer(buffer, ": ");
-              printAst(buffer, subset->v.type, new_opt);
-            }
-            printToBuffer(buffer, " }");
-          }
-        }
-        else
-          printToBuffer(buffer, in->name);
-      } break;
-
-      case AC_FunctionV:
-      {
-        FunctionV *in = castAst(in0, FunctionV);
-        printToBuffer(buffer, in->a.token);
-        if (opt.detailed)
-        {
-          printToBuffer(buffer, " { ");
-          printAst(buffer, in->body, new_opt);
-          printToBuffer(buffer, " }");
-        }
-      } break;
-
-      case AC_ArrowV:
-      {
-        ArrowV *in = castAst(in0, ArrowV);
-        printAst(buffer, &in->a, opt);
-      } break;
-
-      case AC_BuiltinEqual:
-      {
-        printToBuffer(buffer, "=");
-      } break;
-
-      case AC_BuiltinSet:
-      {
-        printToBuffer(buffer, "Set");
-      } break;
-
-      case AC_BuiltinType:
-      {
-        printToBuffer(buffer, "Type");
+        print(buffer, in->out_type, new_opt);
       } break;
 
       case AC_Accessor:
       {
         Accessor *in = castAst(in0, Accessor);
-        printAst(buffer, in->record, new_opt);
-        printToBuffer(buffer, ".");
-        printToBuffer(buffer, in->member);
-      } break;
-
-      case AC_AccessorV:
-      {
-        AccessorV *in = castAst(in0, AccessorV);
-        printAst(buffer, in->record, new_opt);
-        printToBuffer(buffer, ".");
-        ArrowV *op_type = castAst(in->record->op->type, ArrowV);
-        printToBuffer(buffer, op_type->param_names[in->param_id]);
-      }
-
-      case AC_Constructor:
-      {
-        Constructor *in = castAst(in0, Constructor);
-        printToBuffer(buffer, in->name);
-      } break;
-
-      case AC_HeapValue:
-      {
-        HeapValue *in = castAst(in0, HeapValue);
-        printToBuffer(buffer, in->name);
+        print(buffer, in->record, new_opt);
+        print(buffer, ".");
+        print(buffer, in->member);
       } break;
 
       default:
       {
-        printToBuffer(buffer, "<unimplemented category: %u>", in0->cat);
+        print(buffer, "<unimplemented category: %u>", in0->cat);
         invalidCodePath;
       } break;
     }
   }
   else
-    printToBuffer(buffer, "<null>");
+    print(buffer, "<null>");
   return out;
+}
+
+forward_declare internal char *
+print(MemoryArena *buffer, Value *in0, PrintOptions opt)
+{
+  char *out = buffer ? (char*)getNext(buffer) : 0;
+  if (in0)
+  {
+    PrintOptions new_opt = opt;
+    new_opt.detailed = false;
+
+    switch (in0->cat)
+    {
+      case VC_StackValue:
+      {
+        StackValue *in = castValue(in0, StackValue);
+#if 0
+        print(buffer, "%.*s<%d>", in->name.length, in->name.chars, in->stack_depth);
+#else
+        print(buffer, in->name);
+#endif
+      } break;
+
+      case VC_CompositeV:
+      {
+        printComposite(buffer, in0, true, new_opt);
+      } break;
+
+      case VC_Union:
+      {
+        Union *in = castValue(in0, Union);
+        if (opt.detailed)
+        {
+          print(buffer, in->name);
+
+          if (opt.print_type)
+          {
+            print(buffer, ": ");
+            print(buffer, in->v.type, new_opt);
+          }
+
+          if (in->ctor_count)
+          {
+            print(buffer, " {");
+            for (s32 ctor_id = 0; ctor_id < in->ctor_count; ctor_id++)
+            {
+              Constructor *subset = in->ctors + ctor_id;
+              print(buffer, subset->name);
+              print(buffer, ": ");
+              print(buffer, subset->v.type, new_opt);
+            }
+            print(buffer, " }");
+          }
+        }
+        else
+          print(buffer, in->name);
+      } break;
+
+      case VC_FunctionV:
+      {
+        FunctionV *in = castValue(in0, FunctionV);
+        print(buffer, in->a.token);
+        if (opt.detailed)
+        {
+          print(buffer, " { ");
+          print(buffer, in->body, new_opt);
+          print(buffer, " }");
+        }
+      } break;
+
+      case VC_ArrowV:
+      {
+        ArrowV *in = castValue(in0, ArrowV);
+        print(buffer, &in->a, opt);
+      } break;
+
+      case VC_BuiltinEqual:
+      {
+        print(buffer, "=");
+      } break;
+
+      case VC_BuiltinSet:
+      {
+        print(buffer, "Set");
+      } break;
+
+      case VC_BuiltinType:
+      {
+        print(buffer, "Type");
+      } break;
+
+      case VC_AccessorV:
+      {
+        AccessorV *in = castValue(in0, AccessorV);
+        print(buffer, &in->record->v, new_opt);
+        print(buffer, ".");
+        ArrowV *op_type = castValue(in->record->op->type, ArrowV);
+        print(buffer, op_type->param_names[in->param_id]);
+      }
+
+      case VC_Constructor:
+      {
+        Constructor *in = castValue(in0, Constructor);
+        print(buffer, in->name);
+      } break;
+
+      case VC_HeapValue:
+      {
+        HeapValue *in = castValue(in0, HeapValue);
+        print(buffer, in->name);
+      } break;
+
+      default:
+      {
+        print(buffer, "<unimplemented category: %u>", in0->cat);
+        invalidCodePath;
+      } break;
+    }
+  }
+  else
+    print(buffer, "<null>");
+  return out;
+}
+
+forward_declare internal char *
+print(MemoryArena *buffer, void *in0, b32 is_value, PrintOptions opt)
+{
+  if (is_value)
+    return print(buffer, (Value*)in0, opt);
+  else
+    return print(buffer, (Ast*)in0, opt);
 }
 
 inline void
@@ -462,8 +493,8 @@ equalB32(Value *lhs, Value *rhs)
 inline b32
 isConstructor(Value *in0)
 {
-  if (CompositeV *in = castAst(in0, CompositeV))
-    return in->op->cat == AC_Constructor;
+  if (CompositeV *in = castValue(in0, CompositeV))
+    return in->op->cat == VC_Constructor;
   else
     return false;
 }
@@ -520,18 +551,18 @@ equalTrinary(Value *lhs0, Value *rhs0)
   {
     switch (lhs0->cat)
     {
-      case AC_StackRef:
+      case VC_StackValue:
       {
-        StackRef* lhs = castAst(lhs0, StackRef);
-        StackRef* rhs = castAst(rhs0, StackRef);
+        StackValue* lhs = castValue(lhs0, StackValue);
+        StackValue* rhs = castValue(rhs0, StackValue);
         if ((lhs->stack_depth == rhs->stack_depth) && (lhs->id == rhs->id))
           out = Trinary_True;
       } break;
 
-      case AC_ArrowV:
+      case VC_ArrowV:
       {
-        ArrowV* lhs = castAst(lhs0, ArrowV);
-        ArrowV* rhs = castAst(rhs0, ArrowV);
+        ArrowV* lhs = castValue(lhs0, ArrowV);
+        ArrowV* rhs = castValue(rhs0, ArrowV);
 
         s32 param_count = lhs->param_count;
         if (rhs->param_count == param_count)
@@ -564,15 +595,15 @@ equalTrinary(Value *lhs0, Value *rhs0)
           out = Trinary_False;
       } break;
 
-      case AC_CompositeV:
+      case VC_CompositeV:
       {
-        CompositeV *lhs = castAst(lhs0, CompositeV);
-        CompositeV *rhs = castAst(rhs0, CompositeV);
+        CompositeV *lhs = castValue(lhs0, CompositeV);
+        CompositeV *rhs = castValue(rhs0, CompositeV);
 
         Trinary op_compare = equalTrinary((lhs->op), (rhs->op));
         if ((op_compare == Trinary_False) &&
-            (lhs->op->cat == AC_Union) &&
-            (rhs->op->cat == AC_Union))
+            (lhs->op->cat == VC_Union) &&
+            (rhs->op->cat == VC_Union))
         {
           out = Trinary_False;
         }
@@ -584,22 +615,22 @@ equalTrinary(Value *lhs0, Value *rhs0)
         }
       } break;
 
-      case AC_FunctionV:
+      case VC_FunctionV:
       {// we can compare the types to eliminate negatives, but we don't care.
       } break;
 
-      case AC_Constructor:
+      case VC_Constructor:
       {
-        Constructor *lhs = castAst(lhs0, Constructor);
-        Constructor *rhs = castAst(rhs0, Constructor);
+        Constructor *lhs = castValue(lhs0, Constructor);
+        Constructor *rhs = castValue(rhs0, Constructor);
         assert(lhs->v.type == rhs->v.type);
         out = (Trinary)(lhs->id == rhs->id);
       } break;
 
-      case AC_AccessorV:
+      case VC_AccessorV:
       {
-        AccessorV *lhs = castAst(lhs0, AccessorV);
-        AccessorV *rhs = castAst(rhs0, AccessorV);
+        AccessorV *lhs = castValue(lhs0, AccessorV);
+        AccessorV *rhs = castValue(rhs0, AccessorV);
         // NOTE: would loop forever if we did this
         // if (identicalB32(&lhs->record->v, &rhs->record->v))
         if (lhs->record == rhs->record)
@@ -607,8 +638,8 @@ equalTrinary(Value *lhs0, Value *rhs0)
             out = Trinary_True;
       } break;
 
-      case AC_HeapValue:
-      case AC_Union:
+      case VC_HeapValue:
+      case VC_Union:
       {
         out = Trinary_Unknown;
       } break;
@@ -616,8 +647,8 @@ equalTrinary(Value *lhs0, Value *rhs0)
       invalidDefaultCase;
     }
   }
-  else if (((lhs0->cat == AC_Constructor) && isConstructor(rhs0)) ||
-           ((rhs0->cat == AC_Constructor) && isConstructor(lhs0)))
+  else if (((lhs0->cat == VC_Constructor) && isConstructor(rhs0)) ||
+           ((rhs0->cat == VC_Constructor) && isConstructor(lhs0)))
   {
     out = Trinary_False;
   }
@@ -743,29 +774,9 @@ normalize(Environment env, Value *in0)
 
   switch (in0->cat)
   {
-    case AC_Variable:
+    case VC_CompositeV:
     {
-      Variable *in = castAst(in0, Variable);
-      Stack *stack = env.stack;
-      for (s32 delta = 0; delta < in->stack_delta ; delta++)
-        stack = stack->outer;
-      if (!(in->id < stack->count))
-      {
-        myprint(env.stack);
-        invalidCodePath;
-      }
-      out0 = stack->args[in->id];
-    } break;
-
-    case AC_Constant:
-    {
-      Constant *in = castAst(in0, Constant);
-      out0 = in->value;
-    } break;
-
-    case AC_CompositeV:
-    {
-      CompositeV *in = castAst(in0, CompositeV);
+      CompositeV *in = castValue(in0, CompositeV);
 
       Value **norm_args = pushArray(arena, in->arg_count, Value*);
       for (auto arg_id = 0;
@@ -777,9 +788,9 @@ normalize(Environment env, Value *in0)
       }
 
       Value *norm_op = normalize(env, in->op);
-      if (norm_op->cat == AC_FunctionV)
+      if (norm_op->cat == VC_FunctionV)
       {// Function application
-        FunctionV *funv = castAst(norm_op, FunctionV);
+        FunctionV *funv = castValue(norm_op, FunctionV);
         if (funv->body != &dummy_function_under_construction)
         {
           Environment fun_env = env;
@@ -802,8 +813,8 @@ normalize(Environment env, Value *in0)
             out0 = &builtins.False->v;
         }
         else
-          assert((norm_op->cat == AC_Constructor) ||
-                 (norm_op->cat == AC_StackRef));
+          assert((norm_op->cat == VC_Constructor) ||
+                 (norm_op->cat == VC_StackValue));
       }
 
       if (!out0)
@@ -818,23 +829,22 @@ normalize(Environment env, Value *in0)
       assert(out0->cat);
     } break;
 
-    case AC_AccessorV:
+    case VC_AccessorV:
     {
-      AccessorV *in = castAst(in0, AccessorV);
+      AccessorV *in = castValue(in0, AccessorV);
       out0 = in->record->args[in->param_id];
     } break;
 
     // todo #speed most of these don't need rewriting.
-    case AC_ArrowV:
-    case AC_DummyHole:
-    case AC_Constructor:
-    case AC_BuiltinSet:
-    case AC_BuiltinType:
-    case AC_BuiltinEqual:
-    case AC_FunctionV:
-    case AC_StackRef:
-    case AC_Union:
-    case AC_HeapValue:
+    case VC_ArrowV:
+    case VC_Constructor:
+    case VC_BuiltinSet:
+    case VC_BuiltinType:
+    case VC_BuiltinEqual:
+    case VC_FunctionV:
+    case VC_StackValue:
+    case VC_Union:
+    case VC_HeapValue:
     {
       out0 = in0;
     } break;
@@ -940,7 +950,7 @@ replaceFreeVars(Environment *env, Ast *in0, s32 stack_offset)
 
     case AC_Rewrite:
     case AC_Let:
-    case AC_Function:
+    case AC_FunctionDecl:
     case AC_Sequence:
     case AC_Fork:
     {
@@ -1014,7 +1024,7 @@ hasFreeVars(Environment *env, Ast *in0, s32 stack_offset)
 
     case AC_Rewrite:
     case AC_Let:
-    case AC_Function:
+    case AC_FunctionDecl:
     case AC_Sequence:
     case AC_Fork:
     {
@@ -1093,7 +1103,7 @@ evaluateMain(Environment env, Ast *in0, b32 expect_failure)
       {
         if (Value *norm_op = evaluateMain(env, in->op, expect_failure))
         {
-          ArrowV *signature = castAst(norm_op->type, ArrowV);
+          ArrowV *signature = castValue(norm_op->type, ArrowV);
           extendStack(&env, in->arg_count, norm_args);
           if (Value *return_type = evaluateMain(env, signature->out_type, expect_failure))
           {
@@ -1117,16 +1127,16 @@ evaluateMain(Environment env, Ast *in0, b32 expect_failure)
       {
         switch (subject->cat)
         {// note: we fail if the fork is undetermined
-          case AC_Constructor:
+          case VC_Constructor:
           {
-            Constructor *ctor = castAst(subject, Constructor);
+            Constructor *ctor = castValue(subject, Constructor);
             out0 = evaluateMain(env, in->bodies[ctor->id], expect_failure);
           } break;
 
-          case AC_CompositeV:
+          case VC_CompositeV:
           {
-            CompositeV *record = castAst(subject, CompositeV);
-            if (Constructor *ctor = castAst(record->op, Constructor))
+            CompositeV *record = castValue(subject, CompositeV);
+            if (Constructor *ctor = castValue(record->op, Constructor))
             {
               out0 = evaluateMain(env, in->bodies[ctor->id], expect_failure);
             }
@@ -1170,9 +1180,9 @@ evaluateMain(Environment env, Ast *in0, b32 expect_failure)
               failed = true;
           } break;
 
-          case AC_Function:
+          case AC_FunctionDecl:
           {
-            Function  *item        = castAst(item0, Function);
+            FunctionDecl  *item        = castAst(item0, FunctionDecl);
             if (Value *signature_v = evaluateMain(env, &item->signature->a, expect_failure))
             {
               FunctionV *funv = newValue(arena, FunctionV, signature_v);
@@ -1199,14 +1209,14 @@ evaluateMain(Environment env, Ast *in0, b32 expect_failure)
       {
         // note: it has to be a record, otw we wouldn't know what type to
         // return.
-        CompositeV *record = castAst(record0, CompositeV);
+        CompositeV *record = castValue(record0, CompositeV);
         out0 = record->args[in->param_id];
       }
     } break;
 
-    case AC_Function:
+    case AC_FunctionDecl:
     {
-      Function *in = castAst(in0, Function);
+      FunctionDecl *in = castAst(in0, FunctionDecl);
       if (Value *signature = evaluateMain(env, &in->signature->a, expect_failure))
       {
         FunctionV *out = newValue(env.arena, FunctionV, signature);
@@ -1272,7 +1282,7 @@ addLocalBinding(LocalBindings *bindings, Token *key)
 inline Constructor *
 getSoleConstructor(Value *type)
 {
-  if (Union *uni = castAst(type, Union))
+  if (Union *uni = castValue(type, Union))
   {
     if (uni->ctor_count == 1)
       // sole constructor
@@ -1299,9 +1309,9 @@ introduceOnHeap(Environment *env, String base_name, Constructor *ctor)
       for (s32 field_id=0; field_id < param_count; field_id++)
       {
         size_t original_used = temp_arena->used;
-        char *field_name_chars = printToBuffer(temp_arena, base_name);
-        printToBuffer(temp_arena, ".");
-        printToBuffer(temp_arena, ctor_sig->param_names[field_id]);
+        char *field_name_chars = print(temp_arena, base_name);
+        print(temp_arena, ".");
+        print(temp_arena, ctor_sig->param_names[field_id]);
         // todo: hack to get the string length back, so clunky.
         String field_name = String{field_name_chars, (s32)(temp_arena->used - original_used)};
 
@@ -1324,7 +1334,7 @@ introduceOnHeap(Environment *env, String base_name, Constructor *ctor)
   }
   else
   {// rare case: weird type with single enum
-    assert(ctor->v.type->cat == AC_Union);
+    assert(ctor->v.type->cat == VC_Union);
     out = &ctor->v;
   }
   return out;
@@ -1342,7 +1352,7 @@ introduceOnStack(Environment *env, Token *name, Ast *type)
   }
   else
   {
-    StackRef *ref    = newValue(temp_arena, StackRef, typev);
+    StackValue *ref    = newValue(temp_arena, StackValue, typev);
     ref->name        = *name;
     ref->id          = env->stack->count;  // :stack-ref-id-has-significance
     ref->stack_depth = env->stack->depth;
@@ -1551,11 +1561,11 @@ addRewrite(Environment *env, Value *lhs0, Value *rhs0)
   {
     b32 added = false;
 
-    if (CompositeV *lhs = castAst(lhs0, CompositeV))
-      if (CompositeV *rhs = castAst(rhs0, CompositeV))
+    if (CompositeV *lhs = castValue(lhs0, CompositeV))
+      if (CompositeV *rhs = castValue(rhs0, CompositeV))
     {
-      if ((lhs->op->cat == AC_Union) &&
-          (rhs->op->cat == AC_Union))
+      if ((lhs->op->cat == VC_Union) &&
+          (rhs->op->cat == VC_Union))
       {
         assert(equalB32((lhs->op), (rhs->op)));
         for (s32 arg_id = 0; lhs->arg_count; arg_id++)
@@ -1571,10 +1581,10 @@ addRewrite(Environment *env, Value *lhs0, Value *rhs0)
     }
 
 #if 0
-    printToBuffer(0, "added rewrite: ");
-    printAst(0, lhs, {});
-    printToBuffer(0, " -> ");
-    printAst(0, rhs, {});
+    print(0, "added rewrite: ");
+    print(0, lhs, {});
+    print(0, " -> ");
+    print(0, rhs, {});
     printNewline();
 #endif
   }
@@ -1709,10 +1719,10 @@ deepCopy(MemoryArena *arena, Ast *in0)
       out0 = &out->a;
     } break;
 
-    case AC_Function:
+    case AC_FunctionDecl:
     {
-      Function *in = castAst(in0, Function);
-      Function *out = copyStruct(arena, in);
+      FunctionDecl *in = castAst(in0, FunctionDecl);
+      FunctionDecl *out = copyStruct(arena, in);
       out->signature = castAst(deepCopy(arena, &in->signature->a), Arrow);
       out->body      = deepCopy(arena, in->body);
       out0 = &out->a;
@@ -1862,13 +1872,13 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
           else wipeError();
         }
         if (!out)
-          parseError(in->op, "cannot find suitable function overload");
+          parseError(in->op, "there is no suitable function overload");
       }
       else if (Expression op = buildExpression(env, in->op, dummy_holev))
       {
         in->op = op.ast;
 
-        if (ArrowV *signature = castAst(op.value->type, ArrowV))
+        if (ArrowV *signature = castValue(op.value->type, ArrowV))
         {
           if (signature->param_count != in->arg_count)
           {
@@ -1933,18 +1943,18 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                       // todo: #incomplete we need a full-fledged "Value to Ast"
                       // function. HOWEVER that still wouldn't work for
                       // heap-introduced values.
-                      case AC_StackRef:
+                      case VC_StackValue:
                       {
-                        StackRef *ref = castAst(arg.value->type, StackRef);
+                        StackValue *ref = castValue(arg.value->type, StackValue);
                         Variable *synthetic = newAst(arena, Variable, &ref->name);
                         synthetic0 = &synthetic->a;
                         synthetic->stack_delta = env->stack->depth - ref->stack_depth;
                         synthetic->id          = ref->id;  // :stack-ref-id-has-significance
                       } break;
 
-                      case AC_BuiltinSet:
-                      case AC_BuiltinType:
-                      case AC_Union:
+                      case VC_BuiltinSet:
+                      case VC_BuiltinType:
+                      case VC_Union:
                       {
                         Constant *synthetic = newSyntheticConstant(arena, arg.value->type);
                         synthetic0 = &synthetic->a;
@@ -2012,7 +2022,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       Let *in = castAst(in0, Let);
       if (Expression build_rhs = buildExpression(env, in->rhs, dummy_holev))
       {
-        addLocalBinding(env->bindings, &in->lhs.a.token);
+        addLocalBinding(env->bindings, &in->lhs);
         in->rhs = build_rhs.ast;
         addStackValue(env, evaluate(*env, in->rhs));
 
@@ -2021,9 +2031,9 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       }
     } break;
 
-    case AC_Function:
+    case AC_FunctionDecl:
     {// NOTE: common builder for both local and global function.
-      Function *in = castAst(in0, Function);
+      FunctionDecl *in = castAst(in0, FunctionDecl);
 
       char *debug_name = "+";
       if (equal(in->a.token, debug_name))
@@ -2083,7 +2093,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       {
         in->proof = rewrite.ast;
         b32 rule_valid = false;
-        if (CompositeV *rule = castAst(rewrite.value->type, CompositeV))
+        if (CompositeV *rule = castValue(rewrite.value->type, CompositeV))
         {
           if (rule->op == builtins.equal)
           {
@@ -2138,7 +2148,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
         in->subject = subject.ast;
         s32 case_count = in->case_count;
 
-        if (Union *uni = castAst(subject.value->type, Union))
+        if (Union *uni = castValue(subject.value->type, Union))
         {
           if (uni->ctor_count == case_count)
           {
@@ -2172,7 +2182,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                      lookup_id++)
                 {// trying to find the intended constructor of this type, from
                  // the global pool of values.
-                  if (Constructor *candidate = castAst(lookup->values[lookup_id], Constructor))
+                  if (Constructor *candidate = castValue(lookup->values[lookup_id], Constructor))
                   {
                     if (equalB32(candidate->v.type, subject.value->type)) 
                     {
@@ -2180,7 +2190,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
                     }
                     else
                     {// NOTE: rn we DON'T support the weird inductive proposition thingie.
-                      if (ArrowV *ctor_sig = castAst(candidate->v.type, ArrowV))
+                      if (ArrowV *ctor_sig = castValue(candidate->v.type, ArrowV))
                       {
                         if (Constant *constant = castAst(ctor_sig->out_type, Constant))
                         {
@@ -2235,8 +2245,10 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
               in->bodies = correct_bodies;
 
               out.ast   = in0;
-              out.value = pushStruct(arena, Value); // nocheckin: explain yourself
-              out.value->cat  = AC_Null;
+              // nocheckin: explain yourself: well forks aren't expressions, so
+              // "buildExpression" would never have to return this.
+              out.value = pushStruct(arena, Value);
+              out.value->cat  = VC_Null;
               out.value->type = common_type;
             }
           }
@@ -2259,7 +2271,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       {
         Ast   *record   = build_record.ast;
         Value *recordv0 = evaluate(*env, record);
-        if (CompositeV *recordv = castAst(recordv0, CompositeV))
+        if (CompositeV *recordv = castValue(recordv0, CompositeV))
         {
           in->record = record;
           Arrow *op_type = toArrow(recordv->op->type);
@@ -2386,7 +2398,6 @@ parseSequence(MemoryArena *arena)
       {
         switch (keyword)
         {
-          // todo: do we really wanna constraint it to only appear in sequence?
           case Keyword_Rewrite:
           {
             Rewrite *out = newAst(arena, Rewrite, &token);
@@ -2417,7 +2428,7 @@ parseSequence(MemoryArena *arena)
           case TC_DoubleColon:
           {
             pushContextName("function");
-            Function *fun = parseFunction(arena, name);
+            FunctionDecl *fun = parseFunction(arena, name);
             ast = &fun->a;
             popContext();
           } break;
@@ -2429,7 +2440,7 @@ parseSequence(MemoryArena *arena)
 
             Let *let = newAst(arena, Let, name);
             ast = &let->a;
-            initAst(&let->lhs.a, AC_Identifier, name);
+            let->lhs = *name;
             let->rhs = rhs;
 
             popContext();
@@ -2487,11 +2498,11 @@ parseSequence(MemoryArena *arena)
 }
 
 forward_declare
-internal Function *
+internal FunctionDecl *
 parseFunction(MemoryArena *arena, Token *name)
 {
   pushContext;
-  Function *out = newAst(arena, Function, name);
+  FunctionDecl *out = newAst(arena, FunctionDecl, name);
 
   assert(isIdentifier(name));
   char *debug_name = "testLocalVariable";
@@ -2929,14 +2940,14 @@ parseUnionCase(MemoryArena *arena, Union *uni)
       if (Ast *parsed_type = parseExpressionFull(arena).ast)
       {
         Value *norm_type0 = evaluate(arena, parsed_type);
-        initValue(&out->v, AC_Constructor, norm_type0);
+        initValue(&out->v, VC_Constructor, norm_type0);
         b32 valid_type = false;
-        if (Union *type = castAst(norm_type0, Union))
+        if (Union *type = castValue(norm_type0, Union))
         {
           if (type == uni)
             valid_type = true;
         }
-        else if (ArrowV *type = castAst(norm_type0, ArrowV))
+        else if (ArrowV *type = castValue(norm_type0, ArrowV))
         {
           if (getFormOf(type->out_type) == uni)
             valid_type = true;
@@ -2958,7 +2969,7 @@ parseUnionCase(MemoryArena *arena, Union *uni)
     {// constructor as a sole tag
       if (uni->v.type == builtins.Set)
       {
-        initValue(&out->v, AC_Constructor, &uni->v);
+        initValue(&out->v, VC_Constructor, &uni->v);
         out->name = tag;
         out->id   = ctor_id;
       }
@@ -2988,7 +2999,7 @@ parseUnion(MemoryArena *arena, Token *name)
     if (Expression type_parsing = parseExpressionFull(arena))
     {
       Value *norm_type = evaluate(arena, type_parsing.ast);
-      if (ArrowV *arrow = castAst(norm_type, ArrowV))
+      if (ArrowV *arrow = castValue(norm_type, ArrowV))
       {
         if (Constant *return_type = castAst(arrow->out_type, Constant))
           if (return_type->value == builtins.Set)
@@ -3088,8 +3099,8 @@ parseTopLevel(EngineState *state)
           else
           {
             auto path_buffer = arena;
-            char *load_path = printToBuffer(path_buffer, global_tokenizer->directory);
-            printToBuffer(path_buffer, file.text);
+            char *load_path = print(path_buffer, global_tokenizer->directory);
+            print(path_buffer, file.text);
             path_buffer->used++;
 
             // note: this could be made more efficient but we don't care.
@@ -3145,9 +3156,9 @@ parseTopLevel(EngineState *state)
             if (auto parsing = parseExpressionFull(temp_arena))
             {
               Value *reduced = normalize(temp_arena, evaluate(temp_arena, parsing.ast));
-              printAst(0, reduced, {.detailed=true});
-              printToBuffer(0, ": ");
-              printAst(0, parsing.value->type, {});
+              print(0, reduced, {.detailed=true});
+              print(0, ": ");
+              print(0, parsing.value->type, {});
               myprint();
             }
             requireChar(';');
@@ -3157,9 +3168,9 @@ parseTopLevel(EngineState *state)
           {
             if (auto parsing = parseExpressionFull(temp_arena))
             {
-              printAst(0, parsing.ast, {.detailed=true});
-              printToBuffer(0, ": ");
-              printAst(0, parsing.value->type, {});
+              print(0, parsing.ast, {.detailed=true});
+              print(0, ": ");
+              print(0, parsing.value->type, {});
               myprint();
             }
             requireChar(';');
@@ -3169,7 +3180,7 @@ parseTopLevel(EngineState *state)
           {
             if (Ast *exp = parseExpression(temp_arena))
             {
-              char *output = printAst(temp_arena, exp, {.detailed=true, .print_type=true});
+              char *output = print(temp_arena, exp, {.detailed=true, .print_type=true});
               printf("%s\n", output);
             }
             requireChar(';');
@@ -3228,7 +3239,7 @@ parseTopLevel(EngineState *state)
               nextToken();
               parseRecord(arena);
             }
-            else if (Function *fun = parseFunction(arena, name))
+            else if (FunctionDecl *fun = parseFunction(arena, name))
             {
               buildExpressionGlobal(arena, &fun->a);
             }
@@ -3333,18 +3344,18 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
           {
             case AttachmentType_Ast:
             {
-              printAst(0, (Ast*)attachment.p, {});
+              print(0, (Ast*)attachment.p, {});
             } break;
 
             case AttachmentType_Value:
             {
-              printAst(0, (Value*)attachment.p, {});
+              print(0, (Value*)attachment.p, {});
             } break;
 
             case AttachmentType_Token:
             {
               Token *token = (Token*)attachment.p;
-              printToBuffer(0, token->text);
+              print(0, token->text);
             } break;
 
             case AttachmentType_TypeMatcher:
@@ -3354,18 +3365,18 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
               {
                 case MC_Unknown:
                 {
-                  printToBuffer(0, "<any type>");
+                  print(0, "<any type>");
                 };
 
                 case MC_Exact:
                 {
-                  printAst(0, matcher->Exact, {});
+                  print(0, matcher->Exact, {});
                 } break;
 
                 case MC_OutType:
                 {
                   printf("? -> ");
-                  printAst(0, matcher->OutType, {});
+                  print(0, matcher->OutType, {});
                 } break;
               }
             } break;
@@ -3425,13 +3436,13 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
       b32 success = interpretFile(state, platformGetFileFullPath(arena, "../data/builtins.rea"), false);
       assert(success);
 
-      ArrowV *equal_type = castAst(lookupBuiltinGlobalName("equal_type"), ArrowV);
+      ArrowV *equal_type = castValue(lookupBuiltinGlobalName("equal_type"), ArrowV);
       builtins.equal = newValue(arena, BuiltinEqual, &equal_type->v);
       addBuiltinGlobalBinding("=", builtins.equal);
 
-      builtins.True  = castAst(lookupBuiltinGlobalName("True"), Union);
-      builtins.truth = castAst(lookupBuiltinGlobalName("truth"), Constructor);
-      builtins.False = castAst(lookupBuiltinGlobalName("False"), Union);
+      builtins.True  = castValue(lookupBuiltinGlobalName("True"), Union);
+      builtins.truth = castValue(lookupBuiltinGlobalName("truth"), Constructor);
+      builtins.False = castValue(lookupBuiltinGlobalName("False"), Union);
     }
   }
 
@@ -3460,9 +3471,9 @@ union astdbg
   Arrow      Arrow;
   ArrowV     ArrowV;
   Union      Form;
-  Function   Function;
+  FunctionDecl   Function;
   FunctionV  FunctionV;
-  StackRef   StackRef;
+  StackValue   StackRef;
   Accessor   Accessor;
   // AccessorV  AccessorV;
 };
