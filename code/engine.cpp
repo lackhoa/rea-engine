@@ -255,28 +255,7 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
              ctor_id++)
         {
           Constructor *subset = form->ctors + ctor_id;
-          switch (subset->v.type->cat)
-          {// print pattern
-            case VC_Union:
-            {
-              print(buffer, &subset->v, new_opt);
-            } break;
-
-            case VC_ArrowV:
-            {
-              print(buffer, &subset->v, new_opt);
-              print(buffer, " ");
-              ArrowV *signature = castValue(subset->v.type, ArrowV);
-              for (s32 param_id = 0; param_id < signature->param_count; param_id++)
-              {
-                print(buffer, " ");
-              }
-            } break;
-
-            default:
-              invalidCodePath;
-          }
-
+          print(buffer, &subset->v, new_opt);
           print(buffer, ": ");
           print(buffer, &in->bodies[ctor_id]->a, new_opt);
           if (ctor_id != form->ctor_count-1)
@@ -1267,11 +1246,9 @@ introduceOnHeap(Environment *env, String base_name, Constructor *ctor)
       for (s32 field_id=0; field_id < param_count; field_id++)
       {
         size_t original_used = temp_arena->used;
-        char *field_name_chars = print(temp_arena, base_name);
-        print(temp_arena, ".");
-        print(temp_arena, ctor_sig->param_names[field_id]);
-        // todo: hack to get the string length back, so clunky.
-        String field_name = String{field_name_chars, (s32)(temp_arena->used - original_used)};
+        String field_name = print(temp_arena, base_name);
+        field_name.length += print(temp_arena, ".");
+        field_name.length += print(temp_arena, ctor_sig->param_names[field_id]);
 
         Value *field_type = evaluate(temp_arena, env, ctor_sig->param_types[field_id]);
         if (Constructor *field_ctor = getSoleConstructor(field_type))
@@ -2982,18 +2959,18 @@ parseTopLevel(EngineState *state)
         case MetaDirective_load:
         {
           pushContextName("#load");
-          auto file = nextToken();
+          Token file = nextToken();
           if (file.cat != TC_StringLiteral)
             tokenError("expect \"FILENAME\"");
           else
           {
-            auto path_buffer = arena;
-            char *load_path = print(path_buffer, global_tokenizer->directory);
-            print(path_buffer, file.text);
-            path_buffer->used++;
+            size_t original_used = arena->used;
+            String load_path = print(arena, global_tokenizer->directory);
+            load_path.length += print(arena, file.text).length;
+            arena->used++;
 
             // note: this could be made more efficient but we don't care.
-            auto full_path = platformGetFileFullPath(arena, load_path);
+            FilePath full_path = platformGetFileFullPath(arena, load_path.chars);
 
             b32 already_loaded = false;
             for (auto file_list = state->file_list;

@@ -5,7 +5,8 @@
 
 global_variable MemoryArena *permanent_arena;
 global_variable MemoryArena *temp_arena;
-global_variable char *current_dir;
+global_variable String current_dir;
+global_variable __attribute__((unused)) b32 global_debug_mode;
 
 inline char *
 readEntireFile(char *file_name)
@@ -139,10 +140,10 @@ getAllCppFilesInDirectory()
   return out;
 }
 
-inline char *
+inline String
 print(MemoryArena *buffer, CXString string)
 {
-  char *out = 0;
+  String out = {};
   const char *cstring = clang_getCString(string);
   if (cstring)
   {
@@ -155,41 +156,50 @@ print(MemoryArena *buffer, CXString string)
 struct LocationList
 {
   unsigned      line;
-  char         *file_name;
+  String        file_name;
   LocationList *next;
+};
+
+struct EmbedStructs
+{
+  char *name;
+  char *fields;
+  EmbedStructs *next;
 };
 
 struct State
 {
   FILE         *out_file;
   LocationList *forward_declare_locations;
+  LocationList *embed_locations;
+  EmbedStructs *embed_structs;
 };
 
 internal char *
-printFunctionSignature(MemoryArena *arena, CXCursor cursor)
+printFunctionSignature(MemoryArena *buffer, CXCursor cursor)
 {
-  char *out = (char *)getNext(arena);
+  char *out = (char *)getNext(buffer);
 
   CXType type = clang_getCursorType(cursor);
-  print(arena, clang_getTypeSpelling(clang_getResultType(type)));
-  print(arena, " ");
+  print(buffer, clang_getTypeSpelling(clang_getResultType(type)));
+  print(buffer, " ");
 
-  print(arena, clang_getCursorSpelling(cursor));
+  print(buffer, clang_getCursorSpelling(cursor));
 
-  print(arena, "(");
+  print(buffer, "(");
   int num_args = clang_Cursor_getNumArguments(cursor);
   for (int i = 0; i < num_args; ++i)
   {
     CXCursor arg_cursor = clang_Cursor_getArgument(cursor, i);
-    print(arena, clang_getTypeSpelling(clang_getArgType(type, i)));
-    print(arena, " ");
-    print(arena, clang_getCursorSpelling(arg_cursor));
+    print(buffer, clang_getTypeSpelling(clang_getArgType(type, i)));
+    print(buffer, " ");
+    print(buffer, clang_getCursorSpelling(arg_cursor));
     if (i != num_args-1)
     {
-      print(arena, ", ");
+      print(buffer, ", ");
     }
   }
-  print(arena, ");\n\0");
+  print(buffer, ");\n\0");
 
   return out;
 }
@@ -203,10 +213,12 @@ int main()
   MemoryArena permanent_arena_ = newArena(megaBytes(128), (void *)teraBytes(2));
   VirtualAlloc(permanent_arena_.base, permanent_arena_.cap, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
   permanent_arena = &permanent_arena_;
+  MemoryArena *arena = permanent_arena;
 
-  current_dir = (char *)getNext(permanent_arena);
-  permanent_arena->used += GetCurrentDirectory(permanent_arena->cap, (char *)permanent_arena->base);
-  *(permanent_arena->base + permanent_arena->used++) = 0;
+  char *current_dir_base = (char*)getNext(arena);
+  s32 current_dir_length = GetCurrentDirectory(arena->cap, (char *)arena->base);
+  arena->used += current_dir_length + 1;
+  current_dir = {current_dir_base, current_dir_length};
 
   // FileList list = getAllCppFilesInDirectory();
   CXIndex index = clang_createIndex(0, 0);
@@ -221,6 +233,7 @@ int main()
       cursor,
       [](CXCursor cursor, CXCursor parent, CXClientData client_data)
       {
+        MemoryArena *arena = permanent_arena;
         State *state = (State *)client_data;
         (void)parent; (void)client_data;
         TemporaryMemory temp_mem = beginTemporaryMemory(temp_arena);
@@ -231,31 +244,42 @@ int main()
         clang_getExpansionLocation(location, &file, &line, 0, 0);
 
         CXChildVisitResult child_visit_result = CXChildVisit_Continue;
-        if (char *file_name = print(temp_arena, clang_getFileName(file)))
+        if (String file_name = print(temp_arena, clang_getFileName(file)))
         {
           temp_arena->used++;
           CXString path_name0 = clang_File_tryGetRealPathName(file);
-          if (char *path_name = print(temp_arena, path_name0))
+          if (String path_name = print(temp_arena, path_name0))
           {
             if (isSubstring(path_name, current_dir, false))
             {
-              CXString cursor_spelling0 = clang_getCursorSpelling(cursor);
+              temp_arena->used++;
+              CXString cursor_spelling = clang_getCursorSpelling(cursor);
               CXCursorKind kind = clang_getCursorKind(cursor);
 
               switch (kind)
               {
                 case CXCursor_MacroExpansion:
                 {// check for annotations
-                  char *cursor_spelling = print(temp_arena, cursor_spelling0);
-                  if (equal("forward_declare", cursor_spelling))
+                  String cursor_string = print(temp_arena, cursor_spelling);
+                  temp_arena->used++;
+                  if (equal("forward_declare", cursor_string))
                   {
-                    LocationList *locations = pushStruct(permanent_arena, LocationList, true);
-                    locations->line      = line;
-                    locations->next      = state->forward_declare_locations;
-                    locations->file_name = print(permanent_arena, file_name);
-                    permanent_arena->used++;
-                    state->forward_declare_locations = locations;
+                    LocationList *locs = pushStruct(arena, LocationList, true);
+                    locs->line      = line;
+                    locs->next      = state->forward_declare_locations;
+                    locs->file_name = copyString(arena, file_name);
+                    state->forward_declare_locations = locs;
                   }
+#if 1
+                  else if (equal("embed", cursor_string))
+                  {// valid inside a struct only
+                    LocationList *locs = pushStruct(arena, LocationList, true);
+                    locs->line      = line;
+                    locs->next      = state->embed_locations;
+                    locs->file_name = copyString(arena, file_name);
+                    state->embed_locations = locs;
+                  }
+#endif
                 } break;
 
                 case CXCursor_FunctionDecl:
@@ -269,7 +293,9 @@ int main()
                     if (match_line && match_file)
                     {// function was asked to be forward-declared
 #if 0
-                      printf("forward declare: %s\n", print(temp_arena, cursor_spelling0));
+                      print(0, "forward declare:");
+                      print(0, cursor_spelling);
+                      print(0, "\n");
 #endif
                       char *signature = printFunctionSignature(temp_arena, cursor);
                       fprintf(state->out_file, "%s", signature);
@@ -278,7 +304,38 @@ int main()
                   }
                 } break;
 
-                default: break;
+#if 0
+                case CXCursor_StructDecl:
+                {
+                  child_visit_result = CXChildVisit_Recurse;
+                } break;
+#endif
+
+#if 0
+                case CXCursor_FieldDecl:
+                {
+                  char *struct_name = print(arena, cursor_spelling);
+                  arena->used++;
+                  CXType   type          = clang_getCursorType(cursor);
+                  CXString type_spelling = clang_getTypeSpelling(type);
+
+                  char *field = (char *)getNext(arena);
+                  print(arena, type_spelling);
+                  print(arena, cursor_spelling);
+                  arena->used++;
+
+                  EmbedStructs *embed_structs = pushStruct(arena, EmbedStructs);
+                  embed_structs->next   = state->embed_structs;
+                  embed_structs->name   = struct_name;
+                  embed_structs->fields = field;
+                  state->embed_structs = embed_structs;
+
+                  temp_arena->used++;
+                } break;
+#endif
+
+                default:
+                  break;
               }
             }
           }

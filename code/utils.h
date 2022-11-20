@@ -186,8 +186,9 @@ inRange(s32 min, s32 val, s32 max)
 
 struct String
 {
-    char *chars;
-    s32   length;               // note: does not include the nil terminator
+  char *chars;
+  s32   length;               // note: does not include the nil terminator
+  operator bool() {return chars;}
 };
 
 inline s32
@@ -206,24 +207,30 @@ stringLength(char *string)
 inline b32
 equal(String s, const char *cstring)
 {
-    if (!s.chars)
+  if (!s.chars)
+  {
+    return false;
+  }
+  else
+  {
+    s32 at = 0;
+    for (;
+         at < s.length;
+         at++)
     {
+      if ((cstring[at] == 0) || (s.chars[at] != cstring[at]))
+      {
         return false;
+      }
     }
-    else
-    {
-        s32 at = 0;
-        for (;
-             (at < s.length);
-             at++)
-        {
-            if ((cstring[at] == 0) || (s.chars[at] != cstring[at]))
-            {
-                return false;
-            }
-        }
-        return (cstring[at] == 0);
-    }
+    return (cstring[at] == 0);
+  }
+}
+
+inline b32
+equal(const char *cstring, String s)
+{
+  return equal(s, cstring);
 }
 
 inline b32
@@ -295,20 +302,20 @@ printVA(MemoryArena *buffer, char *format, va_list arg_list)
     buffer->used += printed;
 }
 
-internal char *
-print(MemoryArena *buffer, char *format, ...)
+internal String
+print(MemoryArena *buffer, char *format, ...)  // nocheckin: everything should return string
 {
-  char *out = 0;
+  String out = {};
 
    va_list arg_list;
   __crt_va_start(arg_list, format);
 
   if (buffer)
   {
-    out = (char *)getNext(buffer);
-    char *at = out;
-    auto printed = vsprintf_s(at, (buffer->cap-1 - buffer->used), format, arg_list);
+    out.chars = (char *)getNext(buffer);
+    auto printed = vsprintf_s(out.chars, (buffer->cap-1 - buffer->used), format, arg_list);
     buffer->used += printed;
+    out.length    = printed;
     buffer->base[buffer->used] = 0; // nil-termination
   }
   else
@@ -319,19 +326,20 @@ print(MemoryArena *buffer, char *format, ...)
   return out;
 }
 
-inline char *
+inline String
 print(MemoryArena *buffer, String s)
 {
-  char *out = 0;
+  String out = {};
   if (buffer)
   {
-    out = (char *)getNext(buffer);
-    char *at = out;
+    out.chars = (char *)getNext(buffer);
+    char *at = out.chars;
     const char *c = s.chars;
     for (s32 index = 0; index < s.length; index++)
       *at++ = *c++;
     *at = 0;
-    buffer->used = at - (char *)buffer->base;
+    out.length = (s32)(at - out.chars);
+    buffer->used += out.length;
     assert(buffer->used <= buffer->cap);
   }
   else
@@ -374,7 +382,7 @@ belongsToArena(MemoryArena *arena, u8 *memory)
 
 // bunch of metaprogramming tags
 #define forward_declare
-#define embed
+#define embed(type, name)
 #define check_switch(tag)
 
 inline b32
@@ -385,11 +393,40 @@ isSubstring(char *full, char* sub, b32 case_sensitive=true)
   {
     for (char *f = full, *s = sub; *s && *f; s++, f++)
     {
-      b32 equal = case_sensitive ? (*s != *f) : (tolower(*s) != tolower(*f));
-      if (equal)
+      b32 mismatch = case_sensitive ? (*s != *f) : (tolower(*s) != tolower(*f));
+      if (mismatch)
       {
         if (*s)
           out = false;
+        break;
+      }
+    }
+  }
+  else
+    out = false;
+  return out;
+}
+
+inline b32
+isSubstring(String full, String sub, b32 case_sensitive=true)
+{
+  b32 out = true;
+  if (sub.length > full.length)
+  {
+    out = false;
+  }
+  else
+  {
+    for (s32 id = 0;
+         id < sub.length;
+         id++)
+    {
+      char s = sub.chars[id];
+      char f = full.chars[id];
+      b32 mismatch = case_sensitive ? (s != f) : (tolower(s) != tolower(f));
+      if (mismatch)
+      {
+        out = false;
         break;
       }
     }
@@ -419,4 +456,13 @@ inline b32
 inArena(MemoryArena *arena, void *p)
 {
   return ((u64)p >= (u64)arena->base && (u64)p < (u64)arena->base+arena->cap);
+}
+
+inline String
+copyString(MemoryArena *buffer, String src)
+{
+  String out;
+  out.chars  = copyArray(buffer, src.length, src.chars);
+  out.length = src.length;
+  return out;
 }

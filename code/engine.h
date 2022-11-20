@@ -15,7 +15,7 @@ global_variable MemoryArena __attribute__((unused)) *permanent_arena;
 
 // Contains both ast and values because the print functions need to operate on
 // them both.
-enum AstCategory
+enum AstCategory  // nocheckin: maybe don't prepend the name
 {
   AC_Null = 0,
   // hole left in for type-checking
@@ -275,6 +275,7 @@ newValue_(MemoryArena *arena, ValueCategory cat, Value *type, size_t size)
 struct Constructor
 {
   Value  v;
+  /* embed(Value, v) */
   Union *uni;
   Token  name;
   s32    id;
@@ -373,8 +374,7 @@ EMBED_ARROW
 struct ArrowV
 {
   Value v;
-
-  union embed
+  union
   {
     Arrow arrow;
     struct EMBED_ARROW
