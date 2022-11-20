@@ -477,8 +477,6 @@ struct Expression
   Ast   *ast;
   Value *value;
   operator bool() { return (bool)ast; }
-
-  GlobalBinding *globals;  // in case it fails, we can still work it out
 };
 
 struct Rewrite

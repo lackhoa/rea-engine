@@ -574,8 +574,8 @@ equalTrinary(Value *lhs0, Value *rhs0)
           b32 type_mismatch = false;
           for (s32 id = 0; id < param_count; id++)
           {
-            if (equalB32(evaluate(env, lhs->param_types[id]),
-                         evaluate(env, rhs->param_types[id])))
+            if (equalB32(evaluate(&env, lhs->param_types[id]),
+                         evaluate(&env, rhs->param_types[id])))
             {
               introduceOnStack(&env, lhs->param_names+id, lhs->param_types[id]);
             }
@@ -587,8 +587,8 @@ equalTrinary(Value *lhs0, Value *rhs0)
           }
           if (!type_mismatch)
           {
-            out = equalTrinary(evaluate(env, lhs->out_type),
-                                   evaluate(env, rhs->out_type));
+            out = equalTrinary(evaluate(&env, lhs->out_type),
+                               evaluate(&env, rhs->out_type));
           }
         }
         else
@@ -638,13 +638,19 @@ equalTrinary(Value *lhs0, Value *rhs0)
             out = Trinary_True;
       } break;
 
+      case VC_BuiltinEqual:
+      case VC_BuiltinType:
+      case VC_BuiltinSet:
+      {
+        out = Trinary_True;
+      } break;
+
       case VC_HeapValue:
       case VC_Union:
+      case VC_Null:
       {
         out = Trinary_Unknown;
       } break;
-
-      invalidDefaultCase;
     }
   }
   else if (((lhs0->cat == VC_Constructor) && isConstructor(rhs0)) ||
@@ -793,11 +799,10 @@ normalize(Environment env, Value *in0)
         FunctionV *funv = castValue(norm_op, FunctionV);
         if (funv->body != &dummy_function_under_construction)
         {
-          Environment fun_env = env;
-          fun_env.stack = funv->stack;
-          extendStack(&fun_env, in->arg_count, norm_args);
+          extendStack(&env, in->arg_count, norm_args);
           // note: evaluation might fail, in which case we back out.
-          out0 = evaluateMain(fun_env, funv->body, true);
+          out0 = evaluateMain(&env, funv->body, true);
+          unwindStack(&env);
         }
       }
       else
@@ -1037,12 +1042,12 @@ hasFreeVars(Environment *env, Ast *in0, s32 stack_offset)
 }
 
 forward_declare internal Value *
-evaluateMain(Environment env, Ast *in0, b32 expect_failure)
+evaluateMain(Environment *env, Ast *in0, b32 expect_failure)
 {
   // this function may fail due to a fork that cannot continue, or the caller
   // expects some arrow type to not have any dependency on its parameters
   Value *out0 = 0;
-  MemoryArena *arena = env.arena;
+  MemoryArena *arena = env->arena;
 
   if (global_debug_mode)
   {
@@ -1058,7 +1063,7 @@ evaluateMain(Environment env, Ast *in0, b32 expect_failure)
     {
       Variable *in = castAst(in0, Variable);
       assert(in->stack_delta >= 0 && in->id >= 0);
-      Stack *stack = env.stack;
+      Stack *stack = env->stack;
       for (s32 delta = 0; delta < in->stack_delta; delta++)
         stack = stack->outer;
 
@@ -1068,7 +1073,7 @@ evaluateMain(Environment env, Ast *in0, b32 expect_failure)
       }
       else
       {
-        myprint(env.stack);
+        myprint(env->stack);
         invalidCodePath;
       }
     } break;
@@ -1104,17 +1109,17 @@ evaluateMain(Environment env, Ast *in0, b32 expect_failure)
         if (Value *norm_op = evaluateMain(env, in->op, expect_failure))
         {
           ArrowV *signature = castValue(norm_op->type, ArrowV);
-          extendStack(&env, in->arg_count, norm_args);
+          extendStack(env, in->arg_count, norm_args);
           if (Value *return_type = evaluateMain(env, signature->out_type, expect_failure))
           {
-            unwindStack(&env);
-            CompositeV *out = newValue(env.arena, CompositeV, return_type);
+            unwindStack(env);
+            CompositeV *out = newValue(arena, CompositeV, return_type);
             out->arg_count = in->arg_count;
             out->op        = norm_op;
             out->args      = norm_args;
 
             // NOTE: the legendary eval-reduce loop
-            out0 = normalize(env, &out->v);
+            out0 = normalize(*env, &out->v);
           }
         }
       }
@@ -1151,15 +1156,16 @@ evaluateMain(Environment env, Ast *in0, b32 expect_failure)
     case AC_Arrow:
     {
       // Arrow  *in  = castAst(in0, Arrow);
-      ArrowV *out = newValue(env.arena, ArrowV, builtins.Type);
-      out->stack_depth = getStackDepth(env.stack);
-      Arrow *replaced = castAst(replaceFreeVars(&env, in0, 0), Arrow);
+      ArrowV *out = newValue(arena, ArrowV, builtins.Type);
+      out->stack_depth = getStackDepth(env->stack);
+      Arrow *replaced = castAst(replaceFreeVars(env, in0, 0), Arrow);
       out->arrow = *replaced;
       out0 = &out->v;
     } break;
 
     case AC_Sequence:
     {
+      Environment  env_ = *env; Environment *env  = &env_;
       Sequence *in = castAst(in0, Sequence);
       b32 failed = false;
       for (s32 id = 0;  (id < in->count-1) && !failed;  id++)
@@ -1175,7 +1181,7 @@ evaluateMain(Environment env, Ast *in0, b32 expect_failure)
           {
             Let *item = castAst(item0, Let);
             if (Value *rhs = evaluateMain(env, item->rhs, expect_failure))
-              addStackValue(&env, rhs);
+              addStackValue(env, rhs);
             else
               failed = true;
           } break;
@@ -1187,8 +1193,8 @@ evaluateMain(Environment env, Ast *in0, b32 expect_failure)
             {
               FunctionV *funv = newValue(arena, FunctionV, signature_v);
               funv->function = *item;
-              funv->stack    = env.stack;
-              addStackValue(&env, &funv->v);
+              funv->stack    = env->stack;
+              addStackValue(env, &funv->v);
             }
             else
               failed = true;
@@ -1219,9 +1225,9 @@ evaluateMain(Environment env, Ast *in0, b32 expect_failure)
       FunctionDecl *in = castAst(in0, FunctionDecl);
       if (Value *signature = evaluateMain(env, &in->signature->a, expect_failure))
       {
-        FunctionV *out = newValue(env.arena, FunctionV, signature);
+        FunctionV *out = newValue(env->arena, FunctionV, signature);
         out->function = *in;
-        out->stack    = env.stack;
+        out->stack    = env->stack;
       }
     }
     break;
@@ -1238,7 +1244,7 @@ evaluateMain(Environment env, Ast *in0, b32 expect_failure)
   }
 
   if (out0)
-    out0 = normalize(env, out0);
+    out0 = normalize(*env, out0);
   else
     assert(expect_failure);
 
@@ -1246,7 +1252,7 @@ evaluateMain(Environment env, Ast *in0, b32 expect_failure)
 }
 
 forward_declare internal Value *
-evaluate(Environment env, Ast *in0)
+evaluate(Environment *env, Ast *in0)
 {
   return evaluateMain(env, in0, false);
 }
@@ -1254,7 +1260,8 @@ evaluate(Environment env, Ast *in0)
 internal Value *
 evaluate(MemoryArena *arena, Ast *in0)
 {
-  return evaluate(newEnvironment(arena), in0);
+  Environment env = newEnvironment(arena);
+  return evaluate(&env, in0);
 }
 
 inline b32
@@ -1298,7 +1305,7 @@ introduceOnHeap(Environment *env, String base_name, Constructor *ctor)
   if (Arrow *ctor_sig = toArrow(ctor->v.type))
   {
     s32 param_count = ctor_sig->param_count;
-    Value *record_type = evaluate(*env, ctor_sig->out_type);
+    Value *record_type = evaluate(env, ctor_sig->out_type);
     CompositeV *record = newValue(temp_arena, CompositeV, record_type);
     record->op        = &ctor->v;
     record->arg_count = param_count;
@@ -1315,7 +1322,7 @@ introduceOnHeap(Environment *env, String base_name, Constructor *ctor)
         // todo: hack to get the string length back, so clunky.
         String field_name = String{field_name_chars, (s32)(temp_arena->used - original_used)};
 
-        Value *field_type = evaluate(*env, ctor_sig->param_types[field_id]);
+        Value *field_type = evaluate(env, ctor_sig->param_types[field_id]);
         if (Constructor *field_ctor = getSoleConstructor(field_type))
         {
           Value *intro = introduceOnHeap(env, field_name, field_ctor);
@@ -1344,7 +1351,7 @@ forward_declare
 inline void
 introduceOnStack(Environment *env, Token *name, Ast *type)
 {
-  Value *typev = evaluate(*env, type);
+  Value *typev = evaluate(env, type);
   Value *intro;
   if (Constructor *type_ctor = getSoleConstructor(typev))
   {
@@ -1805,7 +1812,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
         var->stack_delta = local.stack_delta;
 
         out.ast   = &var->a;
-        out.value = evaluate(*env, out.ast);
+        out.value = evaluate(env, out.ast);
       }
       else
       {
@@ -1813,11 +1820,11 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
 
         Value *value = 0;
         Value *norm_expected = normalize(*env, expected_type);
-        if ((out.globals = lookupGlobalName(name)))
+        if (GlobalBinding *globals = lookupGlobalName(name))
         {
-          for (s32 value_id = 0; value_id < out.globals->count; value_id++)
+          for (s32 value_id = 0; value_id < globals->count; value_id++)
           {
-            Value *slot_value = out.globals->values[value_id];
+            Value *slot_value = globals->values[value_id];
             // todo: #speed not happy about the repeated normalization within.
             if (matchType(slot_value->type, norm_expected))
             {
@@ -1924,12 +1931,12 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
               else
               {
                 Ast *param_type0 = signature->param_types[arg_id];
-                Value *expected_arg_type = evaluate(signature_env, param_type0);
+                Value *expected_arg_type = evaluate(&signature_env, param_type0);
                 if (Expression arg = buildExpression(env, in->args[arg_id], expected_arg_type))
                 {
                   in->args[arg_id] = arg.ast;
                   // bookmark: evaluating the same value here...
-                  addStackValue(&signature_env, evaluate(*env, arg.ast));
+                  addStackValue(&signature_env, evaluate(env, arg.ast));
                   if (expected_arg_type == dummy_holev)
                   {
                     Variable *param_type = castAst(param_type0, Variable);
@@ -1980,7 +1987,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
             if (noError())
             {
               out.ast   = in0;
-              out.value = evaluate(*env, in0);
+              out.value = evaluate(env, in0);
             }
           }
         }
@@ -2024,7 +2031,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       {
         addLocalBinding(env->bindings, &in->lhs);
         in->rhs = build_rhs.ast;
-        addStackValue(env, evaluate(*env, in->rhs));
+        addStackValue(env, evaluate(env, in->rhs));
 
         out.ast   = in->rhs;
         out.value = build_rhs.value;
@@ -2073,7 +2080,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
           }
           assert(noError());
 
-          Value *expected_body_type = evaluate(*env, in->signature->out_type);
+          Value *expected_body_type = evaluate(env, in->signature->out_type);
           in->body = buildExpression(env, in->body, expected_body_type).ast;
           unwindBindingsAndStack(env);
         }
@@ -2135,7 +2142,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       unwindBindingsAndStack(env);
 
       out.ast   = in0;
-      out.value = evaluate(*env, in0);
+      out.value = evaluate(env, in0);
     } break;
 
     case AC_Fork:
@@ -2153,7 +2160,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
           if (uni->ctor_count == case_count)
           {
             Ast **correct_bodies = pushArray(arena, case_count, Ast *, true);
-            Value *subjectv = evaluate(*env, in->subject);
+            Value *subjectv = evaluate(env, in->subject);
             Environment *outer_env = env;
 
             if (case_count == 0)
@@ -2270,7 +2277,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
       if (Expression build_record = buildExpression(env, in->record, dummy_holev))
       {
         Ast   *record   = build_record.ast;
-        Value *recordv0 = evaluate(*env, record);
+        Value *recordv0 = evaluate(env, record);
         if (CompositeV *recordv = castValue(recordv0, CompositeV))
         {
           in->record = record;
@@ -2290,7 +2297,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
           if (valid_param_name)
           {
             out.ast   = in0;
-            out.value = evaluate(*env, in0);
+            out.value = evaluate(env, in0);
           }
           else
           {
@@ -2302,7 +2309,7 @@ buildExpression(Environment *env, Ast *in0, Value *expected_type)
         else
         {
           parseError(record, "cannot access a non-record");
-          evaluate(*env, record);
+          evaluate(env, record);
           pushAttachment("record", recordv0);
         }
       }
@@ -2436,13 +2443,13 @@ parseSequence(MemoryArena *arena)
           case TC_ColonEqual:
           {
             pushContextName("let");
-            Ast *rhs = parseExpressionToAst(arena);
-
-            Let *let = newAst(arena, Let, name);
-            ast = &let->a;
-            let->lhs = *name;
-            let->rhs = rhs;
-
+            if (Ast *rhs = parseExpressionToAst(arena))
+            {
+              Let *let = newAst(arena, Let, name);
+              ast = &let->a;
+              let->lhs = *name;
+              let->rhs = rhs;
+            }
             popContext();
           } break;
 
