@@ -11,17 +11,15 @@ struct LocalBindings;
 
 // NOTE: Think of this like the function stack, we'll clean it every once in a while.
 global_variable MemoryArena *temp_arena;
-global_variable MemoryArena *permanent_arena;
+global_variable MemoryArena __attribute__((unused)) *permanent_arena;
 
 // Contains both ast and values because the print functions need to operate on
 // them both.
 enum AstCategory
 {
   AC_Null = 0,
-
   // hole left in for type-checking
-  AC_DummyHole,
-
+  AC_Hole,
   // result after initial parsing
   AC_Identifier,
 
@@ -43,6 +41,7 @@ enum AstCategory
 enum ValueCategory
 {
   VC_Null,
+  VC_Hole,
   VC_BuiltinSet   ,
   VC_BuiltinType  ,
   VC_BuiltinEqual ,
@@ -51,7 +50,6 @@ enum ValueCategory
   VC_FunctionV    ,
   VC_StackValue   ,
   VC_HeapValue    ,
-  VC_AccessorV    ,
   VC_Union        ,
   VC_Constructor  ,
 };
@@ -202,12 +200,9 @@ struct Stack
 // used in normalization, build/typecheck, etc.
 struct Environment
 {
-  MemoryArena *arena;
   LocalBindings *bindings;
-
-  Stack *stack;
-
-  RewriteRule *rewrite;
+  Stack         *stack;
+  RewriteRule   *rewrite;
 };
 
 #define getStackDepth(stack) (stack ? stack->depth : 0)
@@ -226,7 +221,6 @@ inline Environment
 newEnvironment(MemoryArena *arena)
 {
   Environment out = {};
-  out.arena = arena;
   return out;
 }
 
@@ -494,14 +488,6 @@ struct Accessor
   Ast   *record;                // in parse phase we can't tell if the op is a constructor
   Token  member;                // parsing info
   s32    param_id;              // after build phase
-};
-
-struct AccessorV
-{
-  Value  v;
-
-  CompositeV *record;
-  s32         param_id;
 };
 
 struct FileList
