@@ -121,7 +121,8 @@ mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*b*c
   0: truth,
   ++(a'):
   rewrite left mulDistributive(b, (a.p * b), c);
-  rewrite mulAssociative(a.p, b, c),
+  rewrite mulAssociative(a.p, b, c);
+  truth,
   }
  }
 
@@ -146,4 +147,5 @@ multiplyPos :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
     }
    }
   }
+ out
  }

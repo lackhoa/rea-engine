@@ -25,6 +25,7 @@ testRatArrow :: (r: RatTest) -> r.d != 0 { r._dnot0 }
 testRatArrow2 :: () -> (a: RatTest) -> (a.d = a.d)
 {
  out :: (b: RatTest) -> (b.d = b.d) {truth}
+ out
  }
 
 + :: (a, b: RatTest) -> RatTest

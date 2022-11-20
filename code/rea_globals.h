@@ -10,4 +10,4 @@ global_variable Ast   *holea = &holea_;
 global_variable Value  holev_ = {.cat = VC_Hole};
 global_variable Value *holev = (Value *)&holev_;
 
-global_variable Ast dummy_function_under_construction;
+global_variable Sequence dummy_function_under_construction;

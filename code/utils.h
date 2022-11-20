@@ -375,6 +375,7 @@ belongsToArena(MemoryArena *arena, u8 *memory)
 // bunch of metaprogramming tags
 #define forward_declare
 #define embed
+#define check_switch(tag)
 
 inline b32
 isSubstring(char *full, char* sub, b32 case_sensitive=true)

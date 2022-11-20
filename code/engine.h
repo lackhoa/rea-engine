@@ -129,6 +129,14 @@ struct Constant
   b32    is_synthetic;
 };
 
+struct Sequence
+{
+  Ast a;
+
+  Ast **items;
+  s32   count;
+};
+
 inline Constant *
 newSyntheticConstant(MemoryArena *arena, Value *value)
 {
@@ -139,16 +147,9 @@ newSyntheticConstant(MemoryArena *arena, Value *value)
   return out;
 }
 
-struct ForkParameters
-{
-  s32    count;
-  Token *names;
-};
-
 struct ForkParsing
 {
-  Identifier  *ctors;
-  Ast        **bodies;
+  Identifier *ctors;
 };
 
 struct Union;
@@ -157,10 +158,10 @@ struct Fork
 {
   Ast a;
 
-  Union  *uni;
-  Ast    *subject;
-  s32     case_count;
-  Ast   **bodies;
+  Union     *uni;
+  Ast       *subject;
+  s32        case_count;
+  Sequence **bodies;
 
   // temporary parsing data
   ForkParsing *parsing;
@@ -178,9 +179,6 @@ enum Trinary
   Trinary_True    = 1,
   Trinary_Unknown = 2, 
 };
-
-internal Trinary
-equalTrinary(Value *lhs, Value *rhs);
 
 struct RewriteRule
 {
@@ -214,13 +212,6 @@ newRewrite(Environment *env, Value *lhs, Value *rhs)
   out->lhs  = lhs;
   out->rhs  = rhs;
   out->next = env->rewrite;
-  return out;
-}
-
-inline Environment
-newEnvironment(MemoryArena *arena)
-{
-  Environment out = {};
   return out;
 }
 
@@ -301,22 +292,21 @@ struct Union
 struct FunctionDecl
 #define EMBED_FUNCTION                          \
 {                                               \
-  Ast    a;                                     \
-  Ast   *body;                                  \
-  Arrow *signature;                             \
+  Ast       a;                                  \
+  Sequence *body;                               \
+  Arrow    *signature;                          \
 };
 EMBED_FUNCTION
 
 struct FunctionV
 {
   Value v;
-
   union
   {
     FunctionDecl function;
     struct   EMBED_FUNCTION;
   };
-  Stack    *stack;
+  Stack *stack;
 };
 
 struct Let
@@ -359,14 +349,6 @@ struct CompositeV
   Value  *op;
   s32     arg_count;
   Value **args;
-};
-
-struct Sequence
-{
-  Ast a;
-
-  Ast **items;
-  s32   count;
 };
 
 inline void
@@ -418,29 +400,6 @@ struct GlobalBindings  // :global-bindings-zero-at-startup
 {
     GlobalBinding table[1024];
 };
-
-#if 0
-inline Union *
-getUnionOf(Value *in0)
-{
-  switch (in0->cat)
-  {
-    case AC_CompositeV:
-    {
-      CompositeV *in = castAst(in0, CompositeV);
-      return castAst(in->op, Union);
-    } break;
-
-    case AC_Union:
-    {
-      return castAst(in0, Union);
-    } break;
-
-    default:
-      return 0;
-  }
-}
-#endif
 
 inline Union *
 getFormOf(Ast *in0)
