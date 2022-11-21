@@ -15,20 +15,20 @@ BigStruct :: union
  makeBigStruct : (r: RatTest) -> BigStruct
  }
 
-testBigStruct :: (big : BigStruct) -> (big.r.d != 0)
+testBigStruct :: fn (big : BigStruct) -> (big.r.d != 0)
 {
  big.r._dnot0
  }
 
-testRatArrow :: (r: RatTest) -> r.d != 0 { r._dnot0 }
+testRatArrow :: fn (r: RatTest) -> r.d != 0 { r._dnot0 }
 
-testRatArrow2 :: () -> (a: RatTest) -> (a.d = a.d)
+testRatArrow2 :: fn () -> (a: RatTest) -> (a.d = a.d)
 {
- out :: (b: RatTest) -> (b.d = b.d) {truth}
+ out :: fn (b: RatTest) -> (b.d = b.d) {truth}
  out
  }
 
-+ :: (a, b: RatTest) -> RatTest
++ :: fn (a, b: RatTest) -> RatTest
 {
  /((a.n * b.d + b.n * a.d), (a.d * b.d),
    multiplyPos(a.d, b.d, a._dnot0, b._dnot0))
@@ -40,7 +40,7 @@ Pos :: union
  ++: (p: Pos) -> Pos,
  }
 
-+ :: (a, b: Pos) -> Pos
++ :: fn (a, b: Pos) -> Pos
 {
  fork a
  {

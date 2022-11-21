@@ -10,10 +10,6 @@ struct Arrow;
 struct Value;
 struct LocalBindings;
 
-// NOTE: Think of this like the function stack, we'll clean it every once in a while.
-global_variable MemoryArena *temp_arena;
-global_variable MemoryArena __attribute__((unused)) *permanent_arena;
-
 enum AstCategory
 {
   AC_Null = 0,
@@ -39,18 +35,18 @@ enum AstCategory
 
 enum ValueCategory
 {
-  VC_Null,
-  VC_Hole,
-  VC_BuiltinSet   ,
-  VC_BuiltinType  ,
-  VC_BuiltinEqual ,
-  VC_CompositeV   ,
-  VC_ArrowV       ,
-  VC_FunctionV    ,
-  VC_StackValue   ,
-  VC_HeapValue    ,
-  VC_Union        ,
-  VC_Constructor  ,
+  VC_Null        ,
+  VC_Hole        ,
+  VC_BuiltinSet  ,
+  VC_BuiltinType ,
+  VC_BuiltinEqual,
+  VC_CompositeV  ,
+  VC_ArrowV      ,
+  VC_FunctionV   ,
+  VC_StackValue  ,
+  VC_HeapValue   ,
+  VC_Union       ,
+  VC_Constructor ,
 };
 
 typedef Value BuiltinType;
@@ -191,16 +187,6 @@ struct Environment
 };
 
 #define getStackDepth(stack) (stack ? stack->depth : 0)
-
-inline RewriteRule *
-newRewrite(Environment *env, Value *lhs, Value *rhs)
-{
-  RewriteRule *out = pushStruct(temp_arena, RewriteRule);
-  out->lhs  = lhs;
-  out->rhs  = rhs;
-  out->next = env->rewrite;
-  return out;
-}
 
 struct AstList
 {
@@ -440,6 +426,7 @@ struct Builtins
   Value *equal;
   Value *Set;
   Value *Type;
+  Constructor *refl;
 };
 
 enum MatcherCategory

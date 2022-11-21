@@ -471,3 +471,4 @@ concat(String *a, String b)
 {
   a->length += b.length;
 }
+#define UNUSED_VAR __attribute__((unused))

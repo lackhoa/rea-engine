@@ -1,9 +1,6 @@
+;; IMPORTANT: deprecated
 equal_type := (_A: Set, a, b: _A) -> Set;
+;; refl_type  := (_A: Set, x: _A) -> =(_A, x, x);
 
 True  :: union { truth }
 False :: union { }
-
-;; typedef = : (_A: Set, a, b: _A) -> Set
-;; {
-;;  refl: (A: Set, x: A) -> =(A, x, x)
-;;  }

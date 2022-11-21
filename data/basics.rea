@@ -13,7 +13,7 @@ print_raw =(_, true, false);
 
 check truth : false & true | true = true;
 
-testAbstraction :: (a, b: Bool) -> Bool
+testAbstraction :: fn (a, b: Bool) -> Bool
 {
  fork a
  {
@@ -24,24 +24,24 @@ testAbstraction :: (a, b: Bool) -> Bool
 
 check andAssociative(true, false, true) : ((true & false) & true = true & false & true);
 
-dependentTypeTest :: (T: Type, A: T, a: A) -> (a = a)
+dependentTypeTest :: fn (T: Type, A: T, a: A) -> (a = a)
 {
  truth
  }
 check dependentTypeTest(Set, Bool, true): True;
 
-testComplexFork :: (a, b: Nat) -> Nat
+testComplexFork :: fn (a, b: Nat) -> Nat
 {
  fork a+b
  {
-  0:    0,
-  ++(n): (a+b).p,
+  0:  0,
+  ++: (a+b).p,
   }
  }
 check truth: testComplexFork(0, 0) = 0;
 check truth: testComplexFork(1, 1) = 1;
 
-testLocalVariable :: (x: Nat) -> Nat
+testLocalVariable :: fn (x: Nat) -> Nat
 {
  a := 3;
  b := 2;
@@ -50,45 +50,45 @@ testLocalVariable :: (x: Nat) -> Nat
 check truth: testLocalVariable(1) = 6;
 
 #should_fail
-testCurryingWeird :: (a: Nat) -> (b, c: Nat) -> (a+b)+c = a+(b+c)
+testCurryingWeird :: fn (a: Nat) -> (b, c: Nat) -> (a+b)+c = a+(b+c)
 {
  fork a
  {
   ++:
   ;; NOTE: the "a.p" is the weird part, which depends on rewrite rule to work,
   ;; and we need to support it.
-  out :: (b',c': Nat) -> (a.p+b')+c' = a.p+b'+c'
+  out :: fn (b',c': Nat) -> (a.p+b')+c' = a.p+b'+c'
   { addAssociative(a.p, b', c') },
 
   0:
-  out :: (b, c: Nat) -> (a+b)+c = a+b+c
+  out :: fn (b, c: Nat) -> (a+b)+c = a+b+c
   { addAssociative(a, b, c) }
   }
  }
 #should_fail off
 
-testCurrying2 :: (a, b, c: Nat) -> (a+b)+c = a+(b+c)
+testCurrying2 :: fn (a, b, c: Nat) -> (a+b)+c = a+(b+c)
 {
- fun :: (b',c': Nat) -> (a+b')+c' = a+(b'+c')
+ fun :: fn (b',c': Nat) -> (a+b')+c' = a+(b'+c')
  { addAssociative(a, b', c') }
 
  fun(b,c)
  }
 
 #should_fail
-testCurrying2Fail :: (a, b, c: Nat) -> (a+b)+c = a+(b+c)
+testCurrying2Fail :: fn (a, b, c: Nat) -> (a+b)+c = a+(b+c)
 {
- fun :: (c',b': Nat) -> (a+b')+c' = a+(b'+c')
+ fun :: fn (c',b': Nat) -> (a+b')+c' = a+(b'+c')
  { addAssociative(a, b', c') }
 
  fun(b,c)
  }
 #should_fail off
 
-testCurrying3 :: (a: Nat) -> Nat
+testCurrying3 :: fn (a: Nat) -> Nat
 {
  b := 3;
- f :: (n: Nat) -> Nat { n*b }
+ f :: fn (n: Nat) -> Nat { n*b }
  f(a)
  }
 check truth: testCurrying3(2) = 6;

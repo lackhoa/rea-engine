@@ -3,10 +3,30 @@
 #include "intrinsics.h"
 #include "tokenization.cpp"
 #include "engine.h"
-#include "rea_globals.h"
-#include <stdint.h>
 
 global_variable b32 global_debug_mode;
+// NOTE: Think of this like the function stack, we'll clean it every once in a while.
+global_variable MemoryArena *temp_arena;
+global_variable MemoryArena *permanent_arena;
+
+global_variable Builtins builtins;
+
+global_variable Ast    holea_ = {.cat = AC_Hole};
+global_variable Ast   *holea = &holea_;
+global_variable Value  holev_ = {.cat = VC_Hole};
+global_variable Value *holev = (Value *)&holev_;
+
+global_variable Sequence dummy_function_under_construction;
+
+inline RewriteRule *
+newRewrite(Environment *env, Value *lhs, Value *rhs)
+{
+  RewriteRule *out = pushStruct(temp_arena, RewriteRule);
+  out->lhs  = lhs;
+  out->rhs  = rhs;
+  out->next = env->rewrite;
+  return out;
+}
 
 inline void
 unwindStack(Environment *env)
@@ -609,6 +629,7 @@ equalTrinary(Value *lhs0, Value *rhs0)
       case VC_HeapValue:
       case VC_Union:
       case VC_Null:
+      case VC_Refl:
       {
         out = Trinary_Unknown;
       } break;
@@ -1306,6 +1327,7 @@ lookupGlobalName(Token *token)
     // note: assume that if the code gets here, then the identifier isn't in
     // local scope either.
     parseError(token, "identifier not found");
+    pushAttachment("identifier", token);
     return 0;
   }
   else
@@ -1913,6 +1935,7 @@ buildFork(MemoryArena *arena, Environment *env, Fork *fork, Value *expected_type
 forward_declare internal Expression
 buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_type)
 {
+  // todo #mem: we just put everything in the arena, including scope values.
   // beware: Usually we mutate in-place, but we may also allocate anew.
   Expression out = {};
   assert(expected_type);
@@ -1939,7 +1962,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
         var->stack_delta = local.stack_delta;
 
         out.ast   = &var->a;
-        out.value = evaluate(temp_arena, env, out.ast);
+        out.value = evaluate(arena, env, out.ast);
       }
       else
       {
@@ -1952,7 +1975,6 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
           for (s32 value_id = 0; value_id < globals->count; value_id++)
           {
             Value *slot_value = globals->values[value_id];
-            // todo: #speed not happy about the repeated normalization within.
             if (matchType(slot_value->type, norm_expected))
             {
               if (value)
@@ -2112,7 +2134,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
             if (noError())
             {
               out.ast   = in0;
-              out.value = evaluate(temp_arena, env, in0);
+              out.value = evaluate(arena, env, in0);
             }
           }
         }
@@ -2143,10 +2165,11 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
       }
       unwindBindingsAndStack(env);
 
-      out.ast   = in0;
-      // TODO: IMPORTANT: global function parsing might use this type, so we can't
-      // just temp_arena this.
-      out.value = evaluate(arena, env, in0);
+      if (noError())
+      {
+        out.ast   = in0;
+        out.value = evaluate(arena, env, in0);
+      }
     } break;
 
     case AC_Accessor:
@@ -2197,8 +2220,8 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
 
   if (noError() && should_check_type)
   {// one last typecheck if needed
-    Value *norm_actual   = normalize(arena, env, out.value->type);
-    Value *norm_expected = normalize(arena, env, expected_type);
+    Value *norm_actual   = normalize(temp_arena, env, out.value->type);
+    Value *norm_expected = normalize(temp_arena, env, expected_type);
     if (!matchType(norm_actual, norm_expected))
     {
       parseError(in0, "actual type differs from expected type");
@@ -2298,10 +2321,17 @@ parseSequence(MemoryArena *arena)
       {
         case TC_DoubleColon:
         {
-          pushContextName("function");
-          FunctionDecl *fun = parseFunction(arena, name);
-          ast = &fun->a;
-          popContext();
+          Token after_dcolon = peekToken();
+          if (equal(after_dcolon, "fn"))
+          {
+            nextToken();
+            pushContextName("function");
+            FunctionDecl *fun = parseFunction(arena, name);
+            ast = &fun->a;
+            popContext();
+          }
+          else
+            tokenError("todo: support internal proof (I guess)");
         } break;
 
         case TC_ColonEqual:
@@ -3103,10 +3133,14 @@ parseTopLevel(EngineState *state)
               nextToken();
               parseRecord(arena);
             }
-            else if (FunctionDecl *fun = parseFunction(arena, name))
+            else if (equal(after_dcolon, "fn"))
             {
-              buildFunction(arena, &empty_env, fun);
+              nextToken();
+              if (FunctionDecl *fun = parseFunction(arena, name))
+                buildFunction(arena, &empty_env, fun);
             }
+            else
+              tokenError("todo: support proofs");
           } break;
 
           case ':':
@@ -3296,16 +3330,38 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
     }
 
     {// more builtins
-      b32 success = interpretFile(state, platformGetFileFullPath(arena, "../data/builtins.rea"), false);
-      assert(success);
-
-      ArrowV *equal_type = castValue(lookupBuiltinGlobalName("equal_type"), ArrowV);
-      builtins.equal = newValue(arena, BuiltinEqual, &equal_type->v);
+#if 1
+      Tokenizer builtin_tk = newTokenizer(arena, print(temp_arena, "<builtin>"), 0);
+      global_tokenizer = &builtin_tk;
+      builtin_tk.at = "(_A: Set, a, b: _A) -> Set";
+      Expression equal_type = parseExpressionFull(arena);
+      builtins.equal = newValue(arena, BuiltinEqual, equal_type.value);
       addBuiltinGlobalBinding("=", builtins.equal);
 
+      builtin_tk.at = "(_A: Set, x: _A) -> =(_A, x, x)";
+      Expression refl_type = parseExpressionFull(arena);
+      builtins.refl = newValue(arena, Constructor, refl_type.value);
+      addBuiltinGlobalBinding("refl", &builtins.refl->v);
+
+      EngineState builtin_engine_state = EngineState{.arena=arena};
+      builtin_tk.at = "True :: union { truth }";
+      parseTopLevel(&builtin_engine_state);
+      builtins.True  = castValue(lookupBuiltinGlobalName("True"), Union);
+      builtins.truth = castValue(lookupBuiltinGlobalName("truth"), Constructor);
+      builtin_tk.at = "False :: union { }";
+      parseTopLevel(&builtin_engine_state);
+      builtins.False = castValue(lookupBuiltinGlobalName("False"), Union);
+
+#else
+      b32 success = interpretFile(state, platformGetFileFullPath(arena, "../data/builtins.rea"), false);
+      assert(success);
+      Value *equal_type = lookupBuiltinGlobalName("equal_type");
+      builtins.equal = newValue(arena, BuiltinEqual, equal_type);
       builtins.True  = castValue(lookupBuiltinGlobalName("True"), Union);
       builtins.truth = castValue(lookupBuiltinGlobalName("truth"), Constructor);
       builtins.False = castValue(lookupBuiltinGlobalName("False"), Union);
+      addBuiltinGlobalBinding("=", builtins.equal);
+#endif
     }
   }
 
@@ -3340,8 +3396,7 @@ union astdbg
   Accessor   Accessor;
 };
 
-int
-engineMain()
+int engineMain()
 {
   astdbg whatever = {}; (void)whatever;
 

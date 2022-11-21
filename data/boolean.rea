@@ -1,6 +1,6 @@
 Bool :: union {false, true}
 
-& :: (a, b: Bool) -> Bool
+& :: fn (a, b: Bool) -> Bool
 {
  fork a
  {
@@ -9,7 +9,7 @@ Bool :: union {false, true}
   }
  }
 
-| :: (a, b: Bool) -> Bool
+| :: fn (a, b: Bool) -> Bool
 {
  fork a
  {
@@ -18,16 +18,7 @@ Bool :: union {false, true}
   }
  }
 
-andWithFalse :: (a: Bool) -> (a & false = false)
-{
- fork a
- {
-  false: truth,
-  true: truth,
-  }
- }
-
-andAssociative :: (a, b, c: Bool) -> ((a & b) & c = a & b & c)
+andAssociative :: fn (a, b, c: Bool) -> ((a & b) & c = a & b & c)
 {
  fork a
  {

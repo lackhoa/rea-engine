@@ -356,24 +356,7 @@ topLevelVisitor(CXCursor cursor, CXCursor parent, CXClientData client_data)
             }
           } break;
 
-#if 0
-          case CXCursor_FieldDecl:
-          {
-            if (state->inside_embedded_struct)
-            {
-              CXString type_spelling = clang_getTypeSpelling(clang_getCursorType(cursor));
-              String fields = print(arena, type_spelling);
-              concat(&fields, print(arena, " "));
-              concat(&fields, print(arena, cursor_spelling));
-              concat(&fields, print(arena, "; "));
-              concat(&state->embed_structs->fields, fields);
-              breakhere;
-            }
-          } break;
-#endif
-
-          default:
-            break;
+          default: break;
         }
       }
     }

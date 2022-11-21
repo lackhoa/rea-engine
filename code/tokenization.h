@@ -106,12 +106,11 @@ struct Tokenizer
   s32    line;
   s32    column;
 
-  String     directory;
+  String directory;
 };
 
 void eatAllSpaces(Tokenizer *tk);
 
-// todo: check tokenizer size
 inline Tokenizer
 newTokenizer(MemoryArena *error_arena, String directory, char *input)
 {
@@ -121,12 +120,7 @@ newTokenizer(MemoryArena *error_arena, String directory, char *input)
   out.directory   = directory;
   out.at          = input;
   out.error_arena = error_arena;
-  eatAllSpaces(&out);
+  if (input)
+    eatAllSpaces(&out);
   return out;
-}
-
-inline Tokenizer
-newTokenizerFromString(MemoryArena *error_arena, char *string)
-{
-  return newTokenizer(error_arena, toString("NONE"), string);
 }
