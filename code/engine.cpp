@@ -1232,7 +1232,7 @@ inline Value *
 introduceOnHeap(Environment *env, String base_name, Constructor *ctor)
 {
   Value *out = 0;
-  if (Arrow *ctor_sig = toArrow(ctor->type))
+  if (ArrowV *ctor_sig = castValue(ctor->type, ArrowV))
   {
     s32 param_count = ctor_sig->param_count;
     Value *record_type = evaluate(temp_arena, env, ctor_sig->out_type);
@@ -2159,7 +2159,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
         if (CompositeV *recordv = castValue(recordv0, CompositeV))
         {
           in->record = record;
-          Arrow *op_type = toArrow(recordv->op->type);
+          ArrowV *op_type = castValue(recordv->op->type, ArrowV);
           s32 param_count = op_type->param_count;
           b32 valid_param_name = false;
           for (s32 param_id=0; param_id < param_count; param_id++)

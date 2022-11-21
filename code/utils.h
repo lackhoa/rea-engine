@@ -302,7 +302,7 @@ printVA(MemoryArena *buffer, char *format, va_list arg_list)
 }
 
 internal String
-print(MemoryArena *buffer, char *format, ...)  // nocheckin: everything should return string
+print(MemoryArena *buffer, char *format, ...)
 {
   String out = {};
 

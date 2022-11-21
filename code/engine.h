@@ -14,9 +14,7 @@ struct LocalBindings;
 global_variable MemoryArena *temp_arena;
 global_variable MemoryArena __attribute__((unused)) *permanent_arena;
 
-// Contains both ast and values because the print functions need to operate on
-// them both.
-enum AstCategory  // nocheckin: maybe don't prepend the name
+enum AstCategory
 {
   AC_Null = 0,
   // hole left in for type-checking
@@ -344,7 +342,7 @@ initComposite(Composite *app, Ast *op, s32 arg_count, Ast **args)
 
 embed_struct struct Arrow
 {
-  Ast a;
+  embed_Ast(a);
   Ast    *out_type;
   s32     param_count;
   Token  *param_names;
@@ -357,12 +355,6 @@ struct ArrowV
   embed_Arrow(arrow);
   s32 stack_depth;
 };
-
-inline Arrow *
-toArrow(Value *value)
-{
-  return &castValue(value, ArrowV)->arrow;
-}
 
 struct GlobalBinding
 {

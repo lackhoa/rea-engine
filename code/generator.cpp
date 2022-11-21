@@ -8,6 +8,30 @@ global_variable MemoryArena *temp_arena;
 global_variable String current_dir;
 global_variable __attribute__((unused)) b32 global_debug_mode;
 
+struct LocationList
+{
+  unsigned      line;
+  String        file_name;
+  LocationList *next;
+};
+
+struct EmbedStructs
+{
+  String name;
+  String fields;
+  EmbedStructs *next;
+};
+
+struct State
+{
+  FILE         *forward_declare_file;
+  LocationList *forward_declare_locations;
+
+  b32           inside_embedded_struct;
+  LocationList *embed_locations;
+  EmbedStructs *embed_structs;
+};
+
 inline char *
 readEntireFile(char *file_name)
 {
@@ -153,30 +177,6 @@ print(MemoryArena *buffer, CXString string)
   return out;
 }
 
-struct LocationList
-{
-  unsigned      line;
-  String        file_name;
-  LocationList *next;
-};
-
-struct EmbedStructs
-{
-  String name;
-  String fields;
-  EmbedStructs *next;
-};
-
-struct State
-{
-  FILE         *forward_declare_file;
-  LocationList *forward_declare_locations;
-
-  b32           inside_embedded_struct;
-  LocationList *embed_locations;
-  EmbedStructs *embed_structs;
-};
-
 internal char *
 printFunctionSignature(MemoryArena *buffer, CXCursor cursor)
 {
@@ -207,7 +207,51 @@ printFunctionSignature(MemoryArena *buffer, CXCursor cursor)
 }
 
 internal CXChildVisitResult
-cursorVisitor(CXCursor cursor, CXCursor parent, CXClientData client_data)
+structVisitor(CXCursor cursor, CXCursor parent, CXClientData client_data)
+{
+  (void)parent;
+  MemoryArena *arena = permanent_arena;
+  String *out = (String *)client_data;
+  CXCursorKind cursor_kind = clang_getCursorKind(cursor);
+  switch (cursor_kind)
+  {
+    case CXCursor_FieldDecl:
+    {
+      CXString cursor_spelling = clang_getCursorSpelling(cursor);
+      CXString type_spelling = clang_getTypeSpelling(clang_getCursorType(cursor));
+      concat(out, print(arena, type_spelling));
+      concat(out, print(arena, " "));
+      concat(out, print(arena, cursor_spelling));
+      concat(out, print(arena, "; "));
+    } break;
+
+    case CXCursor_UnionDecl:
+    {
+      concat(out, print(arena, "union {"));
+      clang_visitChildren(cursor, structVisitor, out);
+      concat(out, print(arena, "}; "));
+    } break;
+
+    case CXCursor_StructDecl:
+    {
+      concat(out, print(arena, "struct {"));
+      clang_visitChildren(cursor, structVisitor, out);
+      concat(out, print(arena, "}; "));
+    } break;
+
+    invalidDefaultCase;
+  }
+  return CXChildVisit_Continue;
+}
+
+internal void
+printStructFields(CXCursor cursor, String *out)
+{
+  clang_visitChildren(cursor, structVisitor, out);
+}
+
+internal CXChildVisitResult
+topLevelVisitor(CXCursor cursor, CXCursor parent, CXClientData client_data)
 {
   MemoryArena *arena = permanent_arena;
   State *state = (State *)client_data;
@@ -232,14 +276,15 @@ cursorVisitor(CXCursor cursor, CXCursor parent, CXClientData client_data)
       {
         temp_arena->used++;
         CXString cursor_spelling = clang_getCursorSpelling(cursor);
-        CXCursorKind kind = clang_getCursorKind(cursor);
+        CXCursorKind cursor_kind = clang_getCursorKind(cursor);
+        CXCursorKind parent_kind = clang_getCursorKind(parent);
 
-        if (state->inside_embedded_struct && kind != CXCursor_FieldDecl)
+        if (state->inside_embedded_struct && parent_kind == CXCursor_TranslationUnit)
         {
           state->inside_embedded_struct = false;
         }
 
-        switch (kind)
+        switch (cursor_kind)
         {
           case CXCursor_MacroExpansion:
           {// check for annotations
@@ -296,23 +341,22 @@ cursorVisitor(CXCursor cursor, CXCursor parent, CXClientData client_data)
                 breakhere;
               if (match_line && match_file)
               {// struct was asked to be embedded
-#if 1
+#if 0
                 print(0, "embed: "); print(0, struct_name); print(0, "\n");
 #endif
-
                 EmbedStructs *new_struct = pushStruct(arena, EmbedStructs, true);
-                new_struct->next         = state->embed_structs;
-                new_struct->name         = struct_name;
-                new_struct->fields.chars = (char *)getNext(arena);
+                new_struct->next   = state->embed_structs;
+                new_struct->name   = struct_name;
+                new_struct->fields = String{.chars = (char *)getNext(arena)};
+                printStructFields(cursor, &new_struct->fields);
                 state->embed_structs = new_struct;
-
                 state->inside_embedded_struct = true;
-                child_visit_result = CXChildVisit_Recurse;
                 break;
               }
             }
           } break;
 
+#if 0
           case CXCursor_FieldDecl:
           {
             if (state->inside_embedded_struct)
@@ -326,6 +370,7 @@ cursorVisitor(CXCursor cursor, CXCursor parent, CXClientData client_data)
               breakhere;
             }
           } break;
+#endif
 
           default:
             break;
@@ -363,7 +408,7 @@ int main()
   State state = {};
   if (fopen_s(&state.forward_declare_file, "generated/engine_forward.h", "w") == 0)
   {
-    clang_visitChildren(cursor, cursorVisitor, &state);
+    clang_visitChildren(cursor, topLevelVisitor, &state);
 
     FILE *embed_file = {};
     if (fopen_s(&embed_file, "generated/engine_embed.h", "w") == 0)
