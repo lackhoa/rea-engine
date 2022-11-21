@@ -1,5 +1,6 @@
 #pragma once
 
+#include "generated/engine_embed.h"
 #include "platform.h"
 #include "utils.h"
 #include "memory.h"
@@ -58,19 +59,10 @@ typedef Value BuiltinType;
 typedef Value BuiltinSet;
 typedef Value BuiltinEqual;
 
-struct Ast
-#define EMBED_AST_                              \
-{                                               \
-  AstCategory cat;                              \
-  Token       token;                            \
-};
-EMBED_AST_
-
-#define EMBED_AST                               \
-union                                           \
-{                                               \
-  Ast a;                                        \
-  struct EMBED_AST_                             \
+embed_struct struct Ast
+{
+  AstCategory cat;
+  Token       token;
 };
 
 inline Ast **
@@ -102,14 +94,11 @@ newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
 
 #define castValue(exp, Cat) ((exp)->cat == VC_##Cat ? (Cat*)(exp) : 0)
 
-struct Identifier
-{
-  EMBED_AST
-};
+typedef Ast Identifier;
 
 struct Variable
 {
-  Ast  a;
+  embed_Ast(a);
 
   s32  id;
   s32  stack_delta;
@@ -248,7 +237,7 @@ extendBindings(MemoryArena *arena, Environment *env)
   return out;
 }
 
-struct Value
+embed_struct struct Value
 {
   ValueCategory  cat;
   Value         *type;
@@ -274,8 +263,7 @@ newValue_(MemoryArena *arena, ValueCategory cat, Value *type, size_t size)
 
 struct Constructor
 {
-  Value  v;
-  /* embed(Value, v) */
+  embed_Value(v);
   Union *uni;
   Token  name;
   s32    id;
@@ -283,30 +271,24 @@ struct Constructor
 
 struct Union
 {
-  Value v;
+  embed_Value(v);
   Token name;
 
   s32          ctor_count;
   Constructor *ctors;
 };
 
-struct FunctionDecl
-#define EMBED_FUNCTION                          \
-{                                               \
-  Ast       a;                                  \
+embed_struct struct FunctionDecl
+{
+  Ast       a;
   Sequence *body;                               \
-  Arrow    *signature;                          \
+  Arrow    *signature;
 };
-EMBED_FUNCTION
 
 struct FunctionV
 {
-  Value v;
-  union
-  {
-    FunctionDecl function;
-    struct   EMBED_FUNCTION;
-  };
+  embed_Value(v);
+  embed_FunctionDecl(function);
   Stack *stack;
 };
 
@@ -345,7 +327,7 @@ struct Composite
 
 struct CompositeV
 {
-  Value v;
+  embed_Value(v);
 
   Value  *op;
   s32     arg_count;
@@ -360,25 +342,19 @@ initComposite(Composite *app, Ast *op, s32 arg_count, Ast **args)
   app->args      = args;
 }
 
-struct Arrow
-#define EMBED_ARROW                             \
-  {                                             \
-    Ast     a;                                  \
-    Ast    *out_type;                           \
-    s32     param_count;                        \
-    Token  *param_names;                        \
-    Ast   **param_types;                        \
-  };
-EMBED_ARROW
+embed_struct struct Arrow
+{
+  Ast a;
+  Ast    *out_type;
+  s32     param_count;
+  Token  *param_names;
+  Ast   **param_types;
+};
 
 struct ArrowV
 {
   Value v;
-  union
-  {
-    Arrow arrow;
-    struct EMBED_ARROW
-  };
+  embed_Arrow(arrow);
   s32 stack_depth;
 };
 

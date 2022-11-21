@@ -162,15 +162,17 @@ struct LocationList
 
 struct EmbedStructs
 {
-  char *name;
-  char *fields;
+  String name;
+  String fields;
   EmbedStructs *next;
 };
 
 struct State
 {
-  FILE         *out_file;
+  FILE         *forward_declare_file;
   LocationList *forward_declare_locations;
+
+  b32           inside_embedded_struct;
   LocationList *embed_locations;
   EmbedStructs *embed_structs;
 };
@@ -204,6 +206,138 @@ printFunctionSignature(MemoryArena *buffer, CXCursor cursor)
   return out;
 }
 
+internal CXChildVisitResult
+cursorVisitor(CXCursor cursor, CXCursor parent, CXClientData client_data)
+{
+  MemoryArena *arena = permanent_arena;
+  State *state = (State *)client_data;
+  (void)parent; (void)client_data;
+  TemporaryMemory temp_mem = beginTemporaryMemory(temp_arena);
+  CXSourceLocation location = clang_getCursorLocation(cursor);
+
+  unsigned cursor_line;
+  CXFile file;
+  clang_getExpansionLocation(location, &file, &cursor_line, 0, 0);
+
+  CXChildVisitResult child_visit_result = CXChildVisit_Continue;
+  String file_name = print(temp_arena, clang_getFileName(file));
+  if (file_name.chars)
+  {
+    temp_arena->used++;
+    CXString path_name0 = clang_File_tryGetRealPathName(file);
+    String path_name = print(temp_arena, path_name0);
+    if (path_name.chars)
+    {
+      if (isSubstring(path_name, current_dir, false))
+      {
+        temp_arena->used++;
+        CXString cursor_spelling = clang_getCursorSpelling(cursor);
+        CXCursorKind kind = clang_getCursorKind(cursor);
+
+        if (state->inside_embedded_struct && kind != CXCursor_FieldDecl)
+        {
+          state->inside_embedded_struct = false;
+        }
+
+        switch (kind)
+        {
+          case CXCursor_MacroExpansion:
+          {// check for annotations
+            String cursor_string = print(temp_arena, cursor_spelling);
+            temp_arena->used++;
+            if (equal("forward_declare", cursor_string))
+            {
+              LocationList *locs = pushStruct(arena, LocationList, true);
+              locs->line      = cursor_line;
+              locs->next      = state->forward_declare_locations;
+              locs->file_name = copyString(arena, file_name);
+              state->forward_declare_locations = locs;
+            }
+            else if (equal("embed_struct", cursor_string))
+            {// valid inside a struct only
+              LocationList *locs = pushStruct(arena, LocationList, true);
+              locs->line      = cursor_line;
+              locs->next      = state->embed_locations;
+              locs->file_name = copyString(arena, file_name);
+              state->embed_locations = locs;
+            }
+          } break;
+
+          case CXCursor_FunctionDecl:
+          {
+            for (LocationList *line = state->forward_declare_locations;
+                 line;
+                 line = line->next)
+            {
+              b32 match_line = (cursor_line >= line->line) && (cursor_line < line->line+3);
+              b32 match_file = equal(file_name, line->file_name);
+              if (match_line && match_file)
+              {// function was asked to be forward-declared
+#if 0
+                print(0, "forward declare:"); print(0, cursor_spelling); print(0, "\n");
+#endif
+                char *signature = printFunctionSignature(temp_arena, cursor);
+                fprintf(state->forward_declare_file, "%s", signature);
+                break;
+              }
+            }
+          } break;
+
+          case CXCursor_StructDecl:
+          {
+            String struct_name = print(arena, cursor_spelling);
+            for (LocationList *lines = state->embed_locations;
+                 lines;
+                 lines = lines->next)
+            {
+              b32 match_line = (cursor_line >= lines->line) && (cursor_line < lines->line+3);
+              b32 match_file = equal(file_name, lines->file_name);
+              if (equal(struct_name, "Ast"))
+                breakhere;
+              if (match_line && match_file)
+              {// struct was asked to be embedded
+#if 1
+                print(0, "embed: "); print(0, struct_name); print(0, "\n");
+#endif
+
+                EmbedStructs *new_struct = pushStruct(arena, EmbedStructs, true);
+                new_struct->next         = state->embed_structs;
+                new_struct->name         = struct_name;
+                new_struct->fields.chars = (char *)getNext(arena);
+                state->embed_structs = new_struct;
+
+                state->inside_embedded_struct = true;
+                child_visit_result = CXChildVisit_Recurse;
+                break;
+              }
+            }
+          } break;
+
+          case CXCursor_FieldDecl:
+          {
+            if (state->inside_embedded_struct)
+            {
+              CXString type_spelling = clang_getTypeSpelling(clang_getCursorType(cursor));
+              String fields = print(arena, type_spelling);
+              concat(&fields, print(arena, " "));
+              concat(&fields, print(arena, cursor_spelling));
+              concat(&fields, print(arena, "; "));
+              concat(&state->embed_structs->fields, fields);
+              breakhere;
+            }
+          } break;
+
+          default:
+            break;
+        }
+      }
+    }
+  }
+
+  endTemporaryMemory(temp_mem);
+  return child_visit_result;
+}
+
 int main()
 {
   MemoryArena temp_arena_ = newArena(megaBytes(8), (void *)teraBytes(3));
@@ -227,126 +361,29 @@ int main()
   CXCursor cursor = clang_getTranslationUnitCursor(unit);
 
   State state = {};
-  if (fopen_s(&state.out_file, "generated/engine_forward.h", "w") == 0)
+  if (fopen_s(&state.forward_declare_file, "generated/engine_forward.h", "w") == 0)
   {
-    clang_visitChildren(
-      cursor,
-      [](CXCursor cursor, CXCursor parent, CXClientData client_data)
+    clang_visitChildren(cursor, cursorVisitor, &state);
+
+    FILE *embed_file = {};
+    if (fopen_s(&embed_file, "generated/engine_embed.h", "w") == 0)
+    {
+      for (EmbedStructs *embed = state.embed_structs; embed; embed = embed->next)
       {
-        MemoryArena *arena = permanent_arena;
-        State *state = (State *)client_data;
-        (void)parent; (void)client_data;
-        TemporaryMemory temp_mem = beginTemporaryMemory(temp_arena);
-        CXSourceLocation location = clang_getCursorLocation(cursor);
+        String macro_ = print(temp_arena, "#define embed_");
+        String *macro = &macro_;
+        concat(macro, print(temp_arena, embed->name));
+        concat(macro, print(temp_arena, "(name) union { "));
+        concat(macro, print(temp_arena, embed->name));
+        concat(macro, print(temp_arena, " name; struct { "));
+        concat(macro, print(temp_arena, embed->fields));
+        concat(macro, print(temp_arena, " };"));
+        concat(macro, print(temp_arena, " };"));
+        fprintf(embed_file, "%s\n", macro->chars);
+      }
+    }
 
-        unsigned line;
-        CXFile file;
-        clang_getExpansionLocation(location, &file, &line, 0, 0);
-
-        CXChildVisitResult child_visit_result = CXChildVisit_Continue;
-        if (String file_name = print(temp_arena, clang_getFileName(file)))
-        {
-          temp_arena->used++;
-          CXString path_name0 = clang_File_tryGetRealPathName(file);
-          if (String path_name = print(temp_arena, path_name0))
-          {
-            if (isSubstring(path_name, current_dir, false))
-            {
-              temp_arena->used++;
-              CXString cursor_spelling = clang_getCursorSpelling(cursor);
-              CXCursorKind kind = clang_getCursorKind(cursor);
-
-              switch (kind)
-              {
-                case CXCursor_MacroExpansion:
-                {// check for annotations
-                  String cursor_string = print(temp_arena, cursor_spelling);
-                  temp_arena->used++;
-                  if (equal("forward_declare", cursor_string))
-                  {
-                    LocationList *locs = pushStruct(arena, LocationList, true);
-                    locs->line      = line;
-                    locs->next      = state->forward_declare_locations;
-                    locs->file_name = copyString(arena, file_name);
-                    state->forward_declare_locations = locs;
-                  }
-#if 1
-                  else if (equal("embed", cursor_string))
-                  {// valid inside a struct only
-                    LocationList *locs = pushStruct(arena, LocationList, true);
-                    locs->line      = line;
-                    locs->next      = state->embed_locations;
-                    locs->file_name = copyString(arena, file_name);
-                    state->embed_locations = locs;
-                  }
-#endif
-                } break;
-
-                case CXCursor_FunctionDecl:
-                {
-                  for (LocationList *lines = state->forward_declare_locations;
-                       lines;
-                       lines = lines->next)
-                  {
-                    b32 match_line = (line > lines->line && line < lines->line+3);
-                    b32 match_file = equal(file_name, lines->file_name);
-                    if (match_line && match_file)
-                    {// function was asked to be forward-declared
-#if 0
-                      print(0, "forward declare:");
-                      print(0, cursor_spelling);
-                      print(0, "\n");
-#endif
-                      char *signature = printFunctionSignature(temp_arena, cursor);
-                      fprintf(state->out_file, "%s", signature);
-                      break;
-                    }
-                  }
-                } break;
-
-#if 0
-                case CXCursor_StructDecl:
-                {
-                  child_visit_result = CXChildVisit_Recurse;
-                } break;
-#endif
-
-#if 0
-                case CXCursor_FieldDecl:
-                {
-                  char *struct_name = print(arena, cursor_spelling);
-                  arena->used++;
-                  CXType   type          = clang_getCursorType(cursor);
-                  CXString type_spelling = clang_getTypeSpelling(type);
-
-                  char *field = (char *)getNext(arena);
-                  print(arena, type_spelling);
-                  print(arena, cursor_spelling);
-                  arena->used++;
-
-                  EmbedStructs *embed_structs = pushStruct(arena, EmbedStructs);
-                  embed_structs->next   = state->embed_structs;
-                  embed_structs->name   = struct_name;
-                  embed_structs->fields = field;
-                  state->embed_structs = embed_structs;
-
-                  temp_arena->used++;
-                } break;
-#endif
-
-                default:
-                  break;
-              }
-            }
-          }
-        }
-
-        endTemporaryMemory(temp_mem);
-        return child_visit_result;
-      },
-      &state);
-
-    fclose(state.out_file);
+    fclose(state.forward_declare_file);
   }
   return 0;
 }

@@ -70,7 +70,6 @@ newToken(const char *text)
   return out;
 }
 
-struct Ast;
 enum AttachmentType
 {
   AttachmentType_Ast,

@@ -188,7 +188,6 @@ struct String
 {
   char *chars;
   s32   length;               // note: does not include the nil terminator
-  operator bool() {return chars;}
 };
 
 inline s32
@@ -382,7 +381,7 @@ belongsToArena(MemoryArena *arena, u8 *memory)
 
 // bunch of metaprogramming tags
 #define forward_declare
-#define embed(type, name)
+#define embed_struct
 #define check_switch(tag)
 
 inline b32
@@ -465,4 +464,10 @@ copyString(MemoryArena *buffer, String src)
   out.chars  = copyArray(buffer, src.length, src.chars);
   out.length = src.length;
   return out;
+}
+
+inline void
+concat(String *a, String b)
+{
+  a->length += b.length;
 }

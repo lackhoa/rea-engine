@@ -217,7 +217,7 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
       {
         Variable *in = castAst(in0, Variable);
         // print(buffer, "%.*s[%d]", in->name.length, in->name.chars, in->stack_delta);
-        print(buffer, in->a.token);
+        print(buffer, in->token);
       } break;
 
       case AC_Sequence:
@@ -254,8 +254,8 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
              ctor_id < form->ctor_count;
              ctor_id++)
         {
-          Constructor *subset = form->ctors + ctor_id;
-          print(buffer, &subset->v, new_opt);
+          Constructor *ctor = form->ctors + ctor_id;
+          print(buffer, &ctor->v, new_opt);
           print(buffer, ": ");
           print(buffer, &in->bodies[ctor_id]->a, new_opt);
           if (ctor_id != form->ctor_count-1)
@@ -339,7 +339,7 @@ print(MemoryArena *buffer, Value *in0, PrintOptions opt)
           if (opt.print_type)
           {
             print(buffer, ": ");
-            print(buffer, in->v.type, new_opt);
+            print(buffer, in->type, new_opt);
           }
 
           if (in->ctor_count)
@@ -350,7 +350,7 @@ print(MemoryArena *buffer, Value *in0, PrintOptions opt)
               Constructor *subset = in->ctors + ctor_id;
               print(buffer, subset->name);
               print(buffer, ": ");
-              print(buffer, subset->v.type, new_opt);
+              print(buffer, subset->type, new_opt);
             }
             print(buffer, " }");
           }
@@ -594,7 +594,7 @@ equalTrinary(Value *lhs0, Value *rhs0)
       {
         Constructor *lhs = castValue(lhs0, Constructor);
         Constructor *rhs = castValue(rhs0, Constructor);
-        assert(lhs->v.type == rhs->v.type);
+        assert(lhs->type == rhs->type);
         out = (Trinary)(lhs->id == rhs->id);
       } break;
 
@@ -868,7 +868,7 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
 
       if (!out0)
       {
-        CompositeV *out = newValue(arena, CompositeV, in->v.type);
+        CompositeV *out = newValue(arena, CompositeV, in->type);
         out->arg_count = in->arg_count;
         out->op        = norm_op;
         out->args      = norm_args;
@@ -1232,7 +1232,7 @@ inline Value *
 introduceOnHeap(Environment *env, String base_name, Constructor *ctor)
 {
   Value *out = 0;
-  if (Arrow *ctor_sig = toArrow(ctor->v.type))
+  if (Arrow *ctor_sig = toArrow(ctor->type))
   {
     s32 param_count = ctor_sig->param_count;
     Value *record_type = evaluate(temp_arena, env, ctor_sig->out_type);
@@ -1245,10 +1245,9 @@ introduceOnHeap(Environment *env, String base_name, Constructor *ctor)
       addStackFrame(env);
       for (s32 field_id=0; field_id < param_count; field_id++)
       {
-        size_t original_used = temp_arena->used;
         String field_name = print(temp_arena, base_name);
-        field_name.length += print(temp_arena, ".");
-        field_name.length += print(temp_arena, ctor_sig->param_names[field_id]);
+        field_name.length += print(temp_arena, ".").length;
+        field_name.length += print(temp_arena, ctor_sig->param_names[field_id]).length;
 
         Value *field_type = evaluate(temp_arena, env, ctor_sig->param_types[field_id]);
         if (Constructor *field_ctor = getSoleConstructor(field_type))
@@ -1269,7 +1268,7 @@ introduceOnHeap(Environment *env, String base_name, Constructor *ctor)
   }
   else
   {// rare case: weird type with single enum
-    assert(ctor->v.type->cat == VC_Union);
+    assert(ctor->type->cat == VC_Union);
     out = &ctor->v;
   }
   return out;
@@ -1840,13 +1839,13 @@ buildFork(MemoryArena *arena, Environment *env, Fork *fork, Value *expected_type
               // the global pool of values.
               if (Constructor *candidate = castValue(lookup->values[lookup_id], Constructor))
               {
-                if (equalB32(candidate->v.type, subject.value->type)) 
+                if (equalB32(candidate->type, subject.value->type)) 
                 {
                   ctor = candidate;
                 }
                 else
                 {// NOTE: rn we DON'T support the weird inductive proposition thingie.
-                  if (ArrowV *ctor_sig = castValue(candidate->v.type, ArrowV))
+                  if (ArrowV *ctor_sig = castValue(candidate->type, ArrowV))
                   {
                     if (Constant *constant = castAst(ctor_sig->out_type, Constant))
                     {
@@ -2621,7 +2620,7 @@ parseOperand(MemoryArena *arena)
       // todo: this doesn't preserve identifier location
       out = holea;
     else
-      out = &(newAst(arena, Identifier, &token1))->a;
+      out = newAst(arena, Identifier, &token1);
   }
   else if (equal(&token1, '('))
   {
@@ -2754,7 +2753,7 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
               args[1] = recurse;
 
               Composite *new_operand = newAst(arena, Composite, &op_token);
-              initComposite(new_operand, &op->a, arg_count, args);
+              initComposite(new_operand, op, arg_count, args);
               operand = &new_operand->a;
             }
           }
@@ -2832,7 +2831,7 @@ parseUnionCase(MemoryArena *arena, Union *uni)
     }
     else
     {// constructor as a sole tag
-      if (uni->v.type == builtins.Set)
+      if (uni->type == builtins.Set)
       {
         initValue(&out->v, VC_Constructor, &uni->v);
         out->name = tag;
@@ -2964,7 +2963,6 @@ parseTopLevel(EngineState *state)
             tokenError("expect \"FILENAME\"");
           else
           {
-            size_t original_used = arena->used;
             String load_path = print(arena, global_tokenizer->directory);
             load_path.length += print(arena, file.text).length;
             arena->used++;
