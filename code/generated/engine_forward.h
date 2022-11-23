@@ -11,5 +11,6 @@ void buildSequence(MemoryArena * arena, Environment * env, Sequence * sequence, 
 void buildFork(MemoryArena * arena, Environment * env, Fork * fork, Value * expected_type);
 Expression buildExpression(MemoryArena * arena, Environment * env, Ast * in0, Value * expected_type);
 FunctionDecl * parseFunction(MemoryArena * arena, Token * name);
+Fork * parseFork(MemoryArena * arena);
 Ast * parseExpressionToAst(MemoryArena * arena);
 b32 interpretFile(EngineState * state, FilePath input_path, b32 is_root_file);

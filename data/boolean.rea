@@ -18,11 +18,13 @@ Bool :: union {false, true}
   }
  }
 
+check refl(true): true = true;
+
 andAssociative :: fn (a, b, c: Bool) -> ((a & b) & c = a & b & c)
 {
  fork a
  {
-  false: truth,
-  true : truth,
+  false: computation,
+  true : computation,
   }
  }

@@ -60,14 +60,20 @@ struct Token
 };
 
 inline Token
-newToken(const char *text)
+newToken(String text)
 {
   Token out;
-  out.text   = toString(text);
+  out.text   = text;
   out.line   = 0;
   out.column = 0;
   out.cat    = TC_Alphanumeric;
   return out;
+}
+
+inline Token
+newToken(const char *text)
+{
+  return newToken(toString(text));
 }
 
 enum AttachmentType

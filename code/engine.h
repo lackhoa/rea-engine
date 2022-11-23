@@ -18,19 +18,22 @@ enum AstCategory
   // result after initial parsing
   AC_Identifier,
 
-  // Expression
+  // Expressions
   AC_Variable,
   AC_Constant,
   AC_Composite,
   AC_Arrow,
   AC_Accessor,
+  AC_Replace,
+  AC_Computation,
 
-  // in "sequence" context only, not general expressions.
+  // Stuff in "sequence" context only, not general expressions.
   AC_Sequence,
   AC_Fork,
   AC_Rewrite,
   AC_FunctionDecl,
   AC_Let,
+  AC_Norm,
 };
 
 enum ValueCategory
@@ -47,6 +50,9 @@ enum ValueCategory
   VC_HeapValue   ,
   VC_Union       ,
   VC_Constructor ,
+  VC_RewriteV    ,
+  VC_ComputationV,
+  VC_AccessorV,
 };
 
 typedef Value BuiltinType;
@@ -88,7 +94,9 @@ newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
 
 #define castValue(exp, Cat) ((exp)->cat == VC_##Cat ? (Cat*)(exp) : 0)
 
+typedef Ast Hole;
 typedef Ast Identifier;
+typedef Ast Norm;
 
 struct Variable
 {
@@ -293,26 +301,57 @@ struct StackValue
   s32   stack_depth;
 };
 
+struct TreeIndex
+{
+  s32 count;
+  u8  ids[8];                  // todo #expand
+  operator bool() {return count;}
+};
+
+#if 0
+struct HeapPath
+{
+  Value *root;
+  s32    count;
+  u8     ids[8];  // todo #expand
+};
+#endif
+
+struct AccessorV
+{
+  embed_Value(v);
+  Value *record;
+  s32    field_id;
+  String field_name;            // #todo #debug_only
+};
+
 struct HeapValue
 {
-  Value v;
-
-  String name;
+  embed_Value(v);
+  String    name;
+  AccessorV accessor;
 };
 
 struct Composite
 {
-  Ast   a;
-
+  embed_Ast(a);
   Ast  *op;
   s32   arg_count;
   Ast **args;
 };
 
+struct Replace
+{
+  embed_Ast(a);
+  b32        built;
+  Ast       *eq_proof;
+  TreeIndex  index;
+  Ast       *proof;
+};
+
 struct CompositeV
 {
   embed_Value(v);
-
   Value  *op;
   s32     arg_count;
   Value **args;
@@ -383,14 +422,14 @@ struct Expression
 {
   Ast   *ast;
   Value *value;
-  operator bool() { return (bool)ast; }
+  operator bool() { return ast && value; }
 };
 
 struct Rewrite
 {
-  Ast  a;
-
-  Ast *proof;
+  embed_Ast(a);
+  Ast *type;  // todo: can we somehow resore the type
+  Ast *eq_proof;
   b32  right_to_left;
 };
 
@@ -399,8 +438,8 @@ struct Accessor
   Ast    a;
 
   Ast   *record;                // in parse phase we can't tell if the op is a constructor
-  Token  member;                // parsing info
-  s32    param_id;              // after build phase
+  Token  field_name;           // parsing info
+  s32    field_id;              // after build phase
 };
 
 struct FileList
@@ -416,7 +455,7 @@ struct EngineState
   FileList    *file_list;
 };
 
-struct PrintOptions{b32 detailed; b32 print_type; void *parent;};
+struct PrintOptions{b32 detailed; b32 print_type; s32 indentation;};
 
 struct Builtins
 {
@@ -462,6 +501,26 @@ struct AstArray
 {
   s32    count;
   Value *items;
+};
+
+struct RewriteV
+{
+  embed_Value(v);
+  Value *eq_proof;
+  Value *body;
+  b32    right_to_left;
+};
+
+struct Computation {
+  embed_Ast(a);
+  Ast *lhs;
+  Ast *rhs;
+};
+
+struct ComputationV {
+  embed_Value(v);
+  Value *lhs;
+  Value *rhs;
 };
 
 #include "generated/engine_forward.h"

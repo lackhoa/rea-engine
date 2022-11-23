@@ -56,3 +56,5 @@ check 1+2: Pos;
 ;; #should_fail
 ;; check 1+2: RatTest;
 ;; #should_fail off
+
+print addIdRight(2);

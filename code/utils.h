@@ -434,19 +434,19 @@ isSubstring(String full, String sub, b32 case_sensitive=true)
 }
 
 inline void
-myprint()
+dump()
 {
   print(0, "\n");
 }
 
 inline void
-myprint(int d)
+dump(int d)
 {
   printf("%d", d);
 }
 
 inline void
-myprint(char *c)
+dump(char *c)
 {
   printf("%s", c);
 }

@@ -148,7 +148,7 @@ noError(Tokenizer *tk = global_tokenizer)
 }
 
 inline char
-nextChar(Tokenizer *tk)
+nextChar(Tokenizer *tk=global_tokenizer)
 {
   char out;
   if (*tk->at)
