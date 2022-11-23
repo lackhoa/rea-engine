@@ -920,12 +920,18 @@ evaluateSequence(MemoryArena *arena, Environment *env, Sequence *sequence)
     last = evaluate(arena, env, last_ast);
 
   Value *out;
-  if (rewrite_chain)
+  if (last)
   {
-    *rewrite_body = last;
-    out = &rewrite_chain->v;
+    if (rewrite_chain)
+    {
+      *rewrite_body = last;
+      out = &rewrite_chain->v;
+    }
+    else
+      out = last;
   }
-  else out = last;
+  else
+    out = 0;
 
   return out;
 }
@@ -1936,6 +1942,14 @@ valueToAst(MemoryArena *arena, Environment *env, Value* value)
       out = &synthetic->a;
     } break;
 
+    case VC_RewriteV:
+    {
+      dump();
+      dump("-------------------");
+      dump(value);
+      todoIncomplete;  // really we don't need it tho?
+    } break;
+
     default:
     {
       todoIncomplete;
@@ -1947,17 +1961,29 @@ valueToAst(MemoryArena *arena, Environment *env, Value* value)
 }
 
 inline Sequence *
-parseSequence(MemoryArena *arena)
+parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
 {
+  // todo: clean up the "is_theorem" and "auto_normalize" nonsense.
   pushContext;
   Sequence *out = 0;
   Token first_token = global_tokenizer->last_token;
   s32 count = 0;
   AstList *list = 0;
+
+#if 1
+  if (auto_normalize)
+  {
+    count++;
+    list = pushStruct(temp_arena, AstList);
+    Token token = newToken("<norm inserted by fork>");
+    list->first = newAst(arena, Norm, &token);
+    list->next  = 0;
+  }
+#endif
+
   b32 stop = false;
   while (noError() && !stop)
   {
-    // todo #speed make a way to rewind the state of the tokenizer
     Tokenizer tk_save = *global_tokenizer;
     Token token = nextToken();
     Ast *ast = 0;
@@ -1989,16 +2015,15 @@ parseSequence(MemoryArena *arena)
         case TC_DoubleColon:
         {
           Token after_dcolon = peekToken();
+          b32 is_theorem;
           if (equal(after_dcolon, "fn"))
           {
+            is_theorem = false;
             nextToken();
-            pushContextName("function");
-            FunctionDecl *fun = parseFunction(arena, name);
-            ast = &fun->a;
-            popContext();
           }
-          else
-            tokenError("todo: support internal proof (I guess)");
+          else is_theorem = true;
+          FunctionDecl *fun = parseFunction(arena, name, is_theorem);
+          ast = &fun->a;
         } break;
 
         case TC_ColonEqual:
@@ -2025,12 +2050,14 @@ parseSequence(MemoryArena *arena)
       if (equal(token, "fork"))
       {
         nextToken();
-        ast = &parseFork(arena)->a;
+        ast = &parseFork(arena, is_theorem)->a;
         stop = true;
       }
       else if (equal(token, "computation"))
-      {// seriously there's nothing to do here before typechecking
-        // note: this has to be in sequence, even though it could be an expression, since the expression that users can supply isn't fully-formed
+      {
+        // NOTE: Nothing to do here before typechecking. The command has to be
+        // in sequence, even though it is an expression, since the expression
+        // that users can supply isn't fully-formed
         nextToken();
         ast = &newAst(arena, Computation, &token)->a;
         stop = true;
@@ -2056,20 +2083,16 @@ parseSequence(MemoryArena *arena)
 
   if (noError())
   {
-    if (count == 0)
-      parseError(&first_token, "expected an expression here");
-    else
+    assert(count != 0);
+    Ast **items = pushArray(arena, count, Ast*);
+    for (s32 id = count-1; id >= 0; id--)
     {
-      Ast **items = pushArray(arena, count, Ast*);
-      for (s32 id = count-1; id >= 0; id--)
-      {
-        items[id] = list->first;
-        list = list->next;
-      }
-      out = newAst(arena, Sequence, &first_token);
-      out->count = count;
-      out->items = items;
+      items[id] = list->first;
+      list = list->next;
     }
+    out = newAst(arena, Sequence, &first_token);
+    out->count = count;
+    out->items = items;
   }
 
   popContext();
@@ -2660,7 +2683,7 @@ parseExpressionFull(MemoryArena *arena)
 }
 
 forward_declare internal FunctionDecl *
-parseFunction(MemoryArena *arena, Token *name)
+parseFunction(MemoryArena *arena, Token *name, b32 is_theorem)
 {
   pushContext;
   FunctionDecl *out = newAst(arena, FunctionDecl, name);
@@ -2678,7 +2701,7 @@ parseFunction(MemoryArena *arena, Token *name)
 
       if (requireChar('{', "open function body"))
       {
-        if (Sequence *body = parseSequence(arena))
+        if (Sequence *body = parseSequence(arena, is_theorem, false))
         {
           if (requireChar('}'))
           {
@@ -2698,7 +2721,7 @@ parseFunction(MemoryArena *arena, Token *name)
 }
 
 forward_declare internal Fork *
-parseFork(MemoryArena *arena)
+parseFork(MemoryArena *arena, b32 is_theorem)
 {
   pushContext;
 
@@ -2732,7 +2755,7 @@ parseFork(MemoryArena *arena)
               parsing->ctors[input_case_id]  = *ctor;
             }
             else if (Composite *pattern = castAst(pattern0, Composite))
-            {
+            {// todo nocheckin don't need this case anymore
               if ((ctor = castAst(pattern->op, Identifier)))
               {
                 parsing->ctors[input_case_id] = *ctor;
@@ -2745,7 +2768,8 @@ parseFork(MemoryArena *arena)
 
             if (requireChar(':', "syntax: CASE: BODY"))
             {
-              if (Sequence *body = parseSequence(arena))
+              b32 auto_normalize = is_theorem ? true : false;
+              if (Sequence *body = parseSequence(arena, is_theorem, auto_normalize))
               {
                 bodies[input_case_id] = body;
                 if (!optionalChar(','))
@@ -3477,14 +3501,18 @@ parseTopLevel(EngineState *state)
               nextToken();
               parseRecord(arena);
             }
-            else if (equal(after_dcolon, "fn"))
+            else
             {
-              nextToken();
-              if (FunctionDecl *fun = parseFunction(arena, name))
+              b32 is_theorem;
+              if (equal(after_dcolon, "fn"))
+              {
+                is_theorem = false;
+                nextToken();
+              }
+              else is_theorem = true;
+              if (FunctionDecl *fun = parseFunction(arena, name, is_theorem))
                 buildFunction(arena, empty_env, fun);
             }
-            else
-              tokenError("todo: support proofs");
           } break;
 
           case ':':
