@@ -5,6 +5,7 @@ Trinary equalTrinary(Value * lhs0, Value * rhs0);
 Value * evaluateFork(MemoryArena * arena, Environment * env, Fork * fork);
 Value * evaluateSequence(MemoryArena * arena, Environment * env, Sequence * sequence);
 Value * normalize(MemoryArena * arena, Environment * env, Value * in0);
+Value * evaluate(MemoryArena * arena, Environment * env, Ast * in0, b32 should_normalize);
 Value * evaluate(MemoryArena * arena, Environment * env, Ast * in0);
 void introduceOnStack(Environment * env, Token * name, Ast * type);
 void buildSequence(MemoryArena * arena, Environment * env, Sequence * sequence, Value * expected_type);

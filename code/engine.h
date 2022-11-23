@@ -428,7 +428,7 @@ struct Expression
 struct Rewrite
 {
   embed_Ast(a);
-  Ast *type;  // todo: can we somehow resore the type
+  Ast *type;  // todo: can we somehow restore the type
   Ast *eq_proof;
   b32  right_to_left;
 };

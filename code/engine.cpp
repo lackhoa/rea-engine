@@ -482,7 +482,7 @@ print(MemoryArena *buffer, Value *in0, PrintOptions opt)
         print(buffer, rewrite->body->type, new_opt);
         newlineAndIndent(buffer, opt.indentation);
 
-        print(buffer, "because of");
+        print(buffer, "rewriting possible due to");
         newlineAndIndent(buffer, new_opt.indentation);
         print(buffer, rewrite->eq_proof, new_opt);
         newlineAndIndent(buffer, opt.indentation);
@@ -861,9 +861,9 @@ evaluateFork(MemoryArena *arena, Environment *env, Fork *fork)
 internal RewriteV *
 evaluateRewrite(MemoryArena *arena, Environment *env, Rewrite *in)
 {
-  Value *type = evaluate(arena, env, in->type);
+  Value *type = evaluate(arena, env, in->type, false);
   RewriteV *out = newValue(arena, RewriteV, type);
-  out->eq_proof      = evaluate(arena, env, in->eq_proof);
+  out->eq_proof      = evaluate(arena, env, in->eq_proof, false);
   out->right_to_left = in->right_to_left;
   return out;
 }
@@ -871,6 +871,8 @@ evaluateRewrite(MemoryArena *arena, Environment *env, Rewrite *in)
 forward_declare internal Value *
 evaluateSequence(MemoryArena *arena, Environment *env, Sequence *sequence)
 {
+  // todo not sure what the normalization should be, but we're probably only
+  // called from "normalize", so I guess it's ok to always normalize.
   Environment env_ = *env; env = &env_;
   RewriteV *rewrite_chain = 0;
   Value   **rewrite_body  = 0;
@@ -936,14 +938,13 @@ evaluateSequence(MemoryArena *arena, Environment *env, Sequence *sequence)
   return out;
 }
 
-// todo: nocheckin: normalization isn't correct if there are multiple steps
 forward_declare internal Value *
 normalize(MemoryArena *arena, Environment *env, Value *in0) 
 {
   // NOTE: I'm kinda convinced that this is only gonna be a best-effort
   // thing. Handling all cases is a waste of time.
   //
-  // todo #speed don't pass the Environment in wholesale?
+  // TODO there are infinite loops when we rewrite f.ex: "(E: a = b) -> False" => "a != 0".
   Value *out0 = {};
 
   if (global_debug_mode)
@@ -976,14 +977,12 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
           // note: evaluation might fail, in which case we back out.
           out0 = evaluateSequence(arena, env, funv->body);
           unwindStack(env);
-          if (out0)
-            return normalize(arena, env, out0);
         }
       }
       else
       {
         assert((norm_op == builtins.equal) || (norm_op->cat == VC_Constructor) || (norm_op->cat == VC_StackValue));
-#if 0  // special casing for equality
+#if 1  // special casing for equality
         if (norm_op == builtins.equal)
         {// special case for equality
           Value *lhs = norm_args[1];
@@ -1217,7 +1216,7 @@ hasFreeVars(Environment *env, Ast *in0, s32 stack_offset)
 }
 
 forward_declare internal Value *
-evaluate(MemoryArena *arena, Environment *env, Ast *in0)
+evaluate(MemoryArena *arena, Environment *env, Ast *in0, b32 should_normalize)
 {
   Value *out0;
 
@@ -1263,26 +1262,27 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
            arg_id++)
       {
         Ast *in_arg = in->args[arg_id];
-        Value *arg = evaluate(arena, env, in_arg);
+        Value *arg = evaluate(arena, env, in_arg, should_normalize);
         norm_args[arg_id] = arg;
       }
 
-      Value *norm_op = evaluate(arena, env, in->op);
+      Value *norm_op = evaluate(arena, env, in->op, should_normalize);
       ArrowV *signature = castValue(norm_op->type, ArrowV);
       extendStack(env, in->arg_count, norm_args);
-      Value *return_type = evaluate(arena, env, signature->out_type);
+      Value *return_type = evaluate(arena, env, signature->out_type, should_normalize);
       unwindStack(env);
       CompositeV *out = newValue(arena, CompositeV, return_type);
       out->arg_count = in->arg_count;
       out->op        = norm_op;
       out->args      = norm_args;
 
-#if 0
-      // NOTE: the legendary eval-reduce loop
-      out0 = normalize(arena, env, &out->v);
-#else
-      out0 = &out->v;
-#endif
+      if (should_normalize)
+      {
+        // NOTE: the legendary eval-reduce loop
+        return normalize(arena, env, &out->v);
+      }
+      else
+        out0 = &out->v;
     } break;
 
     case AC_Arrow:
@@ -1298,7 +1298,7 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
     case AC_Accessor:
     {
       Accessor *in = castAst(in0, Accessor);
-      Value *record0 = evaluate(arena, env, in->record);
+      Value *record0 = evaluate(arena, env, in->record, should_normalize);
       // note: it has to be a record, otw we wouldn't know what type to
       // return.
       CompositeV *record = castValue(record0, CompositeV);
@@ -1308,8 +1308,8 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
     case AC_Computation:
     {
       Computation  *computation = castAst(in0, Computation);
-      Value *lhs = evaluate(arena, env, computation->lhs);
-      Value *rhs = evaluate(arena, env, computation->rhs);
+      Value *lhs = evaluate(arena, env, computation->lhs, should_normalize);
+      Value *rhs = evaluate(arena, env, computation->rhs, should_normalize);
 
       // todo nocheckin: the "tactics" code proliferates too much
       CompositeV *eq = newValue(arena, CompositeV, builtins.Set);
@@ -1339,6 +1339,12 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
 
   assert(out0);
   return out0;
+}
+
+forward_declare internal Value *
+evaluate(MemoryArena *arena, Environment *env, Ast *in0)
+{
+  return evaluate(arena, env, in0, true);
 }
 
 internal Value *
@@ -1929,6 +1935,12 @@ valueToAst(MemoryArena *arena, Environment *env, Value* value)
       accessor->field_id    = accessorv->field_id;
       accessor->field_name  = newToken(accessorv->field_name);
       out = &accessor->a;
+    } break;
+
+    case VC_ArrowV:
+    {
+      ArrowV *arrowv = castValue(value, ArrowV);
+      out = &arrowv->arrow.a;
     } break;
 
     case VC_BuiltinEqual:
@@ -2639,11 +2651,13 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
 
   if (noError() && should_check_type)
   {// one last typecheck if needed
-    if (!matchType(out.value->type, expected_type))
+    Value *norm_actual   = normalize(arena, env, out.value->type);
+    Value *norm_expected = normalize(arena, env, expected_type);
+    if (!matchType(norm_actual, norm_expected))
     {
       parseError(in0, "actual type differs from expected type");
-      pushAttachment("got", out.value->type);
-      pushAttachment("expected", expected_type);
+      pushAttachment("got", norm_actual);
+      pushAttachment("expected", norm_expected);
     }
   }
 
@@ -2712,7 +2726,7 @@ parseFunction(MemoryArena *arena, Token *name, b32 is_theorem)
       }
     }
     else
-      parseError(&signature->a, "function definition requires an arrow type");
+      parseError(signature0, "function definition requires an arrow type");
   }
 
   NULL_WHEN_ERROR(out);

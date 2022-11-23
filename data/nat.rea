@@ -58,13 +58,13 @@ addIdRight :: (n: Nat) -> n + 0 = n
 {
  fork n
  {
-  0 : computation,
+  0 : truth,
   ++:
   rewrite addIdRight(n.p);
-  refl(++(n.p));
+  truth;
   }
  }
-;; print(addIdRight(2));
+print(addIdRight(2));
 
 addSRight :: (n, m: Nat) -> n + ++(m) = ++(n+m)
 {
@@ -84,7 +84,7 @@ addCommutative :: fn (n, m: Nat) -> (n + m = m + n)
   }
  }
 
-addAssociative :: fn (a, b, c: Nat) -> (a+b)+c = a+b+c
+addAssociative :: (a, b, c: Nat) -> (a+b)+c = a+b+c
 {
  fork a
  {
@@ -93,16 +93,17 @@ addAssociative :: fn (a, b, c: Nat) -> (a+b)+c = a+b+c
   }
  }
 
-mulDistributive :: fn (a,b,c: Nat) -> a*c+b*c = (a+b)*c
+mulDistributive :: (a,b,c: Nat) -> a*c+b*c = (a+b)*c
 {fork a
  {0: truth,
 
   ++:
   rewrite mulDistributive(a.p, b, c);
   rewrite addAssociative(c, (a.p * c), (b * c));
+  rewrite mulDistributive(a.p, b, c);
   truth}}
 
-mulAssociative :: fn (a,b,c: Nat) -> (a*b)*c = a*b*c
+mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*b*c
 {fork a
  {0: truth,
   ++:
@@ -116,7 +117,7 @@ mulAssociative :: fn (a,b,c: Nat) -> (a*b)*c = a*b*c
  (E: a = b) -> False
  }
 
-multiplyPos :: fn (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
+multiplyPos :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
 {
  out :: fn (e: a*b = 0) -> False
  {fork a
