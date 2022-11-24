@@ -286,10 +286,10 @@ struct FunctionV
 
 struct Let
 {
-  Ast a;
-
+  embed_Ast(a);
   Token  lhs;
   Ast   *rhs;
+  Ast   *type;  // optional type coercion
 };
 
 struct StackValue

@@ -67,12 +67,10 @@ check 1+2: RatTest;
  }
 
 Z :: union
-{
- 0,
+{0,
  ;; todo: These maybe not work work as unary operators?
  +: (v: Pos) -> Z,
- -: (v: Pos) -> Z
- }
+ -: (v: Pos) -> Z}
 
 ;; - :: (a: Pos, b: Pos) -> Pos
 ;; {;; assuming that a > b
@@ -85,9 +83,8 @@ Z :: union
 ;;  {1  : fork b {1: 0, ++: -},
 ;;   ++ : fork b {1: +, ++: compare(a.p, b.p)}}}
 
-+ :: (a: Z, b: Z) -> Z
-{
- fork a
++ :: (a, b: Z) -> Z
+{fork a
  {0: b,
 
   +:
@@ -107,14 +104,18 @@ Z :: union
    -: ;; both negative
    -(a.v + b.v)}}}
 
-Rat :: union
-{
- /: (n: Z, d: Pos) -> Rat
- }
+* :: (a,b : Z) -> Z
+{fork a
+ {0: 0,
+  +: fork b {0: 0, +: +(a.v * b.v), -: -(a.v * b.v)},
+  -: fork b {0: 0, +: -(a.v * b.v), -: +(a.v * b.v)}}}
+
+Rat :: union { /: (n: Z, d: Pos) -> Rat }
 
 + :: (a: Rat, b: Rat) -> Rat
-{
- check (a.n * +(b.d) + b.n * +(a.d)) : Z
- ;; todo: type coercion
- (a.n * +(b.d) + b.n * +(a.d)) / (a.d * b.d)
+{;; todo: type coercion
+ ;; error report for overloads is so bad
+ n : Z   := a.n * +(b.d) + b.n * +(a.d);
+ d : Pos := a.d * b.d;
+ n / d
  }

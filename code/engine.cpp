@@ -1544,7 +1544,7 @@ requireChar(char c, char *reason = 0, Tokenizer *tk=global_tokenizer)
 {
   auto out = false;
   if (!reason)
-    reason = "<no reason provided>";
+    reason = "";
   if (hasMore(tk))
   {
     Token token = nextToken(tk);
@@ -2044,13 +2044,32 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
 
         case TC_ColonEqual:
         {
-          pushContextName("let");
+          pushContextName("let: NAME := VALUE");
           if (Ast *rhs = parseExpressionToAst(arena))
           {
             Let *let = newAst(arena, Let, name);
             ast = &let->a;
             let->lhs = *name;
             let->rhs = rhs;
+          }
+          popContext();
+        } break;
+
+        case TC_Colon:
+        {
+          pushContextName("typed let: NAME : TYPE := VALUE");
+          if (Ast *type = parseExpressionToAst(arena))
+          {
+            requireCategory(TC_ColonEqual, "");
+            if (Ast *rhs = parseExpressionToAst(arena))
+            {
+              Let *let = newAst(arena, Let, name);
+              ast = &let->a;
+              let->lhs  = *name;
+              let->rhs  = rhs;
+              let->type = type;
+            }
+            requireChar(';');
           }
           popContext();
         } break;
@@ -2130,11 +2149,27 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *e
       case AC_Let:
       {
         Let *let = castAst(item, Let);
-        if (Expression build_rhs = buildExpression(arena, env, let->rhs, holev))
+        if (Expression rhs = buildExpression(arena, env, let->rhs, holev))
         {
-          addLocalBinding(env->bindings, &let->lhs);
-          let->rhs = build_rhs.ast;
-          addStackValue(env, build_rhs.value);
+          if (let->type)
+          {
+            if (Expression type = buildExpression(arena, env, let->type, holev))
+            {
+              if (!equalB32(rhs.value->type, type.value))
+              {
+                parseError(item, "the rhs does not have the expected type");
+                pushAttachment("got", rhs.value->type);
+                pushAttachment("expected", type.value);
+              }
+            }
+          }
+
+          if (noError())
+          {
+            addLocalBinding(env->bindings, &let->lhs);
+            let->rhs = rhs.ast;
+            addStackValue(env, rhs.value);
+          }
         }
       } break;
 
@@ -3189,8 +3224,7 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
   return out;
 }
 
-forward_declare
-inline Ast *
+forward_declare inline Ast *
 parseExpressionToAst(MemoryArena *arena)
 {
   return parseExpressionToAstMain(arena, ParseExpressionOptions{});
