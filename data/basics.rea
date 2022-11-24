@@ -2,7 +2,7 @@
 #load "nat.rea"
 
 check True: Set;
-print =;
+print_raw =;
 print_raw (x: False) -> (x = x);
 print_raw false & true | true & false | true;
 

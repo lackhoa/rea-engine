@@ -1706,12 +1706,16 @@ getExplicitParamCount(ArrowV *in)
 }
 
 inline b32
-matchType(Value *actual, Value *expected)
+matchType(Environment *env, Value *actual, Value *expected)
 {
   if (expected == holev)
     return true;
   else
-    return equalB32(actual, expected);
+  {
+    Value *norm_actual   = normalize(temp_arena, env, actual);
+    Value *norm_expected = normalize(temp_arena, env, expected);
+    return equalB32(norm_actual, norm_expected);
+  }
 }
 
 internal Ast *
@@ -1956,9 +1960,7 @@ valueToAst(MemoryArena *arena, Environment *env, Value* value)
 
     case VC_RewriteV:
     {
-      dump();
-      dump("-------------------");
-      dump(value);
+      dump(); dump("-------------------"); dump(value);
       todoIncomplete;  // really we don't need it tho?
     } break;
 
@@ -1982,7 +1984,7 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
   s32 count = 0;
   AstList *list = 0;
 
-#if 1
+#if 0
   if (auto_normalize)
   {
     count++;
@@ -1991,6 +1993,8 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
     list->first = newAst(arena, Norm, &token);
     list->next  = 0;
   }
+#else
+  (void)auto_normalize;
 #endif
 
   b32 stop = false;
@@ -2405,7 +2409,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
           for (s32 value_id = 0; value_id < globals->count; value_id++)
           {
             Value *slot_value = globals->values[value_id];
-            if (matchType(slot_value->type, expected_type))
+            if (matchType(env, slot_value->type, expected_type))
             {
               if (value)
               {// ambiguous
@@ -2651,13 +2655,18 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
 
   if (noError() && should_check_type)
   {// one last typecheck if needed
-    Value *norm_actual   = normalize(arena, env, out.value->type);
-    Value *norm_expected = normalize(arena, env, expected_type);
-    if (!matchType(norm_actual, norm_expected))
+#if 0
+    Value *actual   = normalize(arena, env, out.value->type);
+    Value *expected = normalize(arena, env, expected_type);
+#else
+    Value *actual   = out.value->type;
+    Value *expected = expected_type;
+#endif
+    if (!matchType(env, actual, expected))
     {
       parseError(in0, "actual type differs from expected type");
-      pushAttachment("got", norm_actual);
-      pushAttachment("expected", norm_expected);
+      pushAttachment("got", actual);
+      pushAttachment("expected", expected);
     }
   }
 
@@ -3418,7 +3427,7 @@ parseTopLevel(EngineState *state)
         {
           Value *norm = normalize(arena, empty_env, expr.value);
           print(0, norm, {.detailed=true});
-          dump();
+          print(0, "\n");
         }
         requireChar(';');
       }
@@ -3426,10 +3435,10 @@ parseTopLevel(EngineState *state)
       {
         if (auto parsing = parseExpressionFull(temp_arena))
         {
-          print(0, parsing.value, {.detailed=true});
+          print(0, parsing.ast, {.detailed=true});
           print(0, ": ");
           print(0, parsing.value->type, {});
-          dump();
+          print(0, "\n");
         }
         requireChar(';');
       }

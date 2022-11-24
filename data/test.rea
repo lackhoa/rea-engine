@@ -44,8 +44,8 @@ Pos :: union
 {
  fork a
  {
-  1: ++(b),
-  ++: ++(a.p+b)
+  1 : ++(b),
+  ++: ++(a.p + b)
   }
  }
 
@@ -53,8 +53,68 @@ Pos :: union
 3 : Pos := ++(2);
 check 1+2: Nat;
 check 1+2: Pos;
-;; #should_fail
-;; check 1+2: RatTest;
-;; #should_fail off
+#should_fail
+check 1+2: RatTest;
+#should_fail off
 
-print addIdRight(2);
+* :: fn (n, m: Pos) -> Pos
+{
+ fork n
+ {
+  1  : m,
+  ++ : m + n.p * m,
+  }
+ }
+
+Z :: union
+{
+ 0,
+ ;; todo: These maybe not work work as unary operators?
+ +: (v: Pos) -> Z,
+ -: (v: Pos) -> Z
+ }
+
+;; - :: (a: Pos, b: Pos) -> Pos
+;; {;; assuming that a > b
+;;  fork a
+;;  {1 : 1,
+;;   ++: fork b {1: 1, ++: -(a.p, b.p)}}}
+
+;; compare :: (a: Pos, b: Pos) -> Pos
+;; {fork a
+;;  {1  : fork b {1: 0, ++: -},
+;;   ++ : fork b {1: +, ++: compare(a.p, b.p)}}}
+
++ :: (a: Z, b: Z) -> Z
+{
+ fork a
+ {0: b,
+
+  +:
+  fork b
+  {0: a,
+   +: +(a.v + b.v),
+   -:  ;; a positive, b negative
+   fork (a.v)
+   {1 : fork (b.v) {1: 0, ++: -(b.v.p)},
+    ++: fork (b.v) {1: +(a.v.p), ++: +(a.v.p) + -(b.v.p)}}},
+
+  -:
+  fork b
+  {0: a,
+   +: ;; a negative, b positve: symmetric case
+   b + a,
+   -: ;; both negative
+   -(a.v + b.v)}}}
+
+Rat :: union
+{
+ /: (n: Z, d: Pos) -> Rat
+ }
+
++ :: (a: Rat, b: Rat) -> Rat
+{
+ check (a.n * +(b.d) + b.n * +(a.d)) : Z
+ ;; todo: type coercion
+ (a.n * +(b.d) + b.n * +(a.d)) / (a.d * b.d)
+ }

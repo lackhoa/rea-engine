@@ -35,8 +35,8 @@ check_truth even(3) = false;
 {
  fork n
  {
-  0     : 0,
-  ++(n1) : m + n.p * m,
+  0  : 0,
+  ++ : m + n.p * m,
   }
  }
 
@@ -46,8 +46,8 @@ check_truth  2*3 = 6;
 {
  fork n
  {
-  0     : 0,
-  ++(n1) : fork(m) {0 : n, ++(m1) : n.p - m.p}
+  0  : 0,
+  ++ : fork(m) {0 : n, ++(m1) : n.p - m.p}
   }
  }
 
@@ -64,7 +64,7 @@ addIdRight :: (n: Nat) -> n + 0 = n
   truth;
   }
  }
-print(addIdRight(2));
+;; print(addIdRight(2));
 
 addSRight :: (n, m: Nat) -> n + ++(m) = ++(n+m)
 {
@@ -102,6 +102,7 @@ mulDistributive :: (a,b,c: Nat) -> a*c+b*c = (a+b)*c
   rewrite addAssociative(c, (a.p * c), (b * c));
   rewrite mulDistributive(a.p, b, c);
   truth}}
+;; print(mulDistributive(1,2,3));
 
 mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*b*c
 {fork a
@@ -119,13 +120,19 @@ mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*b*c
 
 multiplyPos :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
 {
+ ;; a_pos : (E: a = 0) -> False := a_positive
+ ;; b_pos : (E: b = 0) -> False := b_positive
  out :: fn (e: a*b = 0) -> False
  {fork a
-  {0: a_positive(truth),
+  {0:
+   ;; a_pos(truth)
+   a_positive(truth),
 
    ++:
    fork b
-   {0: b_positive(truth),
+   {0:
+    ;; b_pos(truth)
+    b_positive(truth),
     ++: e
     }}}
  out
