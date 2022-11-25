@@ -24,7 +24,7 @@ testRatArrow :: fn (r: RatTest) -> r.d != 0 { r._dnot0 }
 
 testRatArrow2 :: fn () -> (a: RatTest) -> (a.d = a.d)
 {
- out :: fn (b: RatTest) -> (b.d = b.d) {truth}
+ out :: fn (b: RatTest) -> (b.d = b.d) {}
  out
  }
 
@@ -122,13 +122,13 @@ Rat :: union { /: (n: Z, d: Pos) -> Rat }
 
 add1 :: (a: Pos) -> a+1 = ++(a)
 {fork a
- {1 : _,
-  ++: rewrite add1(a.p); truth}}
+ {1 : ,
+  ++: rewrite add1(a.p)}}
 
 addSRight :: (a,b: Pos) -> a + ++(b) = ++(a+b)
 {fork a
- {1 : truth,
-  ++: rewrite addSRight(a.p, b); truth}}
+ {1 :,
+  ++: rewrite addSRight(a.p, b)}}
 
 addCommutative :: (a, b: Pos) -> (a + b = b + a)
 {fork a
@@ -140,20 +140,19 @@ addCommutative :: (a, b: Pos) -> (a + b = b + a)
 ;; todo #cutnpaste collapse these abstract algebra down maybe
 addAssociative :: (a,b,c: Pos) -> (a+b)+c = a+b+c
 {fork a
- {1 : truth,
+ {1 : ,
   ++: rewrite addAssociative(a.p, b, c)}}
 
 mulDistributive :: (a,b,c: Pos) -> a*c+b*c = (a+b)*c
 {fork a
  {1: ,
   ++:
-  rewrite mulDistributive(a.p, b, c);
   rewrite addAssociative(c, (a.p * c), (b * c));
   rewrite mulDistributive(a.p, b, c)}}
 
 mulAssociative :: (a,b,c: Pos) -> (a*b)*c = a*b*c
 {fork a
- {1 : truth,
+ {1 : ,
   ++:
   rewrite left mulDistributive(b, (a.p * b), c);
   rewrite mulAssociative(a.p, b, c)}}
@@ -173,14 +172,14 @@ mulCommutative :: (a,b: Pos) -> a*b = b*a
   rewrite mulCommutative(a.p, b)}}
 
 add0 :: (a: Z) -> a+0 = a
-{fork a {0: truth, +: truth, -: truth}}
+{fork a {0: , +: , -: }}
 
 mulDistributive :: (a,b,c: Z) -> a*c+b*c = (a+b)*c
 {fork a
- {0: truth,
-  +: fork b {0: add0((+(a.v) * c)), +: truth, -: truth},
-  -: truth}}
+ {0: ,
+  +: fork b {0: add0((+(a.v) * c)), +: , -: },
+  -: }}
 
 addAssociative :: (a,b,c: Rat) -> (a+b)+c = a+b+c
 {rewrite(mulAssociative(a.d, b.d, c.d));
- truth}
+ }

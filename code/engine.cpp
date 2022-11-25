@@ -985,15 +985,18 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
       else
       {
         assert((norm_op->cat == VC_BuiltinEqual) || (norm_op->cat == VC_Constructor) || (norm_op->cat == VC_StackValue));
-#if 0  // special casing for equality
+#if 1  // special casing for equality
         if (norm_op->cat == VC_BuiltinEqual)
         {// special case for equality
           Value *lhs = norm_args[1];
           Value *rhs = norm_args[2];
           Trinary compare = equalTrinary(lhs, rhs);
+#if 0
           if (compare == Trinary_True)
             out0 = &builtins.True->v;
-          else if (compare == Trinary_False)
+#endif
+          // I don't know how to handle inconsistency otherwise
+          if (compare == Trinary_False)
             out0 = &builtins.False->v;
         }
 #endif
@@ -2055,38 +2058,47 @@ valueToAst(MemoryArena *arena, Environment *env, Value* value)
 
   return out;
 }
+ 
+struct SearchOutput {b32 matches; TreePath *path;};
 
-struct RewriteParameters
+internal SearchOutput
+searchMatches(MemoryArena *arena, Value *lhs, Value* in0)
 {
-  MemoryArena *arena;
-  Value       *lhs;
-  Value       *rhs;
-};
-
-internal Value *
-rewriteExpression(RewriteParameters *params, Value* in0)
-{
-  if (equalB32(in0, params->lhs))
-    return params->rhs;
+  SearchOutput out0 = {};
+  if (equalB32(in0, lhs))
+  {
+    out0.matches=true;
+    return out0;
+  }
   else
   {
-    MemoryArena *arena = params->arena;
-    Value *out0;
     switch (in0->cat)
     {
       case VC_CompositeV:
       {
-        CompositeV *in  = castValue(in0, CompositeV);
-        CompositeV *out = copyStruct(arena, in);
-        out->op        = rewriteExpression(params, in->op);
-        allocateArray(arena, out->arg_count, out->args);
-        for (int id=0; id < out->arg_count; id++)
+        CompositeV *in = castValue(in0, CompositeV);
+        SearchOutput op = searchMatches(arena, lhs, in->op);
+        if (op.matches)
         {
-          out->args[id] = rewriteExpression(params, in->args[id]);
+          allocate(arena, out0.path);
+          out0.matches     = true;
+          out0.path->index = -1;
+          out0.path->next  = op.path;
+          return out0;
         }
-        out0 = &out->v;
+        for (int arg_id=0; arg_id < in->arg_count; arg_id++)
+        {
+          SearchOutput arg = searchMatches(arena, lhs, in->args[arg_id]);
+          if (arg.matches)
+          {
+            allocate(arena, out0.path);
+            out0.matches     = true;
+            out0.path->index = arg_id;
+            out0.path->next  = arg.path;
+            return out0;
+          }
+        }
       } break;
-
 
       case VC_Null:
       case VC_Hole:
@@ -2099,12 +2111,10 @@ rewriteExpression(RewriteParameters *params, Value* in0)
       case VC_Union:
       case VC_FunctionV:
       case VC_Constructor:
-      {
-        out0 = in0;
-      } break;
+      {} break;
 
       case VC_ArrowV:
-      case VC_RewriteV:
+      case VC_RewriteV:  // probably we never work on proofs in this way?
       {
         todoIncomplete;
       } break;
@@ -2117,6 +2127,37 @@ rewriteExpression(RewriteParameters *params, Value* in0)
 
     return out0;
   }
+}
+
+internal Value *
+substitute(MemoryArena *arena, Value *rhs, TreePath *path, Value *in0)
+{
+  if (path)
+  {
+    CompositeV *in  = castValue(in0, CompositeV);
+    CompositeV *out = copyStruct(arena, in);
+    if (path->index == -1)
+    {
+      out->op = substitute(arena, rhs, path->next, in->op);
+    }
+    else
+    {
+      assert(path->index >= 0 && path->index < out->arg_count);
+      allocateArray(arena, out->arg_count, out->args);
+      for (i32 arg_id=0; arg_id < out->arg_count; arg_id++)
+      {
+        if (arg_id == (i32)path->index)
+        {
+          out->args[arg_id] = substitute(arena, rhs, path->next, in->args[arg_id]);
+        }
+        else
+          out->args[arg_id] = in->args[arg_id];
+      }
+    }
+    return &out->v;
+  }
+  else
+    return rhs;
 }
 
 inline Sequence *
@@ -2288,7 +2329,7 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
 }
 
 forward_declare internal void
-buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *expected_type)
+buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *goal)
 {
   Environment *outer_env = env; env = outer_env;
 
@@ -2351,32 +2392,32 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *e
         {
           rewrite->eq_proof = eq_proof.ast;
           b32 rule_valid = false;
-          if (CompositeV *rule = castValue(eq_proof.value->type, CompositeV))
+          if (CompositeV *eq = castValue(eq_proof.value->type, CompositeV))
           {
-            RewriteParameters rewrite_params;
-            rewrite_params.arena = arena;
-            if (rule->op == &builtins.equal->v)
+            Value *lhs, *rhs;
+            if (eq->op == &builtins.equal->v)
             {
               rule_valid = true;
-              if (rewrite->right_to_left)
+              if (rewrite->right_to_left) {lhs = eq->args[2]; rhs = eq->args[1];}
+              else                        {lhs = eq->args[1]; rhs = eq->args[2];}
+
+              SearchOutput search = searchMatches(arena, lhs, goal);
+              if (search.matches)
               {
-                rewrite_params.lhs = rule->args[2];
-                rewrite_params.rhs = rule->args[1];
+                rewrite->type = valueToAst(arena, env, goal);
+                goal = substitute(arena, rhs, search.path, goal);
               }
               else
               {
-                rewrite_params.lhs = rule->args[1];
-                rewrite_params.rhs = rule->args[2];
+                parseError(item, "substitution has no effect");
+                attach("substitution", eq_proof.value->type);
+                attach("goal", goal);
               }
-
-              Value *before_rewrite = expected_type;
-              rewrite->type = valueToAst(arena, env, before_rewrite);
-              expected_type = rewriteExpression(&rewrite_params, before_rewrite);
             }
           }
           if (!rule_valid)
           {
-            parseError(item, "invalid rewrite rule, can only be equality");
+            parseError(item, "please provide a proof of equality that can be used for substitution");
             attach("got", eq_proof.value->type);
           }
         }
@@ -2384,15 +2425,15 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *e
 
       case AC_Norm:
       {
-        Value *norm_expected_type = normalize(arena, env, expected_type);
+        Value *norm_expected_type = normalize(arena, env, goal);
         Computation *computation = newAst(arena, Computation, &item->token);
-        computation->lhs = valueToAst(arena, env, expected_type);
+        computation->lhs = valueToAst(arena, env, goal);
         computation->rhs = valueToAst(arena, env, norm_expected_type);
         Rewrite *rewrite = newAst(arena, Rewrite, &item->token);
         rewrite->eq_proof = &computation->a;
         rewrite->type     = computation->lhs;
         sequence->items[item_id] = &rewrite->a;
-        expected_type = norm_expected_type;
+        goal = norm_expected_type;
       } break;
 
 #if 0
@@ -2418,12 +2459,12 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *e
     Ast *last = sequence->items[sequence->count-1];
     if (Fork *fork = castAst(last, Fork))
     {
-      buildFork(arena, env, fork, expected_type);
+      buildFork(arena, env, fork, goal);
     }
     else if (Computation *computation = castAst(last, Computation))
     {
       b32 goal_valid = false;
-      if (CompositeV *eq = castValue(expected_type, CompositeV))
+      if (CompositeV *eq = castValue(goal, CompositeV))
       {
         if (eq->op == &builtins.equal->v)
         {
@@ -2446,10 +2487,10 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *e
       if (!goal_valid)
       {
         parseError(last, "computation can only prove equality");
-        attach("got", expected_type);
+        attach("got", goal);
       }
     }
-    else if (Expression build_last = buildExpression(arena, env, sequence->items[sequence->count-1], expected_type))
+    else if (Expression build_last = buildExpression(arena, env, sequence->items[sequence->count-1], goal))
     {
       sequence->items[sequence->count-1] = build_last.ast;
     }
@@ -3203,32 +3244,6 @@ parseInt32()
   return out;
 }
 
-internal TreeIndex
-parseTreeIndex()
-{
-  TreeIndex out;
-  out.count = 0;
-  if (requireChar('['))
-  {
-    for (; hasMore(); )
-    {
-      if (optionalChar(']'))
-        break;
-      else
-      {
-        out.ids[out.count++] = parseInt32();
-        assert(out.count <= arrayCount(out.ids));
-        if (!optionalChar(','))
-        {
-          requireChar(']', "expected ',' or ']'");
-          break;
-        }
-      }
-    }
-  }
-  return out;
-}
-
 internal Ast *
 parseOperand(MemoryArena *arena)
 {
@@ -3546,18 +3561,13 @@ parseTopLevel(EngineState *state)
   b32 should_fail_active = false;
   Environment empty_env_ = {}; Environment *empty_env = &empty_env_;
 
+  Token token = nextToken(); 
   while (hasMore())
   {
 #define CLEAN_TEMPORARY_MEMORY 1
 #if CLEAN_TEMPORARY_MEMORY
     TemporaryMemory top_level_temp = beginTemporaryMemory(temp_arena);
 #endif
-
-    Token token = nextToken(); 
-    while (equal(token, ";"))
-    {// todo: should we do "eat all semicolons after the first one?"
-      token = nextToken();
-    }
 
     if (equal(&token, '#'))
     {// compile directive
@@ -3778,6 +3788,12 @@ parseTopLevel(EngineState *state)
         tokenError(&token, "#should_fail active but didn't fail");
       else if (getError()->code == ErrorWrongType)
         wipeError(global_tokenizer);
+    }
+
+    token = nextToken();
+    while (equal(token, ";"))
+    {// todo: should we do "eat all semicolons after the first one?"
+      token = nextToken();
     }
   }
 }

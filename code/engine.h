@@ -310,21 +310,11 @@ struct StackValue
   s32   stack_depth;
 };
 
-struct TreeIndex
+struct TreePath
 {
-  s32 count;
-  u8  ids[8];                  // todo #expand
-  operator bool() {return count;}
+  s32       index;  // -1 for op
+  TreePath *next;
 };
-
-#if 0
-struct HeapPath
-{
-  Value *root;
-  s32    count;
-  u8     ids[8];  // todo #expand
-};
-#endif
 
 struct AccessorV
 {
@@ -347,15 +337,6 @@ struct Composite
   Ast  *op;
   s32   arg_count;
   Ast **args;
-};
-
-struct Replace
-{
-  embed_Ast(a);
-  b32        built;
-  Ast       *eq_proof;
-  TreeIndex  index;
-  Ast       *proof;
 };
 
 struct CompositeV

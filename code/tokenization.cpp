@@ -136,7 +136,12 @@ popContext(Tokenizer *tk = global_tokenizer)
 inline b32
 hasMore(Tokenizer *tk = global_tokenizer)
 {
-  return ((*tk->at != 0) && (!tk->error));
+  b32 out = ((*tk->at != 0) && (!tk->error));
+#if 0
+  if (out && (peekToken(tk).cat == 0))
+    invalidCodePath;
+#endif
+  return out;
 }
 
 inline void
@@ -232,7 +237,7 @@ matchMetaDirective(Token *token)
     return out;
 }
 
-inline Token
+forward_declare inline Token
 nextToken(Tokenizer *tk = global_tokenizer)
 {
   Token out = {};
@@ -381,7 +386,7 @@ nextToken(Tokenizer *tk = global_tokenizer)
   return out;
 }
 
-inline Token
+forward_declare inline Token
 peekToken(Tokenizer *tk = global_tokenizer)
 {
     auto tk_copy = *tk;
