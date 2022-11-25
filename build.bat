@@ -5,5 +5,5 @@ call build-clang
 rem call build-msvc
 
 pushd data
-..\build\win32_editor.exe || exit 1
+..\build\win32_editor.exe  || exit 1
 popd

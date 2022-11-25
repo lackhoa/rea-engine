@@ -138,6 +138,15 @@ newSyntheticConstant(MemoryArena *arena, Value *value)
   return out;
 }
 
+inline Constant *
+newSyntheticConstant(MemoryArena *arena, Value *value, Token *token)
+{
+  Constant *out = newAst(arena, Constant, token);
+  out->is_synthetic = true;
+  out->value        = value;
+  return out;
+}
+
 struct ForkParsing
 {
   Identifier *ctors;

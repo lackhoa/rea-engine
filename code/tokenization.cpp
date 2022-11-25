@@ -120,8 +120,8 @@ pushContext_(ParseContext *context, Tokenizer *tk = global_tokenizer)
     context->next = old_first;
 }
 
-#define pushContext { ParseContext context = {(char*)__func__}; pushContext_(&context); }
-#define pushContextName(string) { ParseContext context = {string}; pushContext_(&context); }
+// #define pushContext { ParseContext context = {(char*)__func__}; pushContext_(&context); }
+#define pushContext(string) { ParseContext context = {string}; pushContext_(&context); }
 
 internal void
 popContext(Tokenizer *tk = global_tokenizer)
