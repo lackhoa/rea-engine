@@ -172,8 +172,9 @@ mulCommutative :: (a,b: Pos) -> a*b = b*a
 {fork a
  {1 : rewrite mul1(b),
   ++: 
-  ;; x : (b + (a.p * b)) = ((1 * b) + (a.p * b)) := truth;
-  ;; rewrite x;
+  x : (b + (a.p * b)) = ((b * 1) + (a.p * b)) := rewrite mul1(b);
+  rewrite x;
+  rewrite mulCommutative(a.p, b);
   }}
 
 add0 :: (a: Z) -> a+0 = a

@@ -180,11 +180,11 @@ enum Trinary
   Trinary_Unknown = 2, 
 };
 
-struct RewriteRule
+struct RewriteRules
 {
   Value *lhs;
   Value *rhs;
-  RewriteRule *next;
+  RewriteRules *next;
 };
 
 struct Stack
@@ -200,7 +200,7 @@ struct Environment
 {
   LocalBindings *bindings;
   Stack         *stack;
-  RewriteRule   *rewrite;
+  RewriteRules   *rewrite;
 };
 
 #define getStackDepth(stack) (stack ? stack->depth : 0)

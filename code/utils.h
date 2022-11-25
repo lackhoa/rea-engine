@@ -39,7 +39,7 @@ typedef long     s64;
 
 #if REA_INTERNAL
 #  if COMPILER_MSVC
-#    define assert(claim) if (!(claim)) { fflush(stdout); __debugbreak(); }
+#    define assert(claim) if (!(claim)) { fflush(stdout); printf("assertion fired at line %d in file %s!", __LINE__, __FILE__); __debugbreak(); }
 #  else
 #    define assert(claim) if (!(claim)) { fflush(stdout); __builtin_trap(); }
 #  endif

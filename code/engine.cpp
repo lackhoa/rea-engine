@@ -17,10 +17,10 @@ global_variable Value *holev = (Value *)&holev_;
 
 global_variable Sequence dummy_function_under_construction;
 
-inline RewriteRule *
+inline RewriteRules *
 newRewriteRule(Environment *env, Value *lhs, Value *rhs)
 {
-  RewriteRule *out = pushStruct(temp_arena, RewriteRule);
+  RewriteRules *out = pushStruct(temp_arena, RewriteRules);
   out->lhs  = lhs;
   out->rhs  = rhs;
   out->next = env->rewrite;
@@ -41,7 +41,7 @@ unwindBindingsAndStack(Environment *env)
 }
 
 inline void
-dump(RewriteRule *rewrite)
+dump(RewriteRules *rewrite)
 {
   for (; rewrite; rewrite = rewrite->next)
   {
@@ -806,13 +806,13 @@ lookupCurrentFrame(LocalBindings *bindings, String key, b32 add_if_missing)
 }
 
 internal Value *
-rewriteExpression(Environment *env, Value *in)
+repeatedRewrite(Environment *env, Value *in)
 {
   Value *out = 0;
   // todo: find some way to early out in case expression can't be rewritten
   // if (canBeRewritten(in))
   // todo: #speed this is O(n)
-  for (RewriteRule *rewrite = env->rewrite;
+  for (RewriteRules *rewrite = env->rewrite;
        rewrite && !out;
        rewrite = rewrite->next)
   {
@@ -1042,7 +1042,7 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
   }
 
   Value *before_rewrite = out0;
-  out0 = rewriteExpression(env, out0);
+  out0 = repeatedRewrite(env, out0);
 
   if (out0 != before_rewrite)
   {
@@ -1345,7 +1345,7 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0, b32 should_normalize)
   }
 
   // note: rewriting doesn't count as normalization, it's more like "overwriting"
-  out0 = rewriteExpression(env, out0);
+  out0 = repeatedRewrite(env, out0);
 
   assert(out0);
   return out0;
@@ -1506,7 +1506,7 @@ inline void
 addGlobalBinding(Token *token, Value *value)
 {
   GlobalBinding *slot = lookupGlobalNameSlot(token->text);
-  // nocheckin: check for type conflict
+  // TODO: check for type conflict
   slot->values[slot->count++] = value;
   assert(slot->count < arrayCount(slot->values));
 }
@@ -1670,7 +1670,7 @@ addRewriteRule(Environment *env, Value *lhs0, Value *rhs0)
   b32 added = false;
   if (!equalB32(lhs0, rhs0))
   {
-    RewriteRule *rewrite = newRewriteRule(env, lhs0, rhs0);
+    RewriteRules *rewrite = newRewriteRule(env, lhs0, rhs0);
     env->rewrite = rewrite;
     added= true;
 
@@ -1978,6 +1978,69 @@ valueToAst(MemoryArena *arena, Environment *env, Value* value)
   return out;
 }
 
+struct RewriteParameters
+{
+  MemoryArena *arena;
+  Value       *lhs;
+  Value       *rhs;
+};
+
+internal Value *
+rewriteExpression(RewriteParameters *params, Value* in0)
+{
+  if (equalB32(in0, params->lhs))
+    return params->rhs;
+  else
+  {
+    MemoryArena *arena = params->arena;
+    Value *out0;
+    switch (in0->cat)
+    {
+      case VC_CompositeV:
+      {
+        CompositeV *in  = castValue(in0, CompositeV);
+        CompositeV *out = copyStruct(arena, in);
+        out->op        = rewriteExpression(params, in->op);
+        allocateArray(arena, out->arg_count, out->args);
+        for (int id=0; id < out->arg_count; id++)
+        {
+          out->args[id] = rewriteExpression(params, in->args[id]);
+        }
+        out0 = &out->v;
+      } break;
+
+
+      case VC_Null:
+      case VC_Hole:
+      case VC_ComputationV:
+      case VC_StackValue:
+      case VC_HeapValue:
+      case VC_BuiltinEqual:
+      case VC_BuiltinSet:
+      case VC_BuiltinType:
+      case VC_Union:
+      case VC_FunctionV:
+      case VC_Constructor:
+      {
+        out0 = in0;
+      } break;
+
+      case VC_ArrowV:
+      case VC_RewriteV:
+      {
+        todoIncomplete;
+      } break;
+
+      case VC_AccessorV:
+      {
+        invalidCodePath;
+      } break;
+    }
+
+    return out0;
+  }
+}
+
 inline Sequence *
 parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
 {
@@ -2211,25 +2274,25 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *e
           b32 rule_valid = false;
           if (CompositeV *rule = castValue(eq_proof.value->type, CompositeV))
           {
+            RewriteParameters rewrite_params;
+            rewrite_params.arena = arena;
             if (rule->op == builtins.equal)
             {
               rule_valid = true;
-              b32 rule_added;
               if (rewrite->right_to_left)
-                rule_added = addRewriteRule(env, rule->args[2], rule->args[1]);
+              {
+                rewrite_params.lhs = rule->args[2];
+                rewrite_params.rhs = rule->args[1];
+              }
               else
-                rule_added = addRewriteRule(env, rule->args[1], rule->args[2]);
+              {
+                rewrite_params.lhs = rule->args[1];
+                rewrite_params.rhs = rule->args[2];
+              }
 
-              rewrite->type = valueToAst(arena, env, expected_type);
-#if 0
-              dump("rewrite->type: "); dump(rewrite->type); dump();
-#endif
-
-              // nocheckin: it's confusing to do the normlization step here, but
-              // there's no other way right now.
-              expected_type = normalize(arena, env, expected_type);
-              if (rule_added)
-                removeRewriteRule(env);
+              Value *before_rewrite = expected_type;
+              rewrite->type = valueToAst(arena, env, before_rewrite);
+              expected_type = rewriteExpression(&rewrite_params, before_rewrite);
             }
           }
           if (!rule_valid)
@@ -2424,6 +2487,7 @@ forward_declare internal Expression
 buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_type)
 {
   // todo #mem: we just put everything in the arena, including scope values.
+  // todo #speed: normalizing expected_type.
   // beware: Usually we mutate in-place, but we may also allocate anew.
   Expression out = {};
   assert(expected_type);
@@ -2433,14 +2497,16 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
   {
     case AC_Hole:
     {
-      if (expected_type == &builtins.True->v)
+      // Holes are awesome, flexible placeholders that you can feed to the
+      // typechecker to get what you want
+      if (matchType(env, expected_type, &builtins.True->v))
       {
         Constant *constant = newSyntheticConstant(arena, &builtins.truth->v, &in0->token);
         return buildExpression(arena, env, &constant->a, expected_type);
       }
       else
       {
-        parseError(in0, "hole encountered, which cannot be filled");
+        parseError(in0, "please provide an expression");
         pushAttachment("expected type", expected_type);
       }
     } break;
