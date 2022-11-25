@@ -132,35 +132,31 @@ addSRight :: (a,b: Pos) -> a + ++(b) = ++(a+b)
 
 addCommutative :: (a, b: Pos) -> (a + b = b + a)
 {fork a
- {1 : rewrite add1(b); truth,
+ {1 : rewrite add1(b),
   ++:
   rewrite addSRight(b, a.p);
-  rewrite addCommutative(a.p, b);
-  truth}}
+  rewrite addCommutative(a.p, b)}}
 
 ;; todo #cutnpaste collapse these abstract algebra down maybe
 addAssociative :: (a,b,c: Pos) -> (a+b)+c = a+b+c
 {fork a
  {1 : truth,
-  ++: rewrite addAssociative(a.p, b, c); truth}}
+  ++: rewrite addAssociative(a.p, b, c)}}
 
 mulDistributive :: (a,b,c: Pos) -> a*c+b*c = (a+b)*c
 {fork a
  {1: ,
-
   ++:
   rewrite mulDistributive(a.p, b, c);
   rewrite addAssociative(c, (a.p * c), (b * c));
-  rewrite mulDistributive(a.p, b, c);
-  }}
+  rewrite mulDistributive(a.p, b, c)}}
 
 mulAssociative :: (a,b,c: Pos) -> (a*b)*c = a*b*c
 {fork a
  {1 : truth,
   ++:
   rewrite left mulDistributive(b, (a.p * b), c);
-  rewrite mulAssociative(a.p, b, c);
-  }}
+  rewrite mulAssociative(a.p, b, c)}}
 
 mul1 :: (a: Pos) -> a*1 = a
 {fork a
@@ -172,8 +168,8 @@ mulCommutative :: (a,b: Pos) -> a*b = b*a
 {fork a
  {1 : rewrite mul1(b),
   ++: 
-  x : (b + (a.p * b)) = ((b * 1) + (a.p * b)) := rewrite mul1(b);
-  rewrite x;
+  ;; x : (b + (a.p * b)) = ((b * 1) + (a.p * b)) := rewrite mul1(b);
+  ;; rewrite x;
   rewrite mulCommutative(a.p, b)}}
 
 add0 :: (a: Z) -> a+0 = a

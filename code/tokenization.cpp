@@ -213,27 +213,6 @@ eatAllSpaces(Tokenizer *tk)
   }
 }
 
-// todo: #speed use a hash table or something.
-inline Keyword
-matchKeyword(Token *token)
-{
-  auto out = (Keyword)0;
-  if (token->cat == TC_Alphanumeric)
-  {
-    for (int i = 1;
-         i < arrayCount(keywords);
-         i++)
-    {
-      if (equal(token, keywords[i]))
-      {
-        out = (Keyword)(i);
-        break;
-      }
-    }
-  }
-  return out;
-}
-
 // todo: #speed use hash table
 inline MetaDirective
 matchMetaDirective(Token *token)
@@ -377,6 +356,22 @@ nextToken(Tokenizer *tk = global_tokenizer)
     if (!out.text.length)
       out.text.length = (s32)(tk->at - out.text.chars);
     assert(out.text.length);
+
+    if (out.cat == TC_Alphanumeric)
+    {
+      // todo: lookup keywords with hash table
+      for (int i = 1;
+           i < arrayCount(keywords);
+           i++)
+      {
+        if (equal(out, keywords[i]))
+        {
+          out.cat = (TokenCategory)((int)TC_KeywordBegin_ + i);
+          break;
+        }
+      }
+    }
+
   }
 
   tk->last_token = out;

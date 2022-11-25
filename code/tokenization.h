@@ -17,26 +17,23 @@ enum TokenCategory
   TC_ColonEqual    = 263,
   TC_Arrow         = 264,
   TC_StrongArrow   = 265,
+
+  TC_KeywordBegin_,
+  TC_KeywordDefine,
+  TC_KeywordFork,
+  TC_KeywordRewrite,
+  TC_KeywordNorm,
+  TC_KeywordComputation,
+
+  TC_KeywordPrint,
+  TC_KeywordPrintRaw,
+  TC_KeywordPrintDebug,
+  TC_KeywordCheck,
+  TC_KeywordBreakhere,
+  TC_KeywordEnd_,
 };
 
-enum Keyword
-{
-  Keyword_Null_,
-
-  Keyword_Typedef,
-  Keyword_Define,
-  Keyword_Fork,
-  Keyword_Rewrite,
-
-  Keyword_Print,
-  Keyword_PrintRaw,
-  Keyword_PrintDebug,
-  Keyword_Check,
-  Keyword_Breakhere,
-
-  Keywords_Count_,
-};
-const char *keywords[] = {"", "typedef", "define", "fork", "rewrite",
+const char *keywords[] = {"", "define", "fork", "rewrite", "norm", "computation",
                           "print", "print_raw", "print_debug", "check", "breakhere"};
 
 enum MetaDirective

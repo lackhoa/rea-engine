@@ -1,3 +1,8 @@
+/*
+  General Todos: 
+  - Replace all token <-> string comparison with keyword checks.
+ */
+
 #include "utils.h"
 #include "memory.h"
 #include "intrinsics.h"
@@ -980,7 +985,7 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
       else
       {
         assert((norm_op->cat == VC_BuiltinEqual) || (norm_op->cat == VC_Constructor) || (norm_op->cat == VC_StackValue));
-#if 1  // special casing for equality
+#if 0  // special casing for equality
         if (norm_op->cat == VC_BuiltinEqual)
         {// special case for equality
           Value *lhs = norm_args[1];
@@ -2129,6 +2134,7 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
     count++;
     list = pushStruct(temp_arena, AstList);
     Token token = newToken("<norm inserted by fork>");
+    token.cat   = TC_KeywordNorm;
     list->first = &newAst(arena, Norm, &token)->a;
     list->next  = 0;
   }
@@ -2148,7 +2154,7 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
       ast  = &newAst(arena, Hole, &token)->a; // todo do we print this out correctly?
       stop = true;
     }
-    else if (equal(token, "rewrite"))
+    else if (token.cat == TC_KeywordRewrite)
     {
       Rewrite *rewrite = newAst(arena, Rewrite, &token);
 
@@ -2163,7 +2169,7 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
       rewrite->eq_proof = parseExpressionToAst(arena);
       ast = &rewrite->a;
     }
-    else if (equal(token, "norm"))
+    else if (token.cat == TC_KeywordNorm)
     {
       ast = &newAst(arena, Norm, &token)->a;
     }
@@ -2229,13 +2235,13 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
     {
       *global_tokenizer = tk_save;
       Token token = peekToken();
-      if (equal(token, "fork"))
+      if (token.cat == TC_KeywordFork)
       {
         nextToken();
         ast = &parseFork(arena, is_theorem)->a;
         stop = true;
       }
-      else if (equal(token, "computation"))
+      else if (token.cat == TC_KeywordComputation)
       {
         // NOTE: Nothing to do here before typechecking. The command has to be
         // in sequence, even though it is an expression, since the expression
@@ -2577,16 +2583,35 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
         Constant *constant = newSyntheticConstant(arena, &builtins.truth->v, &in0->token);
         return buildExpression(arena, env, &constant->a, expected_type);
       }
-      else
+
+      if (CompositeV *eq = castValue(expected_type, CompositeV))
       {
-        parseError(in0, "please provide an expression");
-        attach("expected type", expected_type);
+        if (eq->op->cat == VC_BuiltinEqual)
+        {
+          if (equalB32(eq->args[1], eq->args[2]))
+          {
+            Composite *refl = newAst(arena, Composite, &in0->token);
+            allocateArray(arena, 1, refl->args);
+            refl->op        = &newSyntheticConstant(arena, &builtins.refl->v, &in0->token)->a;
+            refl->arg_count = 1;
+            refl->args[0]   = valueToAst(arena, env, eq->args[1]);
+            return buildExpression(arena, env, &refl->a, expected_type);
+          }
+        }
       }
+
+      parseError(in0, "please provide an expression");
+      attach("expected type", expected_type);
+    } break;
+
+    case AC_Variable:
+    {
+      out.ast   = in0;
+      out.value = evaluate(arena, env, in0);
     } break;
 
     case AC_Constant:
     {
-      // NOTE: This case can happen if we retry.
       Constant *in = castAst(in0, Constant);
       out.ast   = in0;
       out.value = in->value;
@@ -2717,7 +2742,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
               }
               else
               {// note: there might either be too many or too few  arguments
-                parseError(&in0->token, "argument count does not match the number of explicit parameters (expected %d)", explicit_param_count);
+                parseError(&in0->token, "argument count does not match the number of explicit parameters (expected: %d, got: %d)", explicit_param_count, in->arg_count);
               }
             }
 
@@ -3209,33 +3234,7 @@ parseOperand(MemoryArena *arena)
 {
   Ast *out = 0;
   Token token1 = nextToken();
-  if (equal(token1, "replace"))
-  {
-    pushContext("syntax: replace[INDEX](EQUALITY, PROOF)");
-    if (TreeIndex replacement = parseTreeIndex())
-    {
-      if (requireChar('('))
-      {
-        if (Ast *equality = parseExpressionToAst(arena))
-        {
-          if (requireChar(','))
-          {
-            if (Ast *proof = parseExpressionToAst(arena))
-            {
-              Replace *replace = newAst(arena, Replace, &token1);
-              replace->eq_proof    = equality;
-              replace->index = replacement;
-              replace->proof       = proof;
-              out = &replace->a;
-              requireChar(')');
-            }
-          }
-        }
-      }
-    }
-    popContext();
-  }
-  else if (equal(&token1, '_'))
+  if (equal(&token1, '_'))
   {
     out = &newAst(arena, Hole, &token1)->a;
   }
@@ -3621,7 +3620,7 @@ parseTopLevel(EngineState *state)
     }
     else
     {
-      if (equal(token, "breakhere"))
+      if (token.cat == TC_KeywordBreakhere)
       {
         breakhere;
         global_debug_mode = true;
@@ -3713,6 +3712,7 @@ parseTopLevel(EngineState *state)
               addGlobalBinding(name, norm);
               requireChar(';');
             }
+            popContext();
           } break;
 
           case TC_DoubleColon:
@@ -4004,7 +4004,7 @@ int engineMain()
   setvbuf(stdout, NULL, _IONBF, 0);
 #endif
 
-  assert(arrayCount(keywords)       == Keywords_Count_);
+  assert(arrayCount(keywords)       == TC_KeywordEnd_ - TC_KeywordBegin_);
   assert(arrayCount(metaDirectives) == MetaDirective_Count_);
 
   void   *permanent_memory_base = (void*)teraBytes(2);
