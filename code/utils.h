@@ -37,12 +37,14 @@ typedef long     s64;
 
 #define arrayCount(array) (sizeof(array) / sizeof((array)[0]))
 
+#if COMPILER_MSVC
+#  define crash_the_program __debugbreak()
+#else
+#  define crash_the_program __builtin_trap()
+#endif
+
 #if REA_INTERNAL
-#  if COMPILER_MSVC
-#    define assert(claim) if (!(claim)) { fflush(stdout); printf("assertion fired at line %d in file %s!", __LINE__, __FILE__); __debugbreak(); }
-#  else
-#    define assert(claim) if (!(claim)) { fflush(stdout); __builtin_trap(); }
-#  endif
+#  define assert(claim) if (!(claim)) { printf("assertion fired at line %d in file %s!", __LINE__, __FILE__); fflush(stdout); crash_the_program; }
 #else
 #  define assert(claim)
 #endif

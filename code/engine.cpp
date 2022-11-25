@@ -304,7 +304,7 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         }
         print(buffer, ") -> ");
 
-        print(buffer, in->out_type, new_opt);
+        print(buffer, in->output_type, new_opt);
       } break;
 
       case AC_Accessor:
@@ -350,15 +350,13 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
   return out;
 }
 
-inline void
-indent(MemoryArena *buffer, s32 indentation)
+inline void indent(MemoryArena *buffer, s32 indentation)
 {
   for (int id=0; id < indentation; id++)
     print(buffer, " ");
 }
 
-inline void
-newlineAndIndent(MemoryArena *buffer, s32 indentation)
+inline void newlineAndIndent(MemoryArena *buffer, s32 indentation)
 {
   print(buffer, "\n");
   indent(buffer, indentation);
@@ -543,17 +541,19 @@ addStackValue(Environment *env, Value *value)
 }
 
 inline void
-extendStack(Environment *env, s32 arg_count, Value **args)
+extendStack(Environment *env, s32 count, Value **args)
 {
-  assert(arg_count <= arrayCount(env->stack->args));
+  assert(count <= arrayCount(env->stack->args));
   addStackFrame(env);
   if (args)
   {
-    for (s32 arg_id = 0; arg_id < arg_count; arg_id++)
+    for (s32 arg_id = 0; arg_id < count; arg_id++)
     {// todo: #speed copying values around
       addStackValue(env, args[arg_id]);
     }
   }
+  else 
+    env->stack->count = count;
 }
 
 inline b32
@@ -659,8 +659,8 @@ equalTrinary(Value *lhs0, Value *rhs0)
           }
           if (!type_mismatch)
           {
-            out = equalTrinary(evaluate(temp_arena, &env, lhs->out_type),
-                               evaluate(temp_arena, &env, rhs->out_type));
+            out = equalTrinary(evaluate(temp_arena, &env, lhs->output_type),
+                               evaluate(temp_arena, &env, rhs->output_type));
           }
         }
         else
@@ -979,9 +979,9 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
       }
       else
       {
-        assert((norm_op == builtins.equal) || (norm_op->cat == VC_Constructor) || (norm_op->cat == VC_StackValue));
+        assert((norm_op->cat == VC_BuiltinEqual) || (norm_op->cat == VC_Constructor) || (norm_op->cat == VC_StackValue));
 #if 1  // special casing for equality
-        if (norm_op == builtins.equal)
+        if (norm_op->cat == VC_BuiltinEqual)
         {// special case for equality
           Value *lhs = norm_args[1];
           Value *rhs = norm_args[2];
@@ -1051,7 +1051,6 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
       dump("before_rewrite: "); dump(before_rewrite); dump();
       dump("after rewrite"); dump(out0); dump();
       dump("rewrite rules"); dump(env->rewrite); dump();
-      breakhere;
     }
 
     // normalize again, because there might be new information not present at
@@ -1120,7 +1119,7 @@ replaceFreeVars(MemoryArena* arena, Environment *env, Ast *in0, s32 stack_offset
       Arrow *in = castAst(in0, Arrow);
       Arrow *out = copyStruct(arena, in);
       stack_offset++;
-      out->out_type    = replaceFreeVars(arena, env, in->out_type, stack_offset);
+      out->output_type    = replaceFreeVars(arena, env, in->output_type, stack_offset);
       out->param_types = pushArray(arena, in->param_count, Ast*);
       for (s32 param_id = 0; param_id < in->param_count; param_id++)
       {
@@ -1152,8 +1151,7 @@ replaceFreeVars(MemoryArena* arena, Environment *env, Ast *in0, s32 stack_offset
   return out0;
 }
 
-inline b32
-hasFreeVars(Environment *env, Ast *in0, s32 stack_offset)
+inline b32 hasFreeVars(Environment *env, Ast *in0, s32 stack_offset)
 {
   switch (in0->cat)
   {
@@ -1190,12 +1188,11 @@ hasFreeVars(Environment *env, Ast *in0, s32 stack_offset)
     case AC_Arrow:
     {
       Arrow *in = castAst(in0, Arrow);
-      stack_offset++;
-      if (hasFreeVars(env, in->out_type, stack_offset))
+      if (hasFreeVars(env, in->output_type, stack_offset+1))
         return true;
       for (s32 param_id = 0; param_id < in->param_count; param_id++)
       {
-        if (hasFreeVars(env, in->param_types[param_id], stack_offset))
+        if (hasFreeVars(env, in->param_types[param_id], stack_offset+1))
           return true;
       }
     } break;
@@ -1223,6 +1220,59 @@ hasFreeVars(Environment *env, Ast *in0, s32 stack_offset)
     invalidDefaultCase;
   }
   return false;
+}
+
+inline b32
+isGlobalValue(Value *value)
+{
+  switch (value->cat)
+  {
+    case VC_Hole:
+    case VC_StackValue:
+    case VC_HeapValue:
+    {
+      return false;
+    } break;
+
+    case VC_CompositeV:
+    {
+      CompositeV *composite = castValue(value, CompositeV);
+      if (!isGlobalValue(composite->op))
+        return false;
+
+      for (int id=0; id < composite->arg_count; id++)
+      {
+        if (!isGlobalValue(composite->args[id]))
+          return false;
+      }
+
+      return true;
+    } break;
+
+    case VC_ArrowV:
+    case VC_FunctionV:
+    {
+      return false;  // TODO: don't know what to do so let's just say false for now.
+    } break;
+
+    case VC_Null:
+    case VC_BuiltinSet:
+    case VC_BuiltinType:
+    case VC_BuiltinEqual:
+    case VC_Union:
+    case VC_Constructor:
+    {
+      return true;
+    } break;
+
+    case VC_AccessorV:
+    case VC_RewriteV:
+    case VC_ComputationV:
+    {
+      invalidCodePath;
+      return false;
+    } break;
+  }
 }
 
 forward_declare internal Value *
@@ -1279,7 +1329,7 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0, b32 should_normalize)
       Value *norm_op = evaluate(arena, env, in->op, should_normalize);
       ArrowV *signature = castValue(norm_op->type, ArrowV);
       extendStack(env, in->arg_count, norm_args);
-      Value *return_type = evaluate(arena, env, signature->out_type, should_normalize);
+      Value *return_type = evaluate(arena, env, signature->output_type, should_normalize);
       unwindStack(env);
       CompositeV *out = newValue(arena, CompositeV, return_type);
       out->arg_count = in->arg_count;
@@ -1298,7 +1348,7 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0, b32 should_normalize)
     case AC_Arrow:
     {
       // Arrow  *in  = castAst(in0, Arrow);
-      ArrowV *out = newValue(arena, ArrowV, builtins.Type);
+      ArrowV *out = newValue(arena, ArrowV, &builtins.Type->v);
       out->stack_depth = getStackDepth(env->stack);
       Arrow *replaced = castAst(replaceFreeVars(arena, env, in0, 0), Arrow);
       out->arrow = *replaced;
@@ -1322,8 +1372,8 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0, b32 should_normalize)
       Value *rhs = evaluate(arena, env, computation->rhs, should_normalize);
 
       // todo nocheckin: the "tactics" code proliferates too much
-      CompositeV *eq = newValue(arena, CompositeV, builtins.Set);
-      eq->op        = builtins.equal;
+      CompositeV *eq = newValue(arena, CompositeV, &builtins.Set->v);
+      eq->op        = &builtins.equal->v;
       eq->arg_count = castValue(builtins.equal->type, ArrowV)->param_count;
       allocateArray(arena, eq->arg_count, eq->args);
       eq->args[0] = lhs->type;
@@ -1406,7 +1456,7 @@ introduceOnHeap(Environment *env, Value *parent, String base_name, Constructor *
   if (ArrowV *ctor_sig = castValue(ctor->type, ArrowV))
   {
     s32 param_count = ctor_sig->param_count;
-    Value *record_type = evaluate(temp_arena, env, ctor_sig->out_type);
+    Value *record_type = evaluate(temp_arena, env, ctor_sig->output_type);
     CompositeV *record = newValue(temp_arena, CompositeV, record_type);
     record->op        = &ctor->v;
     record->arg_count = param_count;
@@ -1486,7 +1536,7 @@ lookupGlobalName(Token *token)
     // note: assume that if the code gets here, then the identifier isn't in
     // local scope either.
     parseError(token, "identifier not found");
-    pushAttachment("identifier", token);
+    attach("identifier", token);
     return 0;
   }
   else
@@ -1784,7 +1834,7 @@ deepCopy(MemoryArena *arena, Ast *in0)
     {
       Arrow *in = castAst(in0, Arrow);
       Arrow *out = copyStruct(arena, in);
-      out->out_type = deepCopy(arena, in->out_type);
+      out->output_type = deepCopy(arena, in->output_type);
       allocateArray(arena, out->param_count, out->param_types);
       for (s32 id=0; id < in->param_count; id++)
       {
@@ -1828,26 +1878,49 @@ deepCopy(MemoryArena *arena, Ast *in0)
       out0 = &out->a;
     } break;
 
-    default:
-      todoIncomplete;
+    invalidDefaultCase;
   }
   return out0;
 }
 
-inline GlobalBinding *
-getOverloads(Environment *env, Ast *in0)
+inline ValueArray
+getGlobalOverloads(Environment *env, Identifier *ident, Value *expected_type)
 {
-  if (Identifier *in = castAst(in0, Identifier))
+  ValueArray out = {};
+  if (!lookupLocalName(env, &ident->token))
   {
-    if (lookupLocalName(env, &in->token))
-      return 0;
-    else if (GlobalBinding *slot = lookupGlobalNameSlot(in->token))
+    if (GlobalBinding *slot = lookupGlobalNameSlot(ident->token))
     {
-      if (slot->count > 1)
-        return slot;
+      if (isGlobalValue(expected_type))
+      {
+        allocateArray(temp_arena, slot->count, out.items);
+        for (int slot_id=0; slot_id < slot->count; slot_id++)
+        {
+          ArrowV *signature = castValue(slot->values[slot_id]->type, ArrowV);
+          b32 output_type_mismatch = false;
+          extendStack(env, signature->param_count, 0);
+          if (!hasFreeVars(env, signature->output_type, 0))
+          {
+            Value *output_type = evaluate(temp_arena, env, signature->output_type);
+            if (!equalB32(output_type, expected_type))
+              output_type_mismatch = true;
+          }
+          unwindStack(env);
+
+          if (!output_type_mismatch)
+          {
+            out.items[out.count++] = slot->values[slot_id];
+          }
+        }
+      }
+      else
+      {
+        out.count = slot->count;
+        out.items = (Value **)slot->values;
+      }
     }
   }
-  return 0;
+  return out;
 }
 
 internal FunctionV *
@@ -1888,7 +1961,7 @@ buildFunction(MemoryArena *arena, Environment *env, FunctionDecl *fun)
       }
       assert(noError());
 
-      Value *expected_body_type = evaluate(temp_arena, env, fun->signature->out_type);
+      Value *expected_body_type = evaluate(temp_arena, env, fun->signature->output_type);
       buildSequence(arena, env, fun->body, expected_body_type);
       unwindBindingsAndStack(env);
     }
@@ -2056,7 +2129,7 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
     count++;
     list = pushStruct(temp_arena, AstList);
     Token token = newToken("<norm inserted by fork>");
-    list->first = newAst(arena, Norm, &token);
+    list->first = &newAst(arena, Norm, &token)->a;
     list->next  = 0;
   }
 #else
@@ -2072,7 +2145,7 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
     if (isExpressionEndMarker(&token))
     {// synthetic hole
       *global_tokenizer = tk_save;
-      ast = newAst(arena, Hole, &token); // todo do we print this out correctly?
+      ast  = &newAst(arena, Hole, &token)->a; // todo do we print this out correctly?
       stop = true;
     }
     else if (equal(token, "rewrite"))
@@ -2092,7 +2165,7 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
     }
     else if (equal(token, "norm"))
     {
-      ast = newAst(arena, Norm, &token);
+      ast = &newAst(arena, Norm, &token)->a;
     }
     else if (isIdentifier(&token))
     {
@@ -2237,8 +2310,8 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *e
               else
               {
                 parseError(item, "the rhs does not have the expected type");
-                pushAttachment("got", rhs.value->type);
-                pushAttachment("expected", type.value);
+                attach("got", rhs.value->type);
+                attach("expected", type.value);
               }
             }
           }
@@ -2276,7 +2349,7 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *e
           {
             RewriteParameters rewrite_params;
             rewrite_params.arena = arena;
-            if (rule->op == builtins.equal)
+            if (rule->op == &builtins.equal->v)
             {
               rule_valid = true;
               if (rewrite->right_to_left)
@@ -2298,7 +2371,7 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *e
           if (!rule_valid)
           {
             parseError(item, "invalid rewrite rule, can only be equality");
-            pushAttachment("got", eq_proof.value->type);
+            attach("got", eq_proof.value->type);
           }
         }
       } break;
@@ -2346,7 +2419,7 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *e
       b32 goal_valid = false;
       if (CompositeV *eq = castValue(expected_type, CompositeV))
       {
-        if (eq->op == builtins.equal)
+        if (eq->op == &builtins.equal->v)
         {
           goal_valid = true;
           Value *lhs = normalize(temp_arena, env, eq->args[1]);
@@ -2359,15 +2432,15 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *e
           else
           {
             parseError(last, "equality cannot be proven by computation");
-            pushAttachment("lhs", lhs);
-            pushAttachment("rhs", rhs);
+            attach("lhs", lhs);
+            attach("rhs", rhs);
           }
         }
       }
       if (!goal_valid)
       {
         parseError(last, "computation can only prove equality");
-        pushAttachment("got", expected_type);
+        attach("got", expected_type);
       }
     }
     else if (Expression build_last = buildExpression(arena, env, sequence->items[sequence->count-1], expected_type))
@@ -2420,7 +2493,7 @@ buildFork(MemoryArena *arena, Environment *env, Fork *fork, Value *expected_type
                 {// NOTE: rn we DON'T support the weird inductive proposition thingie.
                   if (ArrowV *ctor_sig = castValue(candidate->type, ArrowV))
                   {
-                    if (Constant *constant = castAst(ctor_sig->out_type, Constant))
+                    if (Constant *constant = castAst(ctor_sig->output_type, Constant))
                     {
                       if (equalB32(constant->value, subject.value->type))
                       {
@@ -2450,7 +2523,7 @@ buildFork(MemoryArena *arena, Environment *env, Fork *fork, Value *expected_type
                 if (correct_bodies[ctor->id])
                 {
                   parseError(&fork->bodies[input_case_id]->a, "fork case handled twice");
-                  pushAttachment("constructor", &ctor->v);
+                  attach("constructor", &ctor->v);
                 }
                 else
                 {
@@ -2478,7 +2551,7 @@ buildFork(MemoryArena *arena, Environment *env, Fork *fork, Value *expected_type
     else
     {
       parseError(fork->subject, "cannot fork expression of type");
-      pushAttachment("type", subject.value->type);
+      attach("type", subject.value->type);
     }
   }
 }
@@ -2507,13 +2580,13 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
       else
       {
         parseError(in0, "please provide an expression");
-        pushAttachment("expected type", expected_type);
+        attach("expected type", expected_type);
       }
     } break;
 
     case AC_Constant:
     {
-      // this case can happen if we retry.
+      // NOTE: This case can happen if we retry.
       Constant *in = castAst(in0, Constant);
       out.ast   = in0;
       out.value = in->value;
@@ -2556,8 +2629,8 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
           if (!value)
           {
             parseError(name, "global name does not match expected type");
-            pushAttachment("name", name);
-            pushAttachment("expected_type", normalize(temp_arena, env, expected_type));
+            attach("name", name);
+            attach("expected_type", normalize(temp_arena, env, expected_type));
           }
         }
 
@@ -2575,141 +2648,158 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
     {
       Composite *in = castAst(in0, Composite);
 
-      if (GlobalBinding *overloads = getOverloads(env, in->op))
+      b32 has_multiple_overloads;
+      if (Identifier *op_ident = castAst(in->op, Identifier))
       {
-        // NOTE: pre-empt operator overloads.
-        // play with op.globals to figure out the output type;
-        // we'd have to pretty much build, typecheck and evaluate the whole thing.
-        // todo #mem
-        for (s32 candidate_id=0; candidate_id < overloads->count; candidate_id++)
+        ValueArray global_overloads = getGlobalOverloads(env, op_ident, expected_type);
+        has_multiple_overloads = global_overloads.count > 1;
+        if (has_multiple_overloads)
+        {
+          // NOTE: pre-empt operator overloads.
+          // play with op.globals to figure out the output type;
+          // we'd have to pretty much build, typecheck and evaluate the whole thing.
+          // todo #mem
+          for (s32 candidate_id=0; candidate_id < global_overloads.count; candidate_id++)
+          {
+            Constant *constant = newAst(arena, Constant, &in->op->token);
+            constant->value    = global_overloads.items[candidate_id];
+
+            Composite *in_copy = castAst(deepCopy(arena, in0), Composite);
+            in_copy->op        = &constant->a;
+            out = buildExpression(arena, env, &in_copy->a, expected_type);
+
+            if (out) break;
+            else     wipeError();
+          }
+          if (!out)
+            parseError(in->op, "there is no suitable function overload");
+        }
+        else if (global_overloads.count == 1)
         {
           Constant *constant = newAst(arena, Constant, &in->op->token);
-          constant->value    = overloads->values[candidate_id];
-
-          Composite *in_copy = castAst(deepCopy(arena, in0), Composite);
-          in_copy->op = &constant->a;
-
-          // dump("deep copy: "); dump(in0); dump(" => "); dump(&in_copy->a); dump();
-
-          out = buildExpression(arena, env, &in_copy->a, expected_type);
-          if (out) break;
-          else wipeError();
+          constant->value    = global_overloads.items[0];
+          in->op = &constant->a;
         }
-        if (!out)
-          parseError(in->op, "there is no suitable function overload");
       }
-      else if (Expression op = buildExpression(arena, env, in->op, holev))
+      else
+        has_multiple_overloads = false;
+
+      if (!has_multiple_overloads)
       {
-        in->op = op.ast;
-
-        if (ArrowV *signature = castValue(op.value->type, ArrowV))
+        if (Expression op = buildExpression(arena, env, in->op, holev))
         {
-          if (signature->param_count != in->arg_count)
+          in->op = op.ast;
+
+          if (ArrowV *signature = castValue(op.value->type, ArrowV))
           {
-            s32 explicit_param_count = getExplicitParamCount(signature);
-            if (in->arg_count == explicit_param_count)
+            if (signature->param_count != in->arg_count)
             {
-              Ast **supplied_args = in->args;
-              in->arg_count = signature->param_count;
-              in->args      = pushArray(arena, signature->param_count, Ast*);
-              for (s32 param_id = 0, arg_id = 0;
-                   param_id < signature->param_count && noError();
-                   param_id++)
+              s32 explicit_param_count = getExplicitParamCount(signature);
+              if (in->arg_count == explicit_param_count)
               {
-                if (paramImplied(signature, param_id))
+                Ast **supplied_args = in->args;
+                in->arg_count = signature->param_count;
+                in->args      = pushArray(arena, signature->param_count, Ast*);
+                for (s32 param_id = 0, arg_id = 0;
+                     param_id < signature->param_count && noError();
+                     param_id++)
                 {
-                  in->args[param_id] = newAst(arena, Hole, &op.ast->token);
-                }
-                else
-                {
-                  assert(arg_id < explicit_param_count);
-                  in->args[param_id] = supplied_args[arg_id++];
-                }
-              }
-            }
-            else
-            {// note: there might either be too many or too few  arguments
-              parseError(&in0->token, "argument count does not match the number of explicit parameters (expected %d)", explicit_param_count);
-            }
-          }
-
-          if (noError())
-          {
-            Environment signature_env = *env;
-            addStackFrame(&signature_env);
-            for (int arg_id = 0;
-                 (arg_id < in->arg_count) && noError();
-                 arg_id++)
-            {// Typecheck/inference for the arguments. todo: the hole stuff is
-              // kinda hard-coded only for the equality.
-              if (in->args[arg_id]->cat == AC_Hole)
-                addStackValue(&signature_env, holev);
-              else
-              {
-                Ast *param_type0 = signature->param_types[arg_id];
-                Value *expected_arg_type = evaluate(temp_arena, &signature_env, param_type0);
-                if (Expression arg = buildExpression(arena, env, in->args[arg_id], expected_arg_type))
-                {
-                  in->args[arg_id] = arg.ast;
-                  addStackValue(&signature_env, arg.value);
-                  if (expected_arg_type == holev)
+                  if (paramImplied(signature, param_id))
                   {
-                    Variable *param_type = castAst(param_type0, Variable);
-                    assert(param_type->stack_delta == 0);
-                    signature_env.stack->args[param_type->id] = arg.value->type;
-
-                    // write back to the input ast.
-                    Ast *synthetic0;
-                    switch (arg.value->type->cat)
-                    {
-                      // todo: #incomplete we need a full-fledged "Value to Ast"
-                      // function. HOWEVER that still wouldn't work for
-                      // heap-introduced values.
-                      case VC_StackValue:
-                      {
-                        StackValue *ref = castValue(arg.value->type, StackValue);
-                        Variable *synthetic = newAst(arena, Variable, &ref->name);
-                        synthetic0 = &synthetic->a;
-                        synthetic->stack_delta = env->stack->depth - ref->stack_depth;
-                        synthetic->id          = ref->id;  // :stack-ref-id-has-significance
-                      } break;
-
-                      case VC_BuiltinSet:
-                      case VC_BuiltinType:
-                      case VC_Union:
-                      {
-                        Constant *synthetic = newSyntheticConstant(arena, arg.value->type);
-                        synthetic0 = &synthetic->a;
-                      } break;
-
-                      default:
-                        todoIncomplete;
-                    }
-                    in->args[param_type->id] = synthetic0;
+                    in->args[param_id] = &newAst(arena, Hole, &op.ast->token)->a;
+                  }
+                  else
+                  {
+                    assert(arg_id < explicit_param_count);
+                    in->args[param_id] = supplied_args[arg_id++];
                   }
                 }
               }
-            }
-
-            for (s32 arg_id = 0;
-                 arg_id < in->arg_count && noError();
-                 arg_id++)
-            {
-              if (in->args[arg_id]->cat == AC_Hole)
-                parseError(in0, "Cannot fill hole in expression");
+              else
+              {// note: there might either be too many or too few  arguments
+                parseError(&in0->token, "argument count does not match the number of explicit parameters (expected %d)", explicit_param_count);
+              }
             }
 
             if (noError())
             {
-              out.ast   = in0;
-              out.value = evaluate(arena, env, in0);
+              Environment signature_env = *env;
+              addStackFrame(&signature_env);
+              for (int arg_id = 0;
+                   (arg_id < in->arg_count) && noError();
+                   arg_id++)
+              {
+                // Typecheck & Inference for the arguments. TODO: the hole stuff
+                // is kinda hard-coded only for the equality.
+                if (in->args[arg_id]->cat == AC_Hole)
+                  addStackValue(&signature_env, holev);
+                else
+                {
+                  Ast *param_type0 = signature->param_types[arg_id];
+                  Value *expected_arg_type = evaluate(temp_arena, &signature_env, param_type0);
+                  if (Expression arg = buildExpression(arena, env, in->args[arg_id], expected_arg_type))
+                  {
+                    in->args[arg_id] = arg.ast;
+                    addStackValue(&signature_env, arg.value);
+                    if (expected_arg_type == holev)
+                    {
+                      Variable *param_type = castAst(param_type0, Variable);
+                      assert(param_type->stack_delta == 0);
+                      signature_env.stack->args[param_type->id] = arg.value->type;
+
+                      // write back to the input ast.
+                      Ast *synthetic0;
+                      switch (arg.value->type->cat)
+                      {
+                        // todo: #incomplete we need a full-fledged "Value to Ast"
+                        // function. HOWEVER that still wouldn't work for
+                        // heap-introduced values.
+                        case VC_StackValue:
+                        {
+                          StackValue *ref = castValue(arg.value->type, StackValue);
+                          Variable *synthetic = newAst(arena, Variable, &ref->name);
+                          synthetic0 = &synthetic->a;
+                          synthetic->stack_delta = env->stack->depth - ref->stack_depth;
+                          synthetic->id          = ref->id;  // :stack-ref-id-has-significance
+                        } break;
+
+                        case VC_BuiltinSet:
+                        case VC_BuiltinType:
+                        case VC_Union:
+                        {
+                          Constant *synthetic = newSyntheticConstant(arena, arg.value->type);
+                          synthetic0 = &synthetic->a;
+                        } break;
+
+                        default:
+                          todoIncomplete;
+                      }
+                      in->args[param_type->id] = synthetic0;
+                    }
+                  }
+                }
+              }
+
+              for (s32 arg_id = 0;
+                   arg_id < in->arg_count && noError();
+                   arg_id++)
+              {
+                if (in->args[arg_id]->cat == AC_Hole)
+                  parseError(in0, "Cannot fill hole in expression");
+              }
+
+              if (noError())
+              {
+                out.ast   = in0;
+                out.value = evaluate(arena, env, in0);
+              }
             }
           }
-        }
-        else
-        {
-          parseError(in->op, "operator must have an arrow type");
-          pushAttachment("got type", op.value->type);
+          else
+          {
+            parseError(in->op, "operator must have an arrow type");
+            attach("got type", op.value->type);
+          }
         }
       }
     } break;
@@ -2729,7 +2819,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
 
       if (noError())
       {
-        in->out_type = buildExpression(arena, env, in->out_type, holev).ast;
+        in->output_type = buildExpression(arena, env, in->output_type, holev).ast;
       }
       unwindBindingsAndStack(env);
 
@@ -2771,14 +2861,14 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
           else
           {
             tokenError(&in->field_name, "accessor has invalid member");
-            pushAttachment("expected a member of constructor", recordv->op);
-            pushAttachment("in type", op_type->out_type);
+            attach("expected a member of constructor", recordv->op);
+            attach("in type", op_type->output_type);
           }
         }
         else
         {
           parseError(record, "cannot access a non-record");
-          pushAttachment("record", recordv0);
+          attach("record", recordv0);
         }
       }
     } break;
@@ -2798,10 +2888,13 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
     if (!matchType(env, actual, expected))
     {
       parseError(in0, "actual type differs from expected type");
-      pushAttachment("got", actual);
-      pushAttachment("expected", expected);
+      attach("got", actual);
+      attach("expected", expected);
     }
   }
+
+  if (ParseError *error = getError())
+    error->code = ErrorWrongType;
 
   NULL_WHEN_ERROR(out);
   return out;
@@ -3040,7 +3133,7 @@ parseArrowType(MemoryArena *arena, b32 is_record)
         if (Ast *return_type = parseExpressionToAst(arena))
         {
           out = newAst(arena, Arrow, &marking_token);
-          out->out_type = return_type;
+          out->output_type = return_type;
           out->param_count = param_count;
           out->param_names = param_names;
           out->param_types = param_types;
@@ -3050,7 +3143,7 @@ parseArrowType(MemoryArena *arena, b32 is_record)
     else
     {
       out = newAst(arena, Arrow, &marking_token);
-      out->out_type = 0;
+      out->output_type = 0;
       out->param_count = param_count;
       out->param_names = param_names;
       out->param_types = param_types;
@@ -3144,11 +3237,11 @@ parseOperand(MemoryArena *arena)
   }
   else if (equal(&token1, '_'))
   {
-    out = newAst(arena, Hole, &token1);
+    out = &newAst(arena, Hole, &token1)->a;
   }
   else if (isIdentifier(&token1))
   {
-    out = newAst(arena, Identifier, &token1);
+    out = &newAst(arena, Identifier, &token1)->a;
   }
   else if (equal(&token1, '('))
   {
@@ -3280,7 +3373,7 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
               args[1] = recurse;
 
               Composite *new_operand = newAst(arena, Composite, &op_token);
-              initComposite(new_operand, op, arg_count, args);
+              initComposite(new_operand, &op->a, arg_count, args);
               operand = &new_operand->a;
             }
           }
@@ -3337,7 +3430,7 @@ parseUnionCase(MemoryArena *arena, Union *uni)
         }
         else if (ArrowV *type = castValue(norm_type0, ArrowV))
         {
-          if (getFormOf(type->out_type) == uni)
+          if (getFormOf(type->output_type) == uni)
             valid_type = true;
         }
 
@@ -3349,13 +3442,13 @@ parseUnionCase(MemoryArena *arena, Union *uni)
         else
         {
           parseError(parsed_type, "invalid type for constructor");
-          pushAttachment("type", parsed_type);
+          attach("type", parsed_type);
         }
       }
     }
     else
     {// constructor as a sole tag
-      if (uni->type == builtins.Set)
+      if (uni->type == &builtins.Set->v)
       {
         initValue(&out->v, VC_Constructor, &uni->v);
         out->name = tag;
@@ -3376,7 +3469,7 @@ internal void
 parseUnion(MemoryArena *arena, Token *name)
 {
   // NOTE: the type is in scope of its own constructor.
-  Value *type = builtins.Set;
+  Value *type = &builtins.Set->v;
   if (optionalChar(':'))
   {// type override
     b32 valid_type = false;
@@ -3385,11 +3478,11 @@ parseUnion(MemoryArena *arena, Token *name)
       Value *norm_type = evaluate(arena, type_parsing.ast);
       if (ArrowV *arrow = castValue(norm_type, ArrowV))
       {
-        if (Constant *return_type = castAst(arrow->out_type, Constant))
-          if (return_type->value == builtins.Set)
+        if (Constant *return_type = castAst(arrow->output_type, Constant))
+          if (return_type->value == &builtins.Set->v)
             valid_type = true;
       }
-      else if (norm_type == builtins.Set)
+      else if (norm_type == &builtins.Set->v)
         valid_type = true;
 
       if (valid_type)
@@ -3399,7 +3492,7 @@ parseUnion(MemoryArena *arena, Token *name)
       else
       {
         parseError(type_parsing.ast, "form has invalid type");
-        pushAttachment("type", norm_type);
+        attach("type", norm_type);
       }
     }
   }
@@ -3519,6 +3612,7 @@ parseTopLevel(EngineState *state)
           {
             should_fail_active = true;
             tokenError(&token, "#should_fail activated");
+            getError()->code = ErrorWrongType;
           }
         } break;
 
@@ -3584,7 +3678,7 @@ parseTopLevel(EngineState *state)
           if (CompositeV *eq = castValue(goal, CompositeV))
           {
             b32 goal_valid = false;
-            if (eq->op == builtins.equal)
+            if (eq->op == &builtins.equal->v)
             {
               goal_valid = true;
               Value *lhs = normalize(temp_arena, empty_env, eq->args[1]);
@@ -3592,21 +3686,20 @@ parseTopLevel(EngineState *state)
               if (!equalB32(lhs, rhs))
               {
                 parseError(&token, "equality cannot be proven by computation");
-                pushAttachment("lhs", lhs);
-                pushAttachment("rhs", rhs);
+                attach("lhs", lhs);
+                attach("rhs", rhs);
               }
             }
             if (!goal_valid)
             {
               parseError(&token, "computation can only prove equality");
-              pushAttachment("got", goal);
+              attach("got", goal);
             }
           }
         }
       }
       else if (isIdentifier(&token))
       {
-        pushContext("definition");
         Token *name = &token;
         Token after_name = nextToken();
         switch (after_name.cat)
@@ -3671,7 +3764,6 @@ parseTopLevel(EngineState *state)
             tokenError("unexpected token");
           } break;
         }
-        popContext();
       }
       else
         tokenError("unexpected token to begin top-level form");
@@ -3684,7 +3776,7 @@ parseTopLevel(EngineState *state)
     {
       if (noError())
         tokenError(&token, "#should_fail active but didn't fail");
-      else
+      else if (getError()->code == ErrorWrongType)
         wipeError(global_tokenizer);
     }
   }
@@ -3720,7 +3812,7 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
       printf("Interpreting file %s...\n", input_path.file);
     }
     parseTopLevel(state);
-    if (ParseError error = tk->error)
+    if (ParseError *error = tk->error)
     {
       success = false;
       printf("%s:%d:%d: [%s] %s",
@@ -3729,7 +3821,7 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
              error->line,
              error->column,
 
-             error->context,
+             error->context ? error->context : "",
              error->message.base);
 
       if (error->attachment_count > 0)
@@ -3826,11 +3918,11 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
     {// Type and Set
       // Token superset_name = newToken("Type");
       builtins.Type = newValue(arena, BuiltinType, 0);
-      builtins.Type->type = builtins.Type; // NOTE: circular types, might bite us
-      addBuiltinGlobalBinding("Type", builtins.Type);
+      builtins.Type->type = &builtins.Type->v; // NOTE: circular types, might bite us
+      addBuiltinGlobalBinding("Type", &builtins.Type->v);
 
-      builtins.Set = newValue(arena, BuiltinSet, builtins.Type);
-      addBuiltinGlobalBinding("Set", builtins.Set);
+      builtins.Set = newValue(arena, BuiltinSet, &builtins.Type->v);
+      addBuiltinGlobalBinding("Set", &builtins.Set->v);
     }
 
     {// more builtins
@@ -3840,7 +3932,7 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
       builtin_tk.at = "(_A: Set, a, b: _A) -> Set";
       Expression equal_type = parseExpressionFull(arena);
       builtins.equal = newValue(arena, BuiltinEqual, equal_type.value);
-      addBuiltinGlobalBinding("=", builtins.equal);
+      addBuiltinGlobalBinding("=", &builtins.equal->v);
 
       builtin_tk.at = "(_A: Set, x: _A) -> =(_A, x, x)";
       Expression refl_type = parseExpressionFull(arena);
@@ -3907,7 +3999,7 @@ int engineMain()
 
   int success = true;
 
-#if REA_INTERNAL
+#if 0
   // for printf debugging: when it crashes you can still see the prints
   setvbuf(stdout, NULL, _IONBF, 0);
 #endif

@@ -38,26 +38,22 @@ enum AstCategory
 
 enum ValueCategory
 {
-  VC_Null        ,
-  VC_Hole        ,
-  VC_BuiltinSet  ,
-  VC_BuiltinType ,
+  VC_Null,
+  VC_Hole,
+  VC_BuiltinSet,
+  VC_BuiltinType,
   VC_BuiltinEqual,
-  VC_CompositeV  ,
-  VC_ArrowV      ,
-  VC_FunctionV   ,
-  VC_StackValue  ,
-  VC_HeapValue   ,
-  VC_Union       ,
-  VC_Constructor ,
-  VC_RewriteV    ,
+  VC_CompositeV,
+  VC_ArrowV,
+  VC_FunctionV,
+  VC_StackValue,
+  VC_HeapValue,
+  VC_Union,
+  VC_Constructor,
+  VC_RewriteV,
   VC_ComputationV,
   VC_AccessorV,
 };
-
-typedef Value BuiltinType;
-typedef Value BuiltinSet;
-typedef Value BuiltinEqual;
 
 embed_struct struct Ast
 {
@@ -94,9 +90,9 @@ newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
 
 #define castValue(exp, Cat) ((exp)->cat == VC_##Cat ? (Cat*)(exp) : 0)
 
-typedef Ast Hole;
-typedef Ast Identifier;
-typedef Ast Norm;
+struct Hole {embed_Ast(a)};
+struct Identifier {embed_Ast(a)};
+struct Norm {embed_Ast(a)};
 
 struct Variable
 {
@@ -244,6 +240,10 @@ embed_struct struct Value
   Value         *type;
 };
 
+struct BuiltinType  {embed_Value(v)};
+struct BuiltinSet   {embed_Value(v)};
+struct BuiltinEqual {embed_Value(v)};
+
 inline void
 initValue(Value *in, ValueCategory cat, Value *type)
 {
@@ -377,7 +377,7 @@ initComposite(Composite *app, Ast *op, s32 arg_count, Ast **args)
 embed_struct struct Arrow
 {
   embed_Ast(a);
-  Ast    *out_type;
+  Ast    *output_type;
   s32     param_count;
   Token  *param_names;
   Ast   **param_types;
@@ -392,8 +392,8 @@ struct ArrowV
 
 struct GlobalBinding
 {
-  String         key;
-  s32            count;
+  String key;
+  s32    count;
   Value *(values[8]);           // todo: #grow
   GlobalBinding *next_hash_slot;
 };
@@ -468,13 +468,13 @@ struct PrintOptions{b32 detailed; b32 print_type; s32 indentation;};
 
 struct Builtins
 {
-  Union *True;
-  Constructor *truth;
-  Union *False;
-  Value *equal;
-  Value *Set;
-  Value *Type;
-  Constructor *refl;
+  Union        *True;
+  Constructor  *truth;
+  Union        *False;
+  BuiltinEqual *equal;
+  BuiltinSet   *Set;
+  BuiltinType  *Type;
+  Constructor  *refl;
 };
 
 enum MatcherCategory
@@ -502,8 +502,8 @@ inline Matcher exactMatch(Value *value)
 
 struct ValueArray
 {
-  s32    count;
-  Value *items;
+  s32     count;
+  Value **items;
 };
 
 struct AstArray

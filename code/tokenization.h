@@ -85,25 +85,31 @@ enum AttachmentType
 };
 struct ErrorAttachment { char *string; AttachmentType type; void *p; };
 
-struct ParseErrorData
+enum ErrorCode
 {
-    MemoryArena  message;
-    s32          line;
-    s32          column;
-    char        *context;
-
-    s32             attachment_count;
-    ErrorAttachment attachments[8];
+  ErrorGeneral,
+  ErrorWrongType,
 };
-typedef ParseErrorData* ParseError;
+
+struct ParseError
+{
+  MemoryArena  message;
+  s32          line;
+  s32          column;
+  char        *context;
+  ErrorCode    code; 
+
+  s32             attachment_count;
+  ErrorAttachment attachments[8];
+};
 
 struct ParseContext { char *first; ParseContext *next; };
 
 // note: the tokenizer also doubles as our error tracker, which may sound weird
-// but in reality it doesn't pose any problem.
+// but so far it doesn't pose any problem.
 struct Tokenizer
 {
-  ParseError    error;
+  ParseError   *error;
   MemoryArena  *error_arena;
   ParseContext *context;
 

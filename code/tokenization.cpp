@@ -85,43 +85,47 @@ printCharToBufferRepeat(char *buffer, char c, s32 repeat)
 
 global_variable Tokenizer *global_tokenizer;
 
-inline void pushAttachmentVoid(char *string, AttachmentType type, void *p)
+inline void setErrorCode(ErrorCode code)
 {
-  ParseError error = global_tokenizer->error;
+  global_tokenizer->error->code = code;
+}
+
+inline void addVoidAttachment(char *string, AttachmentType type, void *p)
+{
+  ParseError *error = global_tokenizer->error;
   assert(error->attachment_count < arrayCount(error->attachments));
   error->attachments[error->attachment_count++] = {string, type, p};
 }
 
-inline void pushAttachment(char *string, Token *token)
+inline void attach(char *string, Token *token)
 {
-  pushAttachmentVoid(string, AttachmentType_Token, token);
+  addVoidAttachment(string, AttachmentType_Token, token);
 }
 
-inline void pushAttachment(char *string, Ast *ast)
+inline void attach(char *string, Ast *ast)
 {
-  pushAttachmentVoid(string, AttachmentType_Ast, ast);
+  addVoidAttachment(string, AttachmentType_Ast, ast);
 }
 
-inline void pushAttachment(char *string, Value *value)
+inline void attach(char *string, Value *value)
 {
-  pushAttachmentVoid(string, AttachmentType_Value, value);
+  addVoidAttachment(string, AttachmentType_Value, value);
 }
 
-inline void pushAttachment(char *string, Matcher *matcher)
+inline void attach(char *string, Matcher *matcher)
 {
-  pushAttachmentVoid(string, AttachmentType_TypeMatcher, matcher);
-}
-
-internal void
-pushContext_(ParseContext *context, Tokenizer *tk = global_tokenizer)
-{
-    ParseContext *old_first = tk->context;
-    tk->context = context;
-    context->next = old_first;
+  addVoidAttachment(string, AttachmentType_TypeMatcher, matcher);
 }
 
 // #define pushContext { ParseContext context = {(char*)__func__}; pushContext_(&context); }
-#define pushContext(string) { ParseContext context = {string}; pushContext_(&context); }
+inline void
+pushContext(char *string, Tokenizer *tk=global_tokenizer)
+{
+  ParseContext *context = pushStruct(tk->error_arena, ParseContext);
+  context->first = string;
+  context->next  = tk->context;
+  tk->context    = context;
+}
 
 internal void
 popContext(Tokenizer *tk = global_tokenizer)
@@ -145,6 +149,12 @@ inline b32
 noError(Tokenizer *tk = global_tokenizer)
 {
   return !tk->error;
+}
+
+inline ParseError *
+getError(Tokenizer *tk=global_tokenizer)
+{
+  return tk->error;
 }
 
 inline char
@@ -436,7 +446,7 @@ parseErrorVA(s32 line, s32 column, char *format, va_list arg_list, Tokenizer *tk
   assert(!tk->error);  // note: prevent parser from doing useless work after failure.
 
   auto arena = tk->error_arena;
-  tk->error = pushStruct(arena, ParseErrorData, true);
+  tk->error = pushStruct(arena, ParseError, true);
   tk->error->message = subArena(tk->error_arena, 1024);
 
   printVA(&tk->error->message, format, arg_list);
