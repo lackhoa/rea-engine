@@ -14,13 +14,9 @@ print_raw =(_, true, false);
 check_truth false & true | true = true;
 
 testAbstraction :: fn (a, b: Bool) -> Bool
-{
- fork a
- {
-  true : b,
-  false: fork b {false: a, true: false},
-  }
- }
+{fork a
+ {true : b,
+  false: fork b {false: a, true: false}}}
 
 check andAssociative(true, false, true) : ((true & false) & true = true & false & true);
 

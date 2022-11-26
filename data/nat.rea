@@ -31,14 +31,10 @@ even :: fn (n : Nat) -> Bool
 check_truth even(4) = true;
 check_truth even(3) = false;
 
-* :: fn (n, m: Nat) -> Nat
-{
- fork n
- {
-  0  : 0,
-  ++ : m + n.p * m,
-  }
- }
+* :: fn (a, b: Nat) -> Nat
+{fork a
+ {0  : 0,
+  ++ : b + a.p * b}}
 
 check_truth  2*3 = 6;
 
@@ -60,7 +56,6 @@ addIdRight :: (n: Nat) -> n + 0 = n
  {0 :,
   ++: rewrite addIdRight(n.p)}
  }
-;; print(addIdRight(2));
 
 addSRight :: (n, m: Nat) -> n + ++(m) = ++(n+m)
 {fork n
@@ -72,33 +67,34 @@ addCommutative :: (n, m: Nat) -> (n + m = m + n)
  {0 : rewrite addIdRight(m),
   ++: rewrite addCommutative(n.p, m); rewrite addSRight(m, n.p)}}
 
-;; print addCommutative(1,2);
-
-addAssociative :: (a, b, c: Nat) -> (a+b)+c = a+b+c
+addAssociative :: (a, b69, c69: Nat) -> (a+b69)+c69 = a+b69+c69
 {fork a
- {0 : ,
-  ++: rewrite addAssociative(a.p, b, c)}}
+ {0 : refl(b69+c69),
+  ++: rewrite addAssociative(a.p, b69, c69); refl(++(a.p + (b69 + c69)))}}
+;; print(addAssociative);
+;; print(addAssociative(0, 0*0, 0*0));
 
 mulDistributive :: (a,b,c: Nat) -> a*c+b*c = (a+b)*c
 {fork a
- {0: ,
+ {0: refl(b*c),
   ++:
   rewrite addAssociative(c, (a.p * c), (b * c));
-  rewrite mulDistributive(a.p, b, c);}}
-;; print(mulDistributive(1,2,3));
+  rewrite mulDistributive(a.p, b, c);
+  refl(c + ((a.p + b) * c))}}
+;; print(mulDistributive);
+;; print(mulDistributive(1+1,0,0));
 
 mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*b*c
 {fork a
  {0: ,
   ++:
   rewrite left mulDistributive(b, (a.p * b), c);
-  rewrite mulAssociative(a.p, b, c)}}
-print(mulAssociative(1,2,3));
+  rewrite mulAssociative(a.p, b, c)
+  }}
+;; print(mulAssociative(1,0,0));
 
 != :: fn (_A: Set, a, b: _A) -> Type
-{
- (E: a = b) -> False
- }
+{ (E: a = b) -> False }
 
 multiplyPos :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
 {

@@ -17,3 +17,4 @@ FunctionDecl * parseFunction(MemoryArena * arena, Token * name, b32 is_theorem);
 Fork * parseFork(MemoryArena * arena, b32 is_theorem);
 Ast * parseExpressionToAst(MemoryArena * arena);
 b32 interpretFile(EngineState * state, FilePath input_path, b32 is_root_file);
+Expression parseExpressionFromString(MemoryArena * arena, char * string);

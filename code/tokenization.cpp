@@ -121,7 +121,7 @@ inline void attach(char *string, Matcher *matcher)
 inline void
 pushContext(char *string, Tokenizer *tk=global_tokenizer)
 {
-  ParseContext *context = pushStruct(tk->error_arena, ParseContext);
+  ParseContext *context = pushStruct(&tk->error_arena, ParseContext);
   context->first = string;
   context->next  = tk->context;
   tk->context    = context;
@@ -147,6 +147,7 @@ hasMore(Tokenizer *tk = global_tokenizer)
 inline void
 wipeError(Tokenizer *tk = global_tokenizer)
 {
+  tk->error_arena.used = 0;
   tk->error = 0;
 }
 
@@ -445,9 +446,9 @@ parseErrorVA(s32 line, s32 column, char *format, va_list arg_list, Tokenizer *tk
 {
   assert(!tk->error);  // note: prevent parser from doing useless work after failure.
 
-  auto arena = tk->error_arena;
+  MemoryArena *arena = &tk->error_arena;
   tk->error = pushStruct(arena, ParseError, true);
-  tk->error->message = subArena(tk->error_arena, 1024);
+  tk->error->message = subArena(arena, 1024);
 
   printVA(&tk->error->message, format, arg_list);
 

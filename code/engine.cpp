@@ -11,6 +11,7 @@
 
 global_variable b32 global_debug_mode;
 s32 debug_normalization_depth;
+s32 debug_evaluation_depth;
 // NOTE: This should work like the function stack, we'll clean it after every top-level form.
 global_variable MemoryArena *temp_arena;
 global_variable MemoryArena *permanent_arena;
@@ -264,6 +265,7 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
       {
         Rewrite *in = castAst(in0, Rewrite);
         print(buffer, "rewrite ");
+        if (in->right_to_left) print(buffer, "left ");
         print(buffer, in->eq_proof, new_opt);
       } break;
 
@@ -483,12 +485,12 @@ print(MemoryArena *buffer, Value *in0, PrintOptions opt)
         print(buffer, rewrite->body->type, new_opt);
         newlineAndIndent(buffer, opt.indentation);
 
-        print(buffer, "rewrite justification");
+        print(buffer, "rewrite justification:");
         newlineAndIndent(buffer, new_opt.indentation);
         print(buffer, rewrite->eq_proof, new_opt);
         newlineAndIndent(buffer, opt.indentation);
 
-        print(buffer, "proving ");
+        print(buffer, "body: ");
         print(buffer, rewrite->body->type, new_opt);
         newlineAndIndent(buffer, new_opt.indentation);
         print(buffer, rewrite->body, new_opt);
@@ -496,11 +498,11 @@ print(MemoryArena *buffer, Value *in0, PrintOptions opt)
 
       case VC_ComputationV:
       {
-        print(buffer, "computation");
-        // ComputationV *computation = castValue(in0, ComputationV);
-        // print(buffer, computation->lhs, new_opt);
-        // print(buffer, " = ");
-        // print(buffer, computation->rhs, new_opt);
+        print(buffer, "computation: ");
+        ComputationV *computation = castValue(in0, ComputationV);
+        print(buffer, computation->lhs, new_opt);
+        print(buffer, " = ");
+        print(buffer, computation->rhs, new_opt);
       } break;
 
       case VC_AccessorV:
@@ -566,6 +568,55 @@ inline b32
 equalB32(Value *lhs, Value *rhs)
 {
   return equalTrinary(lhs, rhs) == Trinary_True;
+}
+
+inline b32 equal(Ast *lhs, Ast *rhs)
+{
+  if (lhs == rhs)
+    return true;
+  if (lhs->cat == rhs->cat)
+  {
+    switch (lhs->cat)
+    {
+      case AC_Variable:
+      {
+        auto l = castAst(lhs, Variable);
+        auto r = castAst(rhs, Variable);
+        return (l->id == r->id && l->stack_delta == r->stack_delta);
+      } break;
+
+      case AC_Composite:
+      {
+        auto l = castAst(lhs, Composite);
+        auto r = castAst(rhs, Composite);
+        if (l->op == r->op)
+        {
+          if (l->arg_count == r->arg_count)
+          {
+            for (int id=0; id < l->arg_count; id++)
+            {
+              if (l->args[id] != r->args[id])
+                return false;
+            }
+            return true;
+          }
+        }
+      } break;
+
+      case AC_Constant:
+      {
+        auto l = castAst(lhs, Constant);
+        auto r = castAst(rhs, Constant);
+        return equalB32(l->value, r->value);
+      } break;
+
+      default:
+      {
+        // todo #incomplete
+      } break;
+    }
+  }
+  return false;
 }
 
 inline b32
@@ -863,7 +914,7 @@ evaluateFork(MemoryArena *arena, Environment *env, Fork *fork)
 
 struct ValuePair {Value *lhs; Value *rhs;};
 
-inline ValuePair isEquality(Value *eq0)
+inline ValuePair getEqualitySides(Value *eq0)
 {
   CompositeV *eq = castValue(eq0, CompositeV);
   assert(eq->op == &builtins.equal->v);
@@ -898,7 +949,17 @@ rewriteExpression(MemoryArena *arena, Value *rhs, TreePath *path, Value *in0)
     return &out->v;
   }
   else
+  {
+#if 0
+    if (!equalB32(in0, lhs))
+    {
+      dump("actual:   "); dump(in0); dump();
+      dump("expected: "); dump(lhs); dump();
+      invalidCodePath;
+    }
+#endif
     return rhs;
+  }
 }
 
 struct RewriteChain {
@@ -920,6 +981,9 @@ inline void dump(TreePath *tree_path)
 forward_declare internal Value *
 evaluateSequence(MemoryArena *arena, Environment *env, Sequence *sequence)
 {
+  if (global_debug_mode)
+    breakhere;
+
   // todo not sure what the normalization should be, but we're probably only
   // called from "normalize", so I guess it's ok to always normalize.
   Environment env_ = *env; env = &env_;
@@ -934,12 +998,6 @@ evaluateSequence(MemoryArena *arena, Environment *env, Sequence *sequence)
         Rewrite  *rewrite  = castAst(item, Rewrite);
         RewriteV *rewritev = newValue(arena, RewriteV, 0);
         Value *eq_proof = evaluateAndNormalize(arena, env, rewrite->eq_proof);
-        Value *nocheckin_type = evaluate(arena, env, rewrite->type);
-        if (global_debug_mode)
-        {
-          dump("nocheckin_type"); dump(nocheckin_type); dump();
-        }
-        rewritev->type          = nocheckin_type;
         rewritev->eq_proof      = eq_proof;
         rewritev->right_to_left = rewrite->right_to_left;
         rewritev->path          = rewrite->path;
@@ -947,33 +1005,6 @@ evaluateSequence(MemoryArena *arena, Environment *env, Sequence *sequence)
         {
           RewriteV *outer_rewrite = rewrite_chain->first;
           outer_rewrite->body = &rewritev->v;
-          // auto [lhs, rhs] = getLhsRhs(outer_rewrite->eq_proof->type);
-          // Value *rewrite_to = outer_rewrite->right_to_left ? rhs : lhs;
-          if (global_debug_mode)
-          {
-            dump("outer_rewrite equality: "); dump(outer_rewrite->eq_proof->type); dump();
-            dump("outer_rewrite path: "); dump(outer_rewrite->path); dump();
-            dump("outer_rewrite body type: "); dump(rewritev->type); dump();
-          }
-          // Value *type = rewriteExpression(arena, rewrite_to, outer_rewrite->path, rewritev->type);
-          // if (global_debug_mode)
-          // {
-          //   dump("outer_rewrite resulting type: "); dump(type); dump();
-          // }
-#if 0
-          if (!equalB32(outer_rewrite->type, type))
-          {
-            dump("mismatch: old: "); dump(outer_rewrite->type); dump();
-            dump("vs new: "); dump(type); dump();
-            dump("before rewrite: "); dump(rewritev->type); dump();
-            dump("rewrite_to: "); dump(rewrite_to); dump();
-            dump("lhs: "); dump(lhs); dump();
-            dump("rhs: "); dump(rhs); dump();
-          }
-#endif
-#if 1  // nocheckin
-          // outer_rewrite->type = type;
-#endif
         }
 
         RewriteChain *new_rewrite_chain = pushStruct(temp_arena, RewriteChain);
@@ -1003,6 +1034,8 @@ evaluateSequence(MemoryArena *arena, Environment *env, Sequence *sequence)
     }
   }
 
+  if (global_debug_mode)
+    breakhere;
   Value *last = 0;
   Ast *last_ast = sequence->items[sequence->count-1];
   if (Fork *fork = castAst(last_ast, Fork))
@@ -1015,22 +1048,42 @@ evaluateSequence(MemoryArena *arena, Environment *env, Sequence *sequence)
   {
     if (rewrite_chain)
     {
-      RewriteV *outer_rewrite = rewrite_chain->first;
-      outer_rewrite->body = last;
+      RewriteV *last_rewrite = rewrite_chain->first;
+      last_rewrite->body = last;
 
-      RewriteChain *last_chain = rewrite_chain;
+      RewriteChain *chain = rewrite_chain;
+      Value *debug_previous_type = 0;
       while (true)
       {
-        if (last_chain->next) last_chain=last_chain->next;
-        else                  break;
+        RewriteV *rewrite = chain->first;
+        auto [lhs, rhs] = getEqualitySides(rewrite->eq_proof->type);
+        Value *rewrite_to   = rewrite->right_to_left ? rhs : lhs;
+        if (debug_previous_type)
+        {
+          assert(equalB32(debug_previous_type, rewrite->body->type));
+        }
+#if 0
+        if (global_debug_mode)
+        {
+          dump();
+          if (rewrite->right_to_left) dump("<-");
+          else                        dump("->");
+          dump("body:          "); dump(rewrite->body)          ; dump();
+          dump("body_type:     "); dump(rewrite->body->type)    ; dump();
+          dump("rewrite->path: "); dump(rewrite->path)          ; dump();
+          dump("equality:      "); dump(rewrite->eq_proof->type); dump();
+          dump("eq_proof:      "); dump(rewrite->eq_proof)      ; dump();
+        }
+#endif
+        Value *type = rewriteExpression(arena, rewrite_to, rewrite->path, rewrite->body->type);
+
+        rewrite->type = type;
+        debug_previous_type = rewrite->type;
+
+        if (chain->next) chain=chain->next;
+        else             break;
       }
-      if (global_debug_mode)
-      {
-        dump("this is the type of the first rewrite in the chain: ");
-        dump(last_chain->first->type);
-        dump();
-      }
-      out = &last_chain->first->v;
+      out = &chain->first->v;
     }
     else
       out = last;
@@ -1178,8 +1231,6 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
 
   assert(out0);
   debug_normalization_depth--;
-  if (out0->type == (Value *)0x1000A7F1A)
-    assert(false);
   return out0;
 }
 
@@ -1395,10 +1446,17 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
 {
   Value *out0;
 
-#if 0
+#define DEBUG_EVALUATE 0
+#define DEBUG_EVALUATE_DEPTH 2
+
+#if DEBUG_EVALUATE
   if (global_debug_mode)
   {
-    debugIndent(); dump("evaluate: "); dump(in0); dump();
+    debug_evaluation_depth++;
+    if (debug_evaluation_depth < DEBUG_EVALUATE_DEPTH)
+    {
+      debugIndent(); dump("evaluate: "); dump(in0); dump();
+    }
   }
 #endif
 
@@ -1493,10 +1551,10 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
       Value *lhs = evaluate(arena, env, computation->lhs);
       Value *rhs = evaluate(arena, env, computation->rhs);
 
-      // todo nocheckin: the "tactics" code proliferates too much
+      // TODO: the "tactics" code proliferates too much
       CompositeV *eq = newValue(arena, CompositeV, &builtins.Set->v);
       eq->op        = &builtins.equal->v;
-      eq->arg_count = castValue(builtins.equal->type, ArrowV)->param_count;
+      eq->arg_count = 3;
       allocateArray(arena, eq->arg_count, eq->args);
       eq->args[0] = lhs->type;
       eq->args[1] = lhs;
@@ -1511,19 +1569,24 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
     invalidDefaultCase;
   }
 
-#if 0
-  if (global_debug_mode)
-  {
-    debugDedent(); dump("=> "); dump(out0); dump();
-  }
-#endif
-
   // note: overwriting doesn't count as normalization
   out0 = repeatedOverwrite(env, out0);
 
   assert(out0);
   if (out0->type == (Value *)0x1000A7F1A)
     assert(false);
+
+#if DEBUG_EVALUATE
+  if (global_debug_mode)
+  {
+    if (debug_evaluation_depth < DEBUG_EVALUATE_DEPTH)
+    {
+      debugDedent(); dump("=> "); dump(out0); dump(": "); dump(out0->type); dump();
+    }
+    debug_evaluation_depth--;
+  }
+#endif
+
   return out0;
 }
 
@@ -1531,14 +1594,8 @@ forward_declare internal Value *
 evaluateAndNormalize(MemoryArena *arena, Environment *env, Ast *in0)
 {
   Value *eval = evaluate(arena, env, in0);
-#if 1
   Value *norm = normalize(arena, env, eval);
-  if (norm->type == (Value *)0x1000A7F1A)
-    __debugbreak();
   return norm;
-#else
-  return eval;
-#endif
 }
 
 internal Value *
@@ -3144,7 +3201,7 @@ parseFork(MemoryArena *arena, b32 is_theorem)
               parsing->ctors[input_case_id]  = *ctor;
             }
             else if (Composite *pattern = castAst(pattern0, Composite))
-            {// todo nocheckin don't need this case anymore
+            {// todo don't need this case anymore
               if ((ctor = castAst(pattern->op, Identifier)))
               {
                 parsing->ctors[input_case_id] = *ctor;
@@ -3737,7 +3794,7 @@ parseTopLevel(EngineState *state)
       {
         if (auto parsing = parseExpressionFull(temp_arena))
         {
-          print(0, parsing.ast, {.detailed=true});
+          print(0, parsing.value, {.detailed=true});
           print(0, ": ");
           print(0, parsing.value->type, {});
           print(0, "\n");
@@ -4010,6 +4067,19 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
   return success;
 }
 
+forward_declare inline Expression parseExpressionFromString(MemoryArena *arena, char *string)
+{
+  TemporaryMemory tmp = beginTemporaryMemory(temp_arena);
+  Tokenizer tk = newTokenizer(temp_arena, String{}, 0);
+  Tokenizer *tk_save = global_tokenizer;
+  global_tokenizer = &tk;
+  tk.at = string;
+  Expression out = parseExpressionFull(arena);
+  global_tokenizer = tk_save;
+  endTemporaryMemory(tmp);
+  return out;
+}
+
 internal b32
 beginInterpreterSession(MemoryArena *arena, char *initial_file)
 {
@@ -4081,27 +4151,8 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
   return success;
 }
 
-// little debug struct
-union astdbg
-{
-  Variable   Variable;
-  Constant   Constant;
-  Composite  Composite;
-  CompositeV CompositeV;
-  Fork       Fork;
-  Arrow      Arrow;
-  ArrowV     ArrowV;
-  Union      Form;
-  FunctionDecl   Function;
-  FunctionV  FunctionV;
-  StackValue   StackRef;
-  Accessor   Accessor;
-};
-
 int engineMain()
 {
-  astdbg whatever = {}; (void)whatever;
-
   int success = true;
 
 #if 0

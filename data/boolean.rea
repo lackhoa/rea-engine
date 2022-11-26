@@ -21,10 +21,8 @@ Bool :: union {false, true}
 check refl(true): true = true;
 
 andAssociative :: fn (a, b, c: Bool) -> ((a & b) & c = a & b & c)
-{
- fork a
- {
-  false: computation,
-  true : computation,
-  }
- }
+{fork a
+ {false: computation,
+  true : computation}}
+
+andFalse :: (a: Bool) -> a & false = false {fork a {false:, true:}}

@@ -107,7 +107,7 @@ struct ParseContext { char *first; ParseContext *next; };
 struct Tokenizer
 {
   ParseError   *error;
-  MemoryArena  *error_arena;
+  MemoryArena   error_arena;
   ParseContext *context;
 
   char  *at;
@@ -121,14 +121,14 @@ struct Tokenizer
 void eatAllSpaces(Tokenizer *tk);
 
 inline Tokenizer
-newTokenizer(MemoryArena *error_arena, String directory, char *input)
+newTokenizer(MemoryArena *arena, String directory, char *input)
 {
   Tokenizer out = {};
   out.line        = 1;
   out.column      = 1;
   out.directory   = directory;
   out.at          = input;
-  out.error_arena = error_arena;
+  out.error_arena = subArena(arena, kiloBytes(128));
   if (input)
     eatAllSpaces(&out);
   return out;

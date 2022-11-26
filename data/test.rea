@@ -162,7 +162,6 @@ mul1 :: (a: Pos) -> a*1 = a
  {1 : ,
   ++: rewrite mul1(a.p)}}
 
-;; breakhere;
 mulCommutative :: (a,b: Pos) -> a*b = b*a
 {fork a
  {1 : rewrite mul1(b),
