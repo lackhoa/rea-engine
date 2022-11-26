@@ -205,6 +205,21 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_value, PrintOptions opt)
   }
 }
 
+inline void
+print(MemoryArena *buffer, TreePath *tree_path)
+{
+  print(buffer, "[");
+  for (TreePath *path=tree_path; path; path=path->next)
+  {
+    print(buffer, "%d", path->index);
+    if (path->next)
+    {
+      print(buffer, ", ");
+    }
+  }
+  print(buffer, "]");
+}
+
 forward_declare internal char *
 print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
 {// printAst
@@ -264,8 +279,10 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
       case AC_Rewrite:
       {
         Rewrite *in = castAst(in0, Rewrite);
-        print(buffer, "rewrite ");
-        if (in->right_to_left) print(buffer, "left ");
+        print(buffer, "rewrite");
+        print(buffer, in->path);
+        print(buffer, " ");
+        if (in->right_to_left) print(buffer, "<- ");
         print(buffer, in->eq_proof, new_opt);
       } break;
 
@@ -485,7 +502,10 @@ print(MemoryArena *buffer, Value *in0, PrintOptions opt)
         print(buffer, rewrite->body->type, new_opt);
         newlineAndIndent(buffer, opt.indentation);
 
-        print(buffer, "rewrite justification:");
+        print(buffer, "rewrite");
+        if (rewrite->right_to_left) print(buffer, "<-");
+        print(buffer, rewrite->path);
+        print(buffer, " justification: ");
         newlineAndIndent(buffer, new_opt.indentation);
         print(buffer, rewrite->eq_proof, new_opt);
         newlineAndIndent(buffer, opt.indentation);
@@ -966,17 +986,6 @@ struct RewriteChain {
   RewriteV     *first;
   RewriteChain *next;
 };
-
-inline void dump(TreePath *tree_path)
-{
-  dump("[");
-  for (TreePath *path=tree_path; path; path=path->next)
-  {
-    dump(path->index);
-    dump(", ");
-  }
-  dump("]");
-}
 
 forward_declare internal Value *
 evaluateSequence(MemoryArena *arena, Environment *env, Sequence *sequence)
@@ -2353,7 +2362,7 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
 
       rewrite->right_to_left = false;
       Token next = peekToken();
-      if (equal(next, "left"))
+      if (equal(next, "<-"))
       {
         nextToken();
         rewrite->right_to_left = true;
@@ -2556,7 +2565,6 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
               SearchOutput search = searchExpression(arena, lhs, goal);
               if (search.found)
               {
-                rewrite->type = valueToAst(arena, env, goal);
                 rewrite->path = search.path;
                 goal = rewriteExpression(arena, rhs, search.path, goal);
               }
@@ -2584,7 +2592,6 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
         computation->rhs = valueToAst(arena, env, norm_expected_type);
         Rewrite *rewrite = newAst(arena, Rewrite, &item->token);
         rewrite->eq_proof = &computation->a;
-        rewrite->type     = computation->lhs;
         sequence->items[item_id] = &rewrite->a;
         goal = norm_expected_type;
       } break;

@@ -419,7 +419,6 @@ struct Rewrite
 {
   embed_Ast(a);
   TreePath *path;
-  Ast      *type;               // todo: can we somehow restore the type
   Ast      *eq_proof;
   b32       right_to_left;
 };

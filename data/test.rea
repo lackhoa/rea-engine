@@ -154,7 +154,7 @@ mulAssociative :: (a,b,c: Pos) -> (a*b)*c = a*b*c
 {fork a
  {1 : ,
   ++:
-  rewrite left mulDistributive(b, (a.p * b), c);
+  rewrite <- mulDistributive(b, (a.p * b), c);
   rewrite mulAssociative(a.p, b, c)}}
 
 mul1 :: (a: Pos) -> a*1 = a
