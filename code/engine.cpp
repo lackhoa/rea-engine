@@ -22,13 +22,13 @@ global_variable Value *holev = (Value *)&holev_;
 
 global_variable Sequence dummy_function_under_construction;
 
-inline RewriteRules *
-newRewriteRule(Environment *env, Value *lhs, Value *rhs)
+inline OverwriteRules *
+newOverwriteRule(Environment *env, Value *lhs, Value *rhs)
 {
-  RewriteRules *out = pushStruct(temp_arena, RewriteRules);
+  OverwriteRules *out = pushStruct(temp_arena, OverwriteRules);
   out->lhs  = lhs;
   out->rhs  = rhs;
-  out->next = env->rewrite;
+  out->next = env->overwrite;
   return out;
 }
 
@@ -46,7 +46,7 @@ unwindBindingsAndStack(Environment *env)
 }
 
 inline void
-dump(RewriteRules *rewrite)
+dump(OverwriteRules *rewrite)
 {
   for (; rewrite; rewrite = rewrite->next)
   {
@@ -97,7 +97,7 @@ dump(Environment *env)
   dump("stack: ");
   dump(env->stack);
   dump(", rewrites: ");
-  dump(env->rewrite);
+  dump(env->overwrite);
 }
 
 s32 global_variable debug_indentation;
@@ -478,16 +478,17 @@ print(MemoryArena *buffer, Value *in0, PrintOptions opt)
       {
         RewriteV *rewrite = castValue(in0, RewriteV);
         print(buffer, rewrite->type, new_opt);
-        print(buffer, " <=> ");
+        print(buffer, " <=>");
+        newlineAndIndent(buffer, opt.indentation);
         print(buffer, rewrite->body->type, new_opt);
         newlineAndIndent(buffer, opt.indentation);
 
-        print(buffer, "rewriting possible due to");
+        print(buffer, "rewrite justification");
         newlineAndIndent(buffer, new_opt.indentation);
         print(buffer, rewrite->eq_proof, new_opt);
         newlineAndIndent(buffer, opt.indentation);
 
-        print(buffer, "proof of ");
+        print(buffer, "proving ");
         print(buffer, rewrite->body->type, new_opt);
         newlineAndIndent(buffer, new_opt.indentation);
         print(buffer, rewrite->body, new_opt);
@@ -811,13 +812,13 @@ lookupCurrentFrame(LocalBindings *bindings, String key, b32 add_if_missing)
 }
 
 internal Value *
-repeatedRewrite(Environment *env, Value *in)
+repeatedOverwrite(Environment *env, Value *in)
 {
   Value *out = 0;
   // todo: find some way to early out in case expression can't be rewritten
   // if (canBeRewritten(in))
   // todo: #speed this is O(n)
-  for (RewriteRules *rewrite = env->rewrite;
+  for (OverwriteRules *rewrite = env->overwrite;
        rewrite && !out;
        rewrite = rewrite->next)
   {
@@ -831,24 +832,24 @@ repeatedRewrite(Environment *env, Value *in)
 }
 
 forward_declare internal Value *
-evaluateFork(MemoryArena *arena, Environment *env, Fork *fork, b32 should_normalize)
+evaluateFork(MemoryArena *arena, Environment *env, Fork *fork)
 {
   Value *out;
-  Value *subject = evaluate(arena, env, fork->subject, should_normalize);
+  Value *subject = evaluateAndNormalize(arena, env, fork->subject);
   {
     switch (subject->cat)
     {// note: we fail if the fork is undetermined
       case VC_Constructor:
       {
         Constructor *ctor = castValue(subject, Constructor);
-        out = evaluateSequence(arena, env, fork->bodies[ctor->id], should_normalize);
+        out = evaluateSequence(arena, env, fork->bodies[ctor->id]);
       } break;
 
       case VC_CompositeV:
       {
         CompositeV *record = castValue(subject, CompositeV);
         if (Constructor *ctor = castValue(record->op, Constructor))
-          out = evaluateSequence(arena, env, fork->bodies[ctor->id], should_normalize);
+          out = evaluateSequence(arena, env, fork->bodies[ctor->id]);
         else
           out = 0;
       } break;
@@ -860,24 +861,69 @@ evaluateFork(MemoryArena *arena, Environment *env, Fork *fork, b32 should_normal
   return out;
 }
 
-internal RewriteV *
-evaluateRewrite(MemoryArena *arena, Environment *env, Rewrite *in)
+struct ValuePair {Value *lhs; Value *rhs;};
+
+inline ValuePair isEquality(Value *eq0)
 {
-  Value *type = evaluate(arena, env, in->type, false);
-  RewriteV *out = newValue(arena, RewriteV, type);
-  out->eq_proof      = evaluate(arena, env, in->eq_proof, false);
-  out->right_to_left = in->right_to_left;
-  return out;
+  CompositeV *eq = castValue(eq0, CompositeV);
+  assert(eq->op == &builtins.equal->v);
+  return ValuePair{eq->args[1], eq->args[2]};
+}
+
+internal Value *
+rewriteExpression(MemoryArena *arena, Value *rhs, TreePath *path, Value *in0)
+{
+  if (path)
+  {
+    CompositeV *in  = castValue(in0, CompositeV);
+    CompositeV *out = copyStruct(arena, in);
+    if (path->index == -1)
+    {
+      out->op = rewriteExpression(arena, rhs, path->next, in->op);
+    }
+    else
+    {
+      assert(path->index >= 0 && path->index < out->arg_count);
+      allocateArray(arena, out->arg_count, out->args);
+      for (i32 arg_id=0; arg_id < out->arg_count; arg_id++)
+      {
+        if (arg_id == (i32)path->index)
+        {
+          out->args[arg_id] = rewriteExpression(arena, rhs, path->next, in->args[arg_id]);
+        }
+        else
+          out->args[arg_id] = in->args[arg_id];
+      }
+    }
+    return &out->v;
+  }
+  else
+    return rhs;
+}
+
+struct RewriteChain {
+  RewriteV     *first;
+  RewriteChain *next;
+};
+
+inline void dump(TreePath *tree_path)
+{
+  dump("[");
+  for (TreePath *path=tree_path; path; path=path->next)
+  {
+    dump(path->index);
+    dump(", ");
+  }
+  dump("]");
 }
 
 forward_declare internal Value *
-evaluateSequence(MemoryArena *arena, Environment *env, Sequence *sequence, b32 should_normalize)
+evaluateSequence(MemoryArena *arena, Environment *env, Sequence *sequence)
 {
   // todo not sure what the normalization should be, but we're probably only
   // called from "normalize", so I guess it's ok to always normalize.
   Environment env_ = *env; env = &env_;
-  RewriteV *rewrite_chain = 0;
-  Value   **rewrite_body  = 0;
+  RewriteChain *rewrite_chain = 0;
   for (s32 id = 0;  id < sequence->count-1;  id++)
   {
     Ast *item = sequence->items[id];
@@ -886,26 +932,67 @@ evaluateSequence(MemoryArena *arena, Environment *env, Sequence *sequence, b32 s
       case AC_Rewrite:
       {
         Rewrite  *rewrite  = castAst(item, Rewrite);
-        RewriteV *rewritev = evaluateRewrite(arena, env, rewrite);
-        if (rewrite_body)
-          *rewrite_body = &rewritev->v;
-        else
-          rewrite_chain = rewritev;
+        RewriteV *rewritev = newValue(arena, RewriteV, 0);
+        Value *eq_proof = evaluateAndNormalize(arena, env, rewrite->eq_proof);
+        Value *nocheckin_type = evaluate(arena, env, rewrite->type);
+        if (global_debug_mode)
+        {
+          dump("nocheckin_type"); dump(nocheckin_type); dump();
+        }
+        rewritev->type          = nocheckin_type;
+        rewritev->eq_proof      = eq_proof;
+        rewritev->right_to_left = rewrite->right_to_left;
+        rewritev->path          = rewrite->path;
+        if (rewrite_chain)
+        {
+          RewriteV *outer_rewrite = rewrite_chain->first;
+          outer_rewrite->body = &rewritev->v;
+          // auto [lhs, rhs] = getLhsRhs(outer_rewrite->eq_proof->type);
+          // Value *rewrite_to = outer_rewrite->right_to_left ? rhs : lhs;
+          if (global_debug_mode)
+          {
+            dump("outer_rewrite equality: "); dump(outer_rewrite->eq_proof->type); dump();
+            dump("outer_rewrite path: "); dump(outer_rewrite->path); dump();
+            dump("outer_rewrite body type: "); dump(rewritev->type); dump();
+          }
+          // Value *type = rewriteExpression(arena, rewrite_to, outer_rewrite->path, rewritev->type);
+          // if (global_debug_mode)
+          // {
+          //   dump("outer_rewrite resulting type: "); dump(type); dump();
+          // }
+#if 0
+          if (!equalB32(outer_rewrite->type, type))
+          {
+            dump("mismatch: old: "); dump(outer_rewrite->type); dump();
+            dump("vs new: "); dump(type); dump();
+            dump("before rewrite: "); dump(rewritev->type); dump();
+            dump("rewrite_to: "); dump(rewrite_to); dump();
+            dump("lhs: "); dump(lhs); dump();
+            dump("rhs: "); dump(rhs); dump();
+          }
+#endif
+#if 1  // nocheckin
+          // outer_rewrite->type = type;
+#endif
+        }
 
-        rewrite_body  = &rewritev->body;
+        RewriteChain *new_rewrite_chain = pushStruct(temp_arena, RewriteChain);
+        new_rewrite_chain->first = rewritev;
+        new_rewrite_chain->next  = rewrite_chain;
+        rewrite_chain            = new_rewrite_chain;
       } break;
 
       case AC_Let:
       {
         Let   *let = castAst(item, Let);
-        Value *rhs = evaluate(arena, env, let->rhs, true);
+        Value *rhs = evaluateAndNormalize(arena, env, let->rhs);
         addStackValue(env, rhs);
       } break;
 
       case AC_FunctionDecl:
       {
         FunctionDecl *fun         = castAst(item, FunctionDecl);
-        Value        *signature_v = evaluate(arena, env, &fun->signature->a, true);
+        Value        *signature_v = evaluate(arena, env, &fun->signature->a);
         FunctionV    *funv        = newValue(arena, FunctionV, signature_v);
         funv->function = *fun;
         funv->stack    = env->stack;
@@ -919,23 +1006,35 @@ evaluateSequence(MemoryArena *arena, Environment *env, Sequence *sequence, b32 s
   Value *last = 0;
   Ast *last_ast = sequence->items[sequence->count-1];
   if (Fork *fork = castAst(last_ast, Fork))
-    last = evaluateFork(arena, env, fork, should_normalize);
+    last = evaluateFork(arena, env, fork);
   else
-    last = evaluate(arena, env, last_ast, should_normalize);
+    last = evaluateAndNormalize(arena, env, last_ast);
 
-  Value *out;
+  Value *out = 0;
   if (last)
   {
     if (rewrite_chain)
     {
-      *rewrite_body = last;
-      out = &rewrite_chain->v;
+      RewriteV *outer_rewrite = rewrite_chain->first;
+      outer_rewrite->body = last;
+
+      RewriteChain *last_chain = rewrite_chain;
+      while (true)
+      {
+        if (last_chain->next) last_chain=last_chain->next;
+        else                  break;
+      }
+      if (global_debug_mode)
+      {
+        dump("this is the type of the first rewrite in the chain: ");
+        dump(last_chain->first->type);
+        dump();
+      }
+      out = &last_chain->first->v;
     }
     else
       out = last;
   }
-  else
-    out = 0;
 
   return out;
 }
@@ -950,10 +1049,12 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
   // TODO there are infinite loops when we rewrite f.ex: "(E: a = b) -> False" => "a != 0".
   Value *out0 = {};
 
+#if 0
   if (global_debug_mode)
   {
     debugIndent(); dump("normalize: "); dump(in0); dump();
   }
+#endif
 
   switch (in0->cat)
   {
@@ -978,7 +1079,9 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
         {
           extendStack(env, in->arg_count, norm_args);
           // note: evaluation might fail, in which case we back out.
-          out0 = evaluateSequence(arena, env, funv->body, true);
+          out0 = evaluateSequence(arena, env, funv->body);
+          if (out0)
+            out0 = normalize(arena, env, out0);
           unwindStack(env);
         }
       }
@@ -1050,7 +1153,7 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
   }
 
   Value *before_rewrite = out0;
-  out0 = repeatedRewrite(env, out0);
+  out0 = repeatedOverwrite(env, out0);
 
   if (out0 != before_rewrite)
   {
@@ -1058,7 +1161,7 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
     {
       dump("before_rewrite: "); dump(before_rewrite); dump();
       dump("after rewrite"); dump(out0); dump();
-      dump("rewrite rules"); dump(env->rewrite); dump();
+      dump("rewrite rules"); dump(env->overwrite); dump();
     }
 
     // normalize again, because there might be new information not present at
@@ -1066,13 +1169,17 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
     out0 = normalize(arena, env, out0);
   }
 
+#if 0
   if (global_debug_mode)
   {
     debugDedent(); dump("=> "); dump(out0); dump();
   }
+#endif
 
   assert(out0);
   debug_normalization_depth--;
+  if (out0->type == (Value *)0x1000A7F1A)
+    assert(false);
   return out0;
 }
 
@@ -1284,14 +1391,16 @@ isGlobalValue(Value *value)
 }
 
 forward_declare internal Value *
-evaluate(MemoryArena *arena, Environment *env, Ast *in0, b32 should_normalize)
+evaluate(MemoryArena *arena, Environment *env, Ast *in0)
 {
   Value *out0;
 
+#if 0
   if (global_debug_mode)
   {
     debugIndent(); dump("evaluate: "); dump(in0); dump();
   }
+#endif
 
   switch (in0->cat)
   {
@@ -1330,20 +1439,22 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0, b32 should_normalize)
            arg_id++)
       {
         Ast *in_arg = in->args[arg_id];
-        Value *arg = evaluate(arena, env, in_arg, should_normalize);
+        Value *arg = evaluate(arena, env, in_arg);
         norm_args[arg_id] = arg;
       }
 
-      Value *norm_op = evaluate(arena, env, in->op, should_normalize);
+      Value *norm_op = evaluate(arena, env, in->op);
       ArrowV *signature = castValue(norm_op->type, ArrowV);
       extendStack(env, in->arg_count, norm_args);
-      Value *return_type = evaluate(arena, env, signature->output_type, should_normalize);
+      Value *return_type = evaluate(arena, env, signature->output_type);
+      if (return_type == (Value *)0x1000A7F1A)
+        assert(false);
       unwindStack(env);
       CompositeV *out = newValue(arena, CompositeV, return_type);
       out->arg_count = in->arg_count;
       out->op        = norm_op;
       out->args      = norm_args;
-
+#if 0
       if (should_normalize)
       {
         // NOTE: the legendary eval-reduce loop
@@ -1351,6 +1462,9 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0, b32 should_normalize)
       }
       else
         out0 = &out->v;
+#else
+      out0 = &out->v;
+#endif
     } break;
 
     case AC_Arrow:
@@ -1366,7 +1480,7 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0, b32 should_normalize)
     case AC_Accessor:
     {
       Accessor *in = castAst(in0, Accessor);
-      Value *record0 = evaluate(arena, env, in->record, should_normalize);
+      Value *record0 = evaluate(arena, env, in->record);
       // note: it has to be a record, otw we wouldn't know what type to
       // return.
       CompositeV *record = castValue(record0, CompositeV);
@@ -1376,8 +1490,8 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0, b32 should_normalize)
     case AC_Computation:
     {
       Computation  *computation = castAst(in0, Computation);
-      Value *lhs = evaluate(arena, env, computation->lhs, should_normalize);
-      Value *rhs = evaluate(arena, env, computation->rhs, should_normalize);
+      Value *lhs = evaluate(arena, env, computation->lhs);
+      Value *rhs = evaluate(arena, env, computation->rhs);
 
       // todo nocheckin: the "tactics" code proliferates too much
       CompositeV *eq = newValue(arena, CompositeV, &builtins.Set->v);
@@ -1397,22 +1511,34 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0, b32 should_normalize)
     invalidDefaultCase;
   }
 
+#if 0
   if (global_debug_mode)
   {
     debugDedent(); dump("=> "); dump(out0); dump();
   }
+#endif
 
-  // note: rewriting doesn't count as normalization, it's more like "overwriting"
-  out0 = repeatedRewrite(env, out0);
+  // note: overwriting doesn't count as normalization
+  out0 = repeatedOverwrite(env, out0);
 
   assert(out0);
+  if (out0->type == (Value *)0x1000A7F1A)
+    assert(false);
   return out0;
 }
 
 forward_declare internal Value *
-evaluate(MemoryArena *arena, Environment *env, Ast *in0)
+evaluateAndNormalize(MemoryArena *arena, Environment *env, Ast *in0)
 {
-  return evaluate(arena, env, in0, false);
+  Value *eval = evaluate(arena, env, in0);
+#if 1
+  Value *norm = normalize(arena, env, eval);
+  if (norm->type == (Value *)0x1000A7F1A)
+    __debugbreak();
+  return norm;
+#else
+  return eval;
+#endif
 }
 
 internal Value *
@@ -1728,8 +1854,8 @@ addRewriteRule(Environment *env, Value *lhs0, Value *rhs0)
   b32 added = false;
   if (!equalB32(lhs0, rhs0))
   {
-    RewriteRules *rewrite = newRewriteRule(env, lhs0, rhs0);
-    env->rewrite = rewrite;
+    OverwriteRules *rewrite = newOverwriteRule(env, lhs0, rhs0);
+    env->overwrite = rewrite;
     added= true;
 
 #if 0
@@ -1746,7 +1872,7 @@ addRewriteRule(Environment *env, Value *lhs0, Value *rhs0)
 inline void
 removeRewriteRule(Environment *env)
 {
-  env->rewrite = env->rewrite->next;
+  env->overwrite = env->overwrite->next;
 }
 
 inline s32
@@ -2059,15 +2185,15 @@ valueToAst(MemoryArena *arena, Environment *env, Value* value)
   return out;
 }
  
-struct SearchOutput {b32 matches; TreePath *path;};
+struct SearchOutput {b32 found; TreePath *path;};
 
 internal SearchOutput
-searchMatches(MemoryArena *arena, Value *lhs, Value* in0)
+searchExpression(MemoryArena *arena, Value *lhs, Value* in0)
 {
   SearchOutput out0 = {};
   if (equalB32(in0, lhs))
   {
-    out0.matches=true;
+    out0.found=true;
     return out0;
   }
   else
@@ -2077,22 +2203,22 @@ searchMatches(MemoryArena *arena, Value *lhs, Value* in0)
       case VC_CompositeV:
       {
         CompositeV *in = castValue(in0, CompositeV);
-        SearchOutput op = searchMatches(arena, lhs, in->op);
-        if (op.matches)
+        SearchOutput op = searchExpression(arena, lhs, in->op);
+        if (op.found)
         {
           allocate(arena, out0.path);
-          out0.matches     = true;
+          out0.found     = true;
           out0.path->index = -1;
           out0.path->next  = op.path;
           return out0;
         }
         for (int arg_id=0; arg_id < in->arg_count; arg_id++)
         {
-          SearchOutput arg = searchMatches(arena, lhs, in->args[arg_id]);
-          if (arg.matches)
+          SearchOutput arg = searchExpression(arena, lhs, in->args[arg_id]);
+          if (arg.found)
           {
             allocate(arena, out0.path);
-            out0.matches     = true;
+            out0.found     = true;
             out0.path->index = arg_id;
             out0.path->next  = arg.path;
             return out0;
@@ -2127,37 +2253,6 @@ searchMatches(MemoryArena *arena, Value *lhs, Value* in0)
 
     return out0;
   }
-}
-
-internal Value *
-substitute(MemoryArena *arena, Value *rhs, TreePath *path, Value *in0)
-{
-  if (path)
-  {
-    CompositeV *in  = castValue(in0, CompositeV);
-    CompositeV *out = copyStruct(arena, in);
-    if (path->index == -1)
-    {
-      out->op = substitute(arena, rhs, path->next, in->op);
-    }
-    else
-    {
-      assert(path->index >= 0 && path->index < out->arg_count);
-      allocateArray(arena, out->arg_count, out->args);
-      for (i32 arg_id=0; arg_id < out->arg_count; arg_id++)
-      {
-        if (arg_id == (i32)path->index)
-        {
-          out->args[arg_id] = substitute(arena, rhs, path->next, in->args[arg_id]);
-        }
-        else
-          out->args[arg_id] = in->args[arg_id];
-      }
-    }
-    return &out->v;
-  }
-  else
-    return rhs;
 }
 
 inline Sequence *
@@ -2343,7 +2438,7 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
       case AC_Let:
       {
         Let   *let = castAst(item, Let);
-        Value *let_type;
+        Value *let_type = 0;
         if (Expression rhs = buildExpression(arena, env, let->rhs, holev))
         {
           if (let->type)
@@ -2401,11 +2496,12 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
               if (rewrite->right_to_left) {lhs = eq->args[2]; rhs = eq->args[1];}
               else                        {lhs = eq->args[1]; rhs = eq->args[2];}
 
-              SearchOutput search = searchMatches(arena, lhs, goal);
-              if (search.matches)
+              SearchOutput search = searchExpression(arena, lhs, goal);
+              if (search.found)
               {
                 rewrite->type = valueToAst(arena, env, goal);
-                goal = substitute(arena, rhs, search.path, goal);
+                rewrite->path = search.path;
+                goal = rewriteExpression(arena, rhs, search.path, goal);
               }
               else
               {
@@ -2435,21 +2531,6 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
         sequence->items[item_id] = &rewrite->a;
         goal = norm_expected_type;
       } break;
-
-#if 0
-      case AC_Replace:
-      {
-        Replace *replace = castAst(item, Replace);
-        if (!replace->built)
-        {
-          if (Expression eq_proof = buildExpression(replace->eq_proof))
-          {
-            assert(expected_type);
-            expected_type = replaceValueAtIndex(expected_type, replace->index, eq_proof);
-          }
-        }
-      } break;
-#endif
 
       invalidDefaultCase;
     }
@@ -3639,8 +3720,15 @@ parseTopLevel(EngineState *state)
       {
         if (Expression expr = parseExpressionFull(temp_arena))
         {
+#if 1
           Value *norm = normalize(arena, empty_env, expr.value);
           print(0, norm, {.detailed=true});
+#else
+          Value *norm = normalize(arena, empty_env, expr.value);
+          dump("type before norm:"); dump(expr.value->type); dump();
+          dump("type after norm:");  dump(norm->type); dump();
+          print(0, norm->type, {.detailed=true});
+#endif
           print(0, "\n");
         }
         requireChar(';');
@@ -3695,6 +3783,7 @@ parseTopLevel(EngineState *state)
               if (!equalB32(lhs, rhs))
               {
                 parseError(&token, "equality cannot be proven by computation");
+                Value *lhs = normalize(temp_arena, empty_env, eq->args[1]);
                 attach("lhs", lhs);
                 attach("rhs", rhs);
               }

@@ -176,11 +176,11 @@ enum Trinary
   Trinary_Unknown = 2, 
 };
 
-struct RewriteRules
+struct OverwriteRules
 {
   Value *lhs;
   Value *rhs;
-  RewriteRules *next;
+  OverwriteRules *next;
 };
 
 struct Stack
@@ -194,9 +194,9 @@ struct Stack
 // used in normalization, build/typecheck, etc.
 struct Environment
 {
-  LocalBindings *bindings;
-  Stack         *stack;
-  RewriteRules   *rewrite;
+  LocalBindings  *bindings;
+  Stack          *stack;
+  OverwriteRules *overwrite;
 };
 
 #define getStackDepth(stack) (stack ? stack->depth : 0)
@@ -418,9 +418,10 @@ struct Expression
 struct Rewrite
 {
   embed_Ast(a);
-  Ast *type;  // todo: can we somehow restore the type
-  Ast *eq_proof;
-  b32  right_to_left;
+  TreePath *path;
+  Ast      *type;               // todo: can we somehow restore the type
+  Ast      *eq_proof;
+  b32       right_to_left;
 };
 
 struct Accessor
@@ -496,9 +497,10 @@ struct AstArray
 struct RewriteV
 {
   embed_Value(v);
-  Value *eq_proof;
-  Value *body;
-  b32    right_to_left;
+  Value     *eq_proof;
+  Value     *body;
+  b32        right_to_left;
+  TreePath  *path;
 };
 
 struct Computation {

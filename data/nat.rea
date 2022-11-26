@@ -72,7 +72,7 @@ addCommutative :: (n, m: Nat) -> (n + m = m + n)
  {0 : rewrite addIdRight(m),
   ++: rewrite addCommutative(n.p, m); rewrite addSRight(m, n.p)}}
 
-print addCommutative(1,2);
+;; print addCommutative(1,2);
 
 addAssociative :: (a, b, c: Nat) -> (a+b)+c = a+b+c
 {fork a
@@ -93,6 +93,7 @@ mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*b*c
   ++:
   rewrite left mulDistributive(b, (a.p * b), c);
   rewrite mulAssociative(a.p, b, c)}}
+print(mulAssociative(1,2,3));
 
 != :: fn (_A: Set, a, b: _A) -> Type
 {
