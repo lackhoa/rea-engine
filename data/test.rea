@@ -54,13 +54,9 @@ check 1+2: RatTest;
 #should_fail off
 
 * :: fn (n, m: Pos) -> Pos
-{
- fork n
- {
-  1  : m,
-  ++ : m + n.p * m,
-  }
- }
+{fork n
+ {1  : m,
+  ++ : m + n.p * m}}
 
 Z :: union
 {0,
@@ -162,12 +158,26 @@ mul1 :: (a: Pos) -> a*1 = a
  {1 : ,
   ++: rewrite mul1(a.p)}}
 
+mulSRight :: (a,b: Pos) -> a * ++(b) = a + a*b
+{fork a
+ {1:,
+  ++:
+  ;; (++((b + (a.p * ++(b)))) = ++((a.p + (b + (a.p * b)))))
+  => ++(b + a.p * ++(b)) = ++(a.p + b + a.p * b)
+  => ++(b + a.p + a.p * b) = ++(a.p + b + a.p * b) { mulSRight(a.p, b) }
+  => ++((a.p + a.p * b) + b) = ++(a.p + b + a.p * b) { addCommutative(b, a.p + a.p * b) }
+  => ++(a.p + a.p * b + b) = ++(a.p + b + a.p * b) { addAssociative(a.p, a.p*b, b) }
+  => ++(a.p + a.p * b + b) = ++(a.p + a.p * b + b) { addCommutative(b, a.p * b) }
+  }}
+
 mulCommutative :: (a,b: Pos) -> a*b = b*a
 {fork a
  {1 : rewrite mul1(b),
   ++: 
-  => b*1 + b*a.p = b * ++(a.p) { mul1(b) };
-  rewrite mulCommutative(a.p, b)}}
+  ;; b + a.p * b = b * ++(a.p)
+  => b + a.p * b = b + b * a.p { mulSRight(b, a.p) }
+  => b + a.p * b = b + a.p * b { <- mulCommutative(a.p, b) }
+  }}
 
 add0 :: (a: Z) -> a+0 = a
 {fork a {0: , +: , -: }}

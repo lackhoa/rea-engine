@@ -220,6 +220,12 @@ print(MemoryArena *buffer, TreePath *tree_path)
   print(buffer, "]");
 }
 
+inline void
+dump(TreePath *tree_path)
+{
+  print(0, tree_path);
+}
+
 forward_declare internal char *
 print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
 {// printAst
@@ -2350,13 +2356,7 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
     Tokenizer tk_save = *global_tokenizer;
     Token token = nextToken();
     Ast *ast = 0;
-    if (isExpressionEndMarker(&token))
-    {// synthetic hole
-      *global_tokenizer = tk_save;
-      ast  = &newAst(arena, Hole, &token)->a; // todo do we print this out correctly?
-      stop = true;
-    }
-    else if (token.cat == TC_KeywordRewrite)
+    if (token.cat == TC_KeywordRewrite)
     {
       Rewrite *rewrite = newAst(arena, Rewrite, &token);
 
@@ -2377,15 +2377,23 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
     }
     else if (token.cat == TC_StrongArrow)
     {
-      pushContext("Full-rewrite: => TO_EXPRESSION { EQ_PROOF }");
+      pushContext("Full-rewrite: => TO_EXPRESSION [{ EQ_PROOF }]");
       Rewrite *rewrite = newAst(arena, Rewrite, &token);
-      if (requireChar('{'))
+      ast = &rewrite->a;
       {
         if ((rewrite->to_expression = parseExpressionToAst(arena)))
         {
-          rewrite->eq_proof = parseExpressionToAst(arena);
-          ast = &rewrite->a;
-          requireChar('}');
+          if (optionalChar('{'))
+          {
+            if (optionalString("<-"))  // todo: don't know whether to make a token type for this.
+            {
+              rewrite->right_to_left = true;
+            }
+            rewrite->eq_proof = parseExpressionToAst(arena);
+            requireChar('}');
+          }
+          else
+            breakhere;
         }
       }
       popContext();
@@ -2446,6 +2454,12 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
 
         default: {};
       }
+    }
+    else if (isExpressionEndMarker(&token))
+    {// synthetic hole
+      *global_tokenizer = tk_save;
+      ast  = &newAst(arena, Hole, &token)->a; // todo do we print this out correctly?
+      stop = true;
     }
 
     if (noError() && !ast)
@@ -2581,39 +2595,59 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
       case AC_Rewrite:
       {
         Rewrite *rewrite = castAst(item, Rewrite);
-        if (Expression eq_proof = buildExpression(arena, env, rewrite->eq_proof, holev))
+        if (!rewrite->eq_proof)
+        {
+          if (Expression to_expression = buildExpression(arena, env, rewrite->to_expression, holev))
+          {
+            Value *new_goal = to_expression.value;
+            Value *new_goal_norm = normalize(arena, env, new_goal);
+            Value *goal_norm = normalize(arena, env, goal);
+            if (equalB32(new_goal_norm, goal_norm))
+              goal = new_goal;
+            else
+            {
+              parseError(item, "Full-rewrite: new goal does not match original");
+              attach("new goal normalized", new_goal_norm);
+              attach("current goal normalized", goal_norm);
+            }
+          }
+        }
+        else if (Expression eq_proof = buildExpression(arena, env, rewrite->eq_proof, holev))
         {
           rewrite->eq_proof = eq_proof.ast;
           b32 rule_valid = false;
           if (CompositeV *eq = castValue(eq_proof.value->type, CompositeV))
           {
-            Value *lhs, *rhs;
+            Value *from, *to;
             if (eq->op == &builtins.equal->v)
             {
               rule_valid = true;
-              if (rewrite->right_to_left) {lhs = eq->args[2]; rhs = eq->args[1];}
-              else                        {lhs = eq->args[1]; rhs = eq->args[2];}
+              if (rewrite->right_to_left) {from = eq->args[2]; to = eq->args[1];}
+              else                        {from = eq->args[1]; to = eq->args[2];}
 
-#if 0
+#if 1
               if (rewrite->to_expression)
-              {// diff
+              {// diff todo: this can be automated even more.
                 if (Expression to_expression = buildExpression(arena, env, rewrite->to_expression, holev))
                 {
-                  if (TreeDiff diff = diffExpressions(goal, to_expression.value))
+                  Value *expected_result = to_expression.value;
+                  CompareExpressions compare = compareExpressions(arena, goal, expected_result);
                   {
-                    rewrite->path = diff.path;
-                    // todo: expand this method to automatically pick side.
-                    if (equalB32(diff.Old, lhs) && equalB32(diff.New, rhs))
+                    rewrite->path = compare.diff_path;
+                    Value *actual_result = rewriteExpression(arena, to, rewrite->path, goal);
+                    if (equalB32(actual_result, expected_result))
                     {
-                      goal = rewriteExpression(arena, rhs, diff.path, goal);
+                      goal = actual_result;
                     }
                     else
                     {
                       parseError(item, "invalid full-rewrite");
-                      attach("old", diff.Old);
-                      attach("new", diff.New);
-                      attach("lhs", lhs);
-                      attach("rhs", rhs);
+                      dump("rewrite path"); print(0, rewrite->path); dump();
+                      attach("original goal", goal);
+                      attach("expected rewrite result", expected_result);
+                      attach("actual rewrite result", actual_result);
+                      attach("rewrite from", from);
+                      attach("rewrite to", to);
                     }
                   }
                 }
@@ -2621,11 +2655,11 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
               else
 #endif
               {// search
-                SearchOutput search = searchExpression(arena, lhs, goal);
+                SearchOutput search = searchExpression(arena, from, goal);
                 if (search.found)
                 {
                   rewrite->path = search.path;
-                  goal = rewriteExpression(arena, rhs, search.path, goal);
+                  goal = rewriteExpression(arena, to, rewrite->path, goal);
                 }
                 else
                 {
