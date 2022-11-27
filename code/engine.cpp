@@ -211,7 +211,7 @@ print(MemoryArena *buffer, TreePath *tree_path)
   print(buffer, "[");
   for (TreePath *path=tree_path; path; path=path->next)
   {
-    print(buffer, "%d", path->index);
+    print(buffer, "%d", path->first);
     if (path->next)
     {
       print(buffer, ", ");
@@ -640,7 +640,7 @@ inline b32 equal(Ast *lhs, Ast *rhs)
 }
 
 inline b32
-isConstructor(Value *in0)
+isCompositeConstructor(Value *in0)
 {
   if (CompositeV *in = castValue(in0, CompositeV))
     return in->op->cat == VC_Constructor;
@@ -648,37 +648,11 @@ isConstructor(Value *in0)
     return false;
 }
 
-internal Trinary
-compareExpressionList(Value **lhs_list, Value **rhs_list, s32 count)
+forward_declare internal CompareExpressions
+compareExpressions(MemoryArena *arena, Value *lhs0, Value *rhs0)
 {
-  Trinary out = Trinary_Unknown;
-  b32 mismatch_found = false;
-  b32 unknown_found  = false;
-  for (s32 id = 0;
-       (id < count) && !mismatch_found;
-       id++)
-  {
-    auto lhs = lhs_list[id];
-    auto rhs = rhs_list[id];
-    auto compare = equalTrinary(lhs, rhs);
-    if (compare == Trinary_Unknown)
-      unknown_found = true;
-    if (compare == Trinary_False)
-      mismatch_found = true;
-  }
-  if (mismatch_found)
-    out = Trinary_False;
-  else if (unknown_found)
-    out = Trinary_Unknown;   
-  else
-    out = Trinary_True;
+  CompareExpressions out = {};
 
-  return out;
-}
-
-forward_declare internal Trinary
-equalTrinary(Value *lhs0, Value *rhs0)
-{
 #if 0
   if (global_debug_mode)
   {
@@ -690,12 +664,12 @@ equalTrinary(Value *lhs0, Value *rhs0)
   }
 #endif
 
-  Trinary out = Trinary_Unknown;
+  out.result = Trinary_Unknown;
 
   if (!lhs0 | !rhs0)
-    out = Trinary_False;
+    out.result = Trinary_False;
   else if (lhs0 == rhs0)
-    out = Trinary_True;
+    out.result = Trinary_True;
   else if (lhs0->cat == rhs0->cat)
   {
     switch (lhs0->cat)
@@ -705,7 +679,7 @@ equalTrinary(Value *lhs0, Value *rhs0)
         StackValue* lhs = castValue(lhs0, StackValue);
         StackValue* rhs = castValue(rhs0, StackValue);
         if ((lhs->stack_depth == rhs->stack_depth) && (lhs->id == rhs->id))
-          out = Trinary_True;
+          out.result = Trinary_True;
       } break;
 
       case VC_ArrowV:
@@ -736,12 +710,12 @@ equalTrinary(Value *lhs0, Value *rhs0)
           }
           if (!type_mismatch)
           {
-            out = equalTrinary(evaluate(temp_arena, &env, lhs->output_type),
-                               evaluate(temp_arena, &env, rhs->output_type));
+            out.result = equalTrinary(evaluate(temp_arena, &env, lhs->output_type),
+                                      evaluate(temp_arena, &env, rhs->output_type));
           }
         }
         else
-          out = Trinary_False;
+          out.result = Trinary_False;
       } break;
 
       case VC_CompositeV:
@@ -754,18 +728,39 @@ equalTrinary(Value *lhs0, Value *rhs0)
             (lhs->op->cat == VC_Union) &&
             (rhs->op->cat == VC_Union))
         {
-          out = Trinary_False;
+          out.result = Trinary_False;
         }
         else if (op_compare == Trinary_True)
         {
           s32 count = lhs->arg_count;
           assert(lhs->arg_count == rhs->arg_count);
-          out = compareExpressionList((lhs->args), (rhs->args), count);
-        }
-      } break;
 
-      case VC_FunctionV:
-      {// we can compare the types to eliminate negatives, but we don't care.
+          int mismatch_count = 0;
+          int       unique_diff_id   = 0;
+          TreePath *unique_diff_path = 0;
+          out.result = Trinary_True;
+          for (s32 id = 0; id < count; id++)
+          {
+            CompareExpressions recurse = compareExpressions(arena, lhs->args[id], rhs->args[id]);
+            if (recurse.result != Trinary_True)
+            {
+              if (out.result != Trinary_False)
+                out.result = recurse.result;
+              mismatch_count++;
+              if (mismatch_count == 1)
+              {
+                unique_diff_id   = id;
+                unique_diff_path = recurse.diff_path;
+              }
+            }
+          }
+          if ((mismatch_count == 1) && arena)
+          {
+            allocate(arena, out.diff_path);
+            out.diff_path->first = unique_diff_id;
+            out.diff_path->next  = unique_diff_path;
+          }
+        }
       } break;
 
       case VC_Constructor:
@@ -773,16 +768,17 @@ equalTrinary(Value *lhs0, Value *rhs0)
         Constructor *lhs = castValue(lhs0, Constructor);
         Constructor *rhs = castValue(rhs0, Constructor);
         assert(lhs->type == rhs->type);
-        out = (Trinary)(lhs->id == rhs->id);
+        out.result = (Trinary)(lhs->id == rhs->id);
       } break;
 
       case VC_BuiltinEqual:
       case VC_BuiltinType:
       case VC_BuiltinSet:
       {
-        out = Trinary_True;
+        out.result = Trinary_True;
       } break;
 
+      case VC_FunctionV:  // we can compare the types to eliminate negatives, but we don't care.
       case VC_Null:
       case VC_Hole:
       case VC_HeapValue:
@@ -791,17 +787,23 @@ equalTrinary(Value *lhs0, Value *rhs0)
       case VC_ComputationV:
       case VC_AccessorV:
       {
-        out = Trinary_Unknown;
+        out.result = Trinary_Unknown;
       } break;
     }
   }
-  else if (((lhs0->cat == VC_Constructor) && isConstructor(rhs0)) ||
-           ((rhs0->cat == VC_Constructor) && isConstructor(lhs0)))
+  else if (((lhs0->cat == VC_Constructor) && isCompositeConstructor(rhs0)) ||
+           ((rhs0->cat == VC_Constructor) && isCompositeConstructor(lhs0)))
   {
-    out = Trinary_False;
+    out.result = Trinary_False;
   }
 
   return out;
+}
+
+forward_declare internal Trinary
+equalTrinary(Value *lhs0, Value *rhs0)
+{
+  return compareExpressions(0, lhs0, rhs0).result;
 }
 
 global_variable GlobalBindings *global_bindings;
@@ -948,17 +950,17 @@ rewriteExpression(MemoryArena *arena, Value *rhs, TreePath *path, Value *in0)
   {
     CompositeV *in  = castValue(in0, CompositeV);
     CompositeV *out = copyStruct(arena, in);
-    if (path->index == -1)
+    if (path->first == -1)
     {
       out->op = rewriteExpression(arena, rhs, path->next, in->op);
     }
     else
     {
-      assert(path->index >= 0 && path->index < out->arg_count);
+      assert(path->first >= 0 && path->first < out->arg_count);
       allocateArray(arena, out->arg_count, out->args);
       for (i32 arg_id=0; arg_id < out->arg_count; arg_id++)
       {
-        if (arg_id == (i32)path->index)
+        if (arg_id == (i32)path->first)
         {
           out->args[arg_id] = rewriteExpression(arena, rhs, path->next, in->args[arg_id]);
         }
@@ -2251,16 +2253,14 @@ valueToAst(MemoryArena *arena, Environment *env, Value* value)
   return out;
 }
  
-struct SearchOutput {b32 found; TreePath *path;};
-
 internal SearchOutput
 searchExpression(MemoryArena *arena, Value *lhs, Value* in0)
 {
-  SearchOutput out0 = {};
+  SearchOutput out = {};
   if (equalB32(in0, lhs))
   {
-    out0.found=true;
-    return out0;
+    out.found = true;
+    return out;
   }
   else
   {
@@ -2272,22 +2272,22 @@ searchExpression(MemoryArena *arena, Value *lhs, Value* in0)
         SearchOutput op = searchExpression(arena, lhs, in->op);
         if (op.found)
         {
-          allocate(arena, out0.path);
-          out0.found     = true;
-          out0.path->index = -1;
-          out0.path->next  = op.path;
-          return out0;
+          allocate(arena, out.path);
+          out.found     = true;
+          out.path->first = -1;
+          out.path->next  = op.path;
+          return out;
         }
         for (int arg_id=0; arg_id < in->arg_count; arg_id++)
         {
           SearchOutput arg = searchExpression(arena, lhs, in->args[arg_id]);
           if (arg.found)
           {
-            allocate(arena, out0.path);
-            out0.found     = true;
-            out0.path->index = arg_id;
-            out0.path->next  = arg.path;
-            return out0;
+            allocate(arena, out.path);
+            out.found     = true;
+            out.path->first = arg_id;
+            out.path->next  = arg.path;
+            return out;
           }
         }
       } break;
@@ -2317,7 +2317,7 @@ searchExpression(MemoryArena *arena, Value *lhs, Value* in0)
       } break;
     }
 
-    return out0;
+    return out;
   }
 }
 
@@ -2374,6 +2374,21 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
     else if (token.cat == TC_KeywordNorm)
     {
       ast = &newAst(arena, Norm, &token)->a;
+    }
+    else if (token.cat == TC_StrongArrow)
+    {
+      pushContext("Full-rewrite: => TO_EXPRESSION { EQ_PROOF }");
+      Rewrite *rewrite = newAst(arena, Rewrite, &token);
+      if (requireChar('{'))
+      {
+        if ((rewrite->to_expression = parseExpressionToAst(arena)))
+        {
+          rewrite->eq_proof = parseExpressionToAst(arena);
+          ast = &rewrite->a;
+          requireChar('}');
+        }
+      }
+      popContext();
     }
     else if (isIdentifier(&token))
     {
@@ -2489,6 +2504,23 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
   return out;
 }
 
+#if 0
+internal SearchOutput
+diffExpressions(Value *Old, Value *New)
+{
+  SearchOutput out = {};
+  if (Old->cat == New->cat)
+  {
+    
+  }
+  else
+  {
+    out.found = true;
+    return out;
+  }
+}
+#endif
+
 forward_declare internal void
 buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *goal)
 {
@@ -2562,17 +2594,45 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
               if (rewrite->right_to_left) {lhs = eq->args[2]; rhs = eq->args[1];}
               else                        {lhs = eq->args[1]; rhs = eq->args[2];}
 
-              SearchOutput search = searchExpression(arena, lhs, goal);
-              if (search.found)
-              {
-                rewrite->path = search.path;
-                goal = rewriteExpression(arena, rhs, search.path, goal);
+#if 0
+              if (rewrite->to_expression)
+              {// diff
+                if (Expression to_expression = buildExpression(arena, env, rewrite->to_expression, holev))
+                {
+                  if (TreeDiff diff = diffExpressions(goal, to_expression.value))
+                  {
+                    rewrite->path = diff.path;
+                    // todo: expand this method to automatically pick side.
+                    if (equalB32(diff.Old, lhs) && equalB32(diff.New, rhs))
+                    {
+                      goal = rewriteExpression(arena, rhs, diff.path, goal);
+                    }
+                    else
+                    {
+                      parseError(item, "invalid full-rewrite");
+                      attach("old", diff.Old);
+                      attach("new", diff.New);
+                      attach("lhs", lhs);
+                      attach("rhs", rhs);
+                    }
+                  }
+                }
               }
               else
-              {
-                parseError(item, "substitution has no effect");
-                attach("substitution", eq_proof.value->type);
-                attach("goal", goal);
+#endif
+              {// search
+                SearchOutput search = searchExpression(arena, lhs, goal);
+                if (search.found)
+                {
+                  rewrite->path = search.path;
+                  goal = rewriteExpression(arena, rhs, search.path, goal);
+                }
+                else
+                {
+                  parseError(item, "substitution has no effect");
+                  attach("substitution", eq_proof.value->type);
+                  attach("goal", goal);
+                }
               }
             }
           }
@@ -3780,6 +3840,19 @@ parseTopLevel(EngineState *state)
         breakhere;
         global_debug_mode = true;
       }
+      else if (equal(token, "compare_expressions"))
+      {
+        if (Expression lhs = parseExpressionFull(temp_arena))
+        {
+          requireChar(',');
+          if (Expression rhs = parseExpressionFull(temp_arena))
+          {
+            CompareExpressions compare = compareExpressions(temp_arena, lhs.value, rhs.value);
+            (void)compare;
+            breakhere;
+          }
+        }
+      }
       else if (equal(token, "print"))
       {
         if (Expression expr = parseExpressionFull(temp_arena))
@@ -4074,16 +4147,15 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
   return success;
 }
 
-forward_declare inline Expression parseExpressionFromString(MemoryArena *arena, char *string)
+forward_declare inline Expression
+parseExpressionFromString(MemoryArena *arena, char *string)
 {
-  TemporaryMemory tmp = beginTemporaryMemory(temp_arena);
   Tokenizer tk = newTokenizer(temp_arena, String{}, 0);
   Tokenizer *tk_save = global_tokenizer;
   global_tokenizer = &tk;
   tk.at = string;
   Expression out = parseExpressionFull(arena);
   global_tokenizer = tk_save;
-  endTemporaryMemory(tmp);
   return out;
 }
 

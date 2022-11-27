@@ -3,6 +3,7 @@ Token peekToken(Tokenizer * tk);
 char * print(MemoryArena * buffer, Ast * in0, PrintOptions opt);
 char * print(MemoryArena * buffer, Value * in0, PrintOptions opt);
 char * print(MemoryArena * buffer, void * in0, b32 is_value, PrintOptions opt);
+CompareExpressions compareExpressions(MemoryArena * arena, Value * lhs0, Value * rhs0);
 Trinary equalTrinary(Value * lhs0, Value * rhs0);
 Value * evaluateFork(MemoryArena * arena, Environment * env, Fork * fork);
 Value * evaluateSequence(MemoryArena * arena, Environment * env, Sequence * sequence);

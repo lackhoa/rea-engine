@@ -1,15 +1,20 @@
 #load "boolean.rea"
 #load "nat.rea"
 
+;; compare_expressions (true = (true | true)), (true = (false | false));  ;; path: [2]
+;; compare_expressions (true = (true | true)), (true = (true | false));  ;; path: [2,1]
+;; compare_expressions (true = (true | true)), (true = (true & false));  ;; path: [2]
+;; compare_expressions ((true & false) | true), (true & (false | true)); ;; path: []
+
 check True: Set;
-print_raw =;
-print_raw (x: False) -> (x = x);
-print_raw false & true | true & false | true;
+;; print_raw =;
+;; print_raw (x: False) -> (x = x);
+;; print_raw false & true | true & false | true;
 
-print_raw &(true, |(false,true,),);
-print_raw false & true | true & false | true;
+;; print_raw &(true, |(false,true,),);
+;; print_raw false & true | true & false | true;
 
-print_raw =(_, true, false);
+;; print_raw =(_, true, false);
 
 check_truth false & true | true = true;
 

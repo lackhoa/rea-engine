@@ -312,7 +312,7 @@ struct StackValue
 
 struct TreePath
 {
-  s32       index;  // -1 for op
+  s32       first;  // -1 for op
   TreePath *next;
 };
 
@@ -418,8 +418,10 @@ struct Expression
 struct Rewrite
 {
   embed_Ast(a);
+
   TreePath *path;
   Ast      *eq_proof;
+  Ast      *to_expression;
   b32       right_to_left;
 };
 
@@ -496,10 +498,10 @@ struct AstArray
 struct RewriteV
 {
   embed_Value(v);
-  Value     *eq_proof;
-  Value     *body;
-  b32        right_to_left;
   TreePath  *path;
+  Value     *eq_proof;
+  b32        right_to_left;
+  Value     *body;
 };
 
 struct Computation {
@@ -513,5 +515,9 @@ struct ComputationV {
   Value *lhs;
   Value *rhs;
 };
+
+struct SearchOutput {b32 found; TreePath *path;};
+
+struct CompareExpressions {Trinary result; TreePath *diff_path;};
 
 #include "generated/engine_forward.h"

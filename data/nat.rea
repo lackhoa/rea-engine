@@ -81,8 +81,8 @@ mulDistributive :: (a,b,c: Nat) -> a*c+b*c = (a+b)*c
   rewrite addAssociative(c, (a.p * c), (b * c));
   rewrite mulDistributive(a.p, b, c);
   refl(c + ((a.p + b) * c))}}
-print(mulDistributive);
-print(mulDistributive(1+1,0,0));
+;; print(mulDistributive);
+;; print(mulDistributive(1+1,0,0));
 
 mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*b*c
 {fork a
