@@ -132,7 +132,7 @@ addCommutative :: (a, b: Nat+) -> (a + b = b + a)
   rewrite addSRight(b, a.p);
   rewrite addCommutative(a.p, b)}}
 
-;; todo #cutnpaste collapse these abstract algebra down maybe
+;; todo #copypasta collapse these abstract algebra down maybe
 addAssociative :: (a,b,c: Nat+) -> (a+b)+c = a+b+c
 {fork a
  {1 : ,
@@ -162,20 +162,22 @@ mulSRight :: (a,b: Nat+) -> a * ++(b) = a + a*b
  {1:,
   ++:
   ;; (++((b + (a.p * ++(b)))) = ++((a.p + (b + (a.p * b)))))
-  => ++(b + a.p * ++(b)) = ++(a.p + b + a.p * b)
-  => ++(b + a.p + a.p * b) = ++(a.p + b + a.p * b) { mulSRight(a.p, b) }
-  => ++((a.p + a.p * b) + b) = ++(a.p + b + a.p * b) { addCommutative(b, a.p + a.p * b) }
-  => ++(a.p + a.p * b + b) = ++(a.p + b + a.p * b) { addAssociative(a.p, a.p*b, b) }
-  => ++(a.p + a.p * b + b) = ++(a.p + a.p * b + b) { addCommutative(b, a.p * b) }
+  => ++(b + a.p * ++(b))   = ++(a.p + b + a.p*b)
+  => ++(b + a.p + a.p*b)   = ++(a.p + b + a.p*b) { mulSRight(a.p, b) }
+  => ++((a.p + a.p*b) + b) = ++(a.p + b + a.p*b) { addCommutative
+                                                  ;; (b, a.p + a.p*b)
+                                                  }
+  => ++(a.p + a.p*b + b)   = ++(a.p + b + a.p*b) { addAssociative(a.p, a.p*b, b) }
+  => ++(a.p + a.p*b + b)   = ++(a.p + a.p*b + b) { addCommutative(b, a.p*b) }
   }}
 
 mulCommutative :: (a,b: Nat+) -> a*b = b*a
 {fork a
  {1 : rewrite mul1(b),
   ++: 
-  ;; b + a.p * b = b * ++(a.p)
-  => b + a.p * b = b + b * a.p { mulSRight(b, a.p) }
-  => b + a.p * b = b + a.p * b { <- mulCommutative(a.p, b) }}}
+  ;; b + a.p*b = b * ++(a.p)
+  => b + a.p*b = b + b*a.p { mulSRight(b, a.p) }
+  => b + a.p*b = b + a.p*b { <- mulCommutative(a.p, b) }}}
 
 add0 :: (a: Z) -> a+0 = a
 {fork a {0: , +: , -: }}

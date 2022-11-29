@@ -50,47 +50,44 @@ check_truth  2*3 = 6;
 check_truth 3 - 2 = 1;
 check_truth 4 - 1 = 3;
 
-addIdRight :: (n: Nat) -> n + 0 = n
-{
- fork n
+add0Right :: (n: Nat) -> n + 0 = n
+{fork n
  {0 :,
-  ++: rewrite addIdRight(n.p)}
- }
+  ++: => ++(n.p) = ++(n.p) {add0Right}}}
 
 addSRight :: (n, m: Nat) -> n + ++(m) = ++(n+m)
 {fork n
  {0 : ,
-  ++: rewrite addSRight(n.p, m)}}
+  ++: => ++(++(n.p + m)) = ++(++(n.p + m)) {addSRight}}}
 
-addCommutative :: (n, m: Nat) -> (n + m = m + n)
+addCommutative :: (n, m: Nat) -> (n+m = m+n)
 {fork n
- {0 : rewrite addIdRight(m),
-  ++: rewrite addCommutative(n.p, m); rewrite addSRight(m, n.p)}}
+ {0 : => m = m {add0Right},
+  ++:
+  => ++(m + n.p) = m + ++(n.p) {addCommutative}
+  => ++(m + n.p) = ++(m + n.p) {addSRight}}}
 
-addAssociative :: (a, b69, c69: Nat) -> (a+b69)+c69 = a+b69+c69
+addAssociative :: (a, b, c: Nat) -> (a+b)+c = a+b+c
 {fork a
- {0 : refl(b69+c69),
-  ++: rewrite addAssociative(a.p, b69, c69); refl(++(a.p + (b69 + c69)))}}
-;; print(addAssociative);
+ {0 : ,
+  ++:
+  => ++(a.p + b + c) = ++(a.p + b + c) {addAssociative}}}
 ;; print(addAssociative(0, 0*0, 0*0));
 
 mulDistributive :: (a,b,c: Nat) -> a*c+b*c = (a+b)*c
 {fork a
  {0: refl(b*c),
   ++:
-  rewrite addAssociative(c, (a.p * c), (b * c));
-  rewrite mulDistributive(a.p, b, c);
-  refl(c + ((a.p + b) * c))}}
-;; print(mulDistributive);
+  => c + a.p*c + b*c = c + (a.p+b)*c {addAssociative(c, (a.p * c), (b * c))}
+  => c + (a.p+b)*c   = c + (a.p+b)*c {mulDistributive(a.p, b, c)}}}
 ;; print(mulDistributive(1+1,0,0));
 
 mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*b*c
 {fork a
  {0: ,
   ++:
-  rewrite <- mulDistributive(b, (a.p * b), c);
-  rewrite mulAssociative(a.p, b, c)
-  }}
+  => (b + a.p*b)*c  = b*c + (a.p*b)*c {<- mulAssociative(a.p, b, c)}
+  => (b + a.p*b)*c  = (b + a.p*b)*c {mulDistributive(b, a.p*b, c)}}}
 ;; print(mulAssociative(1,0,0));
 
 != :: fn (_A: Set, a, b: _A) -> Type
