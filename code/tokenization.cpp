@@ -6,7 +6,7 @@
 inline char
 getMatchingPair(Token *opening)
 {
-  switch (opening->text.chars[0])
+  switch (opening->string.chars[0])
   {
     case '(':
         return ')';
@@ -22,14 +22,14 @@ getMatchingPair(Token *opening)
 inline b32
 equal(Token *token, const char *string)
 {
-    return equal(token->text, string);
+    return equal(token->string, string);
 }
 
 inline b32
 equal(Token *token, char c)
 {
-    return ((token->text.length == 1)
-            &&  (token->text.chars[0] == c));
+    return ((token->string.length == 1) &&
+            (token->string.chars[0] == c));
 }
 
 inline b32
@@ -242,7 +242,7 @@ forward_declare inline Token
 nextToken(Tokenizer *tk = global_tokenizer)
 {
   Token out = {};
-  out.text.chars = tk->at;
+  out.string.chars = tk->at;
   out.line       = tk->line;
   out.column     = tk->column;
 
@@ -250,13 +250,13 @@ nextToken(Tokenizer *tk = global_tokenizer)
   {
     case '"':
     {
-      out.text.chars++; // advance past the opening double quote
+      out.string.chars++; // advance past the opening double quote
       out.cat = TC_StringLiteral;
       while (*tk->at != '"')
         nextChar(tk);
       // handle the closing double quote
       nextChar(tk);
-      out.text.length = (s32)(tk->at - out.text.chars - 1);
+      out.string.length = (s32)(tk->at - out.string.chars - 1);
     } break;
 
     case '=':
@@ -359,9 +359,9 @@ nextToken(Tokenizer *tk = global_tokenizer)
 
   if (out.cat)
   {
-    if (!out.text.length)
-      out.text.length = (s32)(tk->at - out.text.chars);
-    assert(out.text.length);
+    if (!out.string.length)
+      out.string.length = (s32)(tk->at - out.string.chars);
+    assert(out.string.length);
 
     if (out.cat == TC_Alphanumeric)
     {
@@ -410,9 +410,9 @@ eatUntil(char c, Tokenizer *tk)
 inline b32
 inString(char *string, Token *token)
 {
-    if (token->text.length == 1)
+    if (token->string.length == 1)
     {
-        char character = token->text.chars[0];
+        char character = token->string.chars[0];
         for (char *c = string; *c; c++)
         {
             if (*c == character)
@@ -491,7 +491,7 @@ tokenError(Token *token, char *message, Tokenizer *tk = global_tokenizer)
 {
   parseError(token, message, tk);
   print(&tk->error->message, ": ");
-  print(&tk->error->message, token->text);
+  print(&tk->error->message, token->string);
 }
 
 internal void
@@ -529,7 +529,7 @@ getCommaSeparatedListLength(Tokenizer *tk)
   Token opening = tk->last_token;
   char closing = getMatchingPair(&opening);
   assert(closing);
-  char opening_char = opening.text.chars[0];
+  char opening_char = opening.string.chars[0];
   char previous = opening_char;
   s32 out = 0;
   for (b32 stop = false; !stop && hasMore(tk);)
@@ -549,7 +549,7 @@ getCommaSeparatedListLength(Tokenizer *tk)
     {
       out++;
     }
-    previous = tk->last_token.text.chars[0];
+    previous = tk->last_token.string.chars[0];
 
   }
   return out;

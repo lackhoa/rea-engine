@@ -30,30 +30,29 @@ testRatArrow2 :: fn () -> (a: RatTest) -> (a.d = a.d)
 
 + :: fn (a, b: RatTest) -> RatTest
 {
- /((a.n * b.d + b.n * a.d), (a.d * b.d),
+ /(a.n * b.d + b.n * a.d,
+   a.d * b.d,
    multiplyPos(a.d, b.d, a._dnot0, b._dnot0))
  }
 
-Pos :: union
-{
- 1,
- ++: (p: Pos) -> Pos,
- }
+Nat+ :: union
+{1,
+ ++: (p: Nat+) -> Nat+}
 
-+ :: fn (a, b: Pos) -> Pos
++ :: fn (a, b: Nat+) -> Nat+
 {fork a
  {1 : ++(b),
   ++: ++(a.p + b)}}
 
-2 : Pos := ++(1);
-3 : Pos := ++(2);
+2 : Nat+ := ++(1);
+3 : Nat+ := ++(2);
 check 1+2: Nat;
-check 1+2: Pos;
+check 1+2: Nat+;
 #should_fail
 check 1+2: RatTest;
 #should_fail off
 
-* :: fn (n, m: Pos) -> Pos
+* :: fn (n, m: Nat+) -> Nat+
 {fork n
  {1  : m,
   ++ : m + n.p * m}}
@@ -61,16 +60,16 @@ check 1+2: RatTest;
 Z :: union
 {0,
  ;; todo: These maybe not work work as unary operators?
- +: (v: Pos) -> Z,
- -: (v: Pos) -> Z}
+ +: (v: Nat+) -> Z,
+ -: (v: Nat+) -> Z}
 
-;; - :: (a: Pos, b: Pos) -> Pos
+;; - :: (a: Nat+, b: Nat+) -> Nat+
 ;; {;; assuming that a > b
 ;;  fork a
 ;;  {1 : 1,
 ;;   ++: fork b {1: 1, ++: -(a.p, b.p)}}}
 
-;; compare :: (a: Pos, b: Pos) -> Pos
+;; compare :: (a: Nat+, b: Nat+) -> Nat+
 ;; {fork a
 ;;  {1  : fork b {1: 0, ++: -},
 ;;   ++ : fork b {1: +, ++: compare(a.p, b.p)}}}
@@ -106,27 +105,27 @@ Z :: union
   +: fork b {0: 0, +: +(a.v * b.v), -: -(a.v * b.v)},
   -: -(+(a.v) * b)}}
 
-Rat :: union { /: (n: Z, d: Pos) -> Rat }
+Rat :: union { /: (n: Z, d: Nat+) -> Rat }
 
 + :: fn (a, b: Rat) -> Rat
 {;; todo: type coercion
  ;; error reports for overloads is so bad
  n : Z   := a.n * +(b.d) + b.n * +(a.d);
- d : Pos := a.d * b.d;
+ d : Nat+ := a.d * b.d;
  n / d
  }
 
-add1 :: (a: Pos) -> a+1 = ++(a)
+add1 :: (a: Nat+) -> a+1 = ++(a)
 {fork a
  {1 : ,
   ++: rewrite add1(a.p)}}
 
-addSRight :: (a,b: Pos) -> a + ++(b) = ++(a+b)
+addSRight :: (a,b: Nat+) -> a + ++(b) = ++(a+b)
 {fork a
  {1 :,
   ++: rewrite addSRight(a.p, b)}}
 
-addCommutative :: (a, b: Pos) -> (a + b = b + a)
+addCommutative :: (a, b: Nat+) -> (a + b = b + a)
 {fork a
  {1 : rewrite add1(b),
   ++:
@@ -134,31 +133,31 @@ addCommutative :: (a, b: Pos) -> (a + b = b + a)
   rewrite addCommutative(a.p, b)}}
 
 ;; todo #cutnpaste collapse these abstract algebra down maybe
-addAssociative :: (a,b,c: Pos) -> (a+b)+c = a+b+c
+addAssociative :: (a,b,c: Nat+) -> (a+b)+c = a+b+c
 {fork a
  {1 : ,
   ++: rewrite addAssociative(a.p, b, c)}}
 
-mulDistributive :: (a,b,c: Pos) -> a*c+b*c = (a+b)*c
+mulDistributive :: (a,b,c: Nat+) -> a*c+b*c = (a+b)*c
 {fork a
  {1: ,
   ++:
   rewrite addAssociative(c, (a.p * c), (b * c));
   rewrite mulDistributive(a.p, b, c)}}
 
-mulAssociative :: (a,b,c: Pos) -> (a*b)*c = a*b*c
+mulAssociative :: (a,b,c: Nat+) -> (a*b)*c = a*b*c
 {fork a
  {1 : ,
   ++:
   rewrite <- mulDistributive(b, (a.p * b), c);
   rewrite mulAssociative(a.p, b, c)}}
 
-mul1 :: (a: Pos) -> a*1 = a
+mul1 :: (a: Nat+) -> a*1 = a
 {fork a
  {1 : ,
   ++: rewrite mul1(a.p)}}
 
-mulSRight :: (a,b: Pos) -> a * ++(b) = a + a*b
+mulSRight :: (a,b: Nat+) -> a * ++(b) = a + a*b
 {fork a
  {1:,
   ++:
@@ -170,14 +169,13 @@ mulSRight :: (a,b: Pos) -> a * ++(b) = a + a*b
   => ++(a.p + a.p * b + b) = ++(a.p + a.p * b + b) { addCommutative(b, a.p * b) }
   }}
 
-mulCommutative :: (a,b: Pos) -> a*b = b*a
+mulCommutative :: (a,b: Nat+) -> a*b = b*a
 {fork a
  {1 : rewrite mul1(b),
   ++: 
   ;; b + a.p * b = b * ++(a.p)
   => b + a.p * b = b + b * a.p { mulSRight(b, a.p) }
-  => b + a.p * b = b + a.p * b { <- mulCommutative(a.p, b) }
-  }}
+  => b + a.p * b = b + a.p * b { <- mulCommutative(a.p, b) }}}
 
 add0 :: (a: Z) -> a+0 = a
 {fork a {0: , +: , -: }}
@@ -189,5 +187,4 @@ mulDistributive :: (a,b,c: Z) -> a*c+b*c = (a+b)*c
   -: }}
 
 addAssociative :: (a,b,c: Rat) -> (a+b)+c = a+b+c
-{rewrite(mulAssociative(a.d, b.d, c.d));
- }
+{rewrite(mulAssociative(a.d, b.d, c.d))}

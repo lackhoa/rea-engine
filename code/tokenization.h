@@ -49,18 +49,18 @@ const char *metaDirectives[] = {"", "load", "should_fail"};
 
 struct Token
 {
-  String        text;
+  String        string;
   s32           line;
   s32           column;
   TokenCategory cat;
-  operator String() { return text; }
+  operator String() { return string; }
 };
 
 inline Token
 newToken(String text)
 {
   Token out;
-  out.text   = text;
+  out.string   = text;
   out.line   = 0;
   out.column = 0;
   out.cat    = TC_Alphanumeric;

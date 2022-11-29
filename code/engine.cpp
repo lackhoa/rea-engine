@@ -123,13 +123,13 @@ debugDedent()
 inline b32
 paramImplied(Arrow *arrow, s32 param_id)
 {
-  return arrow->param_names[param_id].text.chars[0] == '_';
+  return arrow->param_names[param_id].string.chars[0] == '_';
 }
 
 inline b32
 paramImplied(ArrowV *arrow, s32 param_id)
 {
-  return arrow->param_names[param_id].text.chars[0] == '_';
+  return arrow->param_names[param_id].string.chars[0] == '_';
 }
 
 // prints both Composite and CompositeV
@@ -815,7 +815,7 @@ equalTrinary(Value *lhs0, Value *rhs0)
 global_variable GlobalBindings *global_bindings;
 
 internal GlobalBinding *
-lookupGlobalNameSlot(String key)
+lookupGlobalNameSlot(String key, b32 add_new)
 {
   // :global-bindings-zero-at-startup
   GlobalBinding *slot = 0;
@@ -832,15 +832,21 @@ lookupGlobalNameSlot(String key)
         slot = slot->next_hash_slot;
       else
       {
-        slot->next_hash_slot = pushStruct(permanent_arena, GlobalBinding, true);
-        slot = slot->next_hash_slot;
-        slot->key = key;
+        if (add_new)
+        {
+          slot->next_hash_slot = pushStruct(permanent_arena, GlobalBinding, true);
+          slot = slot->next_hash_slot;
+          slot->key = key;
+        }
+        else slot = 0;
         break;
       }
     }
   }
-  else
-    slot->key = key;
+  else if (add_new) slot->key = key;
+  else slot = 0;
+
+  if (slot && !add_new) assert(slot->count != 0);
 
   return slot;
 }
@@ -1632,7 +1638,7 @@ normalized(Environment *env, Value *in)
 inline b32
 addLocalBinding(LocalBindings *bindings, Token *key)
 {
-  auto lookup = lookupCurrentFrame(bindings, key->text, true);
+  auto lookup = lookupCurrentFrame(bindings, key->string, true);
   b32 succeed = false;
   if (lookup.found)
     parseError(key, "reused parameter name");
@@ -1676,7 +1682,7 @@ introduceOnHeap(Environment *env, Value *parent, String base_name, Constructor *
       {
         String member_name = print(temp_arena, base_name);
         member_name.length += print(temp_arena, ".").length;
-        String field_name = ctor_sig->param_names[field_id].text;
+        String field_name = ctor_sig->param_names[field_id].string;
         member_name.length += print(temp_arena, field_name).length;
 
         Value *member_type = evaluate(temp_arena, env, ctor_sig->param_types[field_id]);
@@ -1723,7 +1729,7 @@ introduceOnStack(Environment *env, Token *name, Ast *type)
 
   if (Constructor *type_ctor = getSoleConstructor(typev))
   {
-    intro = introduceOnHeap(env, &ref->v, name->text, type_ctor);
+    intro = introduceOnHeap(env, &ref->v, name->string, type_ctor);
   }
   else
   {
@@ -1738,8 +1744,9 @@ introduceOnStack(Environment *env, Token *name, Ast *type)
 inline GlobalBinding *
 lookupGlobalName(Token *token)
 {
-  GlobalBinding *slot = lookupGlobalNameSlot(token->text);
-  if (slot->count == 0)
+  if (GlobalBinding *slot = lookupGlobalNameSlot(token->string, false))
+    return slot;
+  else
   {
     // note: assume that if the code gets here, then the identifier isn't in
     // local scope either.
@@ -1747,8 +1754,6 @@ lookupGlobalName(Token *token)
     attach("identifier", token);
     return 0;
   }
-  else
-    return slot;
 }
 
 inline Value *
@@ -1763,7 +1768,7 @@ lookupBuiltinGlobalName(char *name)
 inline void
 addGlobalBinding(Token *token, Value *value)
 {
-  GlobalBinding *slot = lookupGlobalNameSlot(token->text);
+  GlobalBinding *slot = lookupGlobalNameSlot(token->string, true);
   // TODO: check for type conflict
   slot->values[slot->count++] = value;
   assert(slot->count < arrayCount(slot->values));
@@ -1792,7 +1797,7 @@ lookupLocalName(Environment *env, Token *token)
        bindings;
        stack_delta++)
   {
-    LookupCurrentFrame lookup = lookupCurrentFrame(bindings, token->text, false);
+    LookupCurrentFrame lookup = lookupCurrentFrame(bindings, token->string, false);
     if (lookup.found)
     {
       out.found       = true;
@@ -1816,7 +1821,7 @@ requireChar(char c, char *reason = 0, Tokenizer *tk=global_tokenizer)
   if (hasMore(tk))
   {
     Token token = nextToken(tk);
-    if (token.text.length == 1 && token.text.chars[0] == c)
+    if (token.string.length == 1 && token.string.chars[0] == c)
       out = true;
     else
       parseError(tk, &token, "expected character '%c' (%s)", c, reason);
@@ -2097,7 +2102,7 @@ getGlobalOverloads(Environment *env, Identifier *ident, Value *expected_type)
   ValueArray out = {};
   if (!lookupLocalName(env, &ident->token))
   {
-    if (GlobalBinding *slot = lookupGlobalNameSlot(ident->token))
+    if (GlobalBinding *slot = lookupGlobalName(&ident->token))
     {
       if (isGlobalValue(expected_type))
       {
@@ -3464,12 +3469,12 @@ parseInt32()
 {
   Token token = nextToken();
   s32 out = 0;
-  char first_char = token.text.chars[0];
+  char first_char = token.string.chars[0];
   if ('0' <= first_char && first_char <= '9')
   {
-    for (int char_id=0; char_id < token.text.length; char_id++)
+    for (int char_id=0; char_id < token.string.length; char_id++)
     {
-      char c = token.text.chars[char_id];
+      char c = token.string.chars[char_id];
       if ('0' <= c && c <= '9')
       {
         out += out*10 + (c - '0');
@@ -3483,20 +3488,41 @@ parseInt32()
   return out;
 }
 
+inline b32
+areSequential(Token *first, Token *next)
+{
+  return next->string.chars == first->string.chars + first->string.length;
+}
+
 internal Ast *
 parseOperand(MemoryArena *arena)
 {
   Ast *out = 0;
-  Token token1 = nextToken();
-  if (equal(&token1, '_'))
+  Token token = nextToken();
+  if (equal(&token, '_'))
   {
-    out = &newAst(arena, Hole, &token1)->a;
+    out = &newAst(arena, Hole, &token)->a;
   }
-  else if (isIdentifier(&token1))
-  {
-    out = &newAst(arena, Identifier, &token1)->a;
+  else if (isIdentifier(&token))
+  {// token combination. TODO combine more than 2, allow combination in local
+   // scope.
+    Token next = peekToken();
+    Token *tokenp = &token;
+    Token combined_token = token;
+    if (isIdentifier(&next) &&
+        areSequential(&token, &next))
+    {
+      combined_token.string.length += next.string.length;
+      if (lookupGlobalNameSlot(combined_token.string, false))
+      {
+        nextToken();
+        tokenp = &combined_token;
+      }
+    }
+
+    out = &newAst(arena, Identifier, tokenp)->a;
   }
-  else if (equal(&token1, '('))
+  else if (equal(&token, '('))
   {
     out = parseExpressionToAst(arena);
     requireChar(')');
@@ -3549,9 +3575,7 @@ parseOperand(MemoryArena *arena)
       }
     }
   }
-
-  if (noError()) {assert(out);} else out = 0;
-
+  NULL_WHEN_ERROR(out);
   return out;
 }
 
@@ -3786,12 +3810,6 @@ parseUnion(MemoryArena *arena, Token *name)
   }
 }
 
-internal void
-parseRecord(MemoryArena *arena)
-{
-  parseArrowType(arena, true);
-}
-
 // NOTE: Main dispatch parse function
 internal void
 parseTopLevel(EngineState *state)
@@ -3827,7 +3845,7 @@ parseTopLevel(EngineState *state)
           else
           {
             String load_path = print(arena, global_tokenizer->directory);
-            load_path.length += print(arena, file.text).length;
+            load_path.length += print(arena, file.string).length;
             arena->used++;
 
             // note: this could be made more efficient but we don't care.
@@ -3969,8 +3987,14 @@ parseTopLevel(EngineState *state)
       }
       else if (isIdentifier(&token))
       {
-        Token *name = &token;
         Token after_name = nextToken();
+        if (isIdentifier(&after_name) &&
+            areSequential(&token, &after_name))
+        {// token combination
+          token.string.length += after_name.string.length;
+          after_name = nextToken();
+        }
+
         switch (after_name.cat)
         {
           case TC_ColonEqual:
@@ -3979,7 +4003,7 @@ parseTopLevel(EngineState *state)
             if (Ast *value = parseExpression(arena))
             {
               Value *norm = evaluate(arena, value);
-              addGlobalBinding(name, norm);
+              addGlobalBinding(&token, norm);
               requireChar(';');
             }
             popContext();
@@ -3991,12 +4015,7 @@ parseTopLevel(EngineState *state)
             if (equal(after_dcolon, "union"))
             {
               nextToken();
-              parseUnion(arena, name);
-            }
-            else if (equal(after_dcolon, "record"))
-            {
-              nextToken();
-              parseRecord(arena);
+              parseUnion(arena, &token);
             }
             else
             {
@@ -4007,7 +4026,7 @@ parseTopLevel(EngineState *state)
                 nextToken();
               }
               else is_theorem = true;
-              if (FunctionDecl *fun = parseFunction(arena, name, is_theorem))
+              if (FunctionDecl *fun = parseFunction(arena, &token, is_theorem))
                 buildFunction(arena, empty_env, fun);
             }
           } break;
@@ -4022,7 +4041,7 @@ parseTopLevel(EngineState *state)
                 if (Expression parse_value = parseExpression(arena, 0, type))
                 {
                   Value *value = evaluate(arena, parse_value.ast);
-                  addGlobalBinding(name, value);
+                  addGlobalBinding(&token, value);
                   requireChar(';');
                 }
               }
@@ -4031,7 +4050,7 @@ parseTopLevel(EngineState *state)
 
           default:
           {
-            tokenError("unexpected token");
+            tokenError("unexpected token after identifier");
           } break;
         }
       }
@@ -4124,7 +4143,7 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
             case AttachmentType_Token:
             {
               Token *token = (Token*)attachment.p;
-              print(0, token->text);
+              print(0, token->string);
             } break;
 
             case AttachmentType_TypeMatcher:
