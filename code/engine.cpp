@@ -19,7 +19,7 @@ global_variable MemoryArena *permanent_arena;
 global_variable Builtins builtins;
 
 global_variable Value  holev_ = {.cat = VC_Hole};
-global_variable Value *holev = (Value *)&holev_;
+global_variable Value *holev = &holev_;
 
 global_variable Sequence dummy_function_under_construction;
 
@@ -1750,7 +1750,7 @@ lookupBuiltinGlobalName(char *name)
   Token token = newToken(name);
   GlobalBinding *slot = lookupGlobalName(&token);
   assert(slot->count == 1);
-  return slot->values[0];
+  return slot->items[0];
 }
 
 inline void
@@ -1758,8 +1758,8 @@ addGlobalBinding(Token *token, Value *value)
 {
   GlobalBinding *slot = lookupGlobalNameSlot(token->string, true);
   // TODO: check for type conflict
-  slot->values[slot->count++] = value;
-  assert(slot->count < arrayCount(slot->values));
+  slot->items[slot->count++] = value;
+  assert(slot->count < arrayCount(slot->items));
 }
 
 inline void
@@ -2097,7 +2097,7 @@ getGlobalOverloads(Environment *env, Identifier *ident, Value *expected_type)
         allocateArray(temp_arena, slot->count, out.items);
         for (int slot_id=0; slot_id < slot->count; slot_id++)
         {
-          ArrowV *signature = castValue(slot->values[slot_id]->type, ArrowV);
+          ArrowV *signature = castValue(slot->items[slot_id]->type, ArrowV);
           b32 output_type_mismatch = false;
           addStackFrame(env);
           env->stack->count = signature->param_count;
@@ -2111,14 +2111,14 @@ getGlobalOverloads(Environment *env, Identifier *ident, Value *expected_type)
 
           if (!output_type_mismatch)
           {
-            out.items[out.count++] = slot->values[slot_id];
+            out.items[out.count++] = slot->items[slot_id];
           }
         }
       }
       else
       {
         out.count = slot->count;
-        out.items = (Value **)slot->values;
+        out.items = (Value **)slot->items;
       }
     }
   }
@@ -2658,15 +2658,27 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
           if (Expression to_expression = buildExpression(arena, env, rewrite->to_expression, holev))
           {
             Value *new_goal = to_expression.value;
-            Value *new_goal_norm = normalize(arena, env, new_goal);
-            Value *goal_norm = normalize(arena, env, goal);
-            if (equalB32(new_goal_norm, goal_norm))
-              goal = new_goal;
+            if (equalB32(new_goal, goal))
+            {// superfluous rewrite -> remove
+              for (int src_id=item_id+1; src_id < sequence->count; src_id++)
+              {
+                sequence->items[src_id-1] = sequence->items[src_id];
+              }
+              sequence->count--;
+              item_id--;
+            }
             else
-            {
-              parseError(item, "new goal does not match original");
-              attach("new goal normalized", new_goal_norm);
-              attach("current goal normalized", goal_norm);
+            {// nocheckin: we don't record the proof?
+              Value *new_goal_norm = normalize(arena, env, new_goal);
+              Value *goal_norm = normalize(arena, env, goal);
+              if (equalB32(new_goal_norm, goal_norm))
+                goal = new_goal;
+              else
+              {
+                parseError(item, "new goal does not match original");
+                attach("new goal normalized", new_goal_norm);
+                attach("current goal normalized", goal_norm);
+              }
             }
           }
         }
@@ -2683,95 +2695,127 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
               rewrite->path = compare.diff_path;
               Value *from = subExpressionAtPath(goal, compare.diff_path);
               Value *to   = subExpressionAtPath(to_expression.value, compare.diff_path);
-              if (Expression eq_proof_pattern = buildExpression(arena, env, rewrite->eq_proof, holev))
+
+              int retry_count = 1;
+              ValueArray global_overloads = {};
+              Identifier *op_ident = 0;
+              if ((op_ident = castAst(rewrite->eq_proof, Identifier)))
               {
-                Value *type = eq_proof_pattern.value->type;
-                Value *eq_proof = 0;
-                if (ArrowV *arrowv = castValue(type, ArrowV))
-                {
-                  addStackFrame(env);
-                  for (int id=0; id < arrowv->param_count; id++)
-                  {
-                    Token *name = arrowv->param_names+id;
-                    introduceOnStack(env, name, arrowv->param_types[id]);
-                  }
-                  Value *output_type = evaluate(temp_arena, env, arrowv->output_type);
-                  unwindStack(env);
+                global_overloads = getGlobalOverloads(env, op_ident, holev);
+                if (global_overloads.count > 1)
+                  retry_count = global_overloads.count;
+              }
 
-                  CompositeV *eq = newValue(temp_arena, CompositeV, &builtins.Set->v);
-                  eq->op        = &builtins.equal->v;
-                  eq->arg_count = 3;
-                  allocateArray(temp_arena, 3, eq->args);
-                  eq->args[0]   = from->type;
-                  eq->args[1]   = from;
-                  eq->args[2]   = to;
-
-                  Value **values = pushArray(temp_arena, arrowv->param_count, Value *, true);
-                  if (unify(values, output_type, &eq->v))
-                  {
-                    // todo: make a standalone typecheck function, to check type of these things
-                    CompositeV *eq_proofc = newValue(arena, CompositeV, &eq->v);
-                    eq_proofc->op        = eq_proof_pattern.value;
-                    eq_proofc->arg_count = arrowv->param_count;
-                    allocateArray(arena, arrowv->param_count, eq_proofc->args);
-                    for (int id=0; id < arrowv->param_count; id++)
-                    {
-                      eq_proofc->args[id] = values[id];
-                    }
-                    eq_proof = &eq_proofc->v;
-                    rewrite->eq_proof = valueToAst(arena, env, eq_proof);
-                  }
-                  else
-                  {
-                    parseError(rewrite->eq_proof, "unification failed");
-                    attach("goal", goal);
-                  }
-                }
-                else if (CompositeV *composite = castValue(type, CompositeV))
+              for (int attempt=0; attempt < retry_count; attempt++)
+              {
+                Value *hint = 0;
+                if (retry_count > 1)
                 {
-                  if (composite->op == &builtins.equal->v)
-                  {
-                    rewrite->eq_proof = eq_proof_pattern.ast;
-                    eq_proof          = eq_proof_pattern.value;
-                  }
-                  else
-                  {
-                    parseError(rewrite->eq_proof, "invalid proof pattern");
-                    attach("type", type);
-                  }
+                  Constant *constant = newAst(arena, Constant, &op_ident->token);
+                  constant->value    = global_overloads.items[attempt];
+                  hint = constant->value;
                 }
-                else
+                else if (Expression build_hint = buildExpression(arena, env, rewrite->eq_proof, holev))
                 {
-                  parseError(rewrite->eq_proof, "invalid proof pattern");
-                  attach("type", type);
+                  rewrite->eq_proof = build_hint.ast;
+                  hint              = build_hint.value;
                 }
 
                 if (noError())
                 {
-                  if (CompositeV *eq = castValue(eq_proof->type, CompositeV))
+                  Value *eq_proof = 0;
+                  if (ArrowV *arrowv = castValue(hint->type, ArrowV))
                   {
-                    if (eq->op == &builtins.equal->v)
+                    addStackFrame(env);
+                    for (int id=0; id < arrowv->param_count; id++)
                     {
-                      Value *from, *to;
-                      if (rewrite->right_to_left) {from = eq->args[2]; to = eq->args[1];}
-                      else                        {from = eq->args[1]; to = eq->args[2];}
-                      Value *actual_result = rewriteExpression(arena, to, rewrite->path, goal);
-                      if (equalB32(actual_result, expected_result))
+                      Token *name = arrowv->param_names+id;
+                      introduceOnStack(env, name, arrowv->param_types[id]);
+                    }
+                    Value *output_type = evaluate(temp_arena, env, arrowv->output_type);
+                    unwindStack(env);
+
+                    CompositeV *eq = newValue(temp_arena, CompositeV, &builtins.Set->v);
+                    eq->op        = &builtins.equal->v;
+                    eq->arg_count = 3;
+                    allocateArray(temp_arena, 3, eq->args);
+                    eq->args[0]   = from->type;
+                    eq->args[1]   = from;
+                    eq->args[2]   = to;
+
+                    Value **values = pushArray(temp_arena, arrowv->param_count, Value *, true);
+                    if (unify(values, output_type, &eq->v))
+                    {
+                      // todo: make a standalone typecheck function, to check type of these things
+                      CompositeV *eq_proofc = newValue(arena, CompositeV, &eq->v);
+                      eq_proofc->op        = hint;
+                      eq_proofc->arg_count = arrowv->param_count;
+                      allocateArray(arena, arrowv->param_count, eq_proofc->args);
+                      for (int id=0; id < arrowv->param_count; id++)
                       {
-                        goal = actual_result;
+                        eq_proofc->args[id] = values[id];
                       }
-                      else
+                      eq_proof = &eq_proofc->v;
+                      rewrite->eq_proof = valueToAst(arena, env, eq_proof);
+                    }
+                    else
+                    {
+                      parseError(rewrite->eq_proof, "unification failed");
+                      attach("goal", goal);
+                    }
+                  }
+                  else if (CompositeV *composite = castValue(hint->type, CompositeV))
+                  {
+                    if (composite->op == &builtins.equal->v)
+                      eq_proof = hint;
+                    else
+                    {
+                      parseError(rewrite->eq_proof, "invalid proof pattern");
+                      attach("type", hint->type);
+                    }
+                  }
+                  else
+                  {
+                    parseError(rewrite->eq_proof, "invalid proof pattern");
+                    attach("type", hint->type);
+                  }
+
+                  if (noError())
+                  {
+                    if (CompositeV *eq = castValue(eq_proof->type, CompositeV))
+                    {
+                      if (eq->op == &builtins.equal->v)
                       {
-                        parseError(item, "invalid full-rewrite");
-                        dump("rewrite path"); print(0, rewrite->path); dump();
-                        attach("original goal", goal);
-                        attach("expected rewrite result", expected_result);
-                        attach("actual rewrite result", actual_result);
-                        attach("rewrite from", from);
-                        attach("rewrite to", to);
+                        Value *from, *to;
+                        if (rewrite->right_to_left) {from = eq->args[2]; to = eq->args[1];}
+                        else                        {from = eq->args[1]; to = eq->args[2];}
+                        Value *actual_result = rewriteExpression(arena, to, rewrite->path, goal);
+                        if (equalB32(actual_result, expected_result))
+                          goal = actual_result;
+                        else
+                        {
+                          parseError(item, "invalid full-rewrite");
+                          dump("rewrite path"); print(0, rewrite->path); dump();
+                          attach("original goal", goal);
+                          attach("expected rewrite result", expected_result);
+                          attach("actual rewrite result", actual_result);
+                          attach("rewrite from", from);
+                          attach("rewrite to", to);
+                        }
                       }
                     }
                   }
+                }
+
+                if (retry_count > 1)
+                {
+                  if (hasError())
+                  {
+                    wipeError();
+                    if (attempt == retry_count-1)
+                      parseError(&op_ident->a, "found no suitable overload");
+                  }
+                  else break;
                 }
               }
             }
@@ -2907,7 +2951,7 @@ buildFork(MemoryArena *arena, Environment *env, Fork *fork, Value *expected_type
                  lookup_id++)
             {// trying to find the intended constructor of this type, from
               // the global pool of values.
-              if (Constructor *candidate = castValue(lookup->values[lookup_id], Constructor))
+              if (Constructor *candidate = castValue(lookup->items[lookup_id], Constructor))
               {
                 if (equalB32(candidate->type, subject.value->type)) 
                 {
@@ -3057,12 +3101,13 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
         {
           for (s32 value_id = 0; value_id < globals->count; value_id++)
           {
-            Value *slot_value = globals->values[value_id];
+            Value *slot_value = globals->items[value_id];
             if (matchType(env, slot_value->type, expected_type))
             {
               if (value)
               {// ambiguous
                 parseError(name, "not enough type information to disambiguate global name");
+                setErrorCode(ErrorAmbiguousName);
                 break;
               }
               else

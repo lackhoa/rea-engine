@@ -375,7 +375,7 @@ struct GlobalBinding
 {
   String key;
   s32    count;
-  Value *(values[8]);           // todo: #grow
+  Value *(items[8]);           // todo: #grow
   GlobalBinding *next_hash_slot;
 };
 

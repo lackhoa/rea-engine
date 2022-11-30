@@ -86,6 +86,7 @@ enum ErrorCode
 {
   ErrorGeneral,
   ErrorWrongType,
+  ErrorAmbiguousName,
 };
 
 struct ParseError

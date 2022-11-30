@@ -163,6 +163,12 @@ getError(Tokenizer *tk=global_tokenizer)
   return tk->error;
 }
 
+inline ParseError *
+hasError(Tokenizer *tk=global_tokenizer)
+{
+  return tk->error;
+}
+
 inline char
 nextChar(Tokenizer *tk=global_tokenizer)
 {
