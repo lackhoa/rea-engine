@@ -6,6 +6,11 @@
 #include "memory.h"
 #include "tokenization.h"
 
+// NOTE: This should work like the function stack, we'll clean it after every top-level form.
+global_variable MemoryArena __attribute__((unused)) *temp_arena;
+global_variable b32 __attribute__((unused)) global_debug_mode;
+global_variable MemoryArena __attribute__((unused))*permanent_arena;
+
 struct Arrow;
 struct Value;
 struct LocalBindings;
@@ -325,7 +330,6 @@ struct AccessorV
 struct HeapValue
 {
   embed_Value(v);
-  String    name;
   AccessorV accessor;
 };
 

@@ -1,7 +1,7 @@
 @echo off
 
 cd /D "%~dp0"
-call build-clang
+call build-clang %1
 rem call build-msvc
 
 pushd data

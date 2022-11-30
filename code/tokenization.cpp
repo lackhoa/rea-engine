@@ -121,7 +121,7 @@ inline void attach(char *string, Matcher *matcher)
 inline void
 pushContext(char *string, Tokenizer *tk=global_tokenizer)
 {
-  ParseContext *context = pushStruct(&tk->error_arena, ParseContext);
+  ParseContext *context = pushStruct(temp_arena, ParseContext);
   context->first = string;
   context->next  = tk->context;
   tk->context    = context;
@@ -450,6 +450,8 @@ isIdentifier(Token *token)
 internal void
 parseErrorVA(s32 line, s32 column, char *format, va_list arg_list, Tokenizer *tk = global_tokenizer)
 {
+  if (global_debug_mode)
+    breakhere;
   assert(!tk->error);  // note: prevent parser from doing useless work after failure.
 
   MemoryArena *arena = &tk->error_arena;

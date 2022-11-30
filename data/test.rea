@@ -105,12 +105,13 @@ Z :: union
   +: fork b {0: 0, +: +(a.v * b.v), -: -(a.v * b.v)},
   -: -(+(a.v) * b)}}
 
+;; Rat+ :: union { /: (n,d: Nat+) -> Rat+ }
+;; Rat :: union { 0, +: (v: Rat+) -> Rat, -: (v: Rat+) -> Rat }
 Rat :: union { /: (n: Z, d: Nat+) -> Rat }
 
-+ :: fn (a, b: Rat) -> Rat
++ :: fn (a,b: Rat) -> Rat
 {;; todo: type coercion
- ;; error reports for overloads is so bad
- n : Z   := a.n * +(b.d) + b.n * +(a.d);
+ n : Z := a.n * +(b.d) + b.n * +(a.d);
  d : Nat+ := a.d * b.d;
  n / d
  }
@@ -180,10 +181,70 @@ mulCommutative :: (a,b: Nat+) -> a*b = b*a
 add0 :: (a: Z) -> a+0 = a
 {fork a {0: , +: , -: }}
 
+mul0 :: (a: Z) -> a*0 = 0
+{fork a {0:, +:, -: }}
+
+mul1Left :: (a: Z) -> +(1) * a = a
+{fork a {0:,+:,-:}}
+
+cancellation :: (a: Nat+) -> +(a) + -(a) = 0
+{fork a {1:,
+         ++: => +(a.p) + -(a.p) = 0;
+         rewrite cancellation(a.p)}}
+
+;; todo: bug with the heap value name: in the fork of a.v
+;; expected type: +(..p) + -(..p) = 0
+cancellation :: (a: Z) -> a + -(a) = 0
+{fork a {0: ,
+         +: rewrite cancellation(a.v),
+         -: rewrite cancellation(a.v)}}
+
+mulSLeft :: (a: Nat+, b: Z) -> (+(++(a)) * b) = b + +(a)*b
+{=> +(++(a)) * b = b + +(a) * b;
+ fork b
+ {0:, +:, -:}}
+
+negationOfSum :: (a, b: Z) -> -(a + b) = -(a) + -(b)
+{fork a
+ {0: ,
+  +: fork (b) {0: , +:,
+               -: => -(+(a.v) + -(b.v)) = +(b.v) + -(a.v);
+               fork a.v
+               {1 : => -(+(1) + -(b.v)) = +(b.v) + -(1);
+                fork b.v {1:, ++:},
+                ++: fork b.v {1:, ++:},}
+               },
+  -: ,}
+ }
+
 mulDistributive :: (a,b,c: Z) -> a*c+b*c = (a+b)*c
 {fork a
  {0: ,
-  +: fork b {0: add0((+(a.v) * c)), +: , -: },
+  +: fork b
+  {0: add0((+(a.v) * c)),
+   +:
+   => +(a.v) * c + +(b.v) * c = +(a.v + b.v) * c;
+   fork c
+   {0: ,
+    +: => +(a.v * c.v + b.v * c.v) = +((a.v + b.v) * c.v)
+    => +((a.v + b.v) * c.v) = +((a.v + b.v) * c.v) {mulDistributive}
+    ,
+    -: => -(a.v * c.v + b.v * c.v) = -((a.v + b.v) * c.v)
+    => -((a.v + b.v) * c.v) = -((a.v + b.v) * c.v) {mulDistributive},},
+
+   -: => +(a.v) * c + -(+(b.v) * c) = (+(a.v) + -(b.v)) * c;
+   fork a.v
+   {1 : => +(1) * c + -(+(b.v) * c) = (+(1) + -(b.v)) * c
+    => c + -(+(b.v) * c) = (+(1) + -(b.v)) * c {mul1Left}
+    fork b.v {1 : rewrite mul1Left(c); rewrite cancellation(c),
+              ++:
+              => c + -(+(++(b.v.p)) * c) = -(+(b.v.p) * c)
+              => c + -(c + +(b.v.p) * c) = -(+(b.v.p) * c) {mulSLeft}
+              => c + -(c + +(b.v.p) * c) = -(+(b.v.p) * c) {mulSLeft}
+              }
+    ,
+    ++: }
+   },
   -: }}
 
 addAssociative :: (a,b,c: Rat) -> (a+b)+c = a+b+c

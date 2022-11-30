@@ -9,12 +9,8 @@
 #include "tokenization.cpp"
 #include "engine.h"
 
-global_variable b32 global_debug_mode;
 s32 debug_normalization_depth;
 s32 debug_evaluation_depth;
-// NOTE: This should work like the function stack, we'll clean it after every top-level form.
-global_variable MemoryArena *temp_arena;
-global_variable MemoryArena *permanent_arena;
 
 global_variable Builtins builtins;
 
@@ -529,7 +525,7 @@ print(MemoryArena *buffer, Value *in0, PrintOptions opt)
       case VC_HeapValue:
       {
         HeapValue *in = castValue(in0, HeapValue);
-        print(buffer, in->name);
+        print(buffer, &in->accessor.v, new_opt);
       } break;
 
       case VC_RewriteV:
@@ -567,7 +563,10 @@ print(MemoryArena *buffer, Value *in0, PrintOptions opt)
 
       case VC_AccessorV:
       {
-        print(buffer, "accessorv");
+        AccessorV *in = castValue(in0, AccessorV);
+        print(buffer, in->record, new_opt);
+        print(buffer, ".");
+        print(buffer, in->field_name);
       } break;
     }
 
@@ -802,7 +801,6 @@ compareExpressions(MemoryArena *arena, Value *lhs0, Value *rhs0)
       {
         Constructor *lhs = castValue(lhs0, Constructor);
         Constructor *rhs = castValue(rhs0, Constructor);
-        assert(lhs->type == rhs->type);
         out.result = (Trinary)(lhs->id == rhs->id);
       } break;
 
@@ -1690,7 +1688,7 @@ getSoleConstructor(Value *type)
 }
 
 inline Value *
-introduceOnHeap(Environment *env, Value *parent, String base_name, Constructor *ctor)
+introduceOnHeap(Environment *env, Value *parent, Constructor *ctor)
 {
   // todo: I think we don't need "base_name" anymore, b/c we can walk from the root.
   Value *out = 0;
@@ -1707,10 +1705,7 @@ introduceOnHeap(Environment *env, Value *parent, String base_name, Constructor *
       addStackFrame(env);
       for (s32 field_id=0; field_id < param_count; field_id++)
       {
-        String member_name = print(temp_arena, base_name);
-        member_name.length += print(temp_arena, ".").length;
         String field_name = ctor_sig->param_names[field_id].string;
-        member_name.length += print(temp_arena, field_name).length;
 
         Value *member_type = evaluate(temp_arena, env, ctor_sig->param_types[field_id]);
         AccessorV *accessor = newValue(temp_arena, AccessorV, member_type);
@@ -1720,13 +1715,12 @@ introduceOnHeap(Environment *env, Value *parent, String base_name, Constructor *
         if (Constructor *field_ctor = getSoleConstructor(member_type))
         {
           // recursive case
-          Value *intro = introduceOnHeap(env, &accessor->v, member_name, field_ctor);
+          Value *intro = introduceOnHeap(env, &accessor->v, field_ctor);
           addStackValue(env, intro);
         }
         else
         {
           HeapValue *value = newValue(temp_arena, HeapValue, member_type);
-          value->name     =  member_name;
           value->accessor = *accessor;
           addStackValue(env, &value->v);
         }
@@ -1756,7 +1750,7 @@ introduceOnStack(Environment *env, Token *name, Ast *type)
 
   if (Constructor *type_ctor = getSoleConstructor(typev))
   {
-    intro = introduceOnHeap(env, &ref->v, name->string, type_ctor);
+    intro = introduceOnHeap(env, &ref->v, type_ctor);
   }
   else intro = &ref->v;
 
@@ -2882,6 +2876,7 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
             {
               parseError(eq_proof.ast, "please provide a proof of equality that can be used for substitution");
               attach("got", eq_proof.value->type);
+              attach("goal", goal);
             }
           }
         }
@@ -2997,7 +2992,7 @@ buildFork(MemoryArena *arena, Environment *env, Fork *fork, Value *expected_type
               }
               else
               {
-                Value *record = introduceOnHeap(&env, subjectv, subject.ast->token, ctor);
+                Value *record = introduceOnHeap(&env, subjectv, ctor);
                 addRewriteRule(&env, subjectv, record);
               }
 
@@ -3016,7 +3011,10 @@ buildFork(MemoryArena *arena, Environment *env, Fork *fork, Value *expected_type
               }
             }
             else
+            {
               parseError(ctor_token, "expected a constructor");
+              // for (ctor->)
+            }
           }
         }
 
@@ -3121,6 +3119,8 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
             {
               if (value)
               {// ambiguous
+                if (global_debug_mode)
+                  breakhere;
                 parseError(name, "not enough type information to disambiguate global name");
                 setErrorCode(ErrorAmbiguousName);
                 break;
@@ -4019,6 +4019,9 @@ parseTopLevel(EngineState *state)
   Token token = nextToken(); 
   while (hasMore())
   {
+    if (global_tokenizer->context == (ParseContext*)0x37)
+      breakhere;
+
 #define CLEAN_TEMPORARY_MEMORY 1
 #if CLEAN_TEMPORARY_MEMORY
     TemporaryMemory top_level_temp = beginTemporaryMemory(temp_arena);
