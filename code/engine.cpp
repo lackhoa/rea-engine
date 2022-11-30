@@ -368,11 +368,6 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         print(buffer, " = ");
         print(buffer, computation->rhs, new_opt);
       } break;
-
-      case AC_Norm:
-      {
-        print(buffer, "norm");
-      } break;
     }
   }
   else
@@ -2338,8 +2333,7 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
     count++;
     list = pushStruct(temp_arena, AstList);
     Token token = newToken("<norm inserted by fork>");
-    token.cat   = TC_KeywordNorm;
-    list->first = &newAst(arena, Norm, &token)->a;
+    list->first = &newAst(arena, Rewrite, &token)->a;
     list->next  = 0;
   }
 #else
@@ -2367,17 +2361,17 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
       rewrite->eq_proof = parseExpressionToAst(arena);
       ast = &rewrite->a;
     }
-    else if (token.cat == TC_KeywordNorm)
-    {
-      ast = &newAst(arena, Norm, &token)->a;
-    }
     else if (token.cat == TC_StrongArrow)
     {
       pushContext("Full-rewrite: => TO_EXPRESSION [{ EQ_PROOF }]");
       Rewrite *rewrite = newAst(arena, Rewrite, &token);
       ast = &rewrite->a;
       {
-        if ((rewrite->to_expression = parseExpressionToAst(arena)))
+        if (equal(peekToken().string, "_"))
+        {// normlization
+          nextToken();
+        }
+        else if ((rewrite->to_expression = parseExpressionToAst(arena)))
         {
           if (optionalChar('{'))
           {
@@ -2655,9 +2649,20 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
         Rewrite *rewrite = castAst(item, Rewrite);
         if (!rewrite->eq_proof)
         {// just normalize
-          if (Expression to_expression = buildExpression(arena, env, rewrite->to_expression, holev))
+          Value *new_goal = 0;
+          if (!rewrite->to_expression)
           {
-            Value *new_goal = to_expression.value;
+            new_goal = normalize(arena, env, goal);
+            rewrite->to_expression = valueToAst(arena, env, new_goal);
+          }
+          else if (Expression build = buildExpression(arena, env, rewrite->to_expression, holev))
+          {
+            rewrite->to_expression = build.ast;
+            new_goal               = build.value;
+          }
+
+          if (noError())
+          {
             if (equalB32(new_goal, goal))
             {// superfluous rewrite -> remove
               for (int src_id=item_id+1; src_id < sequence->count; src_id++)
@@ -2668,11 +2673,17 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
               item_id--;
             }
             else
-            {// nocheckin: we don't record the proof?
+            {
               Value *new_goal_norm = normalize(arena, env, new_goal);
               Value *goal_norm = normalize(arena, env, goal);
               if (equalB32(new_goal_norm, goal_norm))
+              {
+                Computation *computation = newAst(arena, Computation, &item->token);
+                computation->lhs = valueToAst(arena, env, goal);
+                computation->rhs = valueToAst(arena, env, new_goal);
+                rewrite->eq_proof = &computation->a;
                 goal = new_goal;
+              }
               else
               {
                 parseError(item, "new goal does not match original");
@@ -2858,18 +2869,6 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
             }
           }
         }
-      } break;
-
-      case AC_Norm:
-      {
-        Value *norm_expected_type = normalize(arena, env, goal);
-        Computation *computation = newAst(arena, Computation, &item->token);
-        computation->lhs = valueToAst(arena, env, goal);
-        computation->rhs = valueToAst(arena, env, norm_expected_type);
-        Rewrite *rewrite = newAst(arena, Rewrite, &item->token);
-        rewrite->eq_proof = &computation->a;
-        sequence->items[item_id] = &rewrite->a;
-        goal = norm_expected_type;
       } break;
 
       invalidDefaultCase;

@@ -33,7 +33,6 @@ enum AstCategory
   AC_Rewrite,
   AC_FunctionDecl,
   AC_Let,
-  AC_Norm,
 };
 
 enum ValueCategory
@@ -90,9 +89,8 @@ newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
 
 #define castValue(exp, Cat) ((exp)->cat == VC_##Cat ? (Cat*)(exp) : 0)
 
-struct Hole {embed_Ast(a)};
+struct Hole       {embed_Ast(a)};
 struct Identifier {embed_Ast(a)};
-struct Norm {embed_Ast(a)};
 
 struct Variable
 {

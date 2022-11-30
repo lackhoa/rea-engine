@@ -156,6 +156,7 @@ mul1 :: (a: Nat+) -> a*1 = a
 {fork a
  {1 : ,
   ++: rewrite mul1(a.p)}}
+print mul1;
 
 mulSRight :: (a,b: Nat+) -> a * ++(b) = a + a*b
 {fork a
@@ -165,15 +166,14 @@ mulSRight :: (a,b: Nat+) -> a * ++(b) = a + a*b
   => ++(b + a.p + a.p*b)   = ++(a.p + b + a.p*b) { mulSRight(a.p, b) }
   => ++((a.p + a.p*b) + b) = ++(a.p + b + a.p*b) { addCommutative(b, a.p + a.p*b) }
   => ++(a.p + a.p*b + b)   = ++(a.p + b + a.p*b) { addAssociative(a.p, a.p*b, b) }
-  => ++(a.p + a.p*b + b)   = ++(a.p + a.p*b + b) { addCommutative(b, a.p*b) }
-  }}
-print(mulSRight);
+  => ++(a.p + a.p*b + b)   = ++(a.p + a.p*b + b) { addCommutative(b, a.p*b) }}}
+;; print(mulSRight);
 
 mulCommutative :: (a,b: Nat+) -> a*b = b*a
 {fork a
  {1 : rewrite mul1(b),
   ++: 
-  ;; b + a.p*b = b * ++(a.p)
+  => b + a.p*b = b * ++(a.p)
   => b + a.p*b = b + b*a.p { mulSRight(b, a.p) }
   => b + a.p*b = b + a.p*b { <- mulCommutative(a.p, b) }}}
 

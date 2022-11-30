@@ -22,7 +22,6 @@ enum TokenCategory
   TC_KeywordDefine,
   TC_KeywordFork,
   TC_KeywordRewrite,
-  TC_KeywordNorm,
   TC_KeywordComputation,
 
   TC_KeywordPrint,
@@ -33,7 +32,7 @@ enum TokenCategory
   TC_KeywordEnd_,
 };
 
-const char *keywords[] = {"", "define", "fork", "rewrite", "norm", "computation",
+const char *keywords[] = {"", "define", "fork", "rewrite", "computation",
                           "print", "print_raw", "print_debug", "check", "breakhere"};
 
 enum MetaDirective
