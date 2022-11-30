@@ -156,7 +156,7 @@ mul1 :: (a: Nat+) -> a*1 = a
 {fork a
  {1 : ,
   ++: rewrite mul1(a.p)}}
-print mul1;
+;; print mul1;
 
 mulSRight :: (a,b: Nat+) -> a * ++(b) = a + a*b
 {fork a

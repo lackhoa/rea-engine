@@ -445,7 +445,7 @@ struct EngineState
   FileList    *file_list;
 };
 
-struct PrintOptions{b32 detailed; b32 print_type; s32 indentation;};
+struct PrintOptions{b32 detailed; b32 print_type; s32 indentation; int no_paren_precedence;};
 
 struct Builtins
 {

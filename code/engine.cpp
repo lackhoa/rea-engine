@@ -132,10 +132,34 @@ paramImplied(ArrowV *arrow, s32 param_id)
   return arrow->param_names[param_id].string.chars[0] == '_';
 }
 
+inline s32
+precedenceOf(Token *op)
+{
+  int out = 0;
+
+  // TODO: implement for real
+  if (equal(op, "->"))
+    out = 40;
+  if (equal(op, "=") || equal(op, "!="))
+    out = 50;
+  else if (equal(op, "&")
+           || equal(op, "*"))
+    out = 70;
+  else if (equal(op, "|")
+           || equal(op, "+")
+           || equal(op, "-"))
+    out = 60;
+  else
+    out = 100;
+
+  return out;
+}
+
 // prints both Composite and CompositeV
 inline void
 printComposite(MemoryArena *buffer, void *in0, b32 is_value, PrintOptions opt)
 {
+  int    precedence = 0;  // todo: no idea what the default should be
   void  *op;
   s32    arg_count;
   void **raw_args;
@@ -150,6 +174,9 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_value, PrintOptions opt)
     raw_args = (void **)in->args;
     op_type  = castValue(in->op->type, ArrowV);
     assert(op_type);
+
+    if (FunctionV *op_fun = castValue(in->op, FunctionV))
+      precedence = precedenceOf(&op_fun->a.token);
   }
   else
   {
@@ -161,8 +188,9 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_value, PrintOptions opt)
       op_type = castValue(op->value->type, ArrowV);
       assert(op_type);
     }
-    else
-      arg_count = in->arg_count;
+    else arg_count = in->arg_count;
+
+    precedence = precedenceOf(&in->op->token);
   }
 
   void **args;
@@ -173,31 +201,34 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_value, PrintOptions opt)
     for (s32 param_id = 0; param_id < op_type->param_count; param_id++)
     {
       if (!paramImplied(op_type, param_id))
-      {
         args[arg_count++] = raw_args[param_id];
-      }
     }
   }
-  else
-    args = raw_args;
+  else args = raw_args;
 
   if (arg_count == 2)
   {// special path for infix operator
-    print(buffer, "(");
-    print(buffer, args[0], is_value, opt);
+    PrintOptions arg_opt        = opt;
+    arg_opt.no_paren_precedence = precedence;
+    if (precedence < opt.no_paren_precedence)
+      print(buffer, "(");
+    print(buffer, args[0], is_value, arg_opt);
     print(buffer, " ");
     print(buffer, op, is_value, opt);
     print(buffer, " ");
-    print(buffer, args[1], is_value, opt);
-    print(buffer, ")");
+    print(buffer, args[1], is_value, arg_opt);
+    if (precedence < opt.no_paren_precedence)
+      print(buffer, ")");
   }
   else
-  {// normal pre path
+  {// normal prefix path
     print(buffer, op, is_value, opt);
     print(buffer, "(");
+    PrintOptions arg_opt        = opt;
+    arg_opt.no_paren_precedence = 0;
     for (s32 arg_id = 0; arg_id < arg_count; arg_id++)
     {
-      print(buffer, args[arg_id], is_value, opt);
+      print(buffer, args[arg_id], is_value, arg_opt);
       if (arg_id < arg_count-1)
         print(buffer, ", ");
     }
@@ -226,6 +257,18 @@ dump(TreePath *tree_path)
   print(0, tree_path);
 }
 
+inline void indent(MemoryArena *buffer, s32 indentation)
+{
+  for (int id=0; id < indentation; id++)
+    print(buffer, " ");
+}
+
+inline void newlineAndIndent(MemoryArena *buffer, s32 indentation)
+{
+  print(buffer, "\n");
+  indent(buffer, indentation);
+}
+
 forward_declare internal char *
 print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
 {// printAst
@@ -233,7 +276,8 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
   if (in0)
   {
     PrintOptions new_opt = opt;
-    new_opt.detailed = false;
+    new_opt.detailed    = false;
+    new_opt.indentation = opt.indentation+1;
 
     switch (in0->cat)
     {
@@ -302,7 +346,8 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         Fork *in = castAst(in0, Fork);
         print(buffer, "fork ");
         print(buffer, in->subject, new_opt);
-        print(buffer, " {");
+        newlineAndIndent(buffer, opt.indentation);
+        print(buffer, "{");
         Union *form = in->uni;
         for (s32 ctor_id = 0;
              ctor_id < form->ctor_count;
@@ -313,7 +358,10 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
           print(buffer, ": ");
           print(buffer, &in->bodies[ctor_id]->a, new_opt);
           if (ctor_id != form->ctor_count-1)
+          {
             print(buffer, ", ");
+            newlineAndIndent(buffer, opt.indentation+1);
+          }
         }
         print(buffer, "}");
       } break;
@@ -363,28 +411,17 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
       case AC_Computation:
       {
         Computation *computation = castAst(in0, Computation);
-        print(buffer, "computation: ");
+        print(buffer, "computation: (");
         print(buffer, computation->lhs, new_opt);
-        print(buffer, " = ");
+        print(buffer, ") => (");
         print(buffer, computation->rhs, new_opt);
+        print(buffer, ")");
       } break;
     }
   }
   else
     print(buffer, "<NULL>");
   return out;
-}
-
-inline void indent(MemoryArena *buffer, s32 indentation)
-{
-  for (int id=0; id < indentation; id++)
-    print(buffer, " ");
-}
-
-inline void newlineAndIndent(MemoryArena *buffer, s32 indentation)
-{
-  print(buffer, "\n");
-  indent(buffer, indentation);
 }
 
 forward_declare internal char *
@@ -396,7 +433,7 @@ print(MemoryArena *buffer, Value *in0, PrintOptions opt)
     PrintOptions new_opt = opt;
     new_opt.detailed   = false;
     new_opt.print_type = false;
-    new_opt.indentation = opt.indentation + 2;
+    new_opt.indentation = opt.indentation + 1;
 
     switch (in0->cat)
     {
@@ -455,9 +492,10 @@ print(MemoryArena *buffer, Value *in0, PrintOptions opt)
         print(buffer, in->a.token);
         if (opt.detailed)
         {
-          print(buffer, " { ");
+          newlineAndIndent(buffer, opt.indentation);
+          print(buffer, "{");
           print(buffer, &in->body->a, new_opt);
-          print(buffer, " }");
+          print(buffer, "}");
         }
       } break;
 
@@ -519,11 +557,12 @@ print(MemoryArena *buffer, Value *in0, PrintOptions opt)
 
       case VC_ComputationV:
       {
-        print(buffer, "computation: ");
+        print(buffer, "computation: (");
         ComputationV *computation = castValue(in0, ComputationV);
         print(buffer, computation->lhs, new_opt);
-        print(buffer, " = ");
+        print(buffer, ") => (");
         print(buffer, computation->rhs, new_opt);
+        print(buffer, "(");
       } break;
 
       case VC_AccessorV:
@@ -1885,29 +1924,6 @@ isExpressionEndMarker(Token *token)
     return true;
   else
     return false;
-}
-
-inline s32
-precedenceOf(Token *op)
-{
-  int out = 0;
-
-  // TODO: implement for real
-  if (equal(op, "->"))
-    out = 40;
-  if (equal(op, "=") || equal(op, "!="))
-    out = 50;
-  else if (equal(op, "&")
-           || equal(op, "*"))
-    out = 70;
-  else if (equal(op, "|")
-           || equal(op, "+")
-           || equal(op, "-"))
-    out = 60;
-  else
-    out = 100;
-
-  return out;
 }
 
 internal b32
