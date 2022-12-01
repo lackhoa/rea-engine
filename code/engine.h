@@ -226,17 +226,6 @@ struct LocalBindings
   s32 count;
 };
 
-inline LocalBindings *
-extendBindings(MemoryArena *arena, Environment *env)
-{
-  LocalBindings *out = pushStruct(arena, LocalBindings, true);
-  out->next  = env->bindings;
-  out->arena = arena;
-  out->count = 0;
-  env->bindings = out;
-  return out;
-}
-
 embed_struct struct Value
 {
   ValueCategory  cat;
@@ -262,7 +251,7 @@ newValue_(MemoryArena *arena, ValueCategory cat, Value *type, size_t size)
   return out;
 }
 
-#define newValue(arena, cat, type)                        \
+#define newValue(arena, cat, type)              \
   ((cat *) newValue_(arena, VC_##cat, type, sizeof(cat)))
 
 struct Constructor
@@ -285,7 +274,7 @@ struct Union
 embed_struct struct FunctionDecl
 {
   Ast       a;
-  Sequence *body;                               \
+  Sequence *body;
   Arrow    *signature;
 };
 

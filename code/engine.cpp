@@ -11,7 +11,6 @@
 
 i32 debug_normalization_depth;
 i32 debug_evaluation_depth;
-i32 debug_serial;
 
 global_variable Builtins builtins;
 
@@ -19,6 +18,17 @@ global_variable Value  holev_ = {.cat = VC_Hole};
 global_variable Value *holev = &holev_;
 
 global_variable Sequence dummy_function_under_construction;
+
+inline LocalBindings *
+extendBindings(MemoryArena *arena, Environment *env)
+{
+  LocalBindings *out = pushStruct(arena, LocalBindings, true);
+  out->next     = env->bindings;
+  out->arena    = arena;
+  out->count    = 0;
+  env->bindings = out;
+  return out;
+}
 
 inline void
 dump(Trinary trinary)
@@ -70,32 +80,40 @@ dump(Value *in0)
   print(0, in0, {});
 }
 
-inline void
-dump(Ast *in0)
-{
-  print(0, in0, {});
-}
+inline void dump(Ast *in0) {print(0, in0, {});}
 
 inline void
-dump(Stack *stack)
+print(MemoryArena *buffer, Stack *stack)
 {
-  dump("[");
+  print(buffer, "[");
   while (stack)
   {
-    dump("[");
+    print(buffer, "[");
     for (s32 arg_id = 0; arg_id < stack->count; arg_id++)
     {
-      dump(stack->items[arg_id]);
+      print(buffer, stack->items[arg_id], PrintOptions{.print_type=true});
       if (arg_id != stack->count-1)
-        dump(", ");
+        print(buffer, ", ");
     }
-    dump("]");
+    print(buffer, "]");
     stack = stack->outer;
     if (stack)
-      dump(", ");
+      print(buffer, ", ");
   }
-  dump("]");
+  print(buffer, "]");
 }
+
+inline void dump(Stack *stack) {print(0, stack);}
+
+inline void checkStack(Stack *stack)
+{
+  TemporaryMemory tmp = beginTemporaryMemory(temp_arena);
+  MemoryArena buffer = subArena(temp_arena, 1024);
+  print(&buffer, stack);
+  endTemporaryMemory(tmp);
+}
+
+inline void checkStack(Environment *env) { checkStack(env->stack); }
 
 inline void
 dump(Environment *env)
@@ -715,10 +733,9 @@ compareExpressions(MemoryArena *arena, Value *lhs0, Value *rhs0)
   b32 debug = false;
   if (debug && global_debug_mode)
   {
-    debug_serial++;
-    debugIndent(); dump("comparing("); dump(debug_serial); dump("): "); dump(lhs0); dump(" and "); dump(rhs0); dump();
-    if (debug_serial == 2658)
-      breakhere;
+    local_persist int serial = 0;
+    debugIndent(); dump("comparing("); dump(serial); dump("): "); dump(lhs0); dump(" and "); dump(rhs0); dump();
+    serial++;
   }
 
   out.result = Trinary_Unknown;
@@ -975,28 +992,29 @@ evaluateFork(MemoryArena *arena, Environment *env, Fork *fork)
 {
   Value *out;
   Value *subject = evaluateAndNormalize(arena, env, fork->subject);
-  {
-    switch (subject->cat)
-    {// note: we fail if the fork is undetermined
-      case VC_Constructor:
-      {
-        Constructor *ctor = castValue(subject, Constructor);
+  addStackFrame(env);
+  switch (subject->cat)
+  {// note: we fail if the fork is undetermined
+    case VC_Constructor:
+    {
+      Constructor *ctor = castValue(subject, Constructor);
+      out = evaluateSequence(arena, env, fork->bodies[ctor->id]);
+    } break;
+
+    case VC_CompositeV:
+    {
+      CompositeV *record = castValue(subject, CompositeV);
+      if (Constructor *ctor = castValue(record->op, Constructor))
         out = evaluateSequence(arena, env, fork->bodies[ctor->id]);
-      } break;
-
-      case VC_CompositeV:
-      {
-        CompositeV *record = castValue(subject, CompositeV);
-        if (Constructor *ctor = castValue(record->op, Constructor))
-          out = evaluateSequence(arena, env, fork->bodies[ctor->id]);
-        else
-          out = 0;
-      } break;
-
-      default:
+      else
         out = 0;
-    }
+    } break;
+
+    default:
+      out = 0;
   }
+  unwindStack(env);
+
   return out;
 }
 
@@ -1547,7 +1565,7 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
       }
       else
       {
-        dump(env->stack);
+        dump(env->stack); dump();
         invalidCodePath;
       }
     } break;
@@ -2102,6 +2120,32 @@ deepCopy(MemoryArena *arena, Ast *in0)
   return out0;
 }
 
+internal Value *
+deepCopyForLet(MemoryArena *arena, Value *in0)
+{
+  Value *out0;
+  switch (in0->cat)
+  {
+    case VC_StackValue:
+    {
+      StackValue *in = castValue(in0, StackValue);
+      StackValue *out = copyStruct(arena, in);
+      out0 = &out->v;
+    } break;
+
+    case VC_CompositeV:
+    {
+      out0 = in0;
+    } break;
+
+    default:
+    {
+      todoIncomplete;
+    }
+  }
+  return out0;
+}
+
 inline ValueArray
 getGlobalOverloads(Environment *env, Identifier *ident, Value *expected_type)
 {
@@ -2652,6 +2696,8 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
        (item_id < sequence->count-1) && noError();
        item_id++)
   {
+    local_persist int serial = 0;
+    serial++;
     Ast *item = sequence->items[item_id];
     switch (item->cat)
     {
@@ -2686,7 +2732,7 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
             Value *value;
             if (let_type)
             {// type manipulation (TODO: not sure if this is legal when we actually "run the proof")
-              value = copyStruct(temp_arena, rhs.value);
+              value = deepCopyForLet(temp_arena, rhs.value);
               value->type = let_type;
             }
             else
@@ -2933,13 +2979,13 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
       invalidDefaultCase;
     }
   }
+
   if (noError())
   {
     Ast *last = sequence->items[sequence->count-1];
     if (Fork *fork = castAst(last, Fork))
-    {
       buildFork(arena, env, fork, goal);
-    }
+
     else if (Computation *computation = castAst(last, Computation))
     {
       b32 goal_valid = false;
@@ -2997,7 +3043,10 @@ buildFork(MemoryArena *arena, Environment *env, Fork *fork, Value *expected_type
              input_case_id < case_count && noError();
              input_case_id++)
         {
-          Environment env = *outer_env;
+          Environment env_ = *outer_env;
+          Environment *env = &env_;
+          extendBindings(temp_arena, env);
+          addStackFrame(env);
           Token *ctor_token = &fork->parsing->ctors[input_case_id].token;
 
           if (GlobalBinding *lookup = lookupGlobalName(ctor_token))
@@ -3035,13 +3084,11 @@ buildFork(MemoryArena *arena, Environment *env, Fork *fork, Value *expected_type
             if (ctor)
             {
               if (ctor_is_atomic)
-              {
-                addRewriteRule(&env, subjectv, &ctor->v);
-              }
+                addRewriteRule(env, subjectv, &ctor->v);
               else
               {
-                Value *record = introduceOnHeap(&env, subjectv, ctor);
-                addRewriteRule(&env, subjectv, record);
+                Value *record = introduceOnHeap(env, subjectv, ctor);
+                addRewriteRule(env, subjectv, record);
               }
 
               if (noError())
@@ -3053,7 +3100,7 @@ buildFork(MemoryArena *arena, Environment *env, Fork *fork, Value *expected_type
                 }
                 else
                 {
-                  buildSequence(arena, &env, fork->bodies[input_case_id], expected_type);
+                  buildSequence(arena, env, fork->bodies[input_case_id], expected_type);
                   correct_bodies[ctor->id] = fork->bodies[input_case_id];
                 }
               }
@@ -3064,6 +3111,7 @@ buildFork(MemoryArena *arena, Environment *env, Fork *fork, Value *expected_type
               // for (ctor->)
             }
           }
+          unwindBindingsAndStack(env);
         }
 
         if (noError())
@@ -3135,7 +3183,13 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *goal)
       else
       {
         parseError(in0, "expression required");
-        attach("expected type", goal);
+        attach("goal", goal);
+        MemoryArena buffer_ = subArena(temp_arena, 1024);
+        MemoryArena *buffer = &buffer_;
+        attach("proof_context", (char *)buffer->base);
+        assert(buffer->used == 0);
+        print(buffer, "stack: ");
+        print(buffer, env->stack);
       }
     } break;
 

@@ -289,19 +289,22 @@ add1Associative :: (b,c: Z) -> (+(1)+b)+c = +(1)+b+c
                             add1Associative(+(c.v.p), -(b.v.p))}},
                  -: fork b.v {1 :, ++:}}}}
 
-breakhere;
-sumCancellation :: (a,b,c: Z) -> (a+b=a+c) = (b=c)
-{fork a {0: ,
-         +: fork a.v {1:
-                      => (+(1) + b = +(1) + c) = (b = c);
-                      fork b
-                      {0: fork c {0:, +:, -:},
-                       +:,
-                       -:,}
-                      ,
+sumCancellation :: (a,b,c: Z, P: a+b=a+c) -> (b=c)
+{
+ fork a
+ {0: norm P; P,
+  +: norm P,
+  ;; fork a.v {1: _
+  ;;              ;; norm P;
+  ;;              ;; fork b
+  ;;              ;; {0: fork c {0:, +:, -:},
+  ;;              ;;  +:,
+  ;;              ;;  -:,}
+  ;;              ,
 
-                      ++:},
-         -: }}
+  ;;              ++:},
+  -: }
+ }
 
 addAssociative :: (a,b,c: Z) -> (a+b)+c = a+b+c
 {fork a
