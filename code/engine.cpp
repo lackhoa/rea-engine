@@ -9,8 +9,9 @@
 #include "tokenization.cpp"
 #include "engine.h"
 
-s32 debug_normalization_depth;
-s32 debug_evaluation_depth;
+i32 debug_normalization_depth;
+i32 debug_evaluation_depth;
+i32 debug_serial;
 
 global_variable Builtins builtins;
 
@@ -18,6 +19,14 @@ global_variable Value  holev_ = {.cat = VC_Hole};
 global_variable Value *holev = &holev_;
 
 global_variable Sequence dummy_function_under_construction;
+
+inline void
+dump(Trinary trinary)
+{
+  if (trinary == Trinary_True) dump("true");
+  else if (trinary == Trinary_False) dump("false");
+  else dump("unknown");
+}
 
 inline OverwriteRules *
 newOverwriteRule(Environment *env, Value *lhs, Value *rhs)
@@ -204,14 +213,18 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_value, PrintOptions opt)
 
   if (arg_count == 2)
   {// special path for infix operator
-    PrintOptions arg_opt        = opt;
-    arg_opt.no_paren_precedence = precedence;
     if (precedence < opt.no_paren_precedence)
       print(buffer, "(");
+
+    PrintOptions arg_opt = opt;
+    arg_opt.no_paren_precedence = precedence+1;
     print(buffer, args[0], is_value, arg_opt);
+
     print(buffer, " ");
     print(buffer, op, is_value, opt);
     print(buffer, " ");
+
+    arg_opt.no_paren_precedence = precedence;
     print(buffer, args[1], is_value, arg_opt);
     if (precedence < opt.no_paren_precedence)
       print(buffer, ")");
@@ -687,16 +700,14 @@ compareExpressions(MemoryArena *arena, Value *lhs0, Value *rhs0)
 {
   CompareExpressions out = {};
 
-#if 0
-  if (global_debug_mode)
+  b32 debug = false;
+  if (debug && global_debug_mode)
   {
-    dump("comparing: ");
-    dump(&lhs0->a);
-    dump(" and ");
-    dump(&rhs0->a);
-    dump();
+    debug_serial++;
+    debugIndent(); dump("comparing("); dump(debug_serial); dump("): "); dump(lhs0); dump(" and "); dump(rhs0); dump();
+    if (debug_serial == 2658)
+      breakhere;
   }
-#endif
 
   out.result = Trinary_Unknown;
 
@@ -748,8 +759,7 @@ compareExpressions(MemoryArena *arena, Value *lhs0, Value *rhs0)
                                       evaluate(temp_arena, &env, rhs->output_type));
           }
         }
-        else
-          out.result = Trinary_False;
+        else out.result = Trinary_False;
       } break;
 
       case VC_CompositeV:
@@ -773,13 +783,11 @@ compareExpressions(MemoryArena *arena, Value *lhs0, Value *rhs0)
           int       unique_diff_id   = 0;
           TreePath *unique_diff_path = 0;
           out.result = Trinary_True;
-          for (s32 id = 0; id < count; id++)
+          for (i32 id=0; id < count; id++)
           {
             CompareExpressions recurse = compareExpressions(arena, lhs->args[id], rhs->args[id]);
             if (recurse.result != Trinary_True)
             {
-              if (out.result != Trinary_False)
-                out.result = recurse.result;
               mismatch_count++;
               if (mismatch_count == 1)
               {
@@ -788,6 +796,8 @@ compareExpressions(MemoryArena *arena, Value *lhs0, Value *rhs0)
               }
             }
           }
+          if (mismatch_count > 0)
+            out.result = Trinary_Unknown;
           if ((mismatch_count == 1) && arena)
           {
             allocate(arena, out.diff_path);
@@ -828,6 +838,11 @@ compareExpressions(MemoryArena *arena, Value *lhs0, Value *rhs0)
            ((rhs0->cat == VC_Constructor) && isCompositeConstructor(lhs0)))
   {
     out.result = Trinary_False;
+  }
+
+  if (debug && global_debug_mode)
+  {
+    debugDedent(); dump("=> "); dump(out.result); dump();
   }
 
   return out;
@@ -1031,9 +1046,6 @@ struct RewriteChain {
 forward_declare internal Value *
 evaluateSequence(MemoryArena *arena, Environment *env, Sequence *sequence)
 {
-  if (global_debug_mode)
-    breakhere;
-
   // todo not sure what the normalization should be, but we're probably only
   // called from "normalize", so I guess it's ok to always normalize.
   Environment env_ = *env; env = &env_;
@@ -1152,12 +1164,11 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
   // TODO there are infinite loops when we rewrite f.ex: "(E: a = b) -> False" => "a != 0".
   Value *out0 = {};
 
-#if 0
-  if (global_debug_mode)
+  b32 debug = false;
+  if (debug && global_debug_mode)
   {
     debugIndent(); dump("normalize: "); dump(in0); dump();
   }
-#endif
 
   switch (in0->cat)
   {
@@ -1272,12 +1283,10 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
     out0 = normalize(arena, env, out0);
   }
 
-#if 0
-  if (global_debug_mode)
+  if (debug && global_debug_mode)
   {
     debugDedent(); dump("=> "); dump(out0); dump();
   }
-#endif
 
   assert(out0);
   debug_normalization_depth--;
@@ -2392,8 +2401,6 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
             rewrite->eq_proof = parseExpressionToAst(arena);
             requireChar('}');
           }
-          else
-            breakhere;
         }
       }
       popContext();
@@ -2697,6 +2704,7 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
               else
               {
                 parseError(item, "new goal does not match original");
+                equalB32(new_goal_norm, goal_norm);
                 attach("new goal normalized", new_goal_norm);
                 attach("current goal normalized", goal_norm);
               }
@@ -3063,7 +3071,8 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
       {
         if (eq->op->cat == VC_BuiltinEqual)
         {
-          if (equalB32(eq->args[1], eq->args[2]))
+          if (equalB32(normalize(temp_arena, env, eq->args[1]),
+                       normalize(temp_arena, env, eq->args[2])))
           {
             Composite *refl = newAst(arena, Composite, &in0->token);
             allocateArray(arena, 1, refl->args);
@@ -3075,7 +3084,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
         }
       }
 
-      parseError(in0, "please provide an expression");
+      parseError(in0, "proof in progress");
       attach("expected type", expected_type);
     } break;
 
