@@ -17,8 +17,9 @@
 #endif
 
 
-#define internal static
+#define internal        static
 #define global_variable static
+#define local_persist   static
 
 typedef uint8_t  u8;
 typedef uint16_t u16;
@@ -158,9 +159,10 @@ checkArena(MemoryArena *arena)
 }
 
 inline void
-resetZeroArena(MemoryArena *arena)
+resetArena(MemoryArena *arena, b32 zero=false)
 {
-    arena->used = 0;
+  arena->used = 0;
+  if (zero)
     zeroMemory(arena->base, arena->cap);
 }
 
@@ -297,12 +299,13 @@ equal(char *s1, char *s2)
   return out;
 }
 
-internal void
+internal String
 printVA(MemoryArena *buffer, char *format, va_list arg_list)
 {
-    char *at = (char *)getNext(buffer);
-    auto printed = vsprintf_s(at, (buffer->cap - buffer->used), format, arg_list);
-    buffer->used += printed;
+  char *at = (char *)getNext(buffer);
+  int printed = vsprintf_s(at, (buffer->cap - buffer->used), format, arg_list);
+  buffer->used += printed;
+  return String{at, printed};
 }
 
 internal String

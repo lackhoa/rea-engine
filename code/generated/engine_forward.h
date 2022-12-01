@@ -1,7 +1,9 @@
 Token nextToken(Tokenizer * tk);
 Token peekToken(Tokenizer * tk);
 char * print(MemoryArena * buffer, Ast * in0, PrintOptions opt);
+char * print(MemoryArena * buffer, Ast * in0);
 char * print(MemoryArena * buffer, Value * in0, PrintOptions opt);
+char * print(MemoryArena * buffer, Value * in0);
 char * print(MemoryArena * buffer, void * in0, b32 is_value, PrintOptions opt);
 CompareExpressions compareExpressions(MemoryArena * arena, Value * lhs0, Value * rhs0);
 Trinary equalTrinary(Value * lhs0, Value * rhs0);
@@ -13,7 +15,7 @@ Value * evaluateAndNormalize(MemoryArena * arena, Environment * env, Ast * in0);
 void introduceOnStack(Environment * env, Token * name, Ast * type);
 void buildSequence(MemoryArena * arena, Environment * env, Sequence * sequence, Value * goal);
 void buildFork(MemoryArena * arena, Environment * env, Fork * fork, Value * expected_type);
-Expression buildExpression(MemoryArena * arena, Environment * env, Ast * in0, Value * expected_type);
+Expression buildExpression(MemoryArena * arena, Environment * env, Ast * in0, Value * goal);
 FunctionDecl * parseFunction(MemoryArena * arena, Token * name, b32 is_theorem);
 Fork * parseFork(MemoryArena * arena, b32 is_theorem);
 Ast * parseExpressionToAst(MemoryArena * arena);

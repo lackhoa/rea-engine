@@ -73,6 +73,7 @@ newToken(const char *text)
   return newToken(toString(text));
 }
 
+#if 0
 enum AttachmentType
 {
   AttachmentType_Ast,
@@ -80,7 +81,9 @@ enum AttachmentType
   AttachmentType_Token,
   AttachmentType_TypeMatcher,
 };
-struct ErrorAttachment { char *string; AttachmentType type; void *p; };
+#endif
+
+struct ErrorAttachment { char *key; char *value; };
 
 enum ErrorCode
 {
@@ -91,11 +94,11 @@ enum ErrorCode
 
 struct ParseError
 {
-  MemoryArena  message;
-  s32          line;
-  s32          column;
-  char        *context;
-  ErrorCode    code; 
+  String     message;
+  s32        line;
+  s32        column;
+  char      *context;
+  ErrorCode  code; 
 
   s32             attachment_count;
   ErrorAttachment attachments[8];
@@ -122,14 +125,13 @@ struct Tokenizer
 void eatAllSpaces(Tokenizer *tk);
 
 inline Tokenizer
-newTokenizer(MemoryArena *arena, String directory, char *input)
+newTokenizer(String directory, char *input)
 {
   Tokenizer out = {};
   out.line        = 1;
   out.column      = 1;
   out.directory   = directory;
   out.at          = input;
-  out.error_arena = subArena(arena, kiloBytes(128));
   if (input)
     eatAllSpaces(&out);
   return out;

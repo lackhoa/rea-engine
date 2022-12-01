@@ -109,4 +109,3 @@ multiplyPos :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
    {0:  b_positive(_),
     ++: e}}}
  out}
-print multiplyPos;

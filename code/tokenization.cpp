@@ -90,31 +90,39 @@ inline void setErrorCode(ErrorCode code)
   global_tokenizer->error->code = code;
 }
 
-inline void addVoidAttachment(char *string, AttachmentType type, void *p)
+inline void attach(char *key, char *value)
 {
   ParseError *error = global_tokenizer->error;
   assert(error->attachment_count < arrayCount(error->attachments));
-  error->attachments[error->attachment_count++] = {string, type, p};
+  error->attachments[error->attachment_count++] = {key, value};
 }
 
-inline void attach(char *string, Token *token)
+inline void attach(char *key, Token *token)
 {
-  addVoidAttachment(string, AttachmentType_Token, token);
+  MemoryArena buffer = subArena(temp_arena, 1024);
+  String value = print(&buffer, token->string);
+  attach(key, value.chars);
 }
 
-inline void attach(char *string, Ast *ast)
+inline void attach(char *key, Ast *ast)
 {
-  addVoidAttachment(string, AttachmentType_Ast, ast);
+  MemoryArena buffer = subArena(temp_arena, 1024);
+  char *value = print(&buffer, ast);
+  attach(key, value);
 }
 
-inline void attach(char *string, Value *value)
+inline void attach(char *key, Value *value)
 {
-  addVoidAttachment(string, AttachmentType_Value, value);
-}
-
-inline void attach(char *string, Matcher *matcher)
-{
-  addVoidAttachment(string, AttachmentType_TypeMatcher, matcher);
+  if (global_debug_mode)
+  {
+    local_persist int count = 0;
+    if (count == 6)
+      breakhere;
+    count++;
+  }
+  MemoryArena buffer = subArena(temp_arena, 1024);
+  char *val = print(&buffer, value);
+  attach(key, val);
 }
 
 // #define pushContext { ParseContext context = {(char*)__func__}; pushContext_(&context); }
@@ -456,11 +464,8 @@ parseErrorVA(s32 line, s32 column, char *format, va_list arg_list, Tokenizer *tk
     breakhere;
   assert(!tk->error);  // note: prevent parser from doing useless work after failure.
 
-  MemoryArena *arena = &tk->error_arena;
-  tk->error = pushStruct(arena, ParseError, true);
-  tk->error->message = subArena(arena, 1024);
-
-  printVA(&tk->error->message, format, arg_list);
+  tk->error = pushStruct(temp_arena, ParseError, true);
+  tk->error->message = printVA(temp_arena, format, arg_list);
 
   tk->error->line   = line;
   tk->error->column = column;
@@ -497,11 +502,10 @@ parseError(Tokenizer *tk, Token *token, char *format, ...)
 }
 
 internal void
-tokenError(Token *token, char *message, Tokenizer *tk = global_tokenizer)
+tokenError(Token *token, char *message)
 {
-  parseError(token, message, tk);
-  print(&tk->error->message, ": ");
-  print(&tk->error->message, token->string);
+  parseError(token, "%s", message);
+  attach("token", token);
 }
 
 internal void

@@ -434,6 +434,12 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
 }
 
 forward_declare internal char *
+print(MemoryArena *buffer, Ast *in0)
+{
+  return print(buffer, in0, {});
+}
+
+forward_declare internal char *
 print(MemoryArena *buffer, Value *in0, PrintOptions opt)
 {// mark: printValue
   char *out = buffer ? (char*)getNext(buffer) : 0;
@@ -593,6 +599,12 @@ print(MemoryArena *buffer, Value *in0, PrintOptions opt)
     print(buffer, "<NULL>");
 
   return out;
+}
+
+forward_declare internal char *
+print(MemoryArena *buffer, Value *in0)
+{
+  return print(buffer, in0, {});
 }
 
 forward_declare internal char *
@@ -4201,8 +4213,7 @@ parseTopLevel(EngineState *state)
       {
         if (Ast *exp = parseExpression(temp_arena))
         {
-          char *output = print(temp_arena, exp, {.detailed=true, .print_type=true});
-          printf("%s\n", output);
+          print(0, exp, {.detailed=true, .print_type=true});
         }
         requireChar(';');
       }
@@ -4360,7 +4371,7 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
     new_file_list->next          = state->file_list;
     state->file_list             = new_file_list;
 
-    Tokenizer  tk_ = newTokenizer(arena, input_path.directory, read.content);
+    Tokenizer  tk_ = newTokenizer(input_path.directory, read.content);
     Tokenizer *tk  = &tk_;
 
     Tokenizer *old_tokenizer = global_tokenizer;
@@ -4374,14 +4385,14 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
     if (ParseError *error = tk->error)
     {
       success = false;
-      printf("%s:%d:%d: [%s] %s",
+      printf("%s:%d:%d: [%s]",
              input_path.path,
 
              error->line,
              error->column,
 
-             error->context ? error->context : "",
-             error->message.base);
+             error->context ? error->context : "");
+      print(0, error->message);
 
       if (error->attachment_count > 0)
       {
@@ -4391,48 +4402,7 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
              attached_id++)
         {
           auto attachment = error->attachments[attached_id];
-          printf("%s: ", attachment.string);
-          switch (attachment.type)
-          {
-            case AttachmentType_Ast:
-            {
-              print(0, (Ast*)attachment.p, {});
-            } break;
-
-            case AttachmentType_Value:
-            {
-              print(0, (Value*)attachment.p, {});
-            } break;
-
-            case AttachmentType_Token:
-            {
-              Token *token = (Token*)attachment.p;
-              print(0, token->string);
-            } break;
-
-            case AttachmentType_TypeMatcher:
-            {
-              Matcher *matcher = (Matcher *)attachment.p;
-              switch (matcher->cat)
-              {
-                case MC_Unknown:
-                {
-                  print(0, "<any type>");
-                };
-
-                case MC_Exact:
-                {
-                  print(0, matcher->Exact, {});
-                } break;
-
-                case MC_OutType:
-                {
-                  printf("? -> ");
-                  print(0, matcher->OutType, {});
-                } break;
-              }
-            } break;
-          }
+          printf("%s: %s", attachment.key, attachment.value);
           if (attached_id != error->attachment_count-1) 
             printf("\n");
         }
@@ -4467,7 +4437,7 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
 forward_declare inline Expression
 parseExpressionFromString(MemoryArena *arena, char *string)
 {
-  Tokenizer tk = newTokenizer(temp_arena, String{}, 0);
+  Tokenizer tk = newTokenizer(String{}, 0);
   Tokenizer *tk_save = global_tokenizer;
   global_tokenizer = &tk;
   tk.at = string;
@@ -4498,7 +4468,7 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
 
     {// more builtins
 #if 1
-      Tokenizer builtin_tk = newTokenizer(arena, print(temp_arena, "<builtin>"), 0);
+      Tokenizer builtin_tk = newTokenizer(print(temp_arena, "<builtin>"), 0);
       global_tokenizer = &builtin_tk;
       builtin_tk.at = "(_A: Set, a, b: _A) -> Set";
       Expression equal_type = parseExpressionFull(arena);
@@ -4531,6 +4501,7 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
       addBuiltinGlobalBinding("=", builtins.equal);
 #endif
     }
+    resetArena(temp_arena);
   }
 
   FilePath input_path = platformGetFileFullPath(arena, initial_file);
@@ -4574,13 +4545,13 @@ int engineMain()
 #if 1
   if (!beginInterpreterSession(permanent_arena, "../data/basics.rea"))
     success = false;
-  resetZeroArena(permanent_arena);
+  resetArena(permanent_arena, true);
 #endif
 
 #if 1
   if (!beginInterpreterSession(permanent_arena, "../data/test.rea"))
     success = false;
-  resetZeroArena(permanent_arena);
+  resetArena(permanent_arena, true);
 #endif
 
   return success;
