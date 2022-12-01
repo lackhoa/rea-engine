@@ -24,8 +24,8 @@ enum AstCategory
   AC_Identifier,
 
   // Expressions
-  AC_Variable,
   AC_Constant,
+  AC_Variable,
   AC_Composite,
   AC_Arrow,
   AC_Accessor,

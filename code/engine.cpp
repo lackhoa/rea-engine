@@ -2258,6 +2258,8 @@ valueToAst(MemoryArena *arena, Environment *env, Value* value)
     }
   }
 
+  assert(out);
+
   return out;
 }
  
@@ -3071,15 +3073,41 @@ buildFork(MemoryArena *arena, Environment *env, Fork *fork, Value *expected_type
   }
 }
 
+internal Ast *
+fillHole(MemoryArena *arena, Environment *env, Token *token, Value *goal)
+{
+  Ast *out = 0;
+  if (matchType(env, goal, &builtins.True->v))
+  {
+    Constant *truth = newSyntheticConstant(arena, &builtins.truth->v, token);
+    out = &truth->a;
+  }
+  else if (CompositeV *eq = castValue(goal, CompositeV))
+  {
+    if (eq->op->cat == VC_BuiltinEqual)
+    {
+      if (equalB32(normalize(temp_arena, env, eq->args[1]),
+                   normalize(temp_arena, env, eq->args[2])))
+      {
+        Computation *computation = newAst(arena, Computation, token);
+        computation->lhs = valueToAst(arena, env, eq->args[1]);
+        computation->rhs = valueToAst(arena, env, eq->args[2]);
+        out = &computation->a;
+      }
+    }
+  }
+  return out;
+}
+
 forward_declare internal Expression
-buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_type)
+buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *goal)
 {
   // todo #mem: we just put everything in the arena, including scope values.
   // todo #speed: normalizing expected_type.
   // beware: Usually we mutate in-place, but we may also allocate anew.
   Expression out = {};
-  assert(expected_type);
-  b32 should_check_type = (expected_type != holev);
+  assert(goal);
+  b32 should_check_type = (goal != holev);
 
   switch (in0->cat) check_switch(expression)
   {
@@ -3087,31 +3115,16 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
     {
       // Holes are awesome, flexible placeholders that you can feed to the
       // typechecker to get what you want
-      if (matchType(env, expected_type, &builtins.True->v))
+      Ast *fill = fillHole(arena, env, &in0->token, goal);
+      if (fill)
       {
-        Constant *constant = newSyntheticConstant(arena, &builtins.truth->v, &in0->token);
-        return buildExpression(arena, env, &constant->a, expected_type);
+        return buildExpression(arena, env, fill, goal);
       }
-
-      if (CompositeV *eq = castValue(expected_type, CompositeV))
+      else
       {
-        if (eq->op->cat == VC_BuiltinEqual)
-        {
-          if (equalB32(normalize(temp_arena, env, eq->args[1]),
-                       normalize(temp_arena, env, eq->args[2])))
-          {
-            Composite *refl = newAst(arena, Composite, &in0->token);
-            allocateArray(arena, 1, refl->args);
-            refl->op        = &newSyntheticConstant(arena, &builtins.refl->v, &in0->token)->a;
-            refl->arg_count = 1;
-            refl->args[0]   = valueToAst(arena, env, eq->args[1]);
-            return buildExpression(arena, env, &refl->a, expected_type);
-          }
-        }
+        parseError(in0, "expression required");
+        attach("expected type", goal);
       }
-
-      parseError(in0, "proof in progress");
-      attach("expected type", expected_type);
     } break;
 
     case AC_Variable:
@@ -3150,7 +3163,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
           for (s32 value_id = 0; value_id < globals->count; value_id++)
           {
             Value *slot_value = globals->items[value_id];
-            if (matchType(env, slot_value->type, expected_type))
+            if (matchType(env, slot_value->type, goal))
             {
               if (value)
               {// ambiguous
@@ -3168,7 +3181,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
           {
             parseError(name, "global name does not match expected type");
             attach("name", name);
-            attach("expected_type", normalize(temp_arena, env, expected_type));
+            attach("expected_type", normalize(temp_arena, env, goal));
           }
         }
 
@@ -3189,7 +3202,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
       b32 has_multiple_overloads;
       if (Identifier *op_ident = castAst(in->op, Identifier))
       {
-        ValueArray global_overloads = getGlobalOverloads(env, op_ident, expected_type);
+        ValueArray global_overloads = getGlobalOverloads(env, op_ident, goal);
         has_multiple_overloads = global_overloads.count > 1;
         if (has_multiple_overloads)
         {
@@ -3204,7 +3217,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
 
             Composite *in_copy = castAst(deepCopy(arena, in0), Composite);
             in_copy->op        = &constant->a;
-            out = buildExpression(arena, env, &in_copy->a, expected_type);
+            out = buildExpression(arena, env, &in_copy->a, goal);
 
             if (out) break;
             else     wipeError();
@@ -3267,14 +3280,23 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
                    (arg_id < in->arg_count) && noError();
                    arg_id++)
               {
+                Ast *param_type0 = signature->param_types[arg_id];
+                Value *expected_arg_type = evaluate(temp_arena, &signature_env, param_type0);
+
                 // Typecheck & Inference for the arguments. TODO: the hole stuff
                 // is kinda hard-coded only for the equality.
                 if (in->args[arg_id]->cat == AC_Hole)
-                  addStackValue(&signature_env, holev);
+                {
+                  if (Ast *fill = fillHole(arena, env, &in->args[arg_id]->token, expected_arg_type))
+                  {
+                    in->args[arg_id] = fill;
+                    addStackValue(&signature_env, evaluate(arena, env, fill));
+                  }
+                  else
+                    addStackValue(&signature_env, holev);
+                }
                 else
                 {
-                  Ast *param_type0 = signature->param_types[arg_id];
-                  Value *expected_arg_type = evaluate(temp_arena, &signature_env, param_type0);
                   if (Expression arg = buildExpression(arena, env, in->args[arg_id], expected_arg_type))
                   {
                     in->args[arg_id] = arg.ast;
@@ -3323,7 +3345,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
                    arg_id++)
               {
                 if (in->args[arg_id]->cat == AC_Hole)
-                  parseError(in0, "Cannot fill hole in expression");
+                  parseError(in->args[arg_id], "Cannot fill hole");
               }
 
               if (noError())
@@ -3416,6 +3438,12 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
       }
     } break;
 
+    case AC_Computation:
+    {
+      out.ast   = in0;
+      out.value = evaluate(arena, env, in0);
+    } break;
+
     invalidDefaultCase;
   }
 
@@ -3426,7 +3454,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *expected_
     Value *expected = normalize(arena, env, expected_type);
 #else
     Value *actual   = out.value->type;
-    Value *expected = expected_type;
+    Value *expected = goal;
 #endif
     if (!matchType(env, actual, expected))
     {

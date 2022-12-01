@@ -100,12 +100,13 @@ multiplyPos :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
  norm b_positive;
  out :: fn (e: a*b = 0) -> False
  {fork a
-  {0: a_positive(refl(0)),
+  {0: a_positive(_),
    ;; todo: we can't fill hole for a_positive because the code path
-   ;; for filling in arguments too dumb.
+   ;; for filling in arguments is too dumb.
 
    ++:
    fork b
-   {0:  b_positive(refl(0)),
+   {0:  b_positive(_),
     ++: e}}}
  out}
+print multiplyPos;
