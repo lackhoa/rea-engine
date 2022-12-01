@@ -1669,19 +1669,11 @@ normalized(Environment *env, Value *in)
   return equalB32(in, norm);
 }
 
-inline b32
+inline void
 addLocalBinding(Environment *env, Token *key)
 {
   auto lookup = lookupCurrentFrame(env->bindings, key->string, true);
-  b32 succeed = false;
-  if (lookup.found)
-    parseError(key, "reused parameter name");
-  else
-  {
-    succeed = true;
-    lookup.slot->value = env->bindings->count++;
-  }
-  return succeed;
+  lookup.slot->value = env->bindings->count++;
 }
 
 inline Constructor *
@@ -2104,7 +2096,7 @@ getGlobalOverloads(Environment *env, Identifier *ident, Value *expected_type)
   ValueArray out = {};
   if (!lookupLocalName(env, &ident->token))
   {
-    if (GlobalBinding *slot = lookupGlobalName(&ident->token))
+    if (GlobalBinding *slot = lookupGlobalNameSlot(ident->token, false))
     {
       if (isGlobalValue(expected_type))
       {
@@ -2365,108 +2357,141 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
     Tokenizer tk_save = *global_tokenizer;
     Token token = nextToken();
     Ast *ast = 0;
-    if (token.cat == TC_KeywordRewrite)
+    switch (token.cat)
     {
-      Rewrite *rewrite = newAst(arena, Rewrite, &token);
-
-      rewrite->right_to_left = false;
-      Token next = peekToken();
-      if (equal(next, "<-"))
+      case TC_KeywordNorm:
       {
-        nextToken();
-        rewrite->right_to_left = true;
-      }
-
-      rewrite->eq_proof = parseExpressionToAst(arena);
-      ast = &rewrite->a;
-    }
-    else if (token.cat == TC_StrongArrow)
-    {
-      pushContext("Full-rewrite: => TO_EXPRESSION [{ EQ_PROOF }]");
-      Rewrite *rewrite = newAst(arena, Rewrite, &token);
-      ast = &rewrite->a;
-      {
-        if (equal(peekToken().string, "_"))
-        {// normlization
-          nextToken();
+        pushContext("norm [LOCAL_VARIABLE]");
+        if (optionalChar(';'))
+        {// normalize goal
+          Rewrite *rewrite = newAst(arena, Rewrite, &token);
+          ast = &rewrite->a;
         }
-        else if ((rewrite->to_expression = parseExpressionToAst(arena)))
+        else
         {
-          if (optionalChar('{'))
+          Token name = nextToken();
+          if (isIdentifier(&name))
           {
-            if (optionalString("<-"))  // todo: don't know whether to make a token type for this.
-            {
-              rewrite->right_to_left = true;
-            }
-            rewrite->eq_proof = parseExpressionToAst(arena);
-            requireChar('}');
+            Let *let = newAst(arena, Let, &token);
+            let->lhs  = name;
+            let->rhs  = &newAst(arena, Identifier, &name)->a;
+            let->type = &newAst(arena, Hole, &token)->a;
+            ast = &let->a;
           }
+          else
+            parseError(&token, "syntax error");
         }
-      }
-      popContext();
-    }
-    else if (isIdentifier(&token))
-    {
-      Token *name = &token;
-      Token after_name = nextToken();
-      switch (after_name.cat)
+        popContext();
+      } break;
+
+      case TC_KeywordRewrite:
       {
-        case TC_DoubleColon:
+        Rewrite *rewrite = newAst(arena, Rewrite, &token);
+
+        rewrite->right_to_left = false;
+        Token next = peekToken();
+        if (equal(next, "<-"))
         {
-          Token after_dcolon = peekToken();
-          b32 is_theorem;
-          if (equal(after_dcolon, "fn"))
-          {
-            is_theorem = false;
+          nextToken();
+          rewrite->right_to_left = true;
+        }
+
+        rewrite->eq_proof = parseExpressionToAst(arena);
+        ast = &rewrite->a;
+      } break;
+
+      case TC_StrongArrow:
+      {
+        pushContext("Full-rewrite: => TO_EXPRESSION [{ EQ_PROOF }]");
+        Rewrite *rewrite = newAst(arena, Rewrite, &token);
+        ast = &rewrite->a;
+        {
+          if (equal(peekToken().string, "_"))
+          {// normlization
             nextToken();
           }
-          else is_theorem = true;
-          FunctionDecl *fun = parseFunction(arena, name, is_theorem);
-          ast = &fun->a;
-        } break;
-
-        case TC_ColonEqual:
-        {
-          pushContext("let: NAME := VALUE");
-          if (Ast *rhs = parseExpressionToAst(arena))
+          else if ((rewrite->to_expression = parseExpressionToAst(arena)))
           {
-            Let *let = newAst(arena, Let, name);
-            ast = &let->a;
-            let->lhs = *name;
-            let->rhs = rhs;
-          }
-          popContext();
-        } break;
-
-        case TC_Colon:
-        {
-          pushContext("typed let: NAME : TYPE := VALUE");
-          if (Ast *type = parseExpressionToAst(arena))
-          {
-            if (requireCategory(TC_ColonEqual, ""))
+            if (optionalChar('{'))
             {
+              if (optionalString("<-"))  // todo: don't know whether to make a token type for this.
+              {
+                rewrite->right_to_left = true;
+              }
+              rewrite->eq_proof = parseExpressionToAst(arena);
+              requireChar('}');
+            }
+          }
+        }
+        popContext();
+      } break;
+
+      default:
+      {
+        if (isIdentifier(&token))
+        {
+          Token *name = &token;
+          Token after_name = nextToken();
+          switch (after_name.cat)
+          {
+            case TC_DoubleColon:
+            {
+              Token after_dcolon = peekToken();
+              b32 is_theorem;
+              if (equal(after_dcolon, "fn"))
+              {
+                is_theorem = false;
+                nextToken();
+              }
+              else is_theorem = true;
+              FunctionDecl *fun = parseFunction(arena, name, is_theorem);
+              ast = &fun->a;
+            } break;
+
+            case TC_ColonEqual:
+            {
+              pushContext("let: NAME := VALUE");
               if (Ast *rhs = parseExpressionToAst(arena))
               {
                 Let *let = newAst(arena, Let, name);
                 ast = &let->a;
-                let->lhs  = *name;
-                let->rhs  = rhs;
-                let->type = type;
+                let->lhs = *name;
+                let->rhs = rhs;
               }
-              requireChar(';');
-            }
-          }
-          popContext();
-        } break;
+              popContext();
+            } break;
 
-        default: {};
-      }
-    }
-    else if (isExpressionEndMarker(&token))
-    {// synthetic hole
-      *global_tokenizer = tk_save;
-      ast  = &newAst(arena, Hole, &token)->a; // todo do we print this out correctly?
-      stop = true;
+            case TC_Colon:
+            {
+              pushContext("typed let: NAME : TYPE := VALUE");
+              if (Ast *type = parseExpressionToAst(arena))
+              {
+                if (requireCategory(TC_ColonEqual, ""))
+                {
+                  if (Ast *rhs = parseExpressionToAst(arena))
+                  {
+                    Let *let = newAst(arena, Let, name);
+                    ast = &let->a;
+                    let->lhs  = *name;
+                    let->rhs  = rhs;
+                    let->type = type;
+                  }
+                  requireChar(';');
+                }
+              }
+              popContext();
+            } break;
+
+            default: {};
+          }
+        }
+        else if (isExpressionEndMarker(&token))
+        {// synthetic hole
+          *global_tokenizer = tk_save;
+          ast  = &newAst(arena, Hole, &token)->a; // todo do we print this out correctly?
+          stop = true;
+        }
+      } break;
     }
 
     if (noError() && !ast)
@@ -2624,12 +2649,13 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
         {
           if (let->type)
           {
-            if (Expression type = buildExpression(arena, env, let->type, holev))
+            if (let->type->cat == AC_Hole)
+              let_type = normalize(arena, env, rhs.value->type);
+
+            else if (Expression type = buildExpression(arena, env, let->type, holev))
             {
               if (matchType(env, rhs.value->type, type.value))
-              {
                 let_type = type.value;
-              }
               else
               {
                 parseError(item, "the rhs does not have the expected type");
@@ -2645,7 +2671,7 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
             let->rhs = rhs.ast;
             Value *value;
             if (let_type)
-            {// type manipulation
+            {// type manipulation (TODO: not sure if this is legal when we actually "run the proof")
               value = copyStruct(temp_arena, rhs.value);
               value->type = let_type;
             }

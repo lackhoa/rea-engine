@@ -96,15 +96,16 @@ mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*b*c
 multiplyPos :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
 {
  ;; TODO I'd like to just say "norm a_positive/b_positive" here.
- a_pos : (E: a = 0) -> False := a_positive;
- b_pos : (E: b = 0) -> False := b_positive;
+ norm a_positive;
+ norm b_positive;
  out :: fn (e: a*b = 0) -> False
  {fork a
-  {0: a_pos(refl(0)),  ;; todo: we can't fill this hole because the code path
-                       ;;for filling in arguments too dumb.
+  {0: a_positive(refl(0)),
+   ;; todo: we can't fill hole for a_positive because the code path
+   ;; for filling in arguments too dumb.
 
    ++:
    fork b
-   {0:  b_pos(refl(0)),
+   {0:  b_positive(refl(0)),
     ++: e}}}
  out}

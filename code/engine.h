@@ -301,7 +301,7 @@ struct Let
   embed_Ast(a);
   Token  lhs;
   Ast   *rhs;
-  Ast   *type;  // optional type coercion
+  Ast   *type;  // optional type coercion. "hole" for normalization.
 };
 
 struct StackValue
