@@ -51,7 +51,6 @@ enum ValueCategory
   VC_ArrowV,
   VC_FunctionV,
   VC_StackValue,
-  VC_HeapValue,
   VC_Union,
   VC_Constructor,
   VC_RewriteV,
@@ -314,12 +313,6 @@ struct AccessorV
   Value *record;
   s32    field_id;
   String field_name;            // #todo #debug_only
-};
-
-struct HeapValue
-{
-  embed_Value(v);
-  AccessorV accessor;
 };
 
 struct Composite

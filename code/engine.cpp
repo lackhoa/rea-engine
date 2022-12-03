@@ -559,12 +559,6 @@ print(MemoryArena *buffer, Value *in0, PrintOptions opt)
         print(buffer, in->name);
       } break;
 
-      case VC_HeapValue:
-      {
-        HeapValue *in = castValue(in0, HeapValue);
-        print(buffer, &in->accessor.v, new_opt);
-      } break;
-
       case VC_RewriteV:
       {
         RewriteV *rewrite = castValue(in0, RewriteV);
@@ -853,7 +847,6 @@ compareExpressions(MemoryArena *arena, Value *lhs0, Value *rhs0)
       case VC_FunctionV:  // we can compare signatures to eliminate negatives.
       case VC_Null:
       case VC_Hole:
-      case VC_HeapValue:
       case VC_Union:
       case VC_RewriteV:
       case VC_ComputationV:
@@ -1288,7 +1281,6 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
     case VC_FunctionV:
     case VC_StackValue:
     case VC_Union:
-    case VC_HeapValue:
     case VC_ComputationV:
     case VC_AccessorV:
     {
@@ -1484,7 +1476,6 @@ isGlobalValue(Value *value)
   {
     case VC_Hole:
     case VC_StackValue:
-    case VC_HeapValue:
     {
       return false;
     } break;
@@ -1719,9 +1710,8 @@ getSoleConstructor(Value *type)
 }
 
 inline Value *
-introduceOnHeap(Environment *env, Value *parent, Constructor *ctor)
+introduceAccessor(Environment *env, Value *parent, Constructor *ctor)
 {
-  // todo: I think we don't need "base_name" anymore, b/c we can walk from the root.
   Value *out = 0;
   if (ArrowV *ctor_sig = castValue(ctor->type, ArrowV))
   {
@@ -1730,9 +1720,10 @@ introduceOnHeap(Environment *env, Value *parent, Constructor *ctor)
     CompositeV *record = newValue(temp_arena, CompositeV, record_type);
     record->op        = &ctor->v;
     record->arg_count = param_count;
+    // important: dummy env to evaluate type, because our model of arrow types sucks.
     Environment sig_env = *env;
     {
-      Environment *env = &sig_env;  // important: we need the env to evaluate field types
+      Environment *env = &sig_env;
       addStackFrame(env);
       for (s32 field_id=0; field_id < param_count; field_id++)
       {
@@ -1746,22 +1737,18 @@ introduceOnHeap(Environment *env, Value *parent, Constructor *ctor)
         if (Constructor *field_ctor = getSoleConstructor(member_type))
         {
           // recursive case
-          Value *intro = introduceOnHeap(env, &accessor->v, field_ctor);
+          Value *intro = introduceAccessor(env, &accessor->v, field_ctor);
           addStackValue(env, intro);
         }
         else
-        {
-          HeapValue *value = newValue(temp_arena, HeapValue, member_type);
-          value->accessor = *accessor;
-          addStackValue(env, &value->v);
-        }
+          addStackValue(env, &accessor->v);
       }
       record->args = env->stack->items;
       out = &record->v;
     }
   }
   else
-  {// rare case: weird type with single enum
+  {
     assert(ctor->type->cat == VC_Union);
     out = &ctor->v;
   }
@@ -1780,10 +1767,9 @@ introduceOnStack(Environment *env, Token *name, Ast *type)
   ref->stack_depth = env->stack->depth;
 
   if (Constructor *type_ctor = getSoleConstructor(typev))
-  {
-    intro = introduceOnHeap(env, &ref->v, type_ctor);
-  }
-  else intro = &ref->v;
+    intro = introduceAccessor(env, &ref->v, type_ctor);
+  else
+    intro = &ref->v;
 
   addStackValue(env, intro);
 }
@@ -2268,12 +2254,6 @@ valueToAst(MemoryArena *arena, Environment *env, Value* value)
       var->id          = ref->id;  // :stack-ref-id-has-significance
     } break;
 
-    case VC_HeapValue:
-    {
-      HeapValue *heap_value = castValue(value, HeapValue);
-      out = valueToAst(arena, env, &heap_value->accessor.v);
-    } break;
-
     case VC_AccessorV:
     {
       AccessorV *accessorv = castValue(value, AccessorV);
@@ -2358,11 +2338,16 @@ searchExpression(MemoryArena *arena, Value *lhs, Value* in0)
         }
       } break;
 
+      case VC_AccessorV:
+      {
+        AccessorV* in = castValue(in0, AccessorV);
+        out = searchExpression(arena, lhs, in->record);
+      } break;
+
       case VC_Null:
       case VC_Hole:
       case VC_ComputationV:
       case VC_StackValue:
-      case VC_HeapValue:
       case VC_BuiltinEqual:
       case VC_BuiltinSet:
       case VC_BuiltinType:
@@ -2375,11 +2360,6 @@ searchExpression(MemoryArena *arena, Value *lhs, Value* in0)
       case VC_RewriteV:  // probably we never work on proofs in this way?
       {
         todoIncomplete;
-      } break;
-
-      case VC_AccessorV:
-      {
-        invalidCodePath;
       } break;
     }
 
@@ -3052,7 +3032,6 @@ buildFork(MemoryArena *arena, Environment *env, Fork *fork, Value *expected_type
           if (GlobalBinding *lookup = lookupGlobalName(ctor_token))
           {
             Constructor *ctor = 0;
-            b32 ctor_is_atomic = true;
             for (s32 lookup_id=0;
                  lookup_id < lookup->count && !ctor;
                  lookup_id++)
@@ -3071,10 +3050,7 @@ buildFork(MemoryArena *arena, Environment *env, Fork *fork, Value *expected_type
                     if (Constant *constant = castAst(ctor_sig->output_type, Constant))
                     {
                       if (equalB32(constant->value, subject.value->type))
-                      {
-                        ctor_is_atomic = false;
                         ctor = candidate;
-                      }
                     }
                   }
                 }
@@ -3083,13 +3059,8 @@ buildFork(MemoryArena *arena, Environment *env, Fork *fork, Value *expected_type
 
             if (ctor)
             {
-              if (ctor_is_atomic)
-                addRewriteRule(env, subjectv, &ctor->v);
-              else
-              {
-                Value *record = introduceOnHeap(env, subjectv, ctor);
-                addRewriteRule(env, subjectv, record);
-              }
+              Value *record = introduceAccessor(env, subjectv, ctor);
+              addRewriteRule(env, subjectv, record);
 
               if (noError())
               {
