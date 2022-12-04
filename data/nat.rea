@@ -94,7 +94,6 @@ testFillingHole :: (a: Nat, a_positive: a != 0, P: a=0) -> False
  fork (a)
  {0 : a_positive(_),  ;; since a is now 0, we can fill this hole.
   ++: P}}
-print testFillingHole;
 
 multiplyPos :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
 {norm a_positive; norm b_positive;

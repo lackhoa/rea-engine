@@ -12,7 +12,7 @@ global_variable b32 __attribute__((unused)) global_debug_mode;
 global_variable MemoryArena __attribute__((unused))*permanent_arena;
 
 struct Term;
-struct ArrowA;
+struct ArrowAst;
 struct LocalBindings;
 
 enum AstCategory {
@@ -25,16 +25,16 @@ enum AstCategory {
   // Expressions
   AC_Constant,
   AC_Variable,
-  AC_CompositeA,
-  AC_ArrowA,
-  AC_AccessorA,
-  AC_ComputationA,
+  AC_CompositeAst,
+  AC_ArrowAst,
+  AC_AccessorAst,
+  AC_ComputationAst,
   AC_Lambda,
 
   // Stuff in "sequence" context only, not general expressions.
   AC_Sequence,
   AC_Fork,
-  AC_RewriteA,
+  AC_RewriteAst,
   AC_FunctionDecl,
   AC_Let,
 };
@@ -266,7 +266,7 @@ struct Union
 
 struct FunctionDecl {
   Ast       a;
-  ArrowA   *signature;
+  ArrowAst   *signature;
   Sequence *body;
 };
 
@@ -311,7 +311,7 @@ struct Accessor
   String field_name;            // #todo #debug_only
 };
 
-struct CompositeA
+struct CompositeAst
 {
   embed_Ast(a);
   Ast  *op;
@@ -328,14 +328,14 @@ struct Composite
 };
 
 inline void
-initComposite(CompositeA *app, Ast *op, s32 arg_count, Ast **args)
+initComposite(CompositeAst *app, Ast *op, s32 arg_count, Ast **args)
 {
   app->op        = op;
   app->arg_count = arg_count;
   app->args      = args;
 }
 
-struct ArrowA
+struct ArrowAst
 {
   embed_Ast(a);
   i32     param_count;
@@ -396,17 +396,16 @@ struct Expression
   operator bool() { return ast && value; }
 };
 
-struct RewriteA
+struct RewriteAst
 {
   embed_Ast(a);
-
   TreePath *path;
   Ast      *eq_proof;
   Ast      *to_expression;
   b32       right_to_left;
 };
 
-struct AccessorA
+struct AccessorAst
 {
   Ast    a;
 
@@ -485,7 +484,7 @@ struct Rewrite
   Term     *body;
 };
 
-struct ComputationA {
+struct ComputationAst {
   embed_Ast(a);
   Ast *lhs;
   Ast *rhs;
@@ -503,7 +502,7 @@ struct CompareExpressions {Trinary result; TreePath *diff_path;};
 
 struct Lambda {
   embed_Ast(a);
-  ArrowA   *signature;
+  ArrowAst   *signature;
   Sequence *body;
 };
 
