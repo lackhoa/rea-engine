@@ -85,33 +85,33 @@ printCharToBufferRepeat(char *buffer, char c, s32 repeat)
 
 global_variable Tokenizer *global_tokenizer;
 
-inline void setErrorCode(ErrorCode code)
+inline void setErrorCode(ErrorCode code, Tokenizer *tk=global_tokenizer)
 {
-  global_tokenizer->error->code = code;
+  tk->error->code = code;
 }
 
-inline void attach(char *key, char *value)
+inline void attach(char *key, char *value, Tokenizer *tk=global_tokenizer)
 {
-  ParseError *error = global_tokenizer->error;
+  ParseError *error = tk->error;
   assert(error->attachment_count < arrayCount(error->attachments));
   error->attachments[error->attachment_count++] = {key, value};
 }
 
-inline void attach(char *key, Token *token)
+inline void attach(char *key, Token *token, Tokenizer *tk=global_tokenizer)
 {
   MemoryArena buffer = subArena(temp_arena, 1024);
   String value = print(&buffer, token->string);
-  attach(key, value.chars);
+  attach(key, value.chars, tk);
 }
 
-inline void attach(char *key, Ast *ast)
+inline void attach(char *key, Ast *ast, Tokenizer *tk=global_tokenizer)
 {
   MemoryArena buffer = subArena(temp_arena, 1024);
   char *value = print(&buffer, ast);
-  attach(key, value);
+  attach(key, value, tk);
 }
 
-inline void attach(char *key, Term *value)
+inline void attach(char *key, Term *value, Tokenizer *tk=global_tokenizer)
 {
   if (global_debug_mode)
   {
@@ -122,7 +122,7 @@ inline void attach(char *key, Term *value)
   }
   MemoryArena buffer = subArena(temp_arena, 1024);
   char *val = print(&buffer, value);
-  attach(key, val);
+  attach(key, val, tk);
 }
 
 // #define pushContext { ParseContext context = {(char*)__func__}; pushContext_(&context); }
@@ -502,16 +502,16 @@ parseError(Tokenizer *tk, Token *token, char *format, ...)
 }
 
 internal void
-tokenError(Token *token, char *message)
+tokenError(Token *token, char *message, Tokenizer *tk=global_tokenizer)
 {
-  parseError(token, "%s", message);
-  attach("token", token);
+  parseError(tk, token, "%s", message);
+  attach("token", token, tk);
 }
 
 internal void
-tokenError(char *message, Tokenizer *tk = global_tokenizer)
+tokenError(char *message, Tokenizer *tk=global_tokenizer)
 {
-  tokenError(&tk->last_token, message);
+  tokenError(&tk->last_token, message, tk);
 }
 
 inline b32

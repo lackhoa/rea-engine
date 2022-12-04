@@ -29,6 +29,7 @@ enum AstCategory {
   AC_ArrowA,
   AC_AccessorA,
   AC_ComputationA,
+  AC_Lambda,
 
   // Stuff in "sequence" context only, not general expressions.
   AC_Sequence,
@@ -42,14 +43,17 @@ enum TermCategory {
   Term_Null = 0,
   Term_Hole,
   Term_Builtin,
+
+  // todo maybe we can carve out "Value" from here
   Term_Union,
   Term_Constructor,
+  Term_Function,
+
   Term_Computation,
   Term_StackValue,
   Term_Accessor,
   Term_Composite,
   Term_Arrow,
-  Term_Function,
   Term_Rewrite,
 };
 
@@ -233,15 +237,15 @@ initValue(Term *in, TermCategory cat, Term *type)
 }
 
 inline Term *
-newValue_(MemoryArena *arena, TermCategory cat, Term *type, size_t size)
+newTerm_(MemoryArena *arena, TermCategory cat, Term *type, size_t size)
 {
   Term *out = (Term *)pushSize(arena, size, true);
   initValue(out, cat, type);
   return out;
 }
 
-#define newValue(arena, cat, type)              \
-  ((cat *) newValue_(arena, Term_##cat, type, sizeof(cat)))
+#define newTerm(arena, cat, type)              \
+  ((cat *) newTerm_(arena, Term_##cat, type, sizeof(cat)))
 
 struct Constructor
 {
@@ -260,26 +264,28 @@ struct Union
   Constructor *ctors;
 };
 
-embed_struct struct FunctionDecl
-{
+struct FunctionDecl {
   Ast       a;
+  ArrowA   *signature;
   Sequence *body;
-  ArrowA    *signature;
 };
 
 struct Function
 {
   embed_Term(v);
-  embed_FunctionDecl(function);
-  Stack *stack;
+  Token     name;
+  Sequence *body;
+  Stack    *stack;  // nocheckin wtf does this do?
 };
 
+Ast LET_TYPE_NORMALIZE_;
+Ast *LET_TYPE_NORMALIZE = &LET_TYPE_NORMALIZE_;
 struct Let
 {
   embed_Ast(a);
   Token  lhs;
   Ast   *rhs;
-  Ast   *type;  // optional type coercion. "hole" for normalization.
+  Ast   *type;
 };
 
 struct StackValue
@@ -494,5 +500,11 @@ struct Computation {
 struct SearchOutput {b32 found; TreePath *path;};
 
 struct CompareExpressions {Trinary result; TreePath *diff_path;};
+
+struct Lambda {
+  embed_Ast(a);
+  ArrowA   *signature;
+  Sequence *body;
+};
 
 #include "generated/engine_forward.h"

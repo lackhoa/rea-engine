@@ -14,7 +14,7 @@ Term * evaluate(MemoryArena * arena, Environment * env, Ast * in0);
 Term * evaluateAndNormalize(MemoryArena * arena, Environment * env, Ast * in0);
 void introduceOnStack(MemoryArena * arena, Environment * env, Token * name, Term * typev);
 void introduceOnStack(MemoryArena * arena, Environment * env, Token * name, Ast * type);
-void buildSequence(MemoryArena * arena, Environment * env, Sequence * sequence, Term * goal);
+b32 buildSequence(MemoryArena * arena, Environment * env, Sequence * sequence, Term * goal);
 void buildFork(MemoryArena * arena, Environment * env, Fork * fork, Term * expected_type);
 Expression buildExpression(MemoryArena * arena, Environment * env, Ast * in0, Term * goal);
 FunctionDecl * parseFunction(MemoryArena * arena, Token * name, b32 is_theorem);

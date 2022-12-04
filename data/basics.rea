@@ -50,29 +50,27 @@ testCurryingWeird :: fn (a: Nat) -> (b, c: Nat) -> (a+b)+c = a+(b+c)
  {++:
   ;; NOTE: the "a.p" is the weird part, which depends on rewrite rule to work,
   ;; and we need to support it.
-  out :: fn (b',c': Nat) -> (a.p+b')+c' = a.p+b'+c'
-  { addAssociative(a.p, b', c') },
+  out : (b',c': Nat) -> (a.p+b')+c' = a.p+b'+c' := _ => { addAssociative(a.p, b', c') }
+  out,
 
   0:
-  out :: fn (b, c: Nat) -> (a+b)+c = a+b+c
-  { addAssociative(a, b, c) }}}
+  out : (b, c: Nat) -> (a+b)+c = a+b+c := _ => { addAssociative(a, b, c) }
+  out}}
 #should_fail off
 
 testCurrying2 :: fn (a, b, c: Nat) -> (a+b)+c = a+(b+c)
-{fun :: fn (b',c': Nat) -> (a+b')+c' = a+(b'+c')
- { addAssociative(a, b', c') }
+{fun : (b',c': Nat) -> (a+b')+c' = a+(b'+c') := _ => { addAssociative(a, b', c') }
  fun(b,c)}
 
 #should_fail
 testCurrying2Fail :: fn (a, b, c: Nat) -> (a+b)+c = a+(b+c)
-{fun :: fn (c',b': Nat) -> (a+b')+c' = a+(b'+c')
- { addAssociative(a, b', c') }
+{fun : (c',b': Nat) -> (a+b')+c' = a+(b'+c') := _ => { addAssociative(a, b', c') }
  fun(b,c)}
 #should_fail off
 
 testCurrying3 :: fn (a: Nat) -> Nat
 {b := 3;
- f :: fn (n: Nat) -> Nat { n*b }
+ f : (n: Nat) -> Nat := _ => { n*b }
  f(a)}
 check_truth testCurrying3(2) = 6;
 
