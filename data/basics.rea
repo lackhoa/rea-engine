@@ -16,6 +16,8 @@ check True: Set;
 
 ;; print_raw =(_, true, false);
 
+check refl(true): true = true;
+
 check_truth false & true | true = true;
 
 testAbstraction :: fn (a, b: Bool) -> Bool
@@ -44,10 +46,8 @@ check_truth testLocalVariable(1) = 6;
 
 #should_fail
 testCurryingWeird :: fn (a: Nat) -> (b, c: Nat) -> (a+b)+c = a+(b+c)
-{
- fork a
- {
-  ++:
+{fork a
+ {++:
   ;; NOTE: the "a.p" is the weird part, which depends on rewrite rule to work,
   ;; and we need to support it.
   out :: fn (b',c': Nat) -> (a.p+b')+c' = a.p+b'+c'
@@ -55,33 +55,28 @@ testCurryingWeird :: fn (a: Nat) -> (b, c: Nat) -> (a+b)+c = a+(b+c)
 
   0:
   out :: fn (b, c: Nat) -> (a+b)+c = a+b+c
-  { addAssociative(a, b, c) }
-  }
- }
+  { addAssociative(a, b, c) }}}
 #should_fail off
 
 testCurrying2 :: fn (a, b, c: Nat) -> (a+b)+c = a+(b+c)
-{
- fun :: fn (b',c': Nat) -> (a+b')+c' = a+(b'+c')
+{fun :: fn (b',c': Nat) -> (a+b')+c' = a+(b'+c')
  { addAssociative(a, b', c') }
-
- fun(b,c)
- }
+ fun(b,c)}
 
 #should_fail
 testCurrying2Fail :: fn (a, b, c: Nat) -> (a+b)+c = a+(b+c)
-{
- fun :: fn (c',b': Nat) -> (a+b')+c' = a+(b'+c')
+{fun :: fn (c',b': Nat) -> (a+b')+c' = a+(b'+c')
  { addAssociative(a, b', c') }
-
- fun(b,c)
- }
+ fun(b,c)}
 #should_fail off
 
 testCurrying3 :: fn (a: Nat) -> Nat
-{
- b := 3;
+{b := 3;
  f :: fn (n: Nat) -> Nat { n*b }
- f(a)
- }
+ f(a)}
 check_truth testCurrying3(2) = 6;
+
+check_truth ((a,b: Nat) -> a+b = b+a) = ((A,B: Nat) -> A+B = B+A);
+#should_fail
+check_truth ((a,b: Nat) -> a+b = b+a) = ((A,B: Nat) -> A+B = B+B);
+#should_fail off

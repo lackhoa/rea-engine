@@ -201,8 +201,6 @@ struct Environment
   OverwriteRules *overwrite;
 };
 
-#define getStackDepth(stack) (stack ? stack->depth : 0)
-
 struct AstList
 {
   Ast     *first;
@@ -342,17 +340,20 @@ initComposite(Composite *app, Ast *op, s32 arg_count, Ast **args)
 embed_struct struct Arrow
 {
   embed_Ast(a);
-  Ast    *output_type;
-  s32     param_count;
+  i32     param_count;
   Token  *param_names;
   Ast   **param_types;
+  Ast    *output_type;
 };
 
 struct ArrowV
 {
   Value v;
-  embed_Arrow(arrow);
-  s32 stack_depth;
+  s32     param_count;
+  Token  *param_names;
+  Value **param_types;
+  Value  *output_type;
+  s32     stack_depth;
 };
 
 struct GlobalBinding
@@ -369,22 +370,20 @@ struct GlobalBindings  // :global-bindings-zero-at-startup
 };
 
 inline Union *
-getFormOf(Ast *in0)
+getConstructorOf(Value *in0)
 {
   Union *out = 0;
   switch (in0->cat)
   {
-    case AC_Composite:
+    case VC_CompositeV:
     {
-      if (Composite *in = castAst(in0, Composite))
-        if (Constant *op = castAst(in->op, Constant))
-          out = castValue(op->value, Union);
+      if (CompositeV *in = castValue(in0, CompositeV))
+        out = castValue(in->op, Union);
     } break;
 
-    case AC_Constant:
+    case VC_Union:
     {
-      if (Constant *in = castAst(in0, Constant))
-        out = castValue(in->value, Union);
+      out = castValue(in0, Union);
     } break;
 
     invalidDefaultCase;

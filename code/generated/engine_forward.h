@@ -12,7 +12,8 @@ Value * evaluateSequence(MemoryArena * arena, Environment * env, Sequence * sequ
 Value * normalize(MemoryArena * arena, Environment * env, Value * in0);
 Value * evaluate(MemoryArena * arena, Environment * env, Ast * in0);
 Value * evaluateAndNormalize(MemoryArena * arena, Environment * env, Ast * in0);
-void introduceOnStack(Environment * env, Token * name, Ast * type);
+void introduceOnStack(MemoryArena * arena, Environment * env, Token * name, Value * typev);
+void introduceOnStack(MemoryArena * arena, Environment * env, Token * name, Ast * type);
 void buildSequence(MemoryArena * arena, Environment * env, Sequence * sequence, Value * goal);
 void buildFork(MemoryArena * arena, Environment * env, Fork * fork, Value * expected_type);
 Expression buildExpression(MemoryArena * arena, Environment * env, Ast * in0, Value * goal);

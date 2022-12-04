@@ -39,13 +39,9 @@ check_truth even(3) = false;
 check_truth  2*3 = 6;
 
 - :: fn (n, m : Nat) -> Nat
-{
- fork n
- {
-  0  : 0,
-  ++ : fork(m) {0 : n, ++(m1) : n.p - m.p}
-  }
- }
+{fork n
+ {0  : 0,
+  ++ : fork(m) {0 : n, ++(m1) : n.p - m.p}}}
 
 check_truth 3 - 2 = 1;
 check_truth 4 - 1 = 3;
@@ -93,19 +89,24 @@ mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*b*c
 != :: fn (_A: Set, a, b: _A) -> Type
 { (E: a = b) -> False }
 
+testFillingHole :: (a: Nat, a_positive: a != 0, P: a=0) -> False
+{norm a_positive;
+ fork (a)
+ {0 : a_positive(_),  ;; since a is now 0, we can fill this hole.
+  ++: P}}
+print testFillingHole;
+
 multiplyPos :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
-{
- ;; TODO I'd like to just say "norm a_positive/b_positive" here.
- norm a_positive;
- norm b_positive;
+{norm a_positive; norm b_positive;
  out :: fn (e: a*b = 0) -> False
  {fork a
   {0: a_positive(_),
-   ;; todo: we can't fill hole for a_positive because the code path
-   ;; for filling in arguments is too dumb.
-
-   ++:
-   fork b
-   {0:  b_positive(_),
-    ++: e}}}
+   ++: fork b {0: b_positive(_), ++: e}}}
  out}
+
+;; showing off now that we have arrow type normalization
+multiplyPosv2 :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
+{norm a_positive; norm b_positive;
+ fork a
+ {0 : out :: fn (e: 0 = 0) -> False {a_positive(_)}; out,
+  ++: out :: fn (E: b + a.p * b = 0) -> False {fork b {0: b_positive(_); , ++: E}}; out}}

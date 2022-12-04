@@ -1,24 +1,14 @@
 Bool :: union {false, true}
 
 & :: fn (a, b: Bool) -> Bool
-{
- fork a
- {
-  false: false,
-  true:  b
-  }
- }
+{fork a
+ {false: false,
+  true:  b}}
 
 | :: fn (a, b: Bool) -> Bool
-{
- fork a
- {
-  true:  true,
-  false: b,
-  }
- }
-
-check refl(true): true = true;
+{fork a
+ {true:  true,
+  false: b}}
 
 andAssociative :: fn (a, b, c: Bool) -> ((a & b) & c = a & b & c)
 {fork a
