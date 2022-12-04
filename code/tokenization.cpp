@@ -111,7 +111,7 @@ inline void attach(char *key, Ast *ast)
   attach(key, value);
 }
 
-inline void attach(char *key, Value *value)
+inline void attach(char *key, Term *value)
 {
   if (global_debug_mode)
   {

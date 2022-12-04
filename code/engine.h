@@ -11,8 +11,8 @@ global_variable MemoryArena __attribute__((unused)) *temp_arena;
 global_variable b32 __attribute__((unused)) global_debug_mode;
 global_variable MemoryArena __attribute__((unused))*permanent_arena;
 
+struct Term;
 struct ArrowA;
-struct Value;
 struct LocalBindings;
 
 enum AstCategory {
@@ -38,19 +38,19 @@ enum AstCategory {
   AC_Let,
 };
 
-enum ValueCategory {
-  VC_Null = 0,
-  VC_Hole,
-  VC_Builtin,
-  VC_Composite,
-  VC_Arrow,
-  VC_Function,
-  VC_StackValue,
-  VC_Union,
-  VC_Constructor,
-  VC_Rewrite,
-  VC_Computation,
-  VC_Accessor,
+enum TermCategory {
+  Term_Null = 0,
+  Term_Hole,
+  Term_Builtin,
+  Term_Union,
+  Term_Constructor,
+  Term_Computation,
+  Term_StackValue,
+  Term_Accessor,
+  Term_Composite,
+  Term_Arrow,
+  Term_Function,
+  Term_Rewrite,
 };
 
 embed_struct struct Ast
@@ -60,7 +60,7 @@ embed_struct struct Ast
 };
 
 inline Ast **
-toAsts(Value **values)
+toAsts(Term **values)
 {
   return (Ast **) values;
 }
@@ -86,7 +86,7 @@ newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
 #define castAst(exp, Cat) ((exp)->cat == AC_##Cat ? (Cat*)(exp) : 0)
 #define polyAst(exp, Cat, Cat2) (((exp)->cat == AC_##Cat || (exp)->cat == AC_##Cat2) ? (Cat*)(exp) : 0)
 
-#define castValue(exp, Cat) ((exp)->cat == VC_##Cat ? (Cat*)(exp) : 0)
+#define castTerm(exp, Cat) ((exp)->cat == Term_##Cat ? (Cat*)(exp) : 0)
 
 struct Hole       {embed_Ast(a)};
 struct Identifier {embed_Ast(a)};
@@ -109,7 +109,7 @@ initVariable(Variable *var, u32 id)
 struct Constant
 {
   Ast    a;
-  Value *value;
+  Term *value;
   b32    is_synthetic;
 };
 
@@ -122,7 +122,7 @@ struct Sequence
 };
 
 inline Constant *
-newSyntheticConstant(MemoryArena *arena, Value *value)
+newSyntheticConstant(MemoryArena *arena, Term *value)
 {
   Token token = newToken("<synthetic>");
   Constant *out = newAst(arena, Constant, &token);
@@ -132,7 +132,7 @@ newSyntheticConstant(MemoryArena *arena, Value *value)
 }
 
 inline Constant *
-newSyntheticConstant(MemoryArena *arena, Value *value, Token *token)
+newSyntheticConstant(MemoryArena *arena, Term *value, Token *token)
 {
   Constant *out = newAst(arena, Constant, token);
   out->is_synthetic = true;
@@ -174,8 +174,8 @@ enum Trinary
 
 struct OverwriteRules
 {
-  Value *lhs;
-  Value *rhs;
+  Term *lhs;
+  Term *rhs;
   OverwriteRules *next;
 };
 
@@ -184,7 +184,7 @@ struct Stack
   Stack *outer;
   s32    depth;
   s32    count;
-  Value *items[32];              // todo: compute this cap
+  Term *items[32];              // todo: compute this cap
 };
 
 // used in normalization, build/typecheck, etc.
@@ -217,35 +217,35 @@ struct LocalBindings
   s32 count;
 };
 
-embed_struct struct Value
+embed_struct struct Term
 {
-  ValueCategory  cat;
-  Value         *type;
+  TermCategory  cat;
+  Term         *type;
 };
 
-typedef Value Builtin;
+typedef Term Builtin;
 
 inline void
-initValue(Value *in, ValueCategory cat, Value *type)
+initValue(Term *in, TermCategory cat, Term *type)
 {
   in->cat  = cat;
   in->type = type;
 }
 
-inline Value *
-newValue_(MemoryArena *arena, ValueCategory cat, Value *type, size_t size)
+inline Term *
+newValue_(MemoryArena *arena, TermCategory cat, Term *type, size_t size)
 {
-  Value *out = (Value *)pushSize(arena, size, true);
+  Term *out = (Term *)pushSize(arena, size, true);
   initValue(out, cat, type);
   return out;
 }
 
 #define newValue(arena, cat, type)              \
-  ((cat *) newValue_(arena, VC_##cat, type, sizeof(cat)))
+  ((cat *) newValue_(arena, Term_##cat, type, sizeof(cat)))
 
 struct Constructor
 {
-  embed_Value(v);
+  embed_Term(v);
   Union *uni;
   Token  name;
   s32    id;
@@ -253,7 +253,7 @@ struct Constructor
 
 struct Union
 {
-  embed_Value(v);
+  embed_Term(v);
   Token name;
 
   s32          ctor_count;
@@ -269,7 +269,7 @@ embed_struct struct FunctionDecl
 
 struct Function
 {
-  embed_Value(v);
+  embed_Term(v);
   embed_FunctionDecl(function);
   Stack *stack;
 };
@@ -284,7 +284,7 @@ struct Let
 
 struct StackValue
 {
-  Value v;
+  Term v;
 
   Token name;
   s32   id;
@@ -299,8 +299,8 @@ struct TreePath
 
 struct Accessor
 {
-  embed_Value(v);
-  Value *record;
+  embed_Term(v);
+  Term *record;
   s32    field_id;
   String field_name;            // #todo #debug_only
 };
@@ -315,10 +315,10 @@ struct CompositeA
 
 struct Composite
 {
-  embed_Value(v);
-  Value  *op;
+  embed_Term(v);
+  Term  *op;
   s32     arg_count;
-  Value **args;
+  Term **args;
 };
 
 inline void
@@ -340,11 +340,11 @@ struct ArrowA
 
 struct Arrow
 {
-  Value v;
+  Term v;
   s32     param_count;
   Token  *param_names;
-  Value **param_types;
-  Value  *output_type;
+  Term **param_types;
+  Term  *output_type;
   s32     stack_depth;
 };
 
@@ -352,7 +352,7 @@ struct GlobalBinding
 {
   String key;
   s32    count;
-  Value *(items[8]);           // todo: #grow
+  Term *(items[8]);           // todo: #grow
   GlobalBinding *next_hash_slot;
 };
 
@@ -362,20 +362,20 @@ struct GlobalBindings  // :global-bindings-zero-at-startup
 };
 
 inline Union *
-getConstructorOf(Value *in0)
+getConstructorOf(Term *in0)
 {
   Union *out = 0;
   switch (in0->cat)
   {
-    case VC_Composite:
+    case Term_Composite:
     {
-      if (Composite *in = castValue(in0, Composite))
-        out = castValue(in->op, Union);
+      if (Composite *in = castTerm(in0, Composite))
+        out = castTerm(in->op, Union);
     } break;
 
-    case VC_Union:
+    case Term_Union:
     {
-      out = castValue(in0, Union);
+      out = castTerm(in0, Union);
     } break;
 
     invalidDefaultCase;
@@ -386,7 +386,7 @@ getConstructorOf(Value *in0)
 struct Expression
 {
   Ast   *ast;
-  Value *value;
+  Term *value;
   operator bool() { return ast && value; }
 };
 
@@ -447,13 +447,13 @@ struct Matcher
   MatcherCategory cat;
   union
   {
-    Value *Exact;
-    Value *OutType;
+    Term *Exact;
+    Term *OutType;
   };
   operator bool() { return (cat == MC_Exact) && (Exact == 0); }
 };
 
-inline Matcher exactMatch(Value *value)
+inline Matcher exactMatch(Term *value)
 {
   return Matcher{.cat=MC_Exact, .Exact=value};
 }
@@ -461,22 +461,22 @@ inline Matcher exactMatch(Value *value)
 struct ValueArray
 {
   s32     count;
-  Value **items;
+  Term **items;
 };
 
 struct AstArray
 {
   s32    count;
-  Value *items;
+  Term *items;
 };
 
 struct Rewrite
 {
-  embed_Value(v);
+  embed_Term(v);
   TreePath  *path;
-  Value     *eq_proof;
+  Term     *eq_proof;
   b32        right_to_left;
-  Value     *body;
+  Term     *body;
 };
 
 struct ComputationA {
@@ -486,9 +486,9 @@ struct ComputationA {
 };
 
 struct Computation {
-  embed_Value(v);
-  Value *lhs;
-  Value *rhs;
+  embed_Term(v);
+  Term *lhs;
+  Term *rhs;
 };
 
 struct SearchOutput {b32 found; TreePath *path;};
