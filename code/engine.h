@@ -39,11 +39,9 @@ enum AstCategory {
 };
 
 enum ValueCategory {
-  VC_Null,
+  VC_Null = 0,
   VC_Hole,
-  VC_BuiltinSet,
-  VC_BuiltinType,
-  VC_BuiltinEqual,
+  VC_Builtin,
   VC_Composite,
   VC_Arrow,
   VC_Function,
@@ -225,9 +223,7 @@ embed_struct struct Value
   Value         *type;
 };
 
-struct BuiltinType  {embed_Value(v)};
-struct BuiltinSet   {embed_Value(v)};
-struct BuiltinEqual {embed_Value(v)};
+typedef Value Builtin;
 
 inline void
 initValue(Value *in, ValueCategory cat, Value *type)
@@ -430,13 +426,13 @@ struct PrintOptions{b32 detailed; b32 print_type; s32 indentation; int no_paren_
 
 struct Builtins
 {
-  Union        *True;
-  Constructor  *truth;
-  Union        *False;
-  BuiltinEqual *equal;
-  BuiltinSet   *Set;
-  BuiltinType  *Type;
-  Constructor  *refl;
+  Union       *True;
+  Constructor *truth;
+  Union       *False;
+  Builtin     *equal;
+  Builtin     *Set;
+  Builtin     *Type;
+  Constructor *refl;
 };
 
 enum MatcherCategory

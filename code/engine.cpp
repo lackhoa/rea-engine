@@ -175,9 +175,7 @@ deepCopy(MemoryArena *arena, Value *in0)
       out0 = &out->v;
     } break;
 
-    case VC_BuiltinSet:
-    case VC_BuiltinType:
-    case VC_BuiltinEqual:
+    case VC_Builtin:
     case VC_Union:
     case VC_Constructor:
     case VC_Function:
@@ -718,19 +716,14 @@ print(MemoryArena *buffer, Value *in0, PrintOptions opt)
         print(buffer, in->output_type, new_opt);
       } break;
 
-      case VC_BuiltinEqual:
+      case VC_Builtin:
       {
-        print(buffer, "=");
-      } break;
-
-      case VC_BuiltinSet:
-      {
-        print(buffer, "Set");
-      } break;
-
-      case VC_BuiltinType:
-      {
-        print(buffer, "Type");
+        if (in0 == builtins.equal)
+          print(buffer, "=");
+        else if (in0 == builtins.Set)
+          print(buffer, "Set");
+        else if (in0 == builtins.Type)
+          print(buffer, "Type");
       } break;
 
       case VC_Constructor:
@@ -959,9 +952,7 @@ evaluateArrow(MemoryArena *arena, i32 env_depth, Value **args, i32 depth, Value 
         out0 = &out->v;
       } break;
 
-      case VC_BuiltinSet:
-      case VC_BuiltinType:
-      case VC_BuiltinEqual:
+      case VC_Builtin:
       case VC_Union:
       case VC_Constructor:
       case VC_Function:
@@ -1101,9 +1092,7 @@ compareExpressions(MemoryArena *arena, Value *lhs0, Value *rhs0)
         out.result = compareExpressions(arena, lhs->record, rhs->record).result;
       } break;
 
-      case VC_BuiltinEqual:
-      case VC_BuiltinType:
-      case VC_BuiltinSet:
+      case VC_Builtin:
       {
         out.result = Trinary_True;
       } break;
@@ -1279,7 +1268,7 @@ struct ValuePair {Value *lhs; Value *rhs;};
 inline ValuePair getEqualitySides(Value *eq0)
 {
   Composite *eq = castValue(eq0, Composite);
-  assert(eq->op == &builtins.equal->v);
+  assert(eq->op == builtins.equal);
   return ValuePair{eq->args[1], eq->args[2]};
 }
 
@@ -1485,9 +1474,9 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
       }
       else
       {
-        assert((norm_op->cat == VC_BuiltinEqual) || (norm_op->cat == VC_Constructor) || (norm_op->cat == VC_StackValue));
+        assert((norm_op == builtins.equal) || (norm_op->cat == VC_Constructor) || (norm_op->cat == VC_StackValue));
 #if 1  // special casing for equality
-        if (norm_op->cat == VC_BuiltinEqual)
+        if (norm_op == builtins.equal)
         {// special case for equality
           Value *lhs = norm_args[1];
           Value *rhs = norm_args[2];
@@ -1545,9 +1534,7 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
     case VC_Null:
     case VC_Hole:
     case VC_Constructor:
-    case VC_BuiltinSet:
-    case VC_BuiltinType:
-    case VC_BuiltinEqual:
+    case VC_Builtin:
     case VC_Function:
     case VC_StackValue:
     case VC_Union:
@@ -1699,9 +1686,7 @@ isGlobalValue(Value *value)
     } break;
 
     case VC_Null:
-    case VC_BuiltinSet:
-    case VC_BuiltinType:
-    case VC_BuiltinEqual:
+    case VC_Builtin:
     case VC_Union:
     case VC_Constructor:
     {
@@ -1791,7 +1776,7 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
     case AC_ArrowA:
     {
       ArrowA  *in  = castAst(in0, ArrowA);
-      Arrow *out = newValue(arena, Arrow, &builtins.Type->v);
+      Arrow *out = newValue(arena, Arrow, builtins.Type);
       out->param_count = in->param_count;
       out->param_names = in->param_names;
 
@@ -1826,8 +1811,8 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
       Value *rhs = evaluate(arena, env, computation->rhs);
 
       // TODO: the "tactics" code proliferates too much
-      Composite *eq = newValue(arena, Composite, &builtins.Set->v);
-      eq->op        = &builtins.equal->v;
+      Composite *eq = newValue(arena, Composite, builtins.Set);
+      eq->op        = builtins.equal;
       eq->arg_count = 3;
       allocateArray(arena, eq->arg_count, eq->args);
       eq->args[0] = lhs->type;
@@ -2235,9 +2220,7 @@ hasFreeVars(Value *in0)
       return hasFreeVars(in->record);
     } break;
 
-    case VC_BuiltinSet:
-    case VC_BuiltinType:
-    case VC_BuiltinEqual:
+    case VC_Builtin:
     case VC_Union:
     case VC_Constructor:
     {return false;}
@@ -2386,9 +2369,7 @@ valueToAst(MemoryArena *arena, Environment *env, Value* value)
       out0 = &out->a;
     } break;
 
-    case VC_BuiltinEqual:
-    case VC_BuiltinSet:
-    case VC_BuiltinType:
+    case VC_Builtin:
     case VC_Union:
     case VC_Function:
     case VC_Constructor:
@@ -2464,9 +2445,7 @@ searchExpression(MemoryArena *arena, Value *lhs, Value* in0)
       case VC_Hole:
       case VC_Computation:
       case VC_StackValue:
-      case VC_BuiltinEqual:
-      case VC_BuiltinSet:
-      case VC_BuiltinType:
+      case VC_Builtin:
       case VC_Union:
       case VC_Function:
       case VC_Constructor:
@@ -2954,8 +2933,8 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
                   {
                     Value *output_type = arrowv->output_type;
 
-                    Composite *eq = newValue(temp_arena, Composite, &builtins.Set->v);
-                    eq->op        = &builtins.equal->v;
+                    Composite *eq = newValue(temp_arena, Composite, builtins.Set);
+                    eq->op        = builtins.equal;
                     eq->arg_count = 3;
                     allocateArray(temp_arena, 3, eq->args);
                     eq->args[0]   = from->type;
@@ -2985,7 +2964,7 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
                   }
                   else if (Composite *composite = castValue(hint->type, Composite))
                   {
-                    if (composite->op == &builtins.equal->v)
+                    if (composite->op == builtins.equal)
                       eq_proof = hint;
                     else
                     {
@@ -3003,7 +2982,7 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
                   {
                     if (Composite *eq = castValue(eq_proof->type, Composite))
                     {
-                      if (eq->op == &builtins.equal->v)
+                      if (eq->op == builtins.equal)
                       {
                         Value *from, *to;
                         if (rewrite->right_to_left) {from = eq->args[2]; to = eq->args[1];}
@@ -3048,7 +3027,7 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
             rewrite->eq_proof = eq_proof.ast;
             if (Composite *eq = castValue(eq_proof.value->type, Composite))
             {
-              if (eq->op == &builtins.equal->v)
+              if (eq->op == builtins.equal)
               {
                 Value *from, *to;
                 rule_valid = true;
@@ -3095,7 +3074,7 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
       b32 goal_valid = false;
       if (Composite *eq = castValue(goal, Composite))
       {
-        if (eq->op == &builtins.equal->v)
+        if (eq->op == builtins.equal)
         {
           goal_valid = true;
           Value *lhs = normalize(temp_arena, env, eq->args[1]);
@@ -3232,7 +3211,7 @@ fillHole(MemoryArena *arena, Environment *env, Token *token, Value *goal)
   }
   else if (Composite *eq = castValue(goal, Composite))
   {
-    if (eq->op->cat == VC_BuiltinEqual)
+    if (eq->op == builtins.equal)
     {
       if (equalB32(normalize(temp_arena, env, eq->args[1]),
                    normalize(temp_arena, env, eq->args[2])))
@@ -3477,8 +3456,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *goal)
                           synthetic->id          = ref->id;  // :stack-ref-id-has-significance
                         } break;
 
-                        case VC_BuiltinSet:
-                        case VC_BuiltinType:
+                        case VC_Builtin:
                         case VC_Union:
                         {
                           Constant *synthetic = newSyntheticConstant(arena, arg.value->type);
@@ -4135,7 +4113,7 @@ parseUnionCase(MemoryArena *arena, Union *uni)
     }
     else
     {// constructor as a sole tag
-      if (uni->type == &builtins.Set->v)
+      if (uni->type == builtins.Set)
       {
         initValue(&out->v, VC_Constructor, &uni->v);
         out->name = tag;
@@ -4156,7 +4134,7 @@ internal void
 parseUnion(MemoryArena *arena, Token *name)
 {
   // NOTE: the type is in scope of its own constructor.
-  Value *type = &builtins.Set->v;
+  Value *type = builtins.Set;
   if (optionalChar(':'))
   {// type override
     b32 valid_type = false;
@@ -4165,10 +4143,10 @@ parseUnion(MemoryArena *arena, Token *name)
       Value *norm_type = evaluate(arena, type_parsing.ast);
       if (Arrow *arrow = castValue(norm_type, Arrow))
       {
-        if (arrow->output_type == &builtins.Set->v)
+        if (arrow->output_type == builtins.Set)
           valid_type = true;
       }
-      else if (norm_type == &builtins.Set->v)
+      else if (norm_type == builtins.Set)
         valid_type = true;
 
       if (valid_type)
@@ -4370,7 +4348,7 @@ parseTopLevel(EngineState *state)
           if (Composite *eq = castValue(goal, Composite))
           {
             b32 goal_valid = false;
-            if (eq->op == &builtins.equal->v)
+            if (eq->op == builtins.equal)
             {
               goal_valid = true;
               Value *lhs = normalize(temp_arena, empty_env, eq->args[1]);
@@ -4589,12 +4567,12 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
     builtins = {};
     {// Type and Set
       // Token superset_name = newToken("Type");
-      builtins.Type = newValue(arena, BuiltinType, 0);
-      builtins.Type->type = &builtins.Type->v; // NOTE: circular types, might bite us
-      addBuiltinGlobalBinding("Type", &builtins.Type->v);
+      builtins.Type = newValue(arena, Builtin, 0);
+      builtins.Type->type = builtins.Type; // NOTE: circular types, might bite us
+      addBuiltinGlobalBinding("Type", builtins.Type);
 
-      builtins.Set = newValue(arena, BuiltinSet, &builtins.Type->v);
-      addBuiltinGlobalBinding("Set", &builtins.Set->v);
+      builtins.Set = newValue(arena, Builtin, builtins.Type);
+      addBuiltinGlobalBinding("Set", builtins.Set);
     }
 
     {// more builtins
@@ -4602,8 +4580,8 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
       global_tokenizer = &builtin_tk;
       builtin_tk.at = "(_A: Set, a, b: _A) -> Set";
       Expression equal_type = parseExpressionFull(arena); 
-      builtins.equal = newValue(arena, BuiltinEqual, equal_type.value);
-      addBuiltinGlobalBinding("=", &builtins.equal->v);
+      builtins.equal = newValue(arena, Builtin, equal_type.value);
+      addBuiltinGlobalBinding("=", builtins.equal);
 
       builtin_tk.at = "(_A: Set, x: _A) -> =(_A, x, x)";
       Expression refl_type = parseExpressionFull(arena);
