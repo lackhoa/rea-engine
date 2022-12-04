@@ -66,10 +66,10 @@ deepCopy(MemoryArena *arena, Ast *in0)
       out0 = &out->a;
     } break;
 
-    case AC_Composite:
+    case AC_CompositeA:
     {
-      Composite *in = castAst(in0, Composite);
-      Composite *out = copyStruct(arena, in);
+      CompositeA *in = castAst(in0, CompositeA);
+      CompositeA *out = copyStruct(arena, in);
       out->op = deepCopy(arena, in->op);
       allocateArray(arena, out->arg_count, out->args);
       for (s32 id=0; id < in->arg_count; id++)
@@ -79,10 +79,10 @@ deepCopy(MemoryArena *arena, Ast *in0)
       out0 = &out->a;
     } break;
 
-    case AC_Arrow:
+    case AC_ArrowA:
     {
-      Arrow *in = castAst(in0, Arrow);
-      Arrow *out = copyStruct(arena, in);
+      ArrowA *in = castAst(in0, ArrowA);
+      ArrowA *out = copyStruct(arena, in);
       out->output_type = deepCopy(arena, in->output_type);
       allocateArray(arena, out->param_count, out->param_types);
       for (s32 id=0; id < in->param_count; id++)
@@ -111,18 +111,18 @@ deepCopy(MemoryArena *arena, Ast *in0)
       out0 = &out->a;
     } break;
 
-    case AC_Rewrite:
+    case AC_RewriteA:
     {
-      Rewrite *in = castAst(in0, Rewrite);
-      Rewrite *out = copyStruct(arena, in);
+      RewriteA *in = castAst(in0, RewriteA);
+      RewriteA *out = copyStruct(arena, in);
       out->eq_proof = deepCopy(arena, in->eq_proof);
       out0 = &out->a;
     } break;
 
-    case AC_Accessor:
+    case AC_AccessorA:
     {
-      Accessor *in = castAst(in0, Accessor);
-      Accessor *out = copyStruct(arena, in);
+      AccessorA *in = castAst(in0, AccessorA);
+      AccessorA *out = copyStruct(arena, in);
       out->record = deepCopy(arena, in->record);
       out0 = &out->a;
     } break;
@@ -145,10 +145,10 @@ deepCopy(MemoryArena *arena, Value *in0)
       out0 = &out->v;
     } break;
 
-    case VC_CompositeV:
+    case VC_Composite:
     {
-      CompositeV *in  = castValue(in0, CompositeV);
-      CompositeV *out = copyStruct(arena, in);
+      Composite *in  = castValue(in0, Composite);
+      Composite *out = copyStruct(arena, in);
       out->op = deepCopy(arena, in->op);
       allocateArray(arena, in->arg_count, out->args);
       for (i32 id=0; id < in->arg_count; id++)
@@ -156,10 +156,10 @@ deepCopy(MemoryArena *arena, Value *in0)
       out0 = &out->v;
     } break;
 
-    case VC_ArrowV:
+    case VC_Arrow:
     {
-      ArrowV *in  = castValue(in0, ArrowV);
-      ArrowV *out = copyStruct(arena, in);
+      Arrow *in  = castValue(in0, Arrow);
+      Arrow *out = copyStruct(arena, in);
       allocateArray(arena, in->param_count, out->param_types);
       for (i32 id=0; id < in->param_count; id++)
         out->param_types[id] = deepCopy(arena, in->param_types[id]);
@@ -167,10 +167,10 @@ deepCopy(MemoryArena *arena, Value *in0)
       out0 = &out->v;
     } break;
 
-    case VC_AccessorV:
+    case VC_Accessor:
     {
-      AccessorV *in  = castValue(in0, AccessorV);
-      AccessorV *out = copyStruct(arena, in);
+      Accessor *in  = castValue(in0, Accessor);
+      Accessor *out = copyStruct(arena, in);
       out->record = deepCopy(arena, in->record);
       out0 = &out->v;
     } break;
@@ -180,7 +180,7 @@ deepCopy(MemoryArena *arena, Value *in0)
     case VC_BuiltinEqual:
     case VC_Union:
     case VC_Constructor:
-    case VC_FunctionV:
+    case VC_Function:
     {out0 = in0;} break;
 
     default: todoIncomplete;
@@ -316,13 +316,13 @@ debugDedent()
 #define NULL_WHEN_ERROR(name) if (noError()) {assert(name);} else {name = {};}
 
 inline b32
-paramImplied(Arrow *arrow, s32 param_id)
+paramImplied(ArrowA *arrow, s32 param_id)
 {
   return arrow->param_names[param_id].string.chars[0] == '_';
 }
 
 inline b32
-paramImplied(ArrowV *arrow, s32 param_id)
+paramImplied(Arrow *arrow, s32 param_id)
 {
   return arrow->param_names[param_id].string.chars[0] == '_';
 }
@@ -361,26 +361,26 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_value, PrintOptions opt)
 
   Ast   *ast   = (Ast *)in0;
   Value *value = (Value *)in0;
-  ArrowV *op_type = 0;
+  Arrow *op_type = 0;
   if (is_value)
   {
-    CompositeV *in = castValue(value, CompositeV);
+    Composite *in = castValue(value, Composite);
     op       = in->op;
     raw_args = (void **)in->args;
-    op_type  = castValue(in->op->type, ArrowV);
+    op_type  = castValue(in->op->type, Arrow);
     assert(op_type);
 
-    if (FunctionV *op_fun = castValue(in->op, FunctionV))
+    if (Function *op_fun = castValue(in->op, Function))
       precedence = precedenceOf(&op_fun->a.token);
   }
   else
   {
-    Composite *in = castAst(ast, Composite);
+    CompositeA *in = castAst(ast, CompositeA);
     op       = in->op;
     raw_args = (void **)in->args;
     if (Constant *op = castAst(in->op, Constant))
     {
-      op_type = castValue(op->value->type, ArrowV);
+      op_type = castValue(op->value->type, Arrow);
       assert(op_type);
     }
     else arg_count = in->arg_count;
@@ -525,9 +525,9 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         }
       } break;
 
-      case AC_Rewrite:
+      case AC_RewriteA:
       {
-        Rewrite *in = castAst(in0, Rewrite);
+        RewriteA *in = castAst(in0, RewriteA);
         print(buffer, "rewrite");
         print(buffer, in->path);
         print(buffer, " ");
@@ -535,7 +535,7 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         print(buffer, in->eq_proof, new_opt);
       } break;
 
-      case AC_Composite:
+      case AC_CompositeA:
       {
         printComposite(buffer, in0, false, new_opt);
       } break;
@@ -565,9 +565,9 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         print(buffer, "}");
       } break;
 
-      case AC_Arrow:
+      case AC_ArrowA:
       {
-        Arrow *in = castAst(in0, Arrow);
+        ArrowA *in = castAst(in0, ArrowA);
         print(buffer, "(");
         for (int param_id = 0;
              param_id < in->param_count;
@@ -584,17 +584,12 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         print(buffer, in->output_type, new_opt);
       } break;
 
-      case AC_Accessor:
+      case AC_AccessorA:
       {
-        Accessor *in = castAst(in0, Accessor);
+        AccessorA *in = castAst(in0, AccessorA);
         print(buffer, in->record, new_opt);
         print(buffer, ".");
         print(buffer, in->field_name);
-      } break;
-
-      case AC_Replace:
-      {
-        print(buffer, "replace");
       } break;
 
       case AC_FunctionDecl:
@@ -607,9 +602,9 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         print(buffer, "let");
       } break;
 
-      case AC_Computation:
+      case AC_ComputationA:
       {
-        Computation *computation = castAst(in0, Computation);
+        ComputationA *computation = castAst(in0, ComputationA);
         print(buffer, "computation: (");
         print(buffer, computation->lhs, new_opt);
         print(buffer, ") => (");
@@ -662,7 +657,7 @@ print(MemoryArena *buffer, Value *in0, PrintOptions opt)
 #endif
       } break;
 
-      case VC_CompositeV:
+      case VC_Composite:
       {
         printComposite(buffer, in0, true, new_opt);
       } break;
@@ -691,9 +686,9 @@ print(MemoryArena *buffer, Value *in0, PrintOptions opt)
           print(buffer, in->name);
       } break;
 
-      case VC_FunctionV:
+      case VC_Function:
       {
-        FunctionV *in = castValue(in0, FunctionV);
+        Function *in = castValue(in0, Function);
         print(buffer, in->a.token);
         if (opt.detailed)
         {
@@ -704,9 +699,9 @@ print(MemoryArena *buffer, Value *in0, PrintOptions opt)
         }
       } break;
 
-      case VC_ArrowV:
+      case VC_Arrow:
       {
-        ArrowV *in = castValue(in0, ArrowV);
+        Arrow *in = castValue(in0, Arrow);
         print(buffer, "(");
         for (int param_id = 0;
              param_id < in->param_count;
@@ -744,9 +739,9 @@ print(MemoryArena *buffer, Value *in0, PrintOptions opt)
         print(buffer, in->name);
       } break;
 
-      case VC_RewriteV:
+      case VC_Rewrite:
       {
-        RewriteV *rewrite = castValue(in0, RewriteV);
+        Rewrite *rewrite = castValue(in0, Rewrite);
         print(buffer, rewrite->type, new_opt);
         print(buffer, " <=>");
         newlineAndIndent(buffer, opt.indentation);
@@ -767,19 +762,19 @@ print(MemoryArena *buffer, Value *in0, PrintOptions opt)
         print(buffer, rewrite->body, new_opt);
       } break;
 
-      case VC_ComputationV:
+      case VC_Computation:
       {
         print(buffer, "computation: (");
-        ComputationV *computation = castValue(in0, ComputationV);
+        Computation *computation = castValue(in0, Computation);
         print(buffer, computation->lhs, new_opt);
         print(buffer, ") => (");
         print(buffer, computation->rhs, new_opt);
         print(buffer, "(");
       } break;
 
-      case VC_AccessorV:
+      case VC_Accessor:
       {
-        AccessorV *in = castValue(in0, AccessorV);
+        Accessor *in = castValue(in0, Accessor);
         print(buffer, in->record, new_opt);
         print(buffer, ".");
         print(buffer, in->field_name);
@@ -861,10 +856,10 @@ inline b32 equal(Ast *lhs, Ast *rhs)
         return (l->id == r->id && l->stack_delta == r->stack_delta);
       } break;
 
-      case AC_Composite:
+      case AC_CompositeA:
       {
-        auto l = castAst(lhs, Composite);
-        auto r = castAst(rhs, Composite);
+        auto l = castAst(lhs, CompositeA);
+        auto r = castAst(rhs, CompositeA);
         if (l->op == r->op)
         {
           if (l->arg_count == r->arg_count)
@@ -898,7 +893,7 @@ inline b32 equal(Ast *lhs, Ast *rhs)
 inline b32
 isCompositeConstructor(Value *in0)
 {
-  if (CompositeV *in = castValue(in0, CompositeV))
+  if (Composite *in = castValue(in0, Composite))
     return in->op->cat == VC_Constructor;
   else
     return false;
@@ -930,11 +925,11 @@ evaluateArrow(MemoryArena *arena, i32 env_depth, Value **args, i32 depth, Value 
         if (!out0) out0 = in0;
       } break;
 
-      case VC_CompositeV:
+      case VC_Composite:
       {
-        CompositeV *in  = castValue(in0, CompositeV);
+        Composite *in  = castValue(in0, Composite);
         assert(in->type);
-        CompositeV *out = copyStruct(arena, in);
+        Composite *out = copyStruct(arena, in);
         out->op = evaluateArrow(arena, env_depth, args, depth, in->op);
         allocateArray(arena, in->arg_count, out->args);
         for (i32 id=0; id < in->arg_count; id++)
@@ -942,10 +937,10 @@ evaluateArrow(MemoryArena *arena, i32 env_depth, Value **args, i32 depth, Value 
         out0 = &out->v;
       } break;
 
-      case VC_ArrowV:
+      case VC_Arrow:
       {
-        ArrowV *in  = castValue(in0, ArrowV);
-        ArrowV *out = copyStruct(arena, in);
+        Arrow *in  = castValue(in0, Arrow);
+        Arrow *out = copyStruct(arena, in);
         out->stack_depth = in->stack_depth + depth_bump;
         allocateArray(arena, out->param_count, out->param_types);
         for (int id=0; id < out->param_count; id++)
@@ -956,10 +951,10 @@ evaluateArrow(MemoryArena *arena, i32 env_depth, Value **args, i32 depth, Value 
         out0 = &out->v;
       } break;
 
-      case VC_AccessorV:
+      case VC_Accessor:
       {
-        AccessorV *in  = castValue(in0, AccessorV);
-        AccessorV *out = copyStruct(arena, in);
+        Accessor *in  = castValue(in0, Accessor);
+        Accessor *out = copyStruct(arena, in);
         out->record = evaluateArrow(arena, env_depth, args, depth, in->record);
         out0 = &out->v;
       } break;
@@ -969,7 +964,7 @@ evaluateArrow(MemoryArena *arena, i32 env_depth, Value **args, i32 depth, Value 
       case VC_BuiltinEqual:
       case VC_Union:
       case VC_Constructor:
-      case VC_FunctionV:
+      case VC_Function:
       {out0=in0;} break;
 
       default:
@@ -1018,10 +1013,10 @@ compareExpressions(MemoryArena *arena, Value *lhs0, Value *rhs0)
           out.result = Trinary_True;
       } break;
 
-      case VC_ArrowV:
+      case VC_Arrow:
       {
-        ArrowV* lhs = castValue(lhs0, ArrowV);
-        ArrowV* rhs = castValue(rhs0, ArrowV);
+        Arrow* lhs = castValue(lhs0, Arrow);
+        Arrow* rhs = castValue(rhs0, Arrow);
         s32 param_count = lhs->param_count;
         if (rhs->param_count == param_count)
         {
@@ -1047,10 +1042,10 @@ compareExpressions(MemoryArena *arena, Value *lhs0, Value *rhs0)
         else out.result = Trinary_False;
       } break;
 
-      case VC_CompositeV:
+      case VC_Composite:
       {
-        CompositeV *lhs = castValue(lhs0, CompositeV);
-        CompositeV *rhs = castValue(rhs0, CompositeV);
+        Composite *lhs = castValue(lhs0, Composite);
+        Composite *rhs = castValue(rhs0, Composite);
 
         Trinary op_compare = equalTrinary((lhs->op), (rhs->op));
         if ((op_compare == Trinary_False) &&
@@ -1099,10 +1094,10 @@ compareExpressions(MemoryArena *arena, Value *lhs0, Value *rhs0)
         out.result = (Trinary)(lhs->id == rhs->id);
       } break;
 
-      case VC_AccessorV:
+      case VC_Accessor:
       {
-        AccessorV *lhs = castValue(lhs0, AccessorV);
-        AccessorV *rhs = castValue(rhs0, AccessorV);
+        Accessor *lhs = castValue(lhs0, Accessor);
+        Accessor *rhs = castValue(rhs0, Accessor);
         out.result = compareExpressions(arena, lhs->record, rhs->record).result;
       } break;
 
@@ -1113,12 +1108,12 @@ compareExpressions(MemoryArena *arena, Value *lhs0, Value *rhs0)
         out.result = Trinary_True;
       } break;
 
-      case VC_FunctionV:  // we can compare signatures to eliminate negatives.
+      case VC_Function:  // we can compare signatures to eliminate negatives.
       case VC_Null:
       case VC_Hole:
       case VC_Union:
-      case VC_RewriteV:
-      case VC_ComputationV:
+      case VC_Rewrite:
+      case VC_Computation:
       {
         out.result = Trinary_Unknown;
       } break;
@@ -1262,9 +1257,9 @@ evaluateFork(MemoryArena *arena, Environment *env, Fork *fork)
       out = evaluateSequence(arena, env, fork->bodies[ctor->id]);
     } break;
 
-    case VC_CompositeV:
+    case VC_Composite:
     {
-      CompositeV *record = castValue(subject, CompositeV);
+      Composite *record = castValue(subject, Composite);
       if (Constructor *ctor = castValue(record->op, Constructor))
         out = evaluateSequence(arena, env, fork->bodies[ctor->id]);
       else
@@ -1283,7 +1278,7 @@ struct ValuePair {Value *lhs; Value *rhs;};
 
 inline ValuePair getEqualitySides(Value *eq0)
 {
-  CompositeV *eq = castValue(eq0, CompositeV);
+  Composite *eq = castValue(eq0, Composite);
   assert(eq->op == &builtins.equal->v);
   return ValuePair{eq->args[1], eq->args[2]};
 }
@@ -1293,8 +1288,8 @@ rewriteExpression(MemoryArena *arena, Value *rhs, TreePath *path, Value *in0)
 {
   if (path)
   {
-    CompositeV *in  = castValue(in0, CompositeV);
-    CompositeV *out = copyStruct(arena, in);
+    Composite *in  = castValue(in0, Composite);
+    Composite *out = copyStruct(arena, in);
     if (path->first == -1)
     {
       out->op = rewriteExpression(arena, rhs, path->next, in->op);
@@ -1330,7 +1325,7 @@ rewriteExpression(MemoryArena *arena, Value *rhs, TreePath *path, Value *in0)
 }
 
 struct RewriteChain {
-  RewriteV     *first;
+  Rewrite     *first;
   RewriteChain *next;
 };
 
@@ -1346,17 +1341,17 @@ evaluateSequence(MemoryArena *arena, Environment *env, Sequence *sequence)
     Ast *item = sequence->items[id];
     switch (item->cat)
     {
-      case AC_Rewrite:
+      case AC_RewriteA:
       {
-        Rewrite  *rewrite  = castAst(item, Rewrite);
-        RewriteV *rewritev = newValue(arena, RewriteV, 0);
+        RewriteA  *rewrite  = castAst(item, RewriteA);
+        Rewrite *rewritev = newValue(arena, Rewrite, 0);
         Value *eq_proof = evaluateAndNormalize(arena, env, rewrite->eq_proof);
         rewritev->eq_proof      = eq_proof;
         rewritev->right_to_left = rewrite->right_to_left;
         rewritev->path          = rewrite->path;
         if (rewrite_chain)
         {
-          RewriteV *outer_rewrite = rewrite_chain->first;
+          Rewrite *outer_rewrite = rewrite_chain->first;
           outer_rewrite->body = &rewritev->v;
         }
 
@@ -1377,7 +1372,7 @@ evaluateSequence(MemoryArena *arena, Environment *env, Sequence *sequence)
       {
         FunctionDecl *fun         = castAst(item, FunctionDecl);
         Value        *signature_v = evaluate(arena, env, &fun->signature->a);
-        FunctionV    *funv        = newValue(arena, FunctionV, signature_v);
+        Function    *funv        = newValue(arena, Function, signature_v);
         funv->function = *fun;
         funv->stack    = env->stack;
         addStackValue(env, &funv->v);
@@ -1401,14 +1396,14 @@ evaluateSequence(MemoryArena *arena, Environment *env, Sequence *sequence)
   {
     if (rewrite_chain)
     {
-      RewriteV *last_rewrite = rewrite_chain->first;
+      Rewrite *last_rewrite = rewrite_chain->first;
       last_rewrite->body = last;
 
       RewriteChain *chain = rewrite_chain;
       Value *debug_previous_type = 0;
       while (true)
       {
-        RewriteV *rewrite = chain->first;
+        Rewrite *rewrite = chain->first;
         auto [lhs, rhs] = getEqualitySides(rewrite->eq_proof->type);
         Value *rewrite_to   = rewrite->right_to_left ? rhs : lhs;
         if (debug_previous_type)
@@ -1461,9 +1456,9 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
 
   switch (in0->cat)
   {
-    case VC_CompositeV:
+    case VC_Composite:
     {
-      CompositeV *in = castValue(in0, CompositeV);
+      Composite *in = castValue(in0, Composite);
 
       Value **norm_args = pushArray(arena, in->arg_count, Value*);
       for (auto arg_id = 0;
@@ -1475,9 +1470,9 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
       }
 
       Value *norm_op = normalize(arena, env, in->op);
-      if (norm_op->cat == VC_FunctionV)
+      if (norm_op->cat == VC_Function)
       {// Function application
-        FunctionV *funv = castValue(norm_op, FunctionV);
+        Function *funv = castValue(norm_op, Function);
         if (funv->body != &dummy_function_under_construction)
         {
           extendStack(env, in->arg_count, norm_args);
@@ -1510,7 +1505,7 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
 
       if (!out0)
       {
-        CompositeV *out = newValue(arena, CompositeV, in->type);
+        Composite *out = newValue(arena, Composite, in->type);
         out->arg_count = in->arg_count;
         out->op        = norm_op;
         out->args      = norm_args;
@@ -1520,10 +1515,10 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
       assert(out0->cat);
     } break;
 
-    case VC_ArrowV:
+    case VC_Arrow:
     {
-      ArrowV *in  = castValue(in0, ArrowV);
-      ArrowV *out = copyStruct(arena, in);
+      Arrow *in  = castValue(in0, Arrow);
+      Arrow *out = copyStruct(arena, in);
       allocateArray(arena, out->param_count, out->param_types);
       for (i32 id=0; id < out->param_count; id++)
         out->param_types[id] = normalize(arena, env, in->param_types[id]);
@@ -1531,14 +1526,14 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
       out0 = &out->v;
     } break;
 
-    case VC_RewriteV:
+    case VC_Rewrite:
     {
-      RewriteV *in   = castValue(in0, RewriteV);
+      Rewrite *in   = castValue(in0, Rewrite);
       Value *body     = normalize(arena, env, in->body);
       Value *eq_proof = normalize(arena, env, in->eq_proof);
       if ((body != in->body) || (eq_proof != in->eq_proof))
       {
-        RewriteV *out = copyStruct(arena, in);
+        Rewrite *out = copyStruct(arena, in);
         out->eq_proof = eq_proof;
         out->body     = body;
         out0 = &out->v;
@@ -1553,11 +1548,11 @@ normalize(MemoryArena *arena, Environment *env, Value *in0)
     case VC_BuiltinSet:
     case VC_BuiltinType:
     case VC_BuiltinEqual:
-    case VC_FunctionV:
+    case VC_Function:
     case VC_StackValue:
     case VC_Union:
-    case VC_ComputationV:
-    case VC_AccessorV:
+    case VC_Computation:
+    case VC_Accessor:
     {out0 = in0;} break;
   }
 
@@ -1621,10 +1616,10 @@ replaceFreeVars(MemoryArena* arena, Environment *env, Ast *in0, s32 stack_offset
       out0 = in0;
     } break;
 
-    case AC_Composite:
+    case AC_CompositeA:
     {
-      Composite *in = castAst(in0, Composite);
-      Composite *out = copyStruct(arena, in);
+      CompositeA *in = castAst(in0, CompositeA);
+      CompositeA *out = copyStruct(arena, in);
       out->op   = replaceFreeVars(arena, env, in->op, stack_offset);
       out->args = pushArray(arena, in->arg_count, Ast*);
       for (s32 arg_id = 0; arg_id < in->arg_count; arg_id++)
@@ -1634,10 +1629,10 @@ replaceFreeVars(MemoryArena* arena, Environment *env, Ast *in0, s32 stack_offset
       out0 = &out->a;
     } break;
 
-    case AC_Arrow:
+    case AC_ArrowA:
     {
-      Arrow *in = castAst(in0, Arrow);
-      Arrow *out = copyStruct(arena, in);
+      ArrowA *in = castAst(in0, ArrowA);
+      ArrowA *out = copyStruct(arena, in);
       stack_offset++;
       out->output_type    = replaceFreeVars(arena, env, in->output_type, stack_offset);
       out->param_types = pushArray(arena, in->param_count, Ast*);
@@ -1648,15 +1643,15 @@ replaceFreeVars(MemoryArena* arena, Environment *env, Ast *in0, s32 stack_offset
       out0 = &out->a;
     } break;
 
-    case AC_Accessor:
+    case AC_AccessorA:
     {
-      Accessor *in = castAst(in0, Accessor);
-      Accessor *out = copyStruct(arena, in);
+      AccessorA *in = castAst(in0, AccessorA);
+      AccessorA *out = copyStruct(arena, in);
       out->record = replaceFreeVars(arena, env, in->record, stack_offset);
       out0 = &out->a;
     } break;
 
-    case AC_Rewrite:
+    case AC_RewriteA:
     case AC_Let:
     case AC_FunctionDecl:
     case AC_Sequence:
@@ -1682,9 +1677,9 @@ isGlobalValue(Value *value)
       return false;
     } break;
 
-    case VC_CompositeV:
+    case VC_Composite:
     {
-      CompositeV *composite = castValue(value, CompositeV);
+      Composite *composite = castValue(value, Composite);
       if (!isGlobalValue(composite->op))
         return false;
 
@@ -1697,8 +1692,8 @@ isGlobalValue(Value *value)
       return true;
     } break;
 
-    case VC_ArrowV:
-    case VC_FunctionV:
+    case VC_Arrow:
+    case VC_Function:
     {
       return false;  // TODO: don't know what to do so let's just say false for now.
     } break;
@@ -1713,9 +1708,9 @@ isGlobalValue(Value *value)
       return true;
     } break;
 
-    case VC_AccessorV:
-    case VC_RewriteV:
-    case VC_ComputationV:
+    case VC_Accessor:
+    case VC_Rewrite:
+    case VC_Computation:
     {
       invalidCodePath;
       return false;
@@ -1771,9 +1766,9 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
       out0 = in->value;
     } break;
 
-    case AC_Composite:
+    case AC_CompositeA:
     {
-      Composite *in = castAst(in0, Composite);
+      CompositeA *in = castAst(in0, CompositeA);
 
       Value **args = pushArray(arena, in->arg_count, Value*);
       for (int arg_id = 0; arg_id < in->arg_count; arg_id++)
@@ -1784,19 +1779,19 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
       }
 
       Value *op = evaluate(arena, env, in->op);
-      ArrowV *signature = castValue(op->type, ArrowV);
+      Arrow *signature = castValue(op->type, Arrow);
       Value *return_type = evaluateArrow(arena, env, args, signature->stack_depth, signature->output_type);
-      CompositeV *out = newValue(arena, CompositeV, return_type);
+      Composite *out = newValue(arena, Composite, return_type);
       out->arg_count = in->arg_count;
       out->op        = op;
       out->args      = args;
       out0 = &out->v;
     } break;
 
-    case AC_Arrow:
+    case AC_ArrowA:
     {
-      Arrow  *in  = castAst(in0, Arrow);
-      ArrowV *out = newValue(arena, ArrowV, &builtins.Type->v);
+      ArrowA  *in  = castAst(in0, ArrowA);
+      Arrow *out = newValue(arena, Arrow, &builtins.Type->v);
       out->param_count = in->param_count;
       out->param_names = in->param_names;
 
@@ -1814,24 +1809,24 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
       out0 = &out->v;
     } break;
 
-    case AC_Accessor:
+    case AC_AccessorA:
     {
-      Accessor *in = castAst(in0, Accessor);
+      AccessorA *in = castAst(in0, AccessorA);
       Value *record0 = evaluate(arena, env, in->record);
       // note: it has to be a record, otw we wouldn't know what type to
       // return.
-      CompositeV *record = castValue(record0, CompositeV);
+      Composite *record = castValue(record0, Composite);
       out0 = record->args[in->field_id];
     } break;
 
-    case AC_Computation:
+    case AC_ComputationA:
     {
-      Computation  *computation = castAst(in0, Computation);
+      ComputationA  *computation = castAst(in0, ComputationA);
       Value *lhs = evaluate(arena, env, computation->lhs);
       Value *rhs = evaluate(arena, env, computation->rhs);
 
       // TODO: the "tactics" code proliferates too much
-      CompositeV *eq = newValue(arena, CompositeV, &builtins.Set->v);
+      Composite *eq = newValue(arena, Composite, &builtins.Set->v);
       eq->op        = &builtins.equal->v;
       eq->arg_count = 3;
       allocateArray(arena, eq->arg_count, eq->args);
@@ -1839,7 +1834,7 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
       eq->args[1] = lhs;
       eq->args[2] = rhs;
 
-      ComputationV *out = newValue(arena, ComputationV, &eq->v);
+      Computation *out = newValue(arena, Computation, &eq->v);
       out->lhs = lhs;
       out->rhs = rhs;
       out0 = &out->v;
@@ -1912,11 +1907,11 @@ inline Value *
 introduceRecord(MemoryArena *arena, Environment *env, Value *parent, Constructor *ctor)
 {
   Value *out = 0;
-  if (ArrowV *ctor_sig = castValue(ctor->type, ArrowV))
+  if (Arrow *ctor_sig = castValue(ctor->type, Arrow))
   {
     s32 param_count = ctor_sig->param_count;
     Value *record_type = ctor_sig->output_type;
-    CompositeV *record = newValue(arena, CompositeV, record_type);
+    Composite *record = newValue(arena, Composite, record_type);
     record->op        = &ctor->v;
     record->arg_count = param_count;
     record->args      = pushArray(arena, param_count, Value*);
@@ -1924,7 +1919,7 @@ introduceRecord(MemoryArena *arena, Environment *env, Value *parent, Constructor
     {
       String field_name = ctor_sig->param_names[field_id].string;
       Value *member_type = evaluateArrow(arena, env, record->args, ctor_sig->stack_depth, ctor_sig->param_types[field_id]);
-      AccessorV *accessor = newValue(arena, AccessorV, member_type);
+      Accessor *accessor = newValue(arena, Accessor, member_type);
       accessor->record     = parent;
       accessor->field_id   = field_id;
       accessor->field_name = field_name;
@@ -2162,7 +2157,7 @@ removeRewriteRule(Environment *env)
 }
 
 inline s32
-getExplicitParamCount(Arrow *in)
+getExplicitParamCount(ArrowA *in)
 {
   s32 out = 0;
   for (s32 param_id = 0; param_id < in->param_count; param_id++)
@@ -2174,7 +2169,7 @@ getExplicitParamCount(Arrow *in)
 }
 
 inline s32
-getExplicitParamCount(ArrowV *in)
+getExplicitParamCount(Arrow *in)
 {
   s32 out = 0;
   for (s32 param_id = 0; param_id < in->param_count; param_id++)
@@ -2210,9 +2205,9 @@ hasFreeVars(Value *in0)
         return true;
     } break;
 
-    case VC_CompositeV:
+    case VC_Composite:
     {
-      CompositeV *in = castValue(in0, CompositeV);
+      Composite *in = castValue(in0, Composite);
       if (hasFreeVars(in->op))
         return true;
       for (s32 arg_id=0; arg_id < in->arg_count; arg_id++)
@@ -2222,9 +2217,9 @@ hasFreeVars(Value *in0)
       }
     } break;
 
-    case VC_ArrowV:
+    case VC_Arrow:
     {
-      ArrowV *in = castValue(in0, ArrowV);
+      Arrow *in = castValue(in0, Arrow);
       for (s32 param_id = 0; param_id < in->param_count; param_id++)
       {
         if (hasFreeVars(in->param_types[param_id]))
@@ -2234,9 +2229,9 @@ hasFreeVars(Value *in0)
         return true;
     } break;
 
-    case VC_AccessorV:
+    case VC_Accessor:
     {
-      AccessorV *in = castValue(in0, AccessorV);
+      Accessor *in = castValue(in0, Accessor);
       return hasFreeVars(in->record);
     } break;
 
@@ -2265,7 +2260,7 @@ getGlobalOverloads(Environment *env, Identifier *ident, Value *expected_type)
         allocateArray(temp_arena, slot->count, out.items);
         for (int slot_id=0; slot_id < slot->count; slot_id++)
         {
-          ArrowV *signature = castValue(slot->items[slot_id]->type, ArrowV);
+          Arrow *signature = castValue(slot->items[slot_id]->type, Arrow);
           b32 output_type_mismatch = false;
           if (!hasFreeVars(signature->output_type))
           {
@@ -2287,18 +2282,18 @@ getGlobalOverloads(Environment *env, Identifier *ident, Value *expected_type)
   return out;
 }
 
-internal FunctionV *
+internal Function *
 buildFunction(MemoryArena *arena, Environment *env, FunctionDecl *fun)
 {
   // TODO: we adjust the binding here, which is kinda yikes but what are ya
   // gonna do, that's what you do to support recursion.
-  FunctionV *funv = 0;
+  Function *funv = 0;
 
   if (Expression signature = buildExpression(arena, env, &fun->signature->a, holev))
   {
     // note: store the built signature, maybe to display it later.
-    fun->signature = castAst(signature.ast, Arrow);
-    funv = newValue(arena, FunctionV, signature.value);
+    fun->signature = castAst(signature.ast, ArrowA);
+    funv = newValue(arena, Function, signature.value);
     // note: we only need that funv there for the type.
     funv->a.token = fun->a.token;
     funv->body    = &dummy_function_under_construction;
@@ -2354,10 +2349,10 @@ valueToAst(MemoryArena *arena, Environment *env, Value* value)
       var->id          = ref->id;  // :stack-ref-id-has-significance
     } break;
 
-    case VC_CompositeV:
+    case VC_Composite:
     {
-      CompositeV *compositev = castValue(value, CompositeV);
-      Composite  *composite  = newAst(arena, Composite, &token);
+      Composite *compositev = castValue(value, Composite);
+      CompositeA  *composite  = newAst(arena, CompositeA, &token);
       composite->op        = valueToAst(arena, env, compositev->op);
       composite->arg_count = compositev->arg_count;
       allocateArray(arena, composite->arg_count, composite->args);
@@ -2368,20 +2363,20 @@ valueToAst(MemoryArena *arena, Environment *env, Value* value)
       out0 = &composite->a;
     } break;
 
-    case VC_AccessorV:
+    case VC_Accessor:
     {
-      AccessorV *accessorv = castValue(value, AccessorV);
-      Accessor  *accessor  = newAst(arena, Accessor, &token);
+      Accessor *accessorv = castValue(value, Accessor);
+      AccessorA  *accessor  = newAst(arena, AccessorA, &token);
       accessor->record      = valueToAst(arena, env, accessorv->record);
       accessor->field_id    = accessorv->field_id;
       accessor->field_name  = newToken(accessorv->field_name);
       out0 = &accessor->a;
     } break;
 
-    case VC_ArrowV:
+    case VC_Arrow:
     {
-      ArrowV *in  = castValue(value, ArrowV);
-      Arrow  *out = newAst(arena, Arrow, &token);
+      Arrow *in  = castValue(value, Arrow);
+      ArrowA  *out = newAst(arena, ArrowA, &token);
       out->param_count = in->param_count;
       out->param_names = in->param_names;
       allocateArray(arena, in->param_count, out->param_types);
@@ -2395,14 +2390,14 @@ valueToAst(MemoryArena *arena, Environment *env, Value* value)
     case VC_BuiltinSet:
     case VC_BuiltinType:
     case VC_Union:
-    case VC_FunctionV:
+    case VC_Function:
     case VC_Constructor:
     {
       Constant *synthetic = newSyntheticConstant(arena, value);
       out0 = &synthetic->a;
     } break;
 
-    case VC_RewriteV:
+    case VC_Rewrite:
     {
       dump(); dump("-------------------"); dump(value);
       todoIncomplete;  // really we don't need it tho?
@@ -2433,9 +2428,9 @@ searchExpression(MemoryArena *arena, Value *lhs, Value* in0)
   {
     switch (in0->cat)
     {
-      case VC_CompositeV:
+      case VC_Composite:
       {
-        CompositeV *in = castValue(in0, CompositeV);
+        Composite *in = castValue(in0, Composite);
         SearchOutput op = searchExpression(arena, lhs, in->op);
         if (op.found)
         {
@@ -2459,26 +2454,26 @@ searchExpression(MemoryArena *arena, Value *lhs, Value* in0)
         }
       } break;
 
-      case VC_AccessorV:
+      case VC_Accessor:
       {
-        AccessorV* in = castValue(in0, AccessorV);
+        Accessor* in = castValue(in0, Accessor);
         out = searchExpression(arena, lhs, in->record);
       } break;
 
       case VC_Null:
       case VC_Hole:
-      case VC_ComputationV:
+      case VC_Computation:
       case VC_StackValue:
       case VC_BuiltinEqual:
       case VC_BuiltinSet:
       case VC_BuiltinType:
       case VC_Union:
-      case VC_FunctionV:
+      case VC_Function:
       case VC_Constructor:
       {} break;
 
-      case VC_ArrowV:
-      case VC_RewriteV:  // probably we never work on proofs in this way?
+      case VC_Arrow:
+      case VC_Rewrite:  // probably we never work on proofs in this way?
       {
         todoIncomplete;
       } break;
@@ -2502,7 +2497,7 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
   {
     count++;
     list = pushStruct(temp_arena, AstList);
-    list->first = &newAst(arena, Rewrite, &first_token)->a;
+    list->first = &newAst(arena, RewriteA, &first_token)->a;
     list->next  = 0;
   }
 #else
@@ -2522,7 +2517,7 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
         pushContext("norm [LOCAL_VARIABLE]");
         if (optionalChar(';'))
         {// normalize goal
-          Rewrite *rewrite = newAst(arena, Rewrite, &token);
+          RewriteA *rewrite = newAst(arena, RewriteA, &token);
           ast = &rewrite->a;
         }
         else
@@ -2544,7 +2539,7 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
 
       case TC_KeywordRewrite:
       {
-        Rewrite *rewrite = newAst(arena, Rewrite, &token);
+        RewriteA *rewrite = newAst(arena, RewriteA, &token);
 
         rewrite->right_to_left = false;
         Token next = peekToken();
@@ -2561,7 +2556,7 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
       case TC_StrongArrow:
       {
         pushContext("Full-rewrite: => TO_EXPRESSION [{ EQ_PROOF }]");
-        Rewrite *rewrite = newAst(arena, Rewrite, &token);
+        RewriteA *rewrite = newAst(arena, RewriteA, &token);
         ast = &rewrite->a;
         {
           if (equal(peekToken().string, "_"))
@@ -2668,7 +2663,7 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
         // in sequence, even though it is an expression, since the expression
         // that users can supply isn't fully-formed
         nextToken();
-        ast = &newAst(arena, Computation, &token)->a;
+        ast = &newAst(arena, ComputationA, &token)->a;
         stop = true;
       }
       else
@@ -2715,9 +2710,9 @@ subExpressionAtPath(Value *in, TreePath *path)
   {
     switch (in->cat)
     {
-      case VC_CompositeV:
+      case VC_Composite:
       {
-        CompositeV *composite = castValue(in, CompositeV);
+        Composite *composite = castValue(in, Composite);
         Value *arg = composite->args[path->first];
         return subExpressionAtPath(arg, path->next); 
       } break;
@@ -2758,10 +2753,10 @@ unify(Value **values, i32 free_depth, Value *lhs, Value *rhs)
       }
     } break;
 
-    case VC_CompositeV:
+    case VC_Composite:
     {
-      CompositeV *lhs_composite = castValue(lhs, CompositeV);
-      if (CompositeV *rhs_composite = castValue(rhs, CompositeV))
+      Composite *lhs_composite = castValue(lhs, Composite);
+      if (Composite *rhs_composite = castValue(rhs, Composite))
       {
         if (unify(values, free_depth, lhs_composite->op, rhs_composite->op))
         {
@@ -2846,7 +2841,7 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
                   value0 = &value->v;
                 } break;
 
-                case VC_CompositeV: {value0 = rhs.value;} break;
+                case VC_Composite: {value0 = rhs.value;} break;
                 default: {todoIncomplete;}
               }
               value0->type = let_type;
@@ -2863,9 +2858,9 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
         buildFunction(arena, env, castAst(item, FunctionDecl));
       } break;
 
-      case AC_Rewrite:
+      case AC_RewriteA:
       {
-        Rewrite *rewrite = castAst(item, Rewrite);
+        RewriteA *rewrite = castAst(item, RewriteA);
         if (!rewrite->eq_proof)
         {// just normalize
           Value *new_goal = 0;
@@ -2897,7 +2892,7 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
               Value *goal_norm = normalize(arena, env, goal);
               if (equalB32(new_goal_norm, goal_norm))
               {
-                Computation *computation = newAst(arena, Computation, &item->token);
+                ComputationA *computation = newAst(arena, ComputationA, &item->token);
                 computation->lhs = valueToAst(arena, env, goal);
                 computation->rhs = valueToAst(arena, env, new_goal);
                 rewrite->eq_proof = &computation->a;
@@ -2955,11 +2950,11 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
                 if (noError())
                 {
                   Value *eq_proof = 0;
-                  if (ArrowV *arrowv = castValue(hint->type, ArrowV))
+                  if (Arrow *arrowv = castValue(hint->type, Arrow))
                   {
                     Value *output_type = arrowv->output_type;
 
-                    CompositeV *eq = newValue(temp_arena, CompositeV, &builtins.Set->v);
+                    Composite *eq = newValue(temp_arena, Composite, &builtins.Set->v);
                     eq->op        = &builtins.equal->v;
                     eq->arg_count = 3;
                     allocateArray(temp_arena, 3, eq->args);
@@ -2971,7 +2966,7 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
                     if (unify(values, arrowv->stack_depth, output_type, &eq->v))
                     {
                       // todo: make a standalone typecheck function, to check type of these things
-                      CompositeV *eq_proofc = newValue(arena, CompositeV, &eq->v);
+                      Composite *eq_proofc = newValue(arena, Composite, &eq->v);
                       eq_proofc->op        = hint;
                       eq_proofc->arg_count = arrowv->param_count;
                       allocateArray(arena, arrowv->param_count, eq_proofc->args);
@@ -2988,7 +2983,7 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
                       attach("goal", goal);
                     }
                   }
-                  else if (CompositeV *composite = castValue(hint->type, CompositeV))
+                  else if (Composite *composite = castValue(hint->type, Composite))
                   {
                     if (composite->op == &builtins.equal->v)
                       eq_proof = hint;
@@ -3006,7 +3001,7 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
 
                   if (noError())
                   {
-                    if (CompositeV *eq = castValue(eq_proof->type, CompositeV))
+                    if (Composite *eq = castValue(eq_proof->type, Composite))
                     {
                       if (eq->op == &builtins.equal->v)
                       {
@@ -3051,7 +3046,7 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
           {
             b32 rule_valid = false;
             rewrite->eq_proof = eq_proof.ast;
-            if (CompositeV *eq = castValue(eq_proof.value->type, CompositeV))
+            if (Composite *eq = castValue(eq_proof.value->type, Composite))
             {
               if (eq->op == &builtins.equal->v)
               {
@@ -3095,10 +3090,10 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Value *g
     if (Fork *fork = castAst(last, Fork))
       buildFork(arena, env, fork, goal);
 
-    else if (Computation *computation = castAst(last, Computation))
+    else if (ComputationA *computation = castAst(last, ComputationA))
     {
       b32 goal_valid = false;
-      if (CompositeV *eq = castValue(goal, CompositeV))
+      if (Composite *eq = castValue(goal, Composite))
       {
         if (eq->op == &builtins.equal->v)
         {
@@ -3174,7 +3169,7 @@ buildFork(MemoryArena *arena, Environment *env, Fork *fork, Value *expected_type
                 }
                 else
                 {// NOTE: rn we DON'T support the weird inductive proposition thingie.
-                  if (ArrowV *ctor_sig = castValue(candidate->type, ArrowV))
+                  if (Arrow *ctor_sig = castValue(candidate->type, Arrow))
                   {
                     if (equalB32(ctor_sig->output_type, subject.value->type))
                       ctor = candidate;
@@ -3235,14 +3230,14 @@ fillHole(MemoryArena *arena, Environment *env, Token *token, Value *goal)
     Constant *truth = newSyntheticConstant(arena, &builtins.truth->v, token);
     out = &truth->a;
   }
-  else if (CompositeV *eq = castValue(goal, CompositeV))
+  else if (Composite *eq = castValue(goal, Composite))
   {
     if (eq->op->cat == VC_BuiltinEqual)
     {
       if (equalB32(normalize(temp_arena, env, eq->args[1]),
                    normalize(temp_arena, env, eq->args[2])))
       {
-        Computation *computation = newAst(arena, Computation, token);
+        ComputationA *computation = newAst(arena, ComputationA, token);
         computation->lhs = valueToAst(arena, env, eq->args[1]);
         computation->rhs = valueToAst(arena, env, eq->args[2]);
         out = &computation->a;
@@ -3352,9 +3347,9 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *goal)
       }
     } break;
 
-    case AC_Composite:
+    case AC_CompositeA:
     {
-      Composite *in = castAst(in0, Composite);
+      CompositeA *in = castAst(in0, CompositeA);
 
       b32 has_multiple_overloads;
       if (Identifier *op_ident = castAst(in->op, Identifier))
@@ -3372,7 +3367,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *goal)
             Constant *constant = newAst(arena, Constant, &in->op->token);
             constant->value    = global_overloads.items[candidate_id];
 
-            Composite *in_copy = castAst(deepCopy(arena, in0), Composite);
+            CompositeA *in_copy = castAst(deepCopy(arena, in0), CompositeA);
             in_copy->op        = &constant->a;
             out = buildExpression(arena, env, &in_copy->a, goal);
 
@@ -3404,7 +3399,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *goal)
         {
           in->op = op.ast;
 
-          if (ArrowV *signature = castValue(op.value->type, ArrowV))
+          if (Arrow *signature = castValue(op.value->type, Arrow))
           {
             if (signature->param_count != in->arg_count)
             {
@@ -3523,9 +3518,9 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *goal)
       }
     } break;
 
-    case AC_Arrow:
+    case AC_ArrowA:
     {
-      Arrow *in = castAst(in0, Arrow);
+      ArrowA *in = castAst(in0, ArrowA);
 
       addStackFrame(env);
       extendBindings(temp_arena, env);
@@ -3554,17 +3549,17 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *goal)
       }
     } break;
 
-    case AC_Accessor:
+    case AC_AccessorA:
     {
-      Accessor *in = castAst(in0, Accessor);
+      AccessorA *in = castAst(in0, AccessorA);
       if (Expression build_record = buildExpression(arena, env, in->record, holev))
       {
         Ast   *record   = build_record.ast;
         Value *recordv0 = build_record.value;
-        if (CompositeV *recordv = castValue(recordv0, CompositeV))
+        if (Composite *recordv = castValue(recordv0, Composite))
         {
           in->record = record;
-          ArrowV *op_type = castValue(recordv->op->type, ArrowV);
+          Arrow *op_type = castValue(recordv->op->type, Arrow);
           s32 param_count = op_type->param_count;
           b32 valid_param_name = false;
           for (s32 param_id=0; param_id < param_count; param_id++)
@@ -3597,7 +3592,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *goal)
       }
     } break;
 
-    case AC_Computation:
+    case AC_ComputationA:
     {
       out.ast   = in0;
       out.value = evaluate(arena, env, in0);
@@ -3665,7 +3660,7 @@ parseFunction(MemoryArena *arena, Token *name, b32 is_theorem)
 
   if (Ast *signature0 = parseExpressionToAst(arena))
   {
-    if (Arrow *signature = castAst(signature0, Arrow))
+    if (ArrowA *signature = castAst(signature0, ArrowA))
     {
       // NOTE: rebuild the function's local bindings from the signature
 
@@ -3721,7 +3716,7 @@ parseFork(MemoryArena *arena, b32 is_theorem)
             {
               parsing->ctors[input_case_id]  = *ctor;
             }
-            else if (Composite *pattern = castAst(pattern0, Composite))
+            else if (CompositeA *pattern = castAst(pattern0, CompositeA))
             {// todo don't need this case anymore
               if ((ctor = castAst(pattern->op, Identifier)))
               {
@@ -3767,10 +3762,10 @@ parseFork(MemoryArena *arena, b32 is_theorem)
   return out;
 }
 
-internal Arrow *
+internal ArrowA *
 parseArrowType(MemoryArena *arena, b32 is_record)
 {
-  Arrow *out = 0;
+  ArrowA *out = 0;
 
   s32     param_count;
   Token  *param_names;
@@ -3857,7 +3852,7 @@ parseArrowType(MemoryArena *arena, b32 is_record)
       {
         if (Ast *return_type = parseExpressionToAst(arena))
         {
-          out = newAst(arena, Arrow, &marking_token);
+          out = newAst(arena, ArrowA, &marking_token);
           out->output_type = return_type;
           out->param_count = param_count;
           out->param_names = param_names;
@@ -3867,7 +3862,7 @@ parseArrowType(MemoryArena *arena, b32 is_record)
     }
     else
     {
-      out = newAst(arena, Arrow, &marking_token);
+      out = newAst(arena, ArrowA, &marking_token);
       out->output_type = 0;
       out->param_count = param_count;
       out->param_names = param_names;
@@ -3958,7 +3953,7 @@ parseOperand(MemoryArena *arena)
       if (noError(&tk_copy))
       {
         Ast **args = pushArray(arena, expected_arg_count, Ast*);
-        Composite *branch = newAst(arena, Composite, &op->token);
+        CompositeA *branch = newAst(arena, CompositeA, &op->token);
         initComposite(branch, op, expected_arg_count, args);
         out = &branch->a;
         s32 parsed_arg_count = 0;
@@ -4032,7 +4027,7 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
         if (equal(op_token, "."))
         {// member accessor
           nextToken();
-          Accessor *new_operand = newAst(arena, Accessor, &op_token);
+          AccessorA *new_operand = newAst(arena, AccessorA, &op_token);
           new_operand->record   = operand; // todo: I guess it works?
           Token member = nextToken();
           if (isIdentifier(&member))
@@ -4064,7 +4059,7 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
               args[0] = operand;
               args[1] = recurse;
 
-              Composite *new_operand = newAst(arena, Composite, &op_token);
+              CompositeA *new_operand = newAst(arena, CompositeA, &op_token);
               initComposite(new_operand, &op->a, arg_count, args);
               operand = &new_operand->a;
             }
@@ -4120,7 +4115,7 @@ parseUnionCase(MemoryArena *arena, Union *uni)
           if (type == uni)
             valid_type = true;
         }
-        else if (ArrowV *type = castValue(norm_type0, ArrowV))
+        else if (Arrow *type = castValue(norm_type0, Arrow))
         {
           if (getConstructorOf(type->output_type) == uni)
             valid_type = true;
@@ -4168,7 +4163,7 @@ parseUnion(MemoryArena *arena, Token *name)
     if (Expression type_parsing = parseExpressionFull(arena))
     {
       Value *norm_type = evaluate(arena, type_parsing.ast);
-      if (ArrowV *arrow = castValue(norm_type, ArrowV))
+      if (Arrow *arrow = castValue(norm_type, Arrow))
       {
         if (arrow->output_type == &builtins.Set->v)
           valid_type = true;
@@ -4372,7 +4367,7 @@ parseTopLevel(EngineState *state)
       {
         if (Value *goal = parseExpressionFull(temp_arena).value)
         {
-          if (CompositeV *eq = castValue(goal, CompositeV))
+          if (Composite *eq = castValue(goal, Composite))
           {
             b32 goal_valid = false;
             if (eq->op == &builtins.equal->v)

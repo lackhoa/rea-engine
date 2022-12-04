@@ -11,12 +11,11 @@ global_variable MemoryArena __attribute__((unused)) *temp_arena;
 global_variable b32 __attribute__((unused)) global_debug_mode;
 global_variable MemoryArena __attribute__((unused))*permanent_arena;
 
-struct Arrow;
+struct ArrowA;
 struct Value;
 struct LocalBindings;
 
-enum AstCategory
-{
+enum AstCategory {
   AC_Null = 0,
   // hole left in for type-checking
   AC_Hole,
@@ -26,36 +25,34 @@ enum AstCategory
   // Expressions
   AC_Constant,
   AC_Variable,
-  AC_Composite,
-  AC_Arrow,
-  AC_Accessor,
-  AC_Replace,
-  AC_Computation,
+  AC_CompositeA,
+  AC_ArrowA,
+  AC_AccessorA,
+  AC_ComputationA,
 
   // Stuff in "sequence" context only, not general expressions.
   AC_Sequence,
   AC_Fork,
-  AC_Rewrite,
+  AC_RewriteA,
   AC_FunctionDecl,
   AC_Let,
 };
 
-enum ValueCategory
-{
+enum ValueCategory {
   VC_Null,
   VC_Hole,
   VC_BuiltinSet,
   VC_BuiltinType,
   VC_BuiltinEqual,
-  VC_CompositeV,
-  VC_ArrowV,
-  VC_FunctionV,
+  VC_Composite,
+  VC_Arrow,
+  VC_Function,
   VC_StackValue,
   VC_Union,
   VC_Constructor,
-  VC_RewriteV,
-  VC_ComputationV,
-  VC_AccessorV,
+  VC_Rewrite,
+  VC_Computation,
+  VC_Accessor,
 };
 
 embed_struct struct Ast
@@ -152,8 +149,7 @@ struct ForkParsing
 
 struct Union;
 
-struct Fork
-{
+struct Fork {
   Ast a;
 
   Union     *uni;
@@ -272,10 +268,10 @@ embed_struct struct FunctionDecl
 {
   Ast       a;
   Sequence *body;
-  Arrow    *signature;
+  ArrowA    *signature;
 };
 
-struct FunctionV
+struct Function
 {
   embed_Value(v);
   embed_FunctionDecl(function);
@@ -305,7 +301,7 @@ struct TreePath
   TreePath *next;
 };
 
-struct AccessorV
+struct Accessor
 {
   embed_Value(v);
   Value *record;
@@ -313,7 +309,7 @@ struct AccessorV
   String field_name;            // #todo #debug_only
 };
 
-struct Composite
+struct CompositeA
 {
   embed_Ast(a);
   Ast  *op;
@@ -321,7 +317,7 @@ struct Composite
   Ast **args;
 };
 
-struct CompositeV
+struct Composite
 {
   embed_Value(v);
   Value  *op;
@@ -330,14 +326,14 @@ struct CompositeV
 };
 
 inline void
-initComposite(Composite *app, Ast *op, s32 arg_count, Ast **args)
+initComposite(CompositeA *app, Ast *op, s32 arg_count, Ast **args)
 {
   app->op        = op;
   app->arg_count = arg_count;
   app->args      = args;
 }
 
-embed_struct struct Arrow
+struct ArrowA
 {
   embed_Ast(a);
   i32     param_count;
@@ -346,7 +342,7 @@ embed_struct struct Arrow
   Ast    *output_type;
 };
 
-struct ArrowV
+struct Arrow
 {
   Value v;
   s32     param_count;
@@ -375,9 +371,9 @@ getConstructorOf(Value *in0)
   Union *out = 0;
   switch (in0->cat)
   {
-    case VC_CompositeV:
+    case VC_Composite:
     {
-      if (CompositeV *in = castValue(in0, CompositeV))
+      if (Composite *in = castValue(in0, Composite))
         out = castValue(in->op, Union);
     } break;
 
@@ -398,7 +394,7 @@ struct Expression
   operator bool() { return ast && value; }
 };
 
-struct Rewrite
+struct RewriteA
 {
   embed_Ast(a);
 
@@ -408,7 +404,7 @@ struct Rewrite
   b32       right_to_left;
 };
 
-struct Accessor
+struct AccessorA
 {
   Ast    a;
 
@@ -478,7 +474,7 @@ struct AstArray
   Value *items;
 };
 
-struct RewriteV
+struct Rewrite
 {
   embed_Value(v);
   TreePath  *path;
@@ -487,13 +483,13 @@ struct RewriteV
   Value     *body;
 };
 
-struct Computation {
+struct ComputationA {
   embed_Ast(a);
   Ast *lhs;
   Ast *rhs;
 };
 
-struct ComputationV {
+struct Computation {
   embed_Value(v);
   Value *lhs;
   Value *rhs;
