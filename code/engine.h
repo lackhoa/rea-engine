@@ -49,8 +49,9 @@ enum TermCategory {
   Term_Constructor,
   Term_Function,
 
-  Term_Computation,
   Term_StackValue,
+  Term_StackPointer,
+  Term_Computation,
   Term_Accessor,
   Term_Composite,
   Term_Arrow,
@@ -266,16 +267,19 @@ struct Union
 
 struct FunctionDecl {
   Ast       a;
-  ArrowAst   *signature;
+  ArrowAst *signature;
   Sequence *body;
 };
+
+struct FunctionId {s32 id;};
 
 struct Function
 {
   embed_Term(v);
-  Token     name;
-  Sequence *body;
-  Stack    *stack;  // nocheckin wtf does this do?
+  Token       name;
+  FunctionId  id;  // :reserved-0-for-function-id
+  Sequence   *body;
+  i32         stack_depth;
 };
 
 Ast LET_TYPE_NORMALIZE_;
@@ -290,11 +294,17 @@ struct Let
 
 struct StackValue
 {
-  Term v;
-
+  embed_Term(v);
   Token name;
   s32   id;
   s32   stack_depth;
+};
+
+struct StackPointer {
+  embed_Term(v);
+  Token name;
+  s32   id;
+  s32   stack_delta;
 };
 
 struct TreePath
@@ -319,11 +329,10 @@ struct CompositeAst
   Ast **args;
 };
 
-struct Composite
-{
+struct Composite {
   embed_Term(v);
   Term  *op;
-  s32     arg_count;
+  i32    arg_count;
   Term **args;
 };
 
@@ -335,8 +344,7 @@ initComposite(CompositeAst *app, Ast *op, s32 arg_count, Ast **args)
   app->args      = args;
 }
 
-struct ArrowAst
-{
+struct ArrowAst {
   embed_Ast(a);
   i32     param_count;
   Token  *param_names;
@@ -344,18 +352,15 @@ struct ArrowAst
   Ast    *output_type;
 };
 
-struct Arrow
-{
-  Term v;
+struct Arrow {
+  embed_Term(v);
   s32     param_count;
   Token  *param_names;
-  Term **param_types;
-  Term  *output_type;
-  s32     stack_depth;
+  Term  **param_types;
+  Term   *output_type;
 };
 
-struct GlobalBinding
-{
+struct GlobalBinding {
   String key;
   s32    count;
   Term *(items[8]);           // todo: #grow
@@ -414,23 +419,20 @@ struct AccessorAst
   s32    field_id;              // after build phase
 };
 
-struct FileList
-{
+struct FileList {
   char     *first_path;
   char     *first_content;
   FileList *next;
 };
 
-struct EngineState
-{
+struct EngineState {
   MemoryArena *arena;
   FileList    *file_list;
 };
 
 struct PrintOptions{b32 detailed; b32 print_type; s32 indentation; int no_paren_precedence;};
 
-struct Builtins
-{
+struct Builtins {
   Union       *True;
   Constructor *truth;
   Union       *False;
@@ -440,15 +442,13 @@ struct Builtins
   Constructor *refl;
 };
 
-enum MatcherCategory
-{
+enum MatcherCategory {
   MC_Unknown,
   MC_Exact,
   MC_OutType,
 };
 
-struct Matcher
-{
+struct Matcher {
   MatcherCategory cat;
   union
   {
@@ -463,24 +463,21 @@ inline Matcher exactMatch(Term *value)
   return Matcher{.cat=MC_Exact, .Exact=value};
 }
 
-struct ValueArray
-{
+struct ValueArray {
   s32     count;
   Term **items;
 };
 
-struct AstArray
-{
+struct AstArray {
   s32    count;
   Term *items;
 };
 
-struct Rewrite
-{
+struct Rewrite {
   embed_Term(v);
-  TreePath  *path;
+  TreePath *path;
   Term     *eq_proof;
-  b32        right_to_left;
+  b32       right_to_left;
   Term     *body;
 };
 

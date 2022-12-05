@@ -10,15 +10,20 @@
 #include "engine.h"
 #include <corecrt.h>
 
-i32 debug_normalization_depth;
-i32 debug_evaluation_depth;
+global_variable i32 debug_normalization_depth;
+global_variable i32 global_debug_serial;
 
 global_variable Builtins builtins;
-
+global_variable Sequence dummy_function_under_construction;
 global_variable Term  holev_ = {.cat = Term_Hole};
 global_variable Term *holev = &holev_;
 
-global_variable Sequence dummy_function_under_construction;
+global_variable FunctionId next_function_id;
+inline FunctionId getNextFunctionId()
+{
+  next_function_id.id++;  // :reserved-0-for-function-id
+  return FunctionId{next_function_id.id};
+}
 
 inline i32
 getStackDepth(Environment *env)
@@ -635,6 +640,7 @@ print(MemoryArena *buffer, Ast *in0)
 forward_declare internal char *
 print(MemoryArena *buffer, Term *in0, PrintOptions opt)
 {// mark: printValue
+  i32 debug_print = true;
   char *out = buffer ? (char*)getNext(buffer) : 0;
   if (in0)
   {
@@ -645,6 +651,13 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
 
     switch (in0->cat)
     {
+      case Term_StackPointer:
+      {
+        StackPointer *in = castTerm(in0, StackPointer);
+        print(buffer, in->name);
+        if (debug_print) print(buffer, "[%d]", in->stack_delta);
+      } break;
+
       case Term_Null:
       {
         print(buffer, "<NULL>");
@@ -658,11 +671,8 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
       case Term_StackValue:
       {
         StackValue *in = castTerm(in0, StackValue);
-#if 1
-        print(buffer, "%.*s<%d>", in->name.string.length, in->name.string.chars, in->stack_depth);
-#else
         print(buffer, in->name);
-#endif
+        if (debug_print) print(buffer, "<%d>", in->stack_depth);
       } break;
 
       case Term_Composite:
@@ -906,84 +916,65 @@ isCompositeConstructor(Term *in0)
 }
 
 internal Term *
-evaluateArrow(MemoryArena *arena, i32 env_depth, Term **args, i32 depth, Term *in0)
+evaluateArrow(MemoryArena *arena, Term **args, Term *in0, i32 stack_offset)
 {
   Term *out0 = 0;
-  assert(depth >= 0);
-  i32 depth_bump = maximum(env_depth - depth, 0);
-  if (args || depth_bump)
+  switch (in0->cat)
   {
-    switch (in0->cat)
+    case Term_StackPointer:
     {
-      case Term_StackValue:
+      StackPointer *in = castTerm(in0, StackPointer);
+      assert(in->stack_delta >= 0 && in->id >= 0);
+      if (in->stack_delta == stack_offset)
+        out0 = args[in->id];
+      else out0 = in0;
+    } break;
+
+    case Term_Composite:
+    {
+      Composite *in  = castTerm(in0, Composite);
+      assert(in->type);
+      Composite *out = copyStruct(arena, in);
+      out->op = evaluateArrow(arena, args, in->op, stack_offset);
+      allocateArray(arena, in->arg_count, out->args);
+      for (i32 id=0; id < in->arg_count; id++)
+        out->args[id] = evaluateArrow(arena, args, in->args[id], stack_offset);
+      out0 = &out->v;
+    } break;
+
+    case Term_Arrow:
+    {
+      Arrow *in  = castTerm(in0, Arrow);
+      Arrow *out = copyStruct(arena, in);
+      allocateArray(arena, out->param_count, out->param_types);
+      for (int id=0; id < out->param_count; id++)
       {
-        StackValue *in = castTerm(in0, StackValue);
-        if (in->stack_depth == depth)
-        {
-          if (args) out0 = args[in->id];
-        }
-        if (!out0 && depth_bump && in->stack_depth >= depth)
-        {
-          StackValue *out = copyStruct(arena, in);
-          out->stack_depth = in->stack_depth + depth_bump;
-          out0 = &out->v;
-        }
-        if (!out0) out0 = in0;
-      } break;
+        out->param_types[id] = evaluateArrow(arena, args, out->param_types[id], stack_offset);
+      }
+      out->output_type = evaluateArrow(arena, args, out->output_type, stack_offset);
+      out0 = &out->v;
+    } break;
 
-      case Term_Composite:
-      {
-        Composite *in  = castTerm(in0, Composite);
-        assert(in->type);
-        Composite *out = copyStruct(arena, in);
-        out->op = evaluateArrow(arena, env_depth, args, depth, in->op);
-        allocateArray(arena, in->arg_count, out->args);
-        for (i32 id=0; id < in->arg_count; id++)
-          out->args[id] = evaluateArrow(arena, env_depth, args, depth, in->args[id]);
-        out0 = &out->v;
-      } break;
+    case Term_Accessor:
+    {
+      Accessor *in  = castTerm(in0, Accessor);
+      Accessor *out = copyStruct(arena, in);
+      out->record = evaluateArrow(arena, args, in->record, stack_offset);
+      out0 = &out->v;
+    } break;
 
-      case Term_Arrow:
-      {
-        Arrow *in  = castTerm(in0, Arrow);
-        Arrow *out = copyStruct(arena, in);
-        out->stack_depth = in->stack_depth + depth_bump;
-        allocateArray(arena, out->param_count, out->param_types);
-        for (int id=0; id < out->param_count; id++)
-        {
-          out->param_types[id] = evaluateArrow(arena, env_depth, args, depth, out->param_types[id]);
-        }
-        out->output_type = evaluateArrow(arena, env_depth, args, depth, out->output_type);
-        out0 = &out->v;
-      } break;
+    case Term_Builtin:
+    case Term_Union:
+    case Term_Constructor:
+    case Term_Function:
+    case Term_StackValue:
+    {out0=in0;} break;
 
-      case Term_Accessor:
-      {
-        Accessor *in  = castTerm(in0, Accessor);
-        Accessor *out = copyStruct(arena, in);
-        out->record = evaluateArrow(arena, env_depth, args, depth, in->record);
-        out0 = &out->v;
-      } break;
-
-      case Term_Builtin:
-      case Term_Union:
-      case Term_Constructor:
-      case Term_Function:
-      {out0=in0;} break;
-
-      default:
-      {todoIncomplete;} break;
-    }
+    default:
+    {todoIncomplete;} break;
   }
-  else out0 = in0;
   assert(out0);
   return out0;
-}
-
-inline Term *
-evaluateArrow(MemoryArena *arena, Environment *env, Term **args, i32 depth, Term *in0)
-{
-  return evaluateArrow(arena, getStackDepth(env), args, depth, in0);
 }
 
 forward_declare internal CompareExpressions
@@ -1009,6 +1000,14 @@ compareExpressions(MemoryArena *arena, Term *lhs0, Term *rhs0)
   {
     switch (lhs0->cat)
     {
+      case Term_StackPointer:
+      {
+        StackPointer *lhs = castTerm(lhs0, StackPointer);
+        StackPointer *rhs = castTerm(rhs0, StackPointer);
+        if ((lhs->stack_delta == rhs->stack_delta) && (lhs->id == rhs->id))
+          out.result = Trinary_True;
+      } break;
+
       case Term_StackValue:
       {
         StackValue* lhs = castTerm(lhs0, StackValue);
@@ -1024,24 +1023,17 @@ compareExpressions(MemoryArena *arena, Term *lhs0, Term *rhs0)
         s32 param_count = lhs->param_count;
         if (rhs->param_count == param_count)
         {
-          i32 common_depth = maximum(lhs->stack_depth, rhs->stack_depth);
           b32 type_mismatch = false;
           for (s32 id = 0; id < param_count; id++)
           {
-            Term *lhs_param_type = evaluateArrow(temp_arena, common_depth, 0, lhs->stack_depth, lhs->param_types[id]);
-            Term *rhs_param_type = evaluateArrow(temp_arena, common_depth, 0, rhs->stack_depth, rhs->param_types[id]);
-            if (!equalB32(lhs_param_type, rhs_param_type))
+            if (!equalB32(lhs->param_types[id], rhs->param_types[id]))
             {
               type_mismatch = true;
               break;
             }
           }
           if (!type_mismatch)
-          {
-            Term *lhs_output_type = evaluateArrow(temp_arena, common_depth, 0, lhs->stack_depth, lhs->output_type);
-            Term *rhs_output_type = evaluateArrow(temp_arena, common_depth, 0, rhs->stack_depth, rhs->output_type);
-            out.result = equalTrinary(lhs_output_type, rhs_output_type);
-          }
+            out.result = equalTrinary(lhs->output_type, rhs->output_type);
         }
         else out.result = Trinary_False;
       } break;
@@ -1110,7 +1102,14 @@ compareExpressions(MemoryArena *arena, Term *lhs0, Term *rhs0)
         out.result = Trinary_True;
       } break;
 
-      case Term_Function:  // we can compare signatures to eliminate negatives.
+      case Term_Function:
+      {
+        Function *lhs = castTerm(lhs0, Function);
+        Function *rhs = castTerm(rhs0, Function);
+        if (lhs->id.id == rhs->id.id)
+          out.result = Trinary_True;
+      } break;
+
       case Term_Null:
       case Term_Hole:
       case Term_Union:
@@ -1370,16 +1369,6 @@ evaluateSequence(MemoryArena *arena, Environment *env, Sequence *sequence)
         addStackValue(env, rhs);
       } break;
 
-      case AC_FunctionDecl:
-      {
-        FunctionDecl *fun         = castAst(item, FunctionDecl);
-        Term        *signature_v = evaluate(arena, env, &fun->signature->a);
-        Function    *funv        = newTerm(arena, Function, signature_v);
-        funv->body  = fun->body;
-        funv->stack = env->stack;
-        addStackValue(env, &funv->v);
-      } break;
-
       invalidDefaultCase;
     }
   }
@@ -1545,6 +1534,7 @@ normalize(MemoryArena *arena, Environment *env, Term *in0)
     } break;
 
     // todo #speed most of these don't need rewriting.
+    case Term_StackPointer:
     case Term_Null:
     case Term_Hole:
     case Term_Constructor:
@@ -1673,6 +1663,7 @@ isGlobalValue(Term *value)
   switch (value->cat)
   {
     case Term_Hole:
+    case Term_StackPointer:
     case Term_StackValue:
     {
       return false;
@@ -1717,10 +1708,134 @@ isGlobalValue(Term *value)
   }
 }
 
+inline b32
+isGlobalFunction(Term *in0)
+{
+  return (in0->cat == Term_Function && castTerm(in0, Function)->id.id);
+}
+
+internal Term *
+toAbstractTerm(MemoryArena *arena, Term *in0, i32 zero_depth)
+{// todo #mem #copy-festival: If this stays longer than 3 days, then we
+ // gotta clean it up.
+  i32 serial = global_debug_serial++;
+  b32 debug = false;
+  if (debug)
+  {
+    debugIndent(); dump("toAbstractTerm("); dump(serial); dump("): "); dump(in0); dump();
+  }
+  Term *out0 = 0;
+  if (in0->cat == Term_Builtin      ||
+      in0->cat == Term_Union        ||
+      in0->cat == Term_Constructor  ||
+      in0->cat == Term_StackPointer ||
+      isGlobalFunction(in0))
+  {
+    out0 = in0;
+  }
+  else
+  {
+    Term *type = toAbstractTerm(arena, in0->type, zero_depth);
+    switch (in0->cat)
+    {
+      case Term_StackValue:
+      {
+        StackValue *in = castTerm(in0, StackValue);
+        if (in->stack_depth >= zero_depth)
+        {
+          StackPointer *out = newTerm(arena, StackPointer, type);
+          out->name        = in->name;
+          out->id          = in->id;
+          out->stack_delta = in->stack_depth - zero_depth;
+          out0 = &out->v;
+        }
+        else out0 = in0;
+      } break;
+
+      case Term_Composite:
+      {
+        Composite *in  = castTerm(in0, Composite);
+        Composite *out = copyStruct(arena, in);
+        out->type      = type;
+        out->op        = toAbstractTerm(arena, in->op, zero_depth);
+        allocateArray(arena, out->arg_count, out->args);
+        for (i32 id=0; id < out->arg_count; id++)
+          out->args[id] = toAbstractTerm(arena, in->args[id], zero_depth);
+        out0 = &out->v;
+      } break;
+
+      case Term_Arrow:
+      {
+        Arrow *in  = castTerm(in0, Arrow);
+        Arrow *out = copyStruct(arena, in);
+        allocateArray(arena, out->param_count, out->param_types);
+        for (i32 id=0; id < out->param_count; id++)
+          out->param_types[id] = toAbstractTerm(arena, in->param_types[id], zero_depth+1);
+        out->output_type = toAbstractTerm(arena, in->output_type, zero_depth+1);
+        out0 = &out->v;
+      } break;
+
+      case Term_Function:
+      {
+        if (type == in0->type) out0 = in0;
+        else
+        {
+          Function *in  = castTerm(in0, Function);
+          Function *out = copyStruct(arena, in);
+          out->type = type;
+          out0 = &out->v;
+        }
+      } break;
+
+      case Term_Computation:
+      {
+        Computation *in  = castTerm(in0, Computation);
+        Computation *out = newTerm(arena, Computation, type);
+        out->lhs  = toAbstractTerm(arena, in->lhs, zero_depth);
+        out->rhs  = toAbstractTerm(arena, in->rhs, zero_depth);
+        out->type = type;
+        out0 = &out->v;
+      } break;
+
+      case Term_Accessor:
+      {
+        Accessor *in  = castTerm(in0, Accessor);
+        Accessor *out = copyStruct(arena, in);
+        out->type   = type;
+        out->record = toAbstractTerm(arena, in->record, zero_depth);
+        out0 = &out->v;
+      } break;
+
+      case Term_Rewrite:
+      {
+        Rewrite *in   = castTerm(in0, Rewrite);
+        Rewrite *out  = copyStruct(arena, in);
+        out->eq_proof = toAbstractTerm(arena, in->eq_proof, zero_depth);
+        out->body     = toAbstractTerm(arena, in->body, zero_depth);
+        out0 = &out->v;
+      } break;
+
+      case Term_Union:
+      case Term_Constructor:
+      case Term_Builtin:
+      case Term_Null:
+      case Term_Hole:
+      case Term_StackPointer:
+        invalidCodePath;
+    }
+  }
+  assert(out0);
+  if (debug)
+  {
+    debugDedent(); dump("=>("); dump(serial); dump(") "); dump(out0); dump();
+  }
+  return out0;
+}
+
 forward_declare internal Term *
 evaluate(MemoryArena *arena, Environment *env, Ast *in0)
 {
-  Term *out0;
+  Term *out0 = 0;
 
 #define DEBUG_EVALUATE 0
 #define DEBUG_EVALUATE_DEPTH 2
@@ -1747,10 +1862,7 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
         stack = stack->outer;
 
       if (in->id < stack->count)
-        // todo #copy-paranoia: maybe we let the stack
-        // use the same arena as the env... then manage the env memory as one
-        // unified whole. Or maybe only copy if the value is in a different arena?
-        out0 = deepCopy(arena, stack->items[in->id]);
+        out0 = stack->items[in->id];
       else
       {
         dump(env->stack); dump();
@@ -1778,7 +1890,7 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
 
       Term *op = evaluate(arena, env, in->op);
       Arrow *signature = castTerm(op->type, Arrow);
-      Term *return_type = evaluateArrow(arena, env, args, signature->stack_depth, signature->output_type);
+      Term *return_type = evaluateArrow(arena, args, signature->output_type, 0);
       Composite *out = newTerm(arena, Composite, return_type);
       out->arg_count = in->arg_count;
       out->op        = op;
@@ -1794,7 +1906,6 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
       out->param_names = in->param_names;
 
       addStackFrame(env);
-      out->stack_depth = getStackDepth(env);  // record the depth of the arrow type's free vars
       allocateArray(arena, in->param_count, out->param_types);
       for (i32 id=0; id < in->param_count; id++)
       {
@@ -1804,7 +1915,7 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
       out->output_type = evaluate(arena, env, in->output_type);
       unwindStack(env);
 
-      out0 = &out->v;
+      out0 = toAbstractTerm(arena, &out->v, getStackDepth(env));
     } break;
 
     case AC_AccessorAst:
@@ -1844,7 +1955,7 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
       Term *type = evaluate(arena, env, &in->signature->a);
       Function *out = newTerm(arena, Function, type);
       out->body  = in->body;
-      out->stack = env->stack;
+      out->stack_depth = getStackDepth(env);
       out0 = &out->v;
     } break;
 
@@ -1926,7 +2037,7 @@ introduceRecord(MemoryArena *arena, Environment *env, Term *parent, Constructor 
     for (s32 field_id=0; field_id < param_count; field_id++)
     {
       String field_name = ctor_sig->param_names[field_id].string;
-      Term *member_type = evaluateArrow(arena, env, record->args, ctor_sig->stack_depth, ctor_sig->param_types[field_id]);
+      Term *member_type = evaluateArrow(arena, record->args, ctor_sig->param_types[field_id], 0);
       Accessor *accessor = newTerm(arena, Accessor, member_type);
       accessor->record     = parent;
       accessor->field_id   = field_id;
@@ -2200,47 +2311,48 @@ matchType(Environment *env, Term *actual, Term *expected)
 }
 
 inline b32
-hasFreeVars(Term *in0)
+hasFreeVars(Term *in0, i32 stack_offset)
 {
   switch (in0->cat)
   {
-    case Term_StackValue:
+    case Term_StackPointer:
     {
-      StackValue *in = castTerm(in0, StackValue);
-      if (in->stack_depth == 0)
+      StackPointer *in = castTerm(in0, StackPointer);
+      if (in->stack_delta >= stack_offset)
         return true;
     } break;
 
     case Term_Composite:
     {
       Composite *in = castTerm(in0, Composite);
-      if (hasFreeVars(in->op))
+      if (hasFreeVars(in->op, stack_offset))
         return true;
       for (s32 arg_id=0; arg_id < in->arg_count; arg_id++)
       {
-        if (hasFreeVars(in->args[arg_id]))
+        if (hasFreeVars(in->args[arg_id], stack_offset))
           return true;
       }
     } break;
 
     case Term_Arrow:
-    {
+    {// todo: I suspect this recursion is done completely wrong.
       Arrow *in = castTerm(in0, Arrow);
       for (s32 param_id = 0; param_id < in->param_count; param_id++)
       {
-        if (hasFreeVars(in->param_types[param_id]))
+        if (hasFreeVars(in->param_types[param_id], stack_offset+1))
           return true;
       }
-      if (hasFreeVars(in->output_type))
+      if (hasFreeVars(in->output_type, stack_offset+1))
         return true;
     } break;
 
     case Term_Accessor:
     {
       Accessor *in = castTerm(in0, Accessor);
-      return hasFreeVars(in->record);
+      return hasFreeVars(in->record, stack_offset);
     } break;
 
+    case Term_StackValue:
     case Term_Builtin:
     case Term_Union:
     case Term_Constructor:
@@ -2266,7 +2378,7 @@ getGlobalOverloads(Environment *env, Identifier *ident, Term *expected_type)
         {
           Arrow *signature = castTerm(slot->items[slot_id]->type, Arrow);
           b32 output_type_mismatch = false;
-          if (!hasFreeVars(signature->output_type))
+          if (!hasFreeVars(signature->output_type, 0))
           {
             if (!equalB32(signature->output_type, expected_type))
               output_type_mismatch = true;
@@ -2289,10 +2401,7 @@ getGlobalOverloads(Environment *env, Identifier *ident, Term *expected_type)
 internal Function *
 buildFunction(MemoryArena *arena, Environment *env, FunctionDecl *fun)
 {
-  // TODO: we adjust the binding here, which is kinda yikes but what are ya
-  // gonna do, that's what you do to support recursion.
   Function *funv = 0;
-
   if (Expression signature = buildExpression(arena, env, &fun->signature->a, holev))
   {
     // note: store the built signature, maybe to display it later.
@@ -2302,16 +2411,7 @@ buildFunction(MemoryArena *arena, Environment *env, FunctionDecl *fun)
     funv->body = &dummy_function_under_construction;
 
     // note: add binding first to support recursion
-    b32 is_local = (bool)env->bindings;
-    if (is_local)
-    {// local context
-      addLocalBinding(env, &fun->a.token);
-      addStackValue(env, &funv->v);
-    }
-    else
-    {// global context
-      addGlobalBinding(&fun->a.token, &funv->v);
-    }
+    addGlobalBinding(&fun->a.token, &funv->v);
 
     if (noError())
     {
@@ -2320,7 +2420,7 @@ buildFunction(MemoryArena *arena, Environment *env, FunctionDecl *fun)
       for (s32 id=0; id < fun->signature->param_count; id++)
       {
         Token *name = fun->signature->param_names+id;
-        introduceOnStack(temp_arena, env, name, fun->signature->param_types[id]);
+        introduceOnStack(arena, env, name, fun->signature->param_types[id]);
         addLocalBinding(env, name);
       }
       assert(noError());
@@ -2330,8 +2430,9 @@ buildFunction(MemoryArena *arena, Environment *env, FunctionDecl *fun)
       unwindBindingsAndStack(env);
     }
 
-    funv->body  = fun->body;
-    funv->stack = env->stack;
+    funv->body        = fun->body;
+    funv->stack_depth = getStackDepth(env);
+    funv->id          = getNextFunctionId();
   }
   return funv;
 }
@@ -2339,17 +2440,26 @@ buildFunction(MemoryArena *arena, Environment *env, FunctionDecl *fun)
 internal Ast *
 valueToAst(MemoryArena *arena, Environment *env, Term* value)
 {
-  Ast *out0;
+  Ast *out0 = 0;
   Token token = newToken("<synthetic>");
   switch (value->cat)
   {
     case Term_StackValue:
     {
-      StackValue *ref = castTerm(value, StackValue);
-      Variable   *var = newAst(arena, Variable, &ref->name);
+      StackValue *val = castTerm(value, StackValue);
+      Variable   *var = newAst(arena, Variable, &val->name);
       out0 = &var->a;
-      var->stack_delta = env->stack->depth - ref->stack_depth;
-      var->id          = ref->id;  // :stack-ref-id-has-significance
+      var->stack_delta = env->stack->depth - val->stack_depth;
+      var->id          = val->id;  // :stack-ref-id-has-significance
+    } break;
+
+    case Term_StackPointer:
+    {
+      StackPointer *ptr = castTerm(value, StackPointer);
+      Variable     *var = newAst(arena, Variable, &ptr->name);
+      out0 = &var->a;
+      var->stack_delta = ptr->stack_delta;
+      var->id          = ptr->id;  // :stack-ref-id-has-significance
     } break;
 
     case Term_Composite:
@@ -2404,11 +2514,7 @@ valueToAst(MemoryArena *arena, Environment *env, Term* value)
       todoIncomplete;  // really we don't need it tho?
     } break;
 
-    default:
-    {
-      todoIncomplete;
-      out0 = 0;
-    }
+    default: {todoIncomplete;}
   }
 
   assert(out0);
@@ -2469,6 +2575,7 @@ searchExpression(MemoryArena *arena, Term *lhs, Term* in0)
       case Term_Union:
       case Term_Function:
       case Term_Constructor:
+      case Term_StackPointer:
       {} break;
 
       case Term_Arrow:
@@ -2718,35 +2825,35 @@ subExpressionAtPath(Term *in, TreePath *path)
       invalidDefaultCase;
     }
   }
-  else
-    return in;
+  else return in;
 }
 
 internal b32
-unify(Term **values, i32 free_depth, Term *lhs, Term *rhs)
+unify(Term **values, Term *lhs, Term *rhs)
 {
   b32 success = false;
   b32 debug_print = false;
-  if (debug_print)
+  i32 debug_serial = global_debug_serial++;
+  if (global_debug_mode && debug_print)
   {
-    debugIndent(); dump("unify: "); dump(lhs); dump(" with "); dump(rhs); dump();
+    debugIndent(); dump("unify("); dump(debug_serial); dump(") ");
+    dump(lhs); dump(" with "); dump(rhs); dump();
   }
   switch (lhs->cat)
   {
-    case Term_StackValue:
+    case Term_StackPointer:
     {
-      StackValue *lhs_stack_value = castTerm(lhs, StackValue);
-      if (lhs_stack_value->stack_depth != free_depth)
-        if (equalB32(lhs, rhs))
-          success = true;
-      if (Term *replaced = values[lhs_stack_value->id])
+      StackPointer *lhs_pointer = castTerm(lhs, StackPointer);
+      if (lhs_pointer->stack_delta != 0)
+        todoIncomplete;
+      if (Term *replaced = values[lhs_pointer->id])
       {
         if (equalB32(replaced, rhs))
           success = true;
       }
-      else if (equalB32(lhs->type, rhs->type))
+      else if (equalB32(lhs->type, rhs->type))  // todo: shouldn't we unify instead
       {
-        values[lhs_stack_value->id] = rhs;
+        values[lhs_pointer->id] = rhs;
         success = true;
       }
     } break;
@@ -2756,12 +2863,12 @@ unify(Term **values, i32 free_depth, Term *lhs, Term *rhs)
       Composite *lhs_composite = castTerm(lhs, Composite);
       if (Composite *rhs_composite = castTerm(rhs, Composite))
       {
-        if (unify(values, free_depth, lhs_composite->op, rhs_composite->op))
+        if (unify(values, lhs_composite->op, rhs_composite->op))
         {
           success = true;
           for (int id=0; id < lhs_composite->arg_count; id++)
           {
-            if (!unify(values, free_depth, lhs_composite->args[id], rhs_composite->args[id]))
+            if (!unify(values, lhs_composite->args[id], rhs_composite->args[id]))
             {
               success = false;
               break;
@@ -2776,9 +2883,10 @@ unify(Term **values, i32 free_depth, Term *lhs, Term *rhs)
       success = equalB32(lhs, rhs);
     } break;
   }
-  if (debug_print)
+  if (global_debug_mode && debug_print)
   {
-    debugDedent(); dump("=> "); if (success) dump("true"); else dump("false"); dump();
+    debugDedent(); dump("=>("); dump(debug_serial); dump(") ");
+    if (success) dump("true"); else dump("false"); dump();
   }
   return success;
 }
@@ -2944,7 +3052,7 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Term *go
                     eq->args[2]   = to;
 
                     Term **values = pushArray(temp_arena, arrowv->param_count, Term *, true);
-                    if (unify(values, arrowv->stack_depth, output_type, &eq->v))
+                    if (unify(values, output_type, &eq->v))
                     {
                       // todo: make a standalone typecheck function, to check type of these things
                       Composite *eq_proofc = newTerm(arena, Composite, &eq->v);
@@ -2961,6 +3069,8 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Term *go
                     else
                     {
                       parseError(rewrite->eq_proof, "unification failed");
+                      attach("lhs", output_type);
+                      attach("rhs", &eq->v);
                       attach("goal", goal);
                     }
                   }
@@ -3420,7 +3530,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
                    arg_id++)
               {
                 Term *param_type0 = signature->param_types[arg_id];
-                Term *expected_arg_type = evaluateArrow(temp_arena, env, args, signature->stack_depth, param_type0);
+                Term *expected_arg_type = evaluateArrow(temp_arena, args, param_type0, 0);
 
                 // Typecheck & Inference for the arguments. TODO: the hole stuff
                 // is kinda hard-coded only for the equality.
@@ -3441,8 +3551,8 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
                     args[arg_id]     = arg.value;
                     if (expected_arg_type == holev)
                     {
-                      StackValue *param_type = castTerm(param_type0, StackValue);
-                      assert(param_type->stack_depth == signature->stack_depth);
+                      StackPointer *param_type = castTerm(param_type0, StackPointer);
+                      assert(param_type->stack_delta == 0);
                       args[param_type->id] = arg.value->type;
 
                       // write back to the input ast.
@@ -3591,19 +3701,19 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
         for (s32 id=0; id < signature->param_count; id++)
         {
           Token *name = signature->param_names+id;
-          Term *param_type = evaluateArrow(arena, env, env->stack->items, signature->stack_depth, signature->param_types[id]);
+          Term *param_type = evaluateArrow(arena, env->stack->items, signature->param_types[id], 0);
           introduceOnStack(arena, env, name, param_type);
           addLocalBinding(env, name);
         }
         assert(noError());
 
-        Term *expected_body_type = evaluateArrow(arena, env, env->stack->items, signature->stack_depth, signature->output_type);
+        Term *expected_body_type = evaluateArrow(arena, env->stack->items, signature->output_type, 0);
         if (buildSequence(arena, env, in->body, expected_body_type))
         {
           in->signature = castAst(valueToAst(arena, env, goal), ArrowAst);
           assert(in->signature);
-          fun->body  = in->body;
-          fun->stack = env->stack;
+          fun->body        = in->body;
+          fun->stack_depth = getStackDepth(env);
           out.ast   = in0;
           out.value = &fun->v;
         }

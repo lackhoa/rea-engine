@@ -108,4 +108,5 @@ multiplyPosv2 :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
  fork a
  {0 : _ => {a_positive(_)},
   ++: ;; (E: b + a.p * b = 0) -> False
-  _ => {fork b {0: b_positive(_), ++: E}}}}
+  ;; _ => {fork b {0: b_positive(_), ++: E}}
+  }}

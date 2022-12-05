@@ -1,7 +1,7 @@
 #load "boolean.rea"
 #load "nat.rea"
 
-;; compare_expressions (true = (true | true)), (true = (false | false));  ;; path: [2]
+;; compare_expressions (true = (true | true)), (true = (false | false)); ;; path: [2]
 ;; compare_expressions (true = (true | true)), (true = (true | false));  ;; path: [2,1]
 ;; compare_expressions (true = (true | true)), (true = (true & false));  ;; path: [2]
 ;; compare_expressions ((true & false) | true), (true & (false | true)); ;; path: []
