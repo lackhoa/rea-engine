@@ -125,6 +125,14 @@ inline void attach(char *key, Term *value, Tokenizer *tk=global_tokenizer)
   attach(key, val, tk);
 }
 
+inline void attach(char *key, i32 n, Tokenizer *tk=global_tokenizer)
+{
+  MemoryArena buffer = subArena(temp_arena, 16);
+  String string = print(&buffer, "%d", n);
+  buffer.used++;
+  attach(key, string.chars, tk);
+}
+
 // #define pushContext { ParseContext context = {(char*)__func__}; pushContext_(&context); }
 inline void
 pushContext(char *string, Tokenizer *tk=global_tokenizer)

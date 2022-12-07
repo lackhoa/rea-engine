@@ -5,14 +5,15 @@
 check truth: true = false;
 #should_fail off
 
+;; todo this can be just be a struct
 RatTest :: union
 {
- / : (n,d: Nat, _dnot0: d != 0) -> RatTest
+ / : struct {n,d: Nat, _dnot0: d != 0}
  }
 
 BigStruct :: union
 {
- makeBigStruct : (r: RatTest) -> BigStruct
+ makeBigStruct : struct {r: RatTest}
  }
 
 testBigStruct :: fn (big : BigStruct) -> (big.r.d != 0)
@@ -37,7 +38,7 @@ testRatArrow2 :: fn () -> (a: RatTest) -> (a.d = a.d)
 
 Nat+ :: union
 {1,
- ++: (p: Nat+) -> Nat+}
+ ++: struct {p: Nat+}}
 
 + :: fn (a, b: Nat+) -> Nat+
 {fork a
@@ -60,8 +61,8 @@ check 1+2: RatTest;
 Z :: union
 {0,
  ;; todo: These maybe not work work as unary operators?
- +: (v: Nat+) -> Z,
- -: (v: Nat+) -> Z}
+ +: struct {v: Nat+},
+ -: struct {v: Nat+}}
 
 ;; - :: (a: Nat+, b: Nat+) -> Nat+
 ;; {;; assuming that a > b
@@ -107,7 +108,7 @@ Z :: union
 
 ;; Rat+ :: union { /: (n,d: Nat+) -> Rat+ }
 ;; Rat :: union { 0, +: (v: Rat+) -> Rat, -: (v: Rat+) -> Rat }
-Rat :: union { /: (n: Z, d: Nat+) -> Rat }
+Rat :: union { /: struct {n: Z, d: Nat+} }
 
 + :: fn (a,b: Rat) -> Rat
 {;; todo: type coercion

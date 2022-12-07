@@ -40,22 +40,21 @@ enum AstCategory {
 };
 
 enum TermCategory {
-  Term_Null = 0,
-  Term_Hole,
-  Term_Builtin,
+  Term_Hole    = 1,
+  Term_Builtin = 2,
 
   // todo maybe we can carve out "Value" from here
-  Term_Union,
-  Term_Constructor,
-  Term_Function,
+  Term_Union       = 3,
+  Term_Constructor = 5,
+  Term_Function    = 6,
 
-  Term_StackValue,
-  Term_StackPointer,
-  Term_Computation,
-  Term_Accessor,
-  Term_Composite,
-  Term_Arrow,
-  Term_Rewrite,
+  Term_StackValue   = 7,
+  Term_StackPointer = 8,
+  Term_Computation  = 9,
+  Term_Accessor     = 10,
+  Term_Composite    = 11,
+  Term_Arrow        = 12,
+  Term_Rewrite      = 13,
 };
 
 embed_struct struct Ast
@@ -169,13 +168,19 @@ struct ParseExpressionOptions
   s32 min_precedence = -9999;
 };
 
-// NOTE: bool can be converted directly to this this
-enum Trinary
+// NOTE: bool can be converted directly to this
+enum TrinaryValue
 {
   Trinary_False   = 0,
   Trinary_True    = 1,
-  Trinary_Unknown = 2, 
+  Trinary_Unknown = 2,
 };
+struct Trinary {TrinaryValue v;};
+Trinary toTrinary(b32 v)
+{
+  if (v == 0) return Trinary{Trinary_False};
+  else return Trinary{Trinary_True};
+}
 
 struct OverwriteRules
 {
@@ -218,7 +223,7 @@ struct LocalBindings
 {
   MemoryArena   *arena;
   LocalBinding   table[128];
-  LocalBindings *next;
+   LocalBindings *next;
   s32 count;
 };
 
@@ -248,21 +253,24 @@ newTerm_(MemoryArena *arena, TermCategory cat, Term *type, size_t size)
 #define newTerm(arena, cat, type)              \
   ((cat *) newTerm_(arena, Term_##cat, type, sizeof(cat)))
 
-struct Constructor
-{
+struct Constructor {
   embed_Term(v);
   Union *uni;
   Token  name;
-  s32    id;
+  i32    id;
 };
 
-struct Union
-{
+struct Union {
   embed_Term(v);
-  Token name;
-
-  s32          ctor_count;
+  Token        name;
+  i32          ctor_count;
   Constructor *ctors;
+};
+
+struct Partition {
+  embed_Term(v);
+  Union *uni;
+  i32    ctor_id;
 };
 
 struct FunctionDecl {
