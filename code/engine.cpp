@@ -1226,23 +1226,46 @@ lookupCurrentFrame(LocalBindings *bindings, String key, b32 add_if_missing)
   return out;
 }
 
-internal Term *
-repeatedOverwrite(Environment *env, Term *in)
+internal b32
+isOverwritable(Term *in)
 {
-  Term *out = 0;
-  // todo: find some way to early out in case expression can't be rewritten
-  // if (canBeRewritten(in))
-  // todo: #speed this is O(n)
-  for (OverwriteRules *rewrite = env->overwrite;
-       rewrite && !out;
-       rewrite = rewrite->next)
+  switch (in->cat)
   {
-    if (equal(in, rewrite->lhs))
-      out = rewrite->rhs;
-  }
-  if (!out)
-    out = in;
+    case Term_StackPointer:
+    case Term_StackValue:
+    case Term_Accessor:
+    case Term_Composite:
+    {return true;} break;
 
+    case Term_Hole:
+    case Term_Rewrite:
+    case Term_Arrow:
+    case Term_Computation:
+    case Term_Builtin:
+    case Term_Union:
+    case Term_Constructor:
+    case Term_Function:
+    {return false;} break;
+  }
+}
+
+internal Term *
+overwriteTerm(Environment *env, Term *in)
+{
+  Term *out = in;
+  if (true || isOverwritable(in))
+  {
+    for (OverwriteRules *rewrite = env->overwrite;
+         rewrite;
+         rewrite = rewrite->next)
+    {
+      if (equal(in, rewrite->lhs))
+      {
+        out = rewrite->rhs;
+        break;
+      }
+    }
+  }
   return out;
 }
 
@@ -1549,7 +1572,7 @@ normalize(MemoryArena *arena, Environment *env, Term *in0)
   }
 
   Term *before_rewrite = out0;
-  out0 = repeatedOverwrite(env, out0);
+  out0 = overwriteTerm(env, out0);
 
   if (out0 != before_rewrite)
   {
@@ -1921,8 +1944,7 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
     {
       AccessorAst *in = castAst(in0, AccessorAst);
       Term *record0 = evaluate(arena, env, in->record);
-      // note: it has to be a record, otw we wouldn't know what type to
-      // return.
+      record0 = overwriteTerm(env, record0);
       Composite *record = castTerm(record0, Composite);
       out0 = record->args[in->field_id];
     } break;
@@ -1961,8 +1983,10 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
     invalidDefaultCase;
   }
 
+#if 0
   // note: overwriting doesn't count as normalization
   out0 = repeatedOverwrite(env, out0);
+#endif
 
   assert(out0);
 
@@ -2259,22 +2283,17 @@ isExpressionEndMarker(Token *token)
 }
 
 internal b32
-addRewriteRule(Environment *env, Term *lhs0, Term *rhs0)
+addOverwriteRule(Environment *env, Term *lhs0, Term *rhs0)
 {
   b32 added = false;
-  if (!equal(lhs0, rhs0))
+  if (isOverwritable(lhs0))
   {
-    OverwriteRules *rewrite = newOverwriteRule(env, lhs0, rhs0);
-    env->overwrite = rewrite;
-    added= true;
-
-#if 0
-    print(0, "added rewrite: ");
-    print(0, lhs, {});
-    print(0, " -> ");
-    print(0, rhs, {});
-    printNewline();
-#endif
+    if (!equal(lhs0, rhs0))
+    {
+      OverwriteRules *rewrite = newOverwriteRule(env, lhs0, rhs0);
+      env->overwrite = rewrite;
+      added= true;
+    }
   }
   return added;
 }
@@ -3239,6 +3258,7 @@ buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Term *go
 forward_declare internal void
 buildFork(MemoryArena *arena, Environment *env, Fork *fork, Term *expected_type)
 {
+  // todo #cleanup: don't allow users to fork something they obviously can't
   assert(expected_type);
   if (Expression subject = buildExpression(arena, env, fork->subject, holev))
   {
@@ -3276,7 +3296,7 @@ buildFork(MemoryArena *arena, Environment *env, Fork *fork, Term *expected_type)
           if (ctor)
           {
             Term *record = introduceRecord(temp_arena, env, subjectv, ctor);
-            addRewriteRule(env, subjectv, record);
+            addOverwriteRule(env, subjectv, record);
             if (correct_bodies[ctor->id])
             {
               parseError(&fork->bodies[input_case_id]->a, "fork case handled twice");
@@ -3626,12 +3646,12 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
       AccessorAst *in = castAst(in0, AccessorAst);
       if (Expression build_record = buildExpression(arena, env, in->record, holev))
       {
-        Ast   *record   = build_record.ast;
-        Term *recordv0 = build_record.value;
-        if (Composite *recordv = castTerm(recordv0, Composite))
+        Ast  *recorda = build_record.ast;
+        Term *record0 = overwriteTerm(env, build_record.value);
+        if (Composite *record = castTerm(record0, Composite))
         {
-          in->record = record;
-          Arrow *op_type = castTerm(recordv->op->type, Arrow);
+          in->record = recorda;
+          Arrow *op_type = castTerm(record->op->type, Arrow);
           s32 param_count = op_type->param_count;
           b32 valid_param_name = false;
           for (s32 param_id=0; param_id < param_count; param_id++)
@@ -3652,15 +3672,11 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
           else
           {
             tokenError(&in->field_name, "accessor has invalid member");
-            attach("expected a member of constructor", recordv->op);
+            attach("expected a member of constructor", record->op);
             attach("in type", op_type->output_type);
           }
         }
-        else
-        {
-          parseError(record, "cannot access a non-record");
-          attach("record", recordv0);
-        }
+        else parseError(recorda, "cannot access a non-record");
       }
     } break;
 
