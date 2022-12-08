@@ -48,7 +48,7 @@ enum TermCategory {
   Term_Constructor = 5,
   Term_Function    = 6,
 
-  Term_StackValue   = 7,
+  /* Term_StackValue   = 7, */
   Term_StackPointer = 8,
   Term_Computation  = 9,
   Term_Accessor     = 10,
@@ -112,9 +112,9 @@ initVariable(Variable *var, u32 id)
 
 struct Constant
 {
-  Ast    a;
+  Ast   a;
   Term *value;
-  b32    is_synthetic;
+  b32   is_synthetic;
 };
 
 struct Sequence
@@ -223,7 +223,7 @@ struct LocalBindings
 {
   MemoryArena   *arena;
   LocalBinding   table[128];
-   LocalBindings *next;
+  LocalBindings *next;
   s32 count;
 };
 
@@ -231,6 +231,7 @@ embed_struct struct Term
 {
   TermCategory  cat;
   Term         *type;
+  i32           term_depth;
 };
 
 typedef Term Builtin;
@@ -254,23 +255,17 @@ newTerm_(MemoryArena *arena, TermCategory cat, Term *type, size_t size)
   ((cat *) newTerm_(arena, Term_##cat, type, sizeof(cat)))
 
 struct Constructor {
-  embed_Term(v);
+  embed_Term(t);
   Union *uni;
   Token  name;
   i32    id;
 };
 
 struct Union {
-  embed_Term(v);
+  embed_Term(t);
   Token        name;
   i32          ctor_count;
   Constructor *ctors;
-};
-
-struct Partition {
-  embed_Term(v);
-  Union *uni;
-  i32    ctor_id;
 };
 
 struct FunctionDecl {
@@ -283,7 +278,7 @@ struct FunctionId {s32 id;};
 
 struct Function
 {
-  embed_Term(v);
+  embed_Term(t);
   Token       name;
   FunctionId  id;  // :reserved-0-for-function-id
   Sequence   *body;
@@ -300,16 +295,8 @@ struct Let
   Ast   *type;
 };
 
-struct StackValue
-{
-  embed_Term(v);
-  Token name;
-  s32   id;
-  s32   stack_depth;
-};
-
 struct StackPointer {
-  embed_Term(v);
+  embed_Term(t);
   Token name;
   s32   id;
   s32   stack_delta;
@@ -323,7 +310,7 @@ struct TreePath
 
 struct Accessor
 {
-  embed_Term(v);
+  embed_Term(t);
   Term *record;
   s32    field_id;
   String field_name;            // #todo #debug_only
@@ -338,7 +325,7 @@ struct CompositeAst
 };
 
 struct Composite {
-  embed_Term(v);
+  embed_Term(t);
   Term  *op;
   i32    arg_count;
   Term **args;
@@ -361,7 +348,7 @@ struct ArrowAst {
 };
 
 struct Arrow {
-  embed_Term(v);
+  embed_Term(t);
   s32     param_count;
   Token  *param_names;
   Term  **param_types;
@@ -402,7 +389,7 @@ getConstructorOf(Term *in0)
   return out;
 }
 
-struct Expression
+struct BuildOutput
 {
   Ast   *ast;
   Term *value;
@@ -482,7 +469,7 @@ struct AstArray {
 };
 
 struct Rewrite {
-  embed_Term(v);
+  embed_Term(t);
   TreePath *path;
   Term     *eq_proof;
   b32       right_to_left;
@@ -496,18 +483,18 @@ struct ComputationAst {
 };
 
 struct Computation {
-  embed_Term(v);
+  embed_Term(t);
   Term *lhs;
   Term *rhs;
 };
 
 struct SearchOutput {b32 found; TreePath *path;};
 
-struct CompareExpressions {Trinary result; TreePath *diff_path;};
+struct CompareValues {Trinary result; TreePath *diff_path;};
 
 struct Lambda {
   embed_Ast(a);
-  ArrowAst   *signature;
+  ArrowAst *signature;
   Sequence *body;
 };
 

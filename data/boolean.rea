@@ -10,7 +10,7 @@ Bool :: union {false, true}
  {true:  true,
   false: b}}
 
-andAssociative :: fn (a, b, c: Bool) -> ((a & b) & c = a & b & c)
+andAssociative :: fn (a, b, c: Bool) -> (a & b) & c = a & b & c
 {fork a
  {false: computation,
   true : computation}}
