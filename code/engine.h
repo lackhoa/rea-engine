@@ -44,7 +44,6 @@ enum TermCategory {
   Term_Hole    = 1,
   Term_Builtin = 2,
 
-  // todo maybe we can carve out "Value" from here
   Term_Union       = 3,
   Term_Constructor = 5,
   Term_Function    = 6,
@@ -231,7 +230,7 @@ embed_struct struct Term
 {
   TermCategory  cat;
   Term         *type;
-  i32           term_depth;
+  i32           is_value;
 };
 
 typedef Term Builtin;
@@ -299,7 +298,7 @@ struct StackPointer {
   embed_Term(t);
   Token name;
   s32   id;
-  s32   stack_delta;
+  s32   frame;
 };
 
 struct TreePath
@@ -311,9 +310,9 @@ struct TreePath
 struct Accessor
 {
   embed_Term(t);
-  Term *record;
-  s32    field_id;
-  String field_name;            // #todo #debug_only
+  Term   *record;
+  s32     field_id;
+  String  field_name;           // #todo #debug_only
 };
 
 struct CompositeAst

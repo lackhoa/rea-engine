@@ -27,18 +27,19 @@ inline FunctionId getNextFunctionId()
 }
 
 internal b32
-isFree(Term *in0, i32 offset)
+isFree(Term *in0, i32 offset)  // todo: #cleanup offset not needed?
 {
   b32 out = false;
   b32 debug = true;
-  if (debug && global_debug_mode) {debugIndent(); dump("isFree: "); dump(in0); dump();}
+  if (debug && global_debug_mode)
+  {debugIndent(); dump("isFree: "); dump(in0); dump(" with offset: "); dump(offset); dump();}
 
   switch (in0->cat)
   {
     case Term_StackPointer:
     {
       StackPointer *in = castTerm(in0, StackPointer);
-      out = in->term_depth == 0 && in->stack_delta >= offset;
+      out = !in->is_value && in->frame >= offset;
     } break;
 
     case Term_Composite:
@@ -405,16 +406,14 @@ dump(Environment *env)
 }
 
 s32 global_variable debug_indentation;
-inline void
-debugIndent()
+forward_declare inline void debugIndent()
 {
   debug_indentation++;
   for (s32 id = 0; id < debug_indentation; id++)
     dump(" ");
 }
 
-inline void
-debugDedent()
+forward_declare inline void debugDedent()
 {
   for (s32 id = 0; id < debug_indentation; id++)
     dump(" ");
@@ -759,7 +758,11 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
       {
         StackPointer *in = castTerm(in0, StackPointer);
         print(buffer, in->name);
-        if (debug_print) print(buffer, "<%d>[%d]", in->term_depth, in->stack_delta);
+        if (debug_print)
+        {
+          if (in->is_value) print(buffer, "<%d>", in->frame);
+          else              print(buffer, "[%d]", in->frame);
+        }
       } break;
 
       case Term_Hole:
@@ -1016,8 +1019,8 @@ evaluateArrow(MemoryArena *arena, Term **args, Term *in0, i32 stack_offset)
     case Term_StackPointer:
     {
       StackPointer *in = castTerm(in0, StackPointer);
-      assert(in->stack_delta >= 0 && in->id >= 0);
-      if (in->term_depth == 0 && in->stack_delta == stack_offset)
+      assert(in->frame >= 0 && in->id >= 0);
+      if (!in->is_value && in->frame == stack_offset)
         out0 = args[in->id];
       else out0 = in0;
     } break;
@@ -1095,7 +1098,7 @@ compareValues(MemoryArena *arena, Term *lhs0, Term *rhs0)
       {
         StackPointer *lhs = castTerm(lhs0, StackPointer);
         StackPointer *rhs = castTerm(rhs0, StackPointer);
-        if ((lhs->stack_delta == rhs->stack_delta) && (lhs->id == rhs->id))
+        if ((lhs->frame == rhs->frame) && (lhs->id == rhs->id))
           out.result.v = Trinary_True;
       } break;
 
@@ -1833,11 +1836,11 @@ toAbstractTerm(MemoryArena *arena, Term *in0, i32 zero_depth)
       {
         StackPointer *in = castTerm(in0, StackPointer);
         assert(zero_depth);
-        if (in->term_depth >= zero_depth)
+        if (in->is_value && in->frame >= zero_depth)
         {
           StackPointer *out = copyStruct(arena, in);
-          out->stack_delta  = in->term_depth - zero_depth;
-          out->term_depth   = 0;
+          out->frame    = in->frame - zero_depth;
+          out->is_value = false;
           out0 = &out->t;
         }
         else out0 = in0;
@@ -2146,11 +2149,11 @@ introduceOnStack(MemoryArena* arena, Environment *env, Token *name, Term *typev)
   Term *intro;
 
   StackPointer *ref = newTerm(arena, StackPointer, typev);
-  ref->name        = *name;
-  ref->id          = env->stack->count;  // :stack-ref-id-has-significance
-  ref->stack_delta = 0;
-  ref->term_depth = env->stack->depth;
-  assert(ref->term_depth);
+  ref->name       = *name;
+  ref->id         = env->stack->count; // :stack-ref-id-has-significance
+  ref->is_value   = true;
+  ref->frame      = getStackDepth(env);
+  assert(ref->frame);
 
   if (Constructor *type_ctor = getSoleConstructor(typev))
     intro = introduceRecord(arena, env, &ref->t, type_ctor);
@@ -2409,7 +2412,7 @@ hasFreeVars(Term *in0, i32 stack_offset)
     case Term_StackPointer:
     {
       StackPointer *in = castTerm(in0, StackPointer);
-      if (in->stack_delta >= stack_offset)
+      if (in->frame >= stack_offset)
         return true;
     } break;
 
@@ -2543,10 +2546,10 @@ termToAst(MemoryArena *arena, Environment *env, Term* term)
       StackPointer *ptr = castTerm(term, StackPointer);
       Variable     *var = newAst(arena, Variable, &ptr->name);
       out0 = &var->a;
-      if (ptr->term_depth)
-        var->stack_delta = env->stack->depth - ptr->term_depth;
+      if (ptr->is_value)
+        var->stack_delta = env->stack->depth - ptr->frame;
       else
-        var->stack_delta = ptr->stack_delta;
+        var->stack_delta = ptr->frame;
       var->id          = ptr->id;  // :stack-ref-id-has-significance
     } break;
 
@@ -2928,7 +2931,7 @@ unify(Value **args, Term **types, Term *lhs, Value *rhs)
     case Term_StackPointer:
     {
       StackPointer *lhs_pointer = castTerm(lhs, StackPointer);
-      if (lhs_pointer->stack_delta != 0)
+      if (lhs_pointer->frame != 0)
         todoIncomplete;
       if (Term *replaced = args[lhs_pointer->id])
       {
@@ -3615,7 +3618,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
                     if (expected_arg_type == holev)
                     {
                       StackPointer *param_type = castTerm(param_type0, StackPointer);
-                      assert(param_type->stack_delta == 0);
+                      assert(param_type->frame == 0);
                       args[param_type->id] = getType(arg.value);
 
                       // write back to the input ast.
@@ -4776,9 +4779,11 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
       BuildOutput equal_type = parseExpressionFull(arena); 
       builtins.equal = newTerm(arena, Builtin, equal_type.value);
       addBuiltinGlobalBinding("=", builtins.equal);
+      dump(); print(0, builtins.equal->type, PrintOptions{.detailed=true}); dump();
 
       builtin_tk.at = "(_A: Set, x: _A) -> =(_A, x, x)";
       BuildOutput refl_type = parseExpressionFull(arena);
+      assert(noError());
       builtins.refl = newTerm(arena, Constructor, refl_type.value);
       builtins.refl->name = newToken("refl");
       addBuiltinGlobalBinding("refl", &builtins.refl->t);
