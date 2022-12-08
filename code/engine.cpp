@@ -27,10 +27,10 @@ inline FunctionId getNextFunctionId()
 }
 
 internal b32
-isFree(Term *in0, i32 offset)  // todo: #cleanup offset not needed?
+isFree(Term *in0, i32 offset)
 {
   b32 out = false;
-  b32 debug = true;
+  b32 debug = false;
   if (debug && global_debug_mode)
   {debugIndent(); dump("isFree: "); dump(in0); dump(" with offset: "); dump(offset); dump();}
 
@@ -105,8 +105,11 @@ isFree(Term *in0, i32 offset)  // todo: #cleanup offset not needed?
   }
 
   if (debug && global_debug_mode) {debugDedent(); dump("=> "); dump(out); dump();}
+  // assert(out == !in0->is_value);  // we're gonna move to this model nocheckin
   return out;
 }
+
+inline b32 isValue(Term *in0) {return isFree(in0, 0);}
 
 inline Term *
 getType(Term *term)
@@ -1014,6 +1017,13 @@ internal Term *
 evaluateArrow(MemoryArena *arena, Term **args, Term *in0, i32 stack_offset)
 {
   Term *out0 = 0;
+  i32 serial = global_debug_serial++;
+  b32 debug = false;
+  if (debug && global_debug_mode)
+  {
+    debugIndent(); dump("evaluateArrow("); dump(serial); dump("): ");
+    dump(in0); dump(" with stack offset "); dump(stack_offset); dump();
+  }
   switch (in0->cat)
   {
     case Term_StackPointer:
@@ -1043,9 +1053,9 @@ evaluateArrow(MemoryArena *arena, Term **args, Term *in0, i32 stack_offset)
       allocateArray(arena, out->param_count, out->param_types);
       for (int id=0; id < out->param_count; id++)
       {
-        out->param_types[id] = evaluateArrow(arena, args, out->param_types[id], stack_offset);
+        out->param_types[id] = evaluateArrow(arena, args, in->param_types[id], stack_offset+1);
       }
-      out->output_type = evaluateArrow(arena, args, out->output_type, stack_offset);
+      out->output_type = evaluateArrow(arena, args, out->output_type, stack_offset+1);
       out0 = &out->t;
     } break;
 
@@ -1069,6 +1079,8 @@ evaluateArrow(MemoryArena *arena, Term **args, Term *in0, i32 stack_offset)
     {todoIncomplete;} break;
   }
   assert(out0);
+  if (debug && global_debug_mode)
+  {debugDedent(); dump("=> "); dump(out0); dump();}
   return out0;
 }
 
@@ -1217,11 +1229,7 @@ compareValues(MemoryArena *arena, Term *lhs0, Term *rhs0)
   }
 
   if (debug && global_debug_mode)
-  {
-    debugDedent(); dump("=> "); dump(out.result);
-    dump();
-  }
-
+  {debugDedent(); dump("=> "); dump(out.result); dump();}
   return out;
 }
 
@@ -1810,15 +1818,13 @@ isGlobalFunction(Term *in0)
 }
 
 internal Term *
-toAbstractTerm(MemoryArena *arena, Term *in0, i32 zero_depth)
+toAbstractTerm(MemoryArena *arena, i32 env_depth, Term *in0, i32 zero_depth)
 {// todo #mem #copy-festival: If this stays longer than 3 days, then we
  // gotta clean it up.
   i32 serial = global_debug_serial++;
-  b32 debug = false;
-  if (debug)
-  {
-    debugIndent(); dump("toAbstractTerm("); dump(serial); dump("): "); dump(in0); dump();
-  }
+  b32 debug = true;
+  if (global_debug_mode && debug) {debugIndent(); dump("toAbstractTerm("); dump(serial); dump("): ");
+    dump(in0); dump(" with zero_depth: "); dump(zero_depth); dump();}
   Term *out0 = 0;
   if (in0->cat == Term_Builtin      ||
       in0->cat == Term_Union        ||
@@ -1835,11 +1841,10 @@ toAbstractTerm(MemoryArena *arena, Term *in0, i32 zero_depth)
       case Term_StackPointer:
       {
         StackPointer *in = castTerm(in0, StackPointer);
-        assert(zero_depth);
-        if (in->is_value && in->frame >= zero_depth)
+        if (in->is_value && in->frame > env_depth)
         {
           StackPointer *out = copyStruct(arena, in);
-          out->frame    = in->frame - zero_depth;
+          out->frame    = zero_depth - in->frame;
           out->is_value = false;
           out0 = &out->t;
         }
@@ -1850,10 +1855,10 @@ toAbstractTerm(MemoryArena *arena, Term *in0, i32 zero_depth)
       {
         Composite *in  = castTerm(in0, Composite);
         Composite *out = copyStruct(arena, in);
-        out->op        = toAbstractTerm(arena, in->op, zero_depth);
+        out->op        = toAbstractTerm(arena, env_depth, in->op, zero_depth);
         allocateArray(arena, out->arg_count, out->args);
         for (i32 id=0; id < out->arg_count; id++)
-          out->args[id] = toAbstractTerm(arena, in->args[id], zero_depth);
+          out->args[id] = toAbstractTerm(arena, env_depth, in->args[id], zero_depth);
         out0 = &out->t;
       } break;
 
@@ -1863,9 +1868,9 @@ toAbstractTerm(MemoryArena *arena, Term *in0, i32 zero_depth)
         Arrow *out = copyStruct(arena, in);
         allocateArray(arena, out->param_count, out->param_types);
         for (i32 id=0; id < out->param_count; id++)
-          out->param_types[id] = toAbstractTerm(arena, in->param_types[id], zero_depth+1);
+          out->param_types[id] = toAbstractTerm(arena, env_depth, in->param_types[id], zero_depth+1);
         if (out->output_type)
-          out->output_type = toAbstractTerm(arena, in->output_type, zero_depth+1);
+          out->output_type = toAbstractTerm(arena, env_depth, in->output_type, zero_depth+1);
         out0 = &out->t;
       } break;
 
@@ -1873,8 +1878,8 @@ toAbstractTerm(MemoryArena *arena, Term *in0, i32 zero_depth)
       {
         Computation *in  = castTerm(in0, Computation);
         Computation *out = newTerm(arena, Computation, 0);
-        out->lhs  = toAbstractTerm(arena, in->lhs, zero_depth);
-        out->rhs  = toAbstractTerm(arena, in->rhs, zero_depth);
+        out->lhs  = toAbstractTerm(arena, env_depth, in->lhs, zero_depth);
+        out->rhs  = toAbstractTerm(arena, env_depth, in->rhs, zero_depth);
         out0 = &out->t;
       } break;
 
@@ -1882,7 +1887,7 @@ toAbstractTerm(MemoryArena *arena, Term *in0, i32 zero_depth)
       {
         Accessor *in  = castTerm(in0, Accessor);
         Accessor *out = copyStruct(arena, in);
-        out->record = toAbstractTerm(arena, in->record, zero_depth);
+        out->record = toAbstractTerm(arena, env_depth, in->record, zero_depth);
         out0 = &out->t;
       } break;
 
@@ -1890,8 +1895,8 @@ toAbstractTerm(MemoryArena *arena, Term *in0, i32 zero_depth)
       {
         Rewrite *in   = castTerm(in0, Rewrite);
         Rewrite *out  = copyStruct(arena, in);
-        out->eq_proof = toAbstractTerm(arena, in->eq_proof, zero_depth);
-        out->body     = toAbstractTerm(arena, in->body, zero_depth);
+        out->eq_proof = toAbstractTerm(arena, env_depth, in->eq_proof, zero_depth);
+        out->body     = toAbstractTerm(arena, env_depth, in->body, zero_depth);
         out0 = &out->t;
       } break;
 
@@ -1906,30 +1911,22 @@ toAbstractTerm(MemoryArena *arena, Term *in0, i32 zero_depth)
     }
   }
   assert(out0);
-  if (debug)
+  if (global_debug_mode && debug)
   {
     debugDedent(); dump("=>("); dump(serial); dump(") "); dump(out0); dump();
   }
   return out0;
 }
 
-forward_declare internal Value *  // This is gonna be vaporized since we'll evaluate terms.
+forward_declare internal Value *  // todo: evaluate terms instead of ast.
 evaluate(MemoryArena *arena, Environment *env, Ast *in0)
 {
   Term *out0 = 0;
 
 #define DEBUG_EVALUATE 0
-#define DEBUG_EVALUATE_DEPTH 2
-
 #if DEBUG_EVALUATE
   if (global_debug_mode)
-  {
-    debug_evaluation_depth++;
-    if (debug_evaluation_depth < DEBUG_EVALUATE_DEPTH)
-    {
-      debugIndent(); dump("evaluate: "); dump(in0); dump();
-    }
-  }
+  {debugIndent(); dump("evaluate: "); dump(in0); dump();}
 #endif
 
   switch (in0->cat)
@@ -1997,7 +1994,7 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
         out->output_type = evaluate(arena, env, in->output_type);
       unwindStack(env);
 
-      out0 = toAbstractTerm(arena, &out->t, getStackDepth(env));
+      out0 = toAbstractTerm(arena, getStackDepth(env), &out->t, getStackDepth(env));
     } break;
 
     case AC_AccessorAst:
@@ -2043,24 +2040,13 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
     invalidDefaultCase;
   }
 
-#if 0
-  // note: overwriting doesn't count as normalization
-  out0 = repeatedOverwrite(env, out0);
+#if DEBUG_EVALUATE
+  if (global_debug_mode)
+  {debugDedent(); dump("=> "); dump(out0); dump(": "); dump(getType(out0)); dump();}
 #endif
 
   assert(out0);
-
-#if DEBUG_EVALUATE
-  if (global_debug_mode)
-  {
-    if (debug_evaluation_depth < DEBUG_EVALUATE_DEPTH)
-    {
-      debugDedent(); dump("=> "); dump(out0); dump(": "); dump(getType(out0)); dump();
-    }
-    debug_evaluation_depth--;
-  }
-#endif
-
+  // assert(isValue(out0));  // nocheckin
   return out0;
 }
 
@@ -4494,15 +4480,8 @@ parseTopLevel(EngineState *state)
       {
         if (BuildOutput expr = parseExpressionFull(temp_arena))
         {
-#if 1
           Term *norm = normalize(arena, empty_env, expr.value);
-          print(0, norm, {.detailed=true});
-#else
-          Value *norm = normalize(arena, empty_env, expr.value);
-          dump("type before norm:"); dump(expr.value->type); dump();
-          dump("type after norm:");  dump(norm->type); dump();
-          print(0, norm->type, {.detailed=true});
-#endif
+          print(0, norm, {.detailed=true, .print_type=true});
           print(0, "\n");
         }
       }
@@ -4779,7 +4758,6 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
       BuildOutput equal_type = parseExpressionFull(arena); 
       builtins.equal = newTerm(arena, Builtin, equal_type.value);
       addBuiltinGlobalBinding("=", builtins.equal);
-      dump(); print(0, builtins.equal->type, PrintOptions{.detailed=true}); dump();
 
       builtin_tk.at = "(_A: Set, x: _A) -> =(_A, x, x)";
       BuildOutput refl_type = parseExpressionFull(arena);

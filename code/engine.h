@@ -193,7 +193,7 @@ struct Stack
   Stack *outer;
   s32    depth;
   s32    count;
-  Term *items[32];              // todo: compute this cap
+  Value *items[32];             // todo: compute this cap
 };
 
 // used in normalization, build/typecheck, etc.
