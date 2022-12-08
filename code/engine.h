@@ -12,6 +12,7 @@ global_variable b32 __attribute__((unused)) global_debug_mode;
 global_variable MemoryArena __attribute__((unused))*permanent_arena;
 
 struct Term;
+typedef Term Value;
 struct ArrowAst;
 struct LocalBindings;
 
@@ -48,7 +49,6 @@ enum TermCategory {
   Term_Constructor = 5,
   Term_Function    = 6,
 
-  /* Term_StackValue   = 7, */
   Term_StackPointer = 8,
   Term_Computation  = 9,
   Term_Accessor     = 10,
@@ -282,7 +282,7 @@ struct Function
   Token       name;
   FunctionId  id;  // :reserved-0-for-function-id
   Sequence   *body;
-  i32         stack_depth;
+  Stack      *stack;
 };
 
 Ast LET_TYPE_NORMALIZE_;
@@ -391,8 +391,8 @@ getConstructorOf(Term *in0)
 
 struct BuildOutput
 {
-  Ast   *ast;
-  Term *value;
+  Ast   *ast;  // todo: this should be replaced with term
+  Value *value;
   operator bool() { return ast && value; }
 };
 

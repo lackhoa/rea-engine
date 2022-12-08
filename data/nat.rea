@@ -49,8 +49,7 @@ check_truth 4 - 1 = 3;
 add0Right :: (n: Nat) -> n + 0 = n
 {fork n
  {0 :,
-  ++: => ++(n.p) = ++(n.p) {add0Right}
-  }}
+  ++: => ++(n.p) = ++(n.p) {add0Right}}}
 
 addSRight :: (n, m: Nat) -> n + ++(m) = ++(n+m)
 {fork n
