@@ -8,7 +8,7 @@ char * print(MemoryArena * buffer, Ast * in0, PrintOptions opt);
 char * print(MemoryArena * buffer, Ast * in0);
 char * print(MemoryArena * buffer, Term * in0, PrintOptions opt);
 char * print(MemoryArena * buffer, Term * in0);
-char * print(MemoryArena * buffer, void * in0, b32 is_value, PrintOptions opt);
+char * print(MemoryArena * buffer, void * in0, b32 is_absolute, PrintOptions opt);
 CompareValues compareValues(MemoryArena * arena, Term * lhs0, Term * rhs0);
 Trinary equalTrinary(Term * lhs0, Term * rhs0);
 Term * evaluateFork(MemoryArena * arena, Environment * env, Fork * fork);

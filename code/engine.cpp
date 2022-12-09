@@ -39,7 +39,7 @@ isFree(Term *in0, i32 offset)
     case Term_StackPointer:
     {
       StackPointer *in = castTerm(in0, StackPointer);
-      out = !in->is_value && in->frame >= offset;
+      out = !in->is_absolute && in->stack_frame >= offset;
     } break;
 
     case Term_Composite:
@@ -70,7 +70,7 @@ isFree(Term *in0, i32 offset)
           break;
         }
       }
-      if (!out)
+      if (!out && in->output_type)
         out = isFree(in->output_type, offset+1);
     } break;
 
@@ -105,11 +105,10 @@ isFree(Term *in0, i32 offset)
   }
 
   if (debug && global_debug_mode) {debugDedent(); dump("=> "); dump(out); dump();}
-  // assert(out == !in0->is_value);  // we're gonna move to this model nocheckin
   return out;
 }
 
-inline b32 isValue(Term *in0) {return isFree(in0, 0);}
+inline b32 isGround(Term *in0) {return !isFree(in0, 0);}
 
 inline Term *
 getType(Term *term)
@@ -124,7 +123,7 @@ getType(Term *term)
   return term->type;
 }
 
-// todo #cleanup straighten out the "ok" situation
+// todo #cleanup straighten out this "ok" situation
 inline Term * getTypeOk(Term *term) {return term->type;}
 
 inline void
@@ -469,7 +468,7 @@ getFunctionName(Function *fun)
 
 // prints both Composite and CompositeV
 inline void
-printComposite(MemoryArena *buffer, void *in0, b32 is_value, PrintOptions opt)
+printComposite(MemoryArena *buffer, void *in0, b32 is_absolute, PrintOptions opt)
 {
   int    precedence = 0;  // todo: no idea what the default should be
   void  *op;
@@ -479,7 +478,7 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_value, PrintOptions opt)
   Ast   *ast   = (Ast *)in0;
   Term *value = (Term *)in0;
   Arrow *op_type = 0;
-  if (is_value)
+  if (is_absolute)
   {
     Composite *in = castTerm(value, Composite);
     op       = in->op;
@@ -528,26 +527,26 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_value, PrintOptions opt)
 
     PrintOptions arg_opt = opt;
     arg_opt.no_paren_precedence = precedence+1;
-    print(buffer, args[0], is_value, arg_opt);
+    print(buffer, args[0], is_absolute, arg_opt);
 
     print(buffer, " ");
-    print(buffer, op, is_value, opt);
+    print(buffer, op, is_absolute, opt);
     print(buffer, " ");
 
     arg_opt.no_paren_precedence = precedence;
-    print(buffer, args[1], is_value, arg_opt);
+    print(buffer, args[1], is_absolute, arg_opt);
     if (precedence < opt.no_paren_precedence)
       print(buffer, ")");
   }
   else
   {// normal prefix path
-    print(buffer, op, is_value, opt);
+    print(buffer, op, is_absolute, opt);
     print(buffer, "(");
     PrintOptions arg_opt        = opt;
     arg_opt.no_paren_precedence = 0;
     for (s32 arg_id = 0; arg_id < arg_count; arg_id++)
     {
-      print(buffer, args[arg_id], is_value, arg_opt);
+      print(buffer, args[arg_id], is_absolute, arg_opt);
       if (arg_id < arg_count-1)
         print(buffer, ", ");
     }
@@ -763,8 +762,8 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
         print(buffer, in->name);
         if (debug_print)
         {
-          if (in->is_value) print(buffer, "<%d>", in->frame);
-          else              print(buffer, "[%d]", in->frame);
+          if (in->is_absolute) print(buffer, "<%d>", in->stack_frame);
+          else              print(buffer, "[%d]", in->stack_frame);
         }
       } break;
 
@@ -914,9 +913,9 @@ print(MemoryArena *buffer, Term *in0)
 }
 
 forward_declare internal char *
-print(MemoryArena *buffer, void *in0, b32 is_value, PrintOptions opt)
+print(MemoryArena *buffer, void *in0, b32 is_absolute, PrintOptions opt)
 {
-  if (is_value)
+  if (is_absolute)
     return print(buffer, (Term*)in0, opt);
   else
     return print(buffer, (Ast*)in0, opt);
@@ -1029,8 +1028,8 @@ evaluateArrow(MemoryArena *arena, Term **args, Term *in0, i32 stack_offset)
     case Term_StackPointer:
     {
       StackPointer *in = castTerm(in0, StackPointer);
-      assert(in->frame >= 0 && in->id >= 0);
-      if (!in->is_value && in->frame == stack_offset)
+      assert(in->stack_frame >= 0 && in->id >= 0);
+      if (!in->is_absolute && in->stack_frame == stack_offset)
         out0 = args[in->id];
       else out0 = in0;
     } break;
@@ -1110,7 +1109,7 @@ compareValues(MemoryArena *arena, Term *lhs0, Term *rhs0)
       {
         StackPointer *lhs = castTerm(lhs0, StackPointer);
         StackPointer *rhs = castTerm(rhs0, StackPointer);
-        if ((lhs->frame == rhs->frame) && (lhs->id == rhs->id))
+        if ((lhs->stack_frame == rhs->stack_frame) && (lhs->id == rhs->id))
           out.result.v = Trinary_True;
       } break;
 
@@ -1606,8 +1605,7 @@ normalize(MemoryArena *arena, Environment *env, Term *in0)
 
       if (!out0)
       {
-        Term *type = isFree(in0, 0) ? 0 : getType(in0);
-        Composite *out = newTerm(arena, Composite, type);
+        Composite *out = newTerm(arena, Composite, getTypeOk(in0));
         out->arg_count = in->arg_count;
         out->op        = norm_op;
         out->args      = norm_args;
@@ -1841,11 +1839,11 @@ toAbstractTerm(MemoryArena *arena, i32 env_depth, Term *in0, i32 zero_depth)
       case Term_StackPointer:
       {
         StackPointer *in = castTerm(in0, StackPointer);
-        if (in->is_value && in->frame > env_depth)
+        if (in->is_absolute && in->stack_frame > env_depth)
         {
           StackPointer *out = copyStruct(arena, in);
-          out->frame    = zero_depth - in->frame;
-          out->is_value = false;
+          out->stack_frame    = zero_depth - in->stack_frame;
+          out->is_absolute = false;
           out0 = &out->t;
         }
         else out0 = in0;
@@ -2046,7 +2044,6 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
 #endif
 
   assert(out0);
-  // assert(isValue(out0));  // nocheckin
   return out0;
 }
 
@@ -2137,9 +2134,9 @@ introduceOnStack(MemoryArena* arena, Environment *env, Token *name, Term *typev)
   StackPointer *ref = newTerm(arena, StackPointer, typev);
   ref->name       = *name;
   ref->id         = env->stack->count; // :stack-ref-id-has-significance
-  ref->is_value   = true;
-  ref->frame      = getStackDepth(env);
-  assert(ref->frame);
+  ref->is_absolute   = true;
+  ref->stack_frame      = getStackDepth(env);
+  assert(ref->stack_frame);
 
   if (Constructor *type_ctor = getSoleConstructor(typev))
     intro = introduceRecord(arena, env, &ref->t, type_ctor);
@@ -2379,71 +2376,14 @@ getExplicitParamCount(Arrow *in)
 inline b32
 matchType(Environment *env, Term *actual, Term *expected)
 {
-  // todo: I feel like I can remove normalization
-  if (expected == holev) return true;
+  (void)env;
+  b32 out = false;
+  if (expected == holev) out = true;
   else
   {
-    Term *norm_actual   = normalize(temp_arena, env, actual);
-    Term *norm_expected = normalize(temp_arena, env, expected);
-    if (equal(norm_actual, norm_expected)) return true;
+    if (equal(actual, expected)) out = true;
   }
-  return false;
-}
-
-inline b32
-hasFreeVars(Term *in0, i32 stack_offset)
-{
-  switch (in0->cat)
-  {
-    case Term_StackPointer:
-    {
-      StackPointer *in = castTerm(in0, StackPointer);
-      if (in->frame >= stack_offset)
-        return true;
-    } break;
-
-    case Term_Composite:
-    {
-      Composite *in = castTerm(in0, Composite);
-      if (hasFreeVars(in->op, stack_offset))
-        return true;
-      for (s32 arg_id=0; arg_id < in->arg_count; arg_id++)
-      {
-        if (hasFreeVars(in->args[arg_id], stack_offset))
-          return true;
-      }
-    } break;
-
-    case Term_Arrow:
-    {// todo: I suspect this recursion is done completely wrong.
-      Arrow *in = castTerm(in0, Arrow);
-      for (s32 param_id = 0; param_id < in->param_count; param_id++)
-      {
-        if (hasFreeVars(in->param_types[param_id], stack_offset+1))
-          return true;
-      }
-      if (hasFreeVars(in->output_type, stack_offset+1))
-        return true;
-    } break;
-
-    case Term_Accessor:
-    {
-      Accessor *in = castTerm(in0, Accessor);
-      return hasFreeVars(in->record, stack_offset);
-    } break;
-
-    case Term_Builtin:
-    case Term_Union:
-    case Term_Constructor:
-    {return false;}
-
-    case Term_Hole:
-    case Term_Computation:
-    case Term_Rewrite:
-    case Term_Function:
-    {todoIncomplete;}
-  }
-  return false;
+  return out;
 }
 
 inline ValueArray
@@ -2461,7 +2401,7 @@ getGlobalOverloads(Environment *env, Identifier *ident, Term *expected_type)
         {
           Arrow *signature = castTerm(getType(slot->items[slot_id]), Arrow);
           b32 output_type_mismatch = false;
-          if (!hasFreeVars(signature->output_type, 0))
+          if (!isFree(signature->output_type, 0))
           {
             if (!equal(signature->output_type, expected_type))
               output_type_mismatch = true;
@@ -2532,10 +2472,10 @@ termToAst(MemoryArena *arena, Environment *env, Term* term)
       StackPointer *ptr = castTerm(term, StackPointer);
       Variable     *var = newAst(arena, Variable, &ptr->name);
       out0 = &var->a;
-      if (ptr->is_value)
-        var->stack_delta = env->stack->depth - ptr->frame;
+      if (ptr->is_absolute)
+        var->stack_delta = env->stack->depth - ptr->stack_frame;
       else
-        var->stack_delta = ptr->frame;
+        var->stack_delta = ptr->stack_frame;
       var->id          = ptr->id;  // :stack-ref-id-has-significance
     } break;
 
@@ -2917,7 +2857,7 @@ unify(Value **args, Term **types, Term *lhs, Value *rhs)
     case Term_StackPointer:
     {
       StackPointer *lhs_pointer = castTerm(lhs, StackPointer);
-      if (lhs_pointer->frame != 0)
+      if (lhs_pointer->stack_frame != 0)
         todoIncomplete;
       if (Term *replaced = args[lhs_pointer->id])
       {
@@ -3604,7 +3544,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
                     if (expected_arg_type == holev)
                     {
                       StackPointer *param_type = castTerm(param_type0, StackPointer);
-                      assert(param_type->frame == 0);
+                      assert(param_type->stack_frame == 0);
                       args[param_type->id] = getType(arg.value);
 
                       // write back to the input ast.

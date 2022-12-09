@@ -7,9 +7,9 @@
 #include "tokenization.h"
 
 // NOTE: This should work like the function stack, we'll clean it after every top-level form.
-global_variable MemoryArena __attribute__((unused)) *temp_arena;
-global_variable b32 __attribute__((unused)) global_debug_mode;
-global_variable MemoryArena __attribute__((unused))*permanent_arena;
+global_variable MemoryArena UNUSED_VAR *temp_arena;
+global_variable b32 UNUSED_VAR global_debug_mode;
+global_variable MemoryArena UNUSED_VAR*permanent_arena;
 
 struct Term;
 typedef Term Value;
@@ -230,7 +230,6 @@ embed_struct struct Term
 {
   TermCategory  cat;
   Term         *type;
-  i32           is_value;
 };
 
 typedef Term Builtin;
@@ -298,7 +297,8 @@ struct StackPointer {
   embed_Term(t);
   Token name;
   s32   id;
-  s32   frame;
+  s32   stack_frame;
+  b32   is_absolute;
 };
 
 struct TreePath
@@ -391,7 +391,7 @@ getConstructorOf(Term *in0)
 struct BuildOutput
 {
   Ast   *ast;  // todo: this should be replaced with term
-  Value *value;
+  Value *value;  // note: values are ground, and contain type (which are of course ground)
   operator bool() { return ast && value; }
 };
 

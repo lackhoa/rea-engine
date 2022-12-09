@@ -93,14 +93,14 @@ testFillingHole :: (a: Nat, a_positive: a != 0, P: a=0) -> False
 {norm a_positive;
  fork (a)
  {0 : a_positive(_),  ;; since a is now 0, we can fill this hole.
-  ++: P}}
+  ++: norm P; P}}
 
 multiplyPos :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
 {norm a_positive; norm b_positive;
  norm;
  _ => {fork a
        {0: a_positive(_),
-        ++: fork b {0: b_positive(_), ++: E}}}}
+        ++: fork b {0: b_positive(_), ++: norm E; E}}}}
 
 ;; showing off now that we have arrow type normalization
 multiplyPosv2 :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
@@ -108,5 +108,5 @@ multiplyPosv2 :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
  fork a
  {0 : _ => {a_positive(_)},
   ++: ;; goal: (E: b + a.p * b = 0) -> False
-  _ => {fork b {0: b_positive(_), ++: E}}
+  _ => {fork b {0: b_positive(_), ++: norm E; E}}
   }}
