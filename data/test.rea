@@ -23,12 +23,6 @@ testBigStruct :: fn (big : BigStruct) -> (big.r.d != 0)
 
 testRatArrow :: fn (r: RatTest) -> r.d != 0 { r._dnot0 }
 
-testRatArrow2 :: fn () -> (a: RatTest) -> (a.d = a.d)
-{
- out :: fn (b: RatTest) -> (b.d = b.d) {}
- out
- }
-
 + :: fn (a, b: RatTest) -> RatTest
 {
  /(a.n * b.d + b.n * a.d,

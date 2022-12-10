@@ -1,11 +1,6 @@
 #load "boolean.rea"
 #load "nat.rea"
 
-;; compare_expressions (true = (true | true)), (true = (false | false)); ;; path: [2]
-;; compare_expressions (true = (true | true)), (true = (true | false));  ;; path: [2,1]
-;; compare_expressions (true = (true | true)), (true = (true & false));  ;; path: [2]
-;; compare_expressions ((true & false) | true), (true & (false | true)); ;; path: []
-
 check True: Set;
 ;; print_raw (x: False) -> (x = x);
 ;; print_raw false & true | true & false | true;
@@ -44,6 +39,10 @@ testLocalVariable :: fn (x: Nat) -> Nat
 check_truth testLocalVariable(1) = 6;
 
 #should_fail
+reproLet :: fn (a: Nat) -> Nat {b : Bool := true; b}
+#should_fail off
+
+#should_fail 
 testCurryingWeird :: fn (a: Nat) -> (b, c: Nat) -> (a+b)+c = a+(b+c)
 {fork a
  {++:

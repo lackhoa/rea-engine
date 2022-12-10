@@ -27,19 +27,23 @@ enum TokenCategory
   TC_KeywordComputation,
   TC_KeywordNorm,
 
+  TC_KeywordTestEval,
   TC_KeywordPrint,
   TC_KeywordPrintRaw,
   TC_KeywordPrintDebug,
   TC_KeywordCheck,
+  TC_KeywordCheckTruth,
   TC_KeywordBreakhere,
   TC_KeywordEnd_,
 };
 
-const char *keywords[] = {"", "define", "fork", "union", "struct",
-                          "rewrite", "computation", "norm", "print", "print_raw", "print_debug", "check", "breakhere"};
+const char *keywords[] = {
+  "", "define", "fork", "union", "struct",
+  "rewrite", "computation", "norm",
+  "test_eval", "print", "print_raw", "print_debug", "check", "check_truth", "breakhere"
+};
 
-enum MetaDirective
-{
+enum MetaDirective {
     MetaDirective_Null_,
 
     MetaDirective_load,

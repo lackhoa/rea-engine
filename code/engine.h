@@ -12,9 +12,9 @@ global_variable b32 UNUSED_VAR global_debug_mode;
 global_variable MemoryArena UNUSED_VAR*permanent_arena;
 
 struct Term;
-typedef Term Value;
 struct ArrowAst;
 struct LocalBindings;
+typedef Term Value;
 
 enum AstCategory {
   AC_Null = 0,
@@ -33,8 +33,8 @@ enum AstCategory {
   AC_Lambda,
 
   // Stuff in "sequence" context only, not general expressions.
-  AC_Sequence,
-  AC_Fork,
+  /* AC_Sequence, */
+  AC_ForkAst,
   AC_RewriteAst,
   AC_FunctionDecl,
   AC_Let,
@@ -116,6 +116,7 @@ struct Constant
   b32   is_synthetic;
 };
 
+#if 0
 struct Sequence
 {
   Ast a;
@@ -123,6 +124,7 @@ struct Sequence
   Ast **items;
   s32   count;
 };
+#endif
 
 inline Constant *
 newSyntheticConstant(MemoryArena *arena, Term *value)
@@ -143,20 +145,18 @@ newSyntheticConstant(MemoryArena *arena, Term *value, Token *token)
   return out;
 }
 
-struct ForkParsing
-{
-  Identifier *ctors;
-};
+// todo #cleanup just put this in the ForkAst
+struct ForkParsing {Identifier *ctors;};
 
 struct Union;
 
-struct Fork {
+struct ForkAst {
   Ast a;
 
-  Union     *uni;
-  Ast       *subject;
-  s32        case_count;
-  Sequence **bodies;
+  Union  *uni;
+  Ast    *subject;
+  s32     case_count;
+  Ast   **bodies;
 
   // temporary parsing data
   ForkParsing *parsing;
@@ -269,28 +269,27 @@ struct Union {
 struct FunctionDecl {
   Ast       a;
   ArrowAst *signature;
-  Sequence *body;
+  Ast      *body;
 };
 
 struct FunctionId {s32 id;};
-
 struct Function
 {
   embed_Term(t);
   Token       name;
-  FunctionId  id;  // :reserved-0-for-function-id
-  Sequence   *body;
+  FunctionId  id;               // :reserved-0-for-function-id
+  Ast        *body;
   Stack      *stack;
 };
 
 Ast LET_TYPE_NORMALIZE_;
 Ast *LET_TYPE_NORMALIZE = &LET_TYPE_NORMALIZE_;
-struct Let
-{
+struct Let {
   embed_Ast(a);
   Token  lhs;
   Ast   *rhs;
   Ast   *type;
+  Ast   *body;
 };
 
 struct StackPointer {
@@ -301,14 +300,12 @@ struct StackPointer {
   b32   is_absolute;
 };
 
-struct TreePath
-{
+struct TreePath {
   s32       first;  // -1 for op
   TreePath *next;
 };
 
-struct Accessor
-{
+struct Accessor {
   embed_Term(t);
   Term   *record;
   s32     field_id;
@@ -388,11 +385,11 @@ getConstructorOf(Term *in0)
   return out;
 }
 
-struct BuildOutput
+struct BuildExpression
 {
   Ast   *ast;  // todo: this should be replaced with term
   Value *value;  // note: values are ground, and contain type (which are of course ground)
-  operator bool() { return ast && value; }
+  operator bool() { return ast; }
 };
 
 struct RewriteAst
@@ -401,6 +398,7 @@ struct RewriteAst
   TreePath *path;
   Ast      *eq_proof;
   Ast      *to_expression;
+  Ast      *body;
   b32       right_to_left;
 };
 
@@ -458,12 +456,12 @@ inline Matcher exactMatch(Term *value)
 }
 
 struct ValueArray {
-  s32     count;
+  i32    count;
   Term **items;
 };
 
 struct AstArray {
-  s32    count;
+  i32   count;
   Term *items;
 };
 
@@ -494,7 +492,7 @@ struct CompareValues {Trinary result; TreePath *diff_path;};
 struct Lambda {
   embed_Ast(a);
   ArrowAst *signature;
-  Sequence *body;
+  Ast      *body;
 };
 
 #include "generated/engine_forward.h"

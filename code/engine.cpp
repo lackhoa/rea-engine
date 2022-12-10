@@ -9,13 +9,12 @@
 #include "intrinsics.h"
 #include "tokenization.cpp"
 #include "engine.h"
-#include <corecrt.h>
 
 global_variable i32 debug_normalization_depth;
 global_variable i32 global_debug_serial;
 
 global_variable Builtins builtins;
-global_variable Sequence dummy_function_under_construction;
+global_variable Ast dummy_function_under_construction;
 global_variable Term  holev_ = {.cat = Term_Hole};
 global_variable Term *holev = &holev_;
 
@@ -24,6 +23,21 @@ inline FunctionId getNextFunctionId()
 {
   next_function_id.id++;  // :reserved-0-for-function-id
   return FunctionId{next_function_id.id};
+}
+
+inline b32
+isSequenced(Ast *ast)
+{
+  b32 out = false;
+  switch (ast->cat)
+  {
+    case AC_RewriteAst:
+    case AC_Let:
+    case AC_ForkAst:
+    {out = true;} break;
+    default: out = false;
+  }
+  return out;
 }
 
 internal b32
@@ -99,8 +113,14 @@ isFree(Term *in0, i32 offset)
     case Term_Constructor:
     {out = false;} break;
 
-    case Term_Hole:
     case Term_Rewrite:
+    {
+      Rewrite *in = castTerm(in0, Rewrite);
+      if (isFree(in->eq_proof, offset)) out = true;
+      else if (isFree(in->body, offset)) out = true;
+    } break;
+
+    case Term_Hole:
     {todoIncomplete;}
   }
 
@@ -174,6 +194,7 @@ deepCopy(MemoryArena *arena, Ast *in0)
     } break;
 #endif
 
+#if 0
     case AC_Sequence:
     {
       Sequence *in = castAst(in0, Sequence);
@@ -185,6 +206,7 @@ deepCopy(MemoryArena *arena, Ast *in0)
       }
       out0 = &out->a;
     } break;
+#endif
 
     case AC_CompositeAst:
     {
@@ -211,17 +233,6 @@ deepCopy(MemoryArena *arena, Ast *in0)
       }
       out0 = &out->a;
     } break;
-
-#if 0
-    case AC_FunctionDecl:
-    {
-      FunctionDecl *in = castAst(in0, FunctionDecl);
-      FunctionDecl *out = copyStruct(arena, in);
-      out->signature = castAst(deepCopy(arena, &in->signature->a), Arrow);
-      out->body      = deepCopy(arena, in->body);
-      out0 = &out->a;
-    } break;
-#endif
 
     case AC_Let:
     {
@@ -600,19 +611,13 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
     switch (in0->cat)
     {
       case AC_Null:
-      {
-        print(buffer, "<NULL>");
-      } break;
+      {print(buffer, "<NULL>");} break;
 
       case AC_Hole:
-      {
-        print(buffer, "_");
-      } break;
+      {print(buffer, "_");} break;
 
       case AC_Identifier:
-      {
-        print(buffer, in0->token);
-      } break;
+      {print(buffer, in0->token);} break;
 
       case AC_Constant:
       {
@@ -620,28 +625,15 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         if (in->is_synthetic)
           print(buffer, in->value, opt);
         else
-        {
-          // print(buffer, "<c>");
           print(buffer, in->a.token);
-        }
       } break;
 
       case AC_Variable:
       {
         Variable *in = castAst(in0, Variable);
-        // print(buffer, "%.*s[%d]", in->name.length, in->name.chars, in->stack_delta);
         print(buffer, in->token);
-      } break;
-
-      case AC_Sequence:
-      {
-        Sequence *in = castAst(in0, Sequence);
-        for (s32 id = 0; id < in->count; id++)
-        {
-          print(buffer, in->items[id], new_opt);
-          if (id < in->count-1)
-            print(buffer, "; ");
-        }
+        if (global_debug_mode)
+          print(buffer, "[%d]", in->stack_delta);
       } break;
 
       case AC_RewriteAst:
@@ -659,9 +651,9 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         printComposite(buffer, in0, false, new_opt);
       } break;
 
-      case AC_Fork:
+      case AC_ForkAst:
       {
-        Fork *in = castAst(in0, Fork);
+        ForkAst *in = castAst(in0, ForkAst);
         print(buffer, "fork ");
         print(buffer, in->subject, new_opt);
         newlineAndIndent(buffer, opt.indentation);
@@ -674,7 +666,7 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
           Constructor *ctor = form->ctors + ctor_id;
           print(buffer, &ctor->t, new_opt);
           print(buffer, ": ");
-          print(buffer, &in->bodies[ctor_id]->a, new_opt);
+          print(buffer, in->bodies[ctor_id], new_opt);
           if (ctor_id != form->ctor_count-1)
           {
             print(buffer, ", ");
@@ -717,7 +709,17 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
 
       case AC_Let:
       {
-        print(buffer, "let");
+        Let *in = castAst(in0, Let);
+        print(buffer, in->lhs);
+        if (in->type)
+        {
+          print(buffer, " : ");
+          print(buffer, in->type, new_opt);
+        }
+        print(buffer, " := ");
+        print(buffer, in->rhs, new_opt);
+        print(buffer, "; ");
+        print(buffer, in->body, new_opt);
       } break;
 
       case AC_ComputationAst:
@@ -745,7 +747,6 @@ print(MemoryArena *buffer, Ast *in0)
 forward_declare internal char *
 print(MemoryArena *buffer, Term *in0, PrintOptions opt)
 {// mark: printTerm
-  i32 debug_print = true;
   char *out = buffer ? (char*)getNext(buffer) : 0;
   if (in0)
   {
@@ -760,10 +761,12 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
       {
         StackPointer *in = castTerm(in0, StackPointer);
         print(buffer, in->name);
-        if (debug_print)
+        if (global_debug_mode)
         {
-          if (in->is_absolute) print(buffer, "<%d>", in->stack_frame);
-          else              print(buffer, "[%d]", in->stack_frame);
+          if (in->is_absolute)
+            print(buffer, "<%d>", in->stack_frame);
+          else
+            print(buffer, "[%d]", in->stack_frame);
         }
       } break;
 
@@ -812,7 +815,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
         {
           newlineAndIndent(buffer, opt.indentation);
           print(buffer, "{");
-          print(buffer, &in->body->a, new_opt);
+          print(buffer, in->body, new_opt);
           print(buffer, "}");
         }
       } break;
@@ -882,7 +885,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
         print(buffer, computation->lhs, new_opt);
         print(buffer, ") => (");
         print(buffer, computation->rhs, new_opt);
-        print(buffer, "(");
+        print(buffer, ")");
       } break;
 
       case Term_Accessor:
@@ -1365,7 +1368,7 @@ overwriteTerm(Environment *env, Term *in)
 }
 
 forward_declare internal Term *
-evaluateFork(MemoryArena *arena, Environment *env, Fork *fork)
+evaluateFork(MemoryArena *arena, Environment *env, ForkAst *fork)
 {
   Term *out;
   Term *subject = evaluateAndNormalize(arena, env, fork->subject);
@@ -1375,14 +1378,14 @@ evaluateFork(MemoryArena *arena, Environment *env, Fork *fork)
     case Term_Constructor:
     {
       Constructor *ctor = castTerm(subject, Constructor);
-      out = evaluateSequence(arena, env, fork->bodies[ctor->id]);
+      out = evaluate(arena, env, fork->bodies[ctor->id]);
     } break;
 
     case Term_Composite:
     {
       Composite *record = castTerm(subject, Composite);
       if (Constructor *ctor = castTerm(record->op, Constructor))
-        out = evaluateSequence(arena, env, fork->bodies[ctor->id]);
+        out = evaluate(arena, env, fork->bodies[ctor->id]);
       else
         out = 0;
     } break;
@@ -1450,54 +1453,27 @@ struct RewriteChain {
   RewriteChain *next;
 };
 
-forward_declare internal Term *
+#if 0
+internal Term *
 evaluateSequence(MemoryArena *arena, Environment *env, Sequence *sequence)
 {
   // todo not sure what the normalization should be, but we're probably only
   // called from "normalize", so I guess it's ok to always normalize.
   Environment env_ = *env; env = &env_;
   RewriteChain *rewrite_chain = 0;
+  Term **body_to_fill = 0;
   for (s32 id = 0;  id < sequence->count-1;  id++)
   {
     Ast *item = sequence->items[id];
     switch (item->cat)
     {
-      case AC_RewriteAst:
-      {
-        RewriteAst  *rewrite  = castAst(item, RewriteAst);
-        Rewrite *rewritev = newTerm(arena, Rewrite, 0);
-        Term *eq_proof = evaluateAndNormalize(arena, env, rewrite->eq_proof);
-        rewritev->eq_proof      = eq_proof;
-        rewritev->right_to_left = rewrite->right_to_left;
-        rewritev->path          = rewrite->path;
-        if (rewrite_chain)
-        {
-          Rewrite *outer_rewrite = rewrite_chain->first;
-          outer_rewrite->body = &rewritev->t;
-        }
-
-        RewriteChain *new_rewrite_chain = pushStruct(temp_arena, RewriteChain);
-        new_rewrite_chain->first = rewritev;
-        new_rewrite_chain->next  = rewrite_chain;
-        rewrite_chain            = new_rewrite_chain;
-      } break;
-
-      case AC_Let:
-      {
-        Let   *let = castAst(item, Let);
-        Term *rhs = evaluateAndNormalize(arena, env, let->rhs);
-        addStackValue(env, rhs);
-      } break;
-
       invalidDefaultCase;
     }
   }
 
-  if (global_debug_mode)
-    breakhere;
   Term *last = 0;
   Ast *last_ast = sequence->items[sequence->count-1];
-  if (Fork *fork = castAst(last_ast, Fork))
+  if (ForkAst *fork = castAst(last_ast, ForkAst))
     last = evaluateFork(arena, env, fork);
   else
     last = evaluateAndNormalize(arena, env, last_ast);
@@ -1505,18 +1481,17 @@ evaluateSequence(MemoryArena *arena, Environment *env, Sequence *sequence)
   Term *out = 0;
   if (last)
   {
+    if (body_to_fill) *body_to_fill = last;
+
     if (rewrite_chain)
     {
-      Rewrite *last_rewrite = rewrite_chain->first;
-      last_rewrite->body = last;
-
       RewriteChain *chain = rewrite_chain;
       Term *debug_previous_type = 0;
       while (true)
       {
         Rewrite *rewrite = chain->first;
         auto [lhs, rhs] = getEqualitySides(getType(rewrite->eq_proof));
-        Term *rewrite_to   = rewrite->right_to_left ? rhs : lhs;
+        Term *rewrite_to  = rewrite->right_to_left ? rhs : lhs;
         if (debug_previous_type)
         {
           assert(equal(debug_previous_type, getType(rewrite->body)));
@@ -1531,12 +1506,11 @@ evaluateSequence(MemoryArena *arena, Environment *env, Sequence *sequence)
       }
       out = &chain->first->t;
     }
-    else
-      out = last;
+    else out = last;
   }
-
   return out;
 }
+#endif
 
 forward_declare internal Term *
 normalize(MemoryArena *arena, Environment *env, Term *in0) 
@@ -1577,7 +1551,7 @@ normalize(MemoryArena *arena, Environment *env, Term *in0)
           env->stack = funv->stack;
           extendStack(env, in->arg_count, norm_args);
           // note: evaluation might fail, in which case we back out.
-          out0 = evaluateSequence(arena, env, funv->body);
+          out0 = evaluate(arena, env, funv->body);
           if (out0)
             out0 = normalize(arena, env, out0);
           env->stack = original_stack;
@@ -1750,8 +1724,7 @@ replaceFreeVars(MemoryArena* arena, Environment *env, Ast *in0, s32 stack_offset
     case AC_RewriteAst:
     case AC_Let:
     case AC_FunctionDecl:
-    case AC_Sequence:
-    case AC_Fork:
+    case AC_ForkAst:
     {
       todoIncomplete;
     } break;
@@ -1820,7 +1793,7 @@ toAbstractTerm(MemoryArena *arena, i32 env_depth, Term *in0, i32 zero_depth)
 {// todo #mem #copy-festival: If this stays longer than 3 days, then we
  // gotta clean it up.
   i32 serial = global_debug_serial++;
-  b32 debug = true;
+  b32 debug = false;
   if (global_debug_mode && debug) {debugIndent(); dump("toAbstractTerm("); dump(serial); dump("): ");
     dump(in0); dump(" with zero_depth: "); dump(zero_depth); dump();}
   Term *out0 = 0;
@@ -2035,15 +2008,52 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
       out0 = &out->t;
     } break;
 
+    case AC_RewriteAst:
+    {
+      RewriteAst *in  = castAst(in0, RewriteAst);
+      if (Term *eq_proof = evaluate(arena, env, in->eq_proof))
+      {
+        if (Term *body     = evaluate(arena, env, in->body))
+        {
+          auto [lhs, rhs] = getEqualitySides(getType(eq_proof));
+          Term *rewrite_to  = in->right_to_left ? rhs : lhs;
+          Term *type = rewriteExpression(arena, rewrite_to, in->path, getType(body));
+
+          Rewrite *out = newTerm(arena, Rewrite, type);
+          out->eq_proof      = eq_proof;
+          out->body          = body;
+          out->right_to_left = in->right_to_left;
+          out->path          = in->path;
+          out0 = &out->t;
+        }
+      }
+    } break;
+
+    case AC_Let:
+    {
+      Let *in = castAst(in0, Let);
+      Term *rhs = evaluate(arena, env, in->rhs);
+      addStackValue(env, rhs);
+      out0 = evaluate(arena, env, in->body);
+    } break;
+
+    case AC_ForkAst:
+    {
+      out0 = evaluateFork(arena, env, castAst(in0, ForkAst));
+    } break;
+
     invalidDefaultCase;
   }
 
 #if DEBUG_EVALUATE
   if (global_debug_mode)
-  {debugDedent(); dump("=> "); dump(out0); dump(": "); dump(getType(out0)); dump();}
+  {
+    debugDedent(); dump("=> "); dump(out0); dump(": "); dump(out0 ? getTypeOk(out0) : 0); dump();
+  }
 #endif
 
-  assert(out0);
+  if (!isSequenced(in0))
+    assert(out0);
   return out0;
 }
 
@@ -2425,7 +2435,7 @@ internal Function *
 buildFunction(MemoryArena *arena, Environment *env, FunctionDecl *fun)
 {
   Function *funv = 0;
-  if (BuildOutput signature = buildExpression(arena, env, &fun->signature->a, holev))
+  if (BuildExpression signature = buildExpression(arena, env, &fun->signature->a, holev))
   {
     // note: store the built signature, maybe to display it later.
     fun->signature = castAst(signature.ast, ArrowAst);
@@ -2450,7 +2460,7 @@ buildFunction(MemoryArena *arena, Environment *env, FunctionDecl *fun)
       assert(noError());
 
       Term *expected_body_type = evaluate(temp_arena, env, fun->signature->output_type);
-      buildSequence(arena, env, fun->body, expected_body_type);
+      buildExpression(arena, env, fun->body, expected_body_type);
       unwindBindingsAndStack(env);
     }
 
@@ -2461,7 +2471,7 @@ buildFunction(MemoryArena *arena, Environment *env, FunctionDecl *fun)
 }
 
 internal Ast *
-termToAst(MemoryArena *arena, Environment *env, Term* term)
+termToAst(MemoryArena *arena, i32 env_depth, Term* term)
 {
   Ast *out0 = 0;
   Token token = newToken("<synthetic>");
@@ -2473,7 +2483,7 @@ termToAst(MemoryArena *arena, Environment *env, Term* term)
       Variable     *var = newAst(arena, Variable, &ptr->name);
       out0 = &var->a;
       if (ptr->is_absolute)
-        var->stack_delta = env->stack->depth - ptr->stack_frame;
+        var->stack_delta = env_depth - ptr->stack_frame;
       else
         var->stack_delta = ptr->stack_frame;
       var->id          = ptr->id;  // :stack-ref-id-has-significance
@@ -2483,12 +2493,12 @@ termToAst(MemoryArena *arena, Environment *env, Term* term)
     {
       Composite *compositev = castTerm(term, Composite);
       CompositeAst  *composite  = newAst(arena, CompositeAst, &token);
-      composite->op        = termToAst(arena, env, compositev->op);
+      composite->op        = termToAst(arena, env_depth, compositev->op);
       composite->arg_count = compositev->arg_count;
       allocateArray(arena, composite->arg_count, composite->args);
       for (int id=0; id < composite->arg_count; id++)
       {
-        composite->args[id] = termToAst(arena, env, compositev->args[id]);
+        composite->args[id] = termToAst(arena, env_depth, compositev->args[id]);
       }
       out0 = &composite->a;
     } break;
@@ -2497,7 +2507,7 @@ termToAst(MemoryArena *arena, Environment *env, Term* term)
     {
       Accessor *accessorv = castTerm(term, Accessor);
       AccessorAst  *accessor  = newAst(arena, AccessorAst, &token);
-      accessor->record      = termToAst(arena, env, accessorv->record);
+      accessor->record      = termToAst(arena, env_depth, accessorv->record);
       accessor->field_id    = accessorv->field_id;
       accessor->field_name  = newToken(accessorv->field_name);
       out0 = &accessor->a;
@@ -2511,8 +2521,8 @@ termToAst(MemoryArena *arena, Environment *env, Term* term)
       out->param_names = in->param_names;
       allocateArray(arena, in->param_count, out->param_types);
       for (i32 id=0; id < in->param_count; id++)
-        out->param_types[id] = termToAst(arena, env, in->param_types[id]);
-      out->output_type = termToAst(arena, env, in->output_type);
+        out->param_types[id] = termToAst(arena, env_depth+1, in->param_types[id]);
+      out->output_type = termToAst(arena, env_depth+1, in->output_type);
       out0 = &out->a;
     } break;
 
@@ -2541,6 +2551,12 @@ termToAst(MemoryArena *arena, Environment *env, Term* term)
   return out0;
 }
  
+inline Ast *
+termToAst(MemoryArena *arena, Environment *env, Term* term)
+{
+  return termToAst(arena, getStackDepth(env), term);
+}
+
 internal SearchOutput
 searchExpression(MemoryArena *arena, Term *lhs, Term* in0)
 {// todo #cleanup don't like the early returns
@@ -2601,11 +2617,11 @@ searchExpression(MemoryArena *arena, Term *lhs, Term* in0)
   }
 }
 
-inline Sequence *
+inline Ast *
 parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
 {
   // NOTE: we mutate the crap out of this sequence.
-  Sequence *out = 0;
+  Ast *out = 0;
   Token first_token = global_tokenizer->last_token;
   s32 count = 0;
   AstList *list = 0;
@@ -2705,20 +2721,6 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
           Token after_name = nextToken();
           switch (after_name.cat)
           {
-            case TC_DoubleColon:
-            {
-              Token after_dcolon = peekToken();
-              b32 is_theorem;
-              if (equal(after_dcolon, "fn"))
-              {
-                is_theorem = false;
-                nextToken();
-              }
-              else is_theorem = true;
-              FunctionDecl *fun = parseFunction(arena, name, is_theorem);
-              ast = &fun->a;
-            } break;
-
             case TC_ColonEqual:
             {
               pushContext("let: NAME := VALUE");
@@ -2778,7 +2780,9 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
       {
         // NOTE: Nothing to do here before typechecking. The command has to be
         // in sequence, even though it is an expression, since the expression
-        // that users can supply isn't fully-formed
+        // that users can supply isn't fully-formed.  TODO: So what if it isn't
+        // fully-formed? Holes aren't fully-formed and we let them be
+        // everywhere.
         nextToken();
         ast = &newAst(arena, ComputationAst, &token)->a;
         stop = true;
@@ -2789,7 +2793,6 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
         stop = true;
       }
     }
-
 
     if (noError())
     {
@@ -2805,16 +2808,23 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
 
   if (noError())
   {
-    assert(count != 0);
-    Ast **items = pushArray(arena, count, Ast*);
-    for (s32 id = count-1; id >= 0; id--)
+    assert(count > 0);
+    Ast *previous = 0;
+    for (i32 id = 0; id < count; id++)
     {
-      items[id] = list->first;
-      list = list->next;
+      Ast *item = list->first;
+      if (id > 0)
+      {
+        if (Let *let = castAst(item, Let))
+          let->body = previous;
+        else if (RewriteAst *rewrite = castAst(item, RewriteAst))
+          rewrite->body = previous;
+      }
+      previous = item;
+      if (id != count-1)
+        list = list->next;
     }
-    out = newAst(arena, Sequence, &first_token);
-    out->count = count;
-    out->items = items;
+    out = list->first;
   }
 
   return out;
@@ -2904,337 +2914,14 @@ unify(Value **args, Term **types, Term *lhs, Value *rhs)
   return success;
 }
 
-forward_declare internal b32
-buildSequence(MemoryArena *arena, Environment *env, Sequence *sequence, Term *goal)
-{
-  Environment *outer_env = env; env = outer_env;
-  i32 serial = global_debug_serial++;
-
-  for (s32 item_id = 0;
-       (item_id < sequence->count-1) && noError();
-       item_id++)
-  {
-    Ast *item = sequence->items[item_id];
-    switch (item->cat)
-    {
-      case AC_Let:
-      {
-        Let  *let = castAst(item, Let);
-        Term *type_hint = holev;
-        if (let->type && let->type != LET_TYPE_NORMALIZE)
-        {
-          if (BuildOutput type = buildExpression(arena, env, let->type, holev))
-            type_hint = type.value;
-        }
-        if (noError())
-        {
-          if (BuildOutput rhs = buildExpression(arena, env, let->rhs, type_hint))
-          {
-            addLocalBinding(env, &let->lhs);
-            let->rhs = rhs.ast;
-            Value *value0 = 0;
-            if (let->type == LET_TYPE_NORMALIZE)
-            {// type manipulation (TODO: not sure if this is legal when we actually "run the proof")
-              switch (rhs.value->cat)
-              {
-                case Term_StackPointer:
-                {
-                  StackPointer *in    = castTerm(rhs.value, StackPointer);
-                  StackPointer *value = copyStruct(arena, in);
-                  value0 = &value->t;
-                } break;
-                case Term_Composite: {value0 = rhs.value;} break;
-                default: {todoIncomplete;}
-              }
-              setType(value0, normalize(arena, env, getType(rhs.value)));
-            }
-            else value0 = rhs.value;
-            addStackValue(env, value0);
-          }
-        }
-      } break;
-
-      case AC_FunctionDecl:
-      {// NOTE: common builder for both local and global function.
-        buildFunction(arena, env, castAst(item, FunctionDecl));
-      } break;
-
-      case AC_RewriteAst:
-      {
-        RewriteAst *rewrite = castAst(item, RewriteAst);
-        if (!rewrite->eq_proof)
-        {
-          Term *new_goal = 0;
-          if (!rewrite->to_expression)
-          {
-            new_goal = normalize(arena, env, goal);
-            rewrite->to_expression = termToAst(arena, env, new_goal);
-          }
-          else if (BuildOutput build = buildExpression(arena, env, rewrite->to_expression, holev))
-          {
-            rewrite->to_expression = build.ast;
-            new_goal               = build.value;
-          }
-
-          if (noError())
-          {
-            if (equal(new_goal, goal))
-            {// superfluous rewrite -> remove
-              for (int src_id=item_id+1; src_id < sequence->count; src_id++)
-              {
-                sequence->items[src_id-1] = sequence->items[src_id];
-              }
-              sequence->count--;
-              item_id--;
-            }
-            else
-            {
-              Term *new_goal_norm = normalize(arena, env, new_goal);
-              Term *goal_norm = normalize(arena, env, goal);
-              if (equal(new_goal_norm, goal_norm))
-              {
-                ComputationAst *computation = newAst(arena, ComputationAst, &item->token);
-                computation->lhs = termToAst(arena, env, goal);
-                computation->rhs = termToAst(arena, env, new_goal);
-                rewrite->eq_proof = &computation->a;
-                goal = new_goal;
-              }
-              else
-              {
-                parseError(item, "new goal does not match original");
-                equal(new_goal_norm, goal_norm);
-                attach("new goal normalized", new_goal_norm);
-                attach("current goal normalized", goal_norm);
-              }
-            }
-          }
-        }
-        else if (rewrite->to_expression)
-        {// diff
-          if (BuildOutput to_expression = buildExpression(arena, env, rewrite->to_expression, holev))
-          {
-            Term *expected_result = to_expression.value;
-            CompareValues compare = compareValues(arena, goal, expected_result);
-            if (compare.result.v == Trinary_True)
-              parseError(item, "new goal same as current goal");
-            else
-            {
-              rewrite->path = compare.diff_path;
-              Term *from = subExpressionAtPath(goal, compare.diff_path);
-              Term *to   = subExpressionAtPath(to_expression.value, compare.diff_path);
-
-              int retry_count = 1;
-              ValueArray global_overloads = {};
-              Identifier *op_ident = 0;
-              if ((op_ident = castAst(rewrite->eq_proof, Identifier)))
-              {
-                global_overloads = getGlobalOverloads(env, op_ident, holev);
-                if (global_overloads.count > 1)
-                  retry_count = global_overloads.count;
-              }
-
-              for (int attempt=0; attempt < retry_count; attempt++)
-              {
-                Term *hint = 0;
-                if (retry_count > 1)
-                {
-                  Constant *constant = newAst(arena, Constant, &op_ident->token);
-                  constant->value    = global_overloads.items[attempt];
-                  hint = constant->value;
-                }
-                else if (BuildOutput build_hint = buildExpression(arena, env, rewrite->eq_proof, holev))
-                {
-                  rewrite->eq_proof = build_hint.ast;
-                  hint              = build_hint.value;
-                }
-
-                if (noError())
-                {
-                  Term *eq_proof = 0;
-                  if (Arrow *arrowv = castTerm(getType(hint), Arrow))
-                  {
-                    Composite *eq = newTerm(temp_arena, Composite, builtins.Set);
-                    eq->op        = builtins.equal;
-                    eq->arg_count = 3;
-                    allocateArray(temp_arena, 3, eq->args);
-                    eq->args[0]   = getType(from);
-                    eq->args[1]   = from;
-                    eq->args[2]   = to;
-
-                    Value **unify_args = pushArray(temp_arena, arrowv->param_count, Value *, true);
-                    if (unify(unify_args, arrowv->param_types, arrowv->output_type, &eq->t))
-                    {
-                      // todo: make a standalone typecheck function, to check type of these things
-                      Composite *eq_proofc = newTerm(arena, Composite, &eq->t);
-                      eq_proofc->op        = hint;
-                      eq_proofc->arg_count = arrowv->param_count;
-                      allocateArray(arena, arrowv->param_count, eq_proofc->args);
-                      for (int id=0; id < arrowv->param_count; id++)
-                      {
-                        eq_proofc->args[id] = unify_args[id];
-                      }
-                      eq_proof = &eq_proofc->t;
-                      rewrite->eq_proof = termToAst(arena, env, eq_proof);
-                    }
-                    else
-                    {
-                      parseError(rewrite->eq_proof, "unification failed");
-                      attach("lhs", arrowv->output_type);
-                      attach("rhs", &eq->t);
-                      attach("goal", goal);
-                      attach("serial", serial);
-                    }
-                  }
-                  else if (Composite *composite = castTerm(getType(hint), Composite))
-                  {
-                    if (composite->op == builtins.equal)
-                      eq_proof = hint;
-                    else
-                    {
-                      parseError(rewrite->eq_proof, "invalid proof pattern");
-                      attach("type", getType(hint));
-                    }
-                  }
-                  else
-                  {
-                    parseError(rewrite->eq_proof, "invalid proof pattern");
-                    attach("type", getType(hint));
-                  }
-
-                  if (noError())
-                  {
-                    if (Composite *eq = castTerm(getType(eq_proof), Composite))
-                    {
-                      if (eq->op == builtins.equal)
-                      {
-                        Term *from, *to;
-                        if (rewrite->right_to_left) {from = eq->args[2]; to = eq->args[1];}
-                        else                        {from = eq->args[1]; to = eq->args[2];}
-                        Term *actual_result = rewriteExpression(arena, to, rewrite->path, goal);
-                        if (equal(actual_result, expected_result))
-                          goal = actual_result;
-                        else
-                        {
-                          parseError(item, "invalid full-rewrite");
-                          dump("rewrite path"); print(0, rewrite->path); dump();
-                          attach("original goal", goal);
-                          attach("expected rewrite result", expected_result);
-                          attach("actual rewrite result", actual_result);
-                          attach("rewrite from", from);
-                          attach("rewrite to", to);
-                        }
-                      }
-                    }
-                  }
-                }
-
-                if (retry_count > 1)
-                {
-                  if (hasError())
-                  {
-                    wipeError();
-                    if (attempt == retry_count-1)
-                      parseError(&op_ident->a, "found no suitable overload");
-                  }
-                  else break;
-                }
-              }
-            }
-          }
-        }
-        else
-        {// search
-          if (BuildOutput eq_proof = buildExpression(arena, env, rewrite->eq_proof, holev))
-          {
-            b32 rule_valid = false;
-            rewrite->eq_proof = eq_proof.ast;
-            if (Composite *eq = castTerm(getType(eq_proof.value), Composite))
-            {
-              if (eq->op == builtins.equal)
-              {
-                Term *from, *to;
-                rule_valid = true;
-                if (rewrite->right_to_left) {from = eq->args[2]; to = eq->args[1];}
-                else                        {from = eq->args[1]; to = eq->args[2];}
-
-                SearchOutput search = searchExpression(arena, from, goal);
-                if (search.found)
-                {
-                  rewrite->path = search.path;
-                  goal = rewriteExpression(arena, to, rewrite->path, goal);
-                }
-                else
-                {
-                  parseError(item, "substitution has no effect");
-                  attach("substitution", getType(eq_proof.value));
-                  attach("goal", goal);
-                }
-              }
-            }
-
-            if (!rule_valid)
-            {
-              parseError(eq_proof.ast, "please provide a proof of equality that can be used for substitution");
-              attach("got", getType(eq_proof.value));
-              attach("goal", goal);
-            }
-          }
-        }
-      } break;
-
-      invalidDefaultCase;
-    }
-  }
-
-  if (noError())
-  {
-    Ast *last = sequence->items[sequence->count-1];
-    if (Fork *fork = castAst(last, Fork))
-      buildFork(arena, env, fork, goal);
-
-    else if (ComputationAst *computation = castAst(last, ComputationAst))
-    {
-      b32 goal_valid = false;
-      if (Composite *eq = castTerm(goal, Composite))
-      {
-        if (eq->op == builtins.equal)
-        {
-          goal_valid = true;
-          Term *lhs = normalize(temp_arena, env, eq->args[1]);
-          Term *rhs = normalize(temp_arena, env, eq->args[2]);
-          if (equal(lhs, rhs))
-          {
-            computation->lhs = termToAst(arena, env, eq->args[1]);
-            computation->rhs = termToAst(arena, env, eq->args[2]);
-          }
-          else
-          {
-            parseError(last, "equality cannot be proven by computation");
-            attach("lhs", lhs);
-            attach("rhs", rhs);
-          }
-        }
-      }
-      if (!goal_valid)
-      {
-        parseError(last, "computation can only prove equality");
-        attach("got", goal);
-      }
-    }
-    else if (BuildOutput build_last = buildExpression(arena, env, sequence->items[sequence->count-1], goal))
-    {
-      sequence->items[sequence->count-1] = build_last.ast;
-    }
-  }
-  return noError();
-}
-
 forward_declare internal void
-buildFork(MemoryArena *arena, Environment *env, Fork *fork, Term *expected_type)
+buildFork(MemoryArena *arena, Environment *env, ForkAst *fork, Term *goal)
 {
+  i32 unused_variable serial = global_debug_serial++;
+
   // todo #cleanup: don't allow users to fork something they obviously can't
-  assert(expected_type);
-  if (BuildOutput subject = buildExpression(arena, env, fork->subject, holev))
+  assert(goal);
+  if (BuildExpression subject = buildExpression(arena, env, fork->subject, holev))
   {
     fork->subject = subject.ast;
     s32 case_count = fork->case_count;
@@ -3243,7 +2930,7 @@ buildFork(MemoryArena *arena, Environment *env, Fork *fork, Term *expected_type)
     {
       if (uni->ctor_count == case_count)
       {
-        Sequence **correct_bodies = pushArray(arena, case_count, Sequence *, true);
+        Ast **correct_bodies = pushArray(arena, case_count, Ast *, true);
         Term *subjectv = subject.value;
         Environment *outer_env = env;
 
@@ -3273,13 +2960,16 @@ buildFork(MemoryArena *arena, Environment *env, Fork *fork, Term *expected_type)
             addOverwriteRule(env, subjectv, record);
             if (correct_bodies[ctor->id])
             {
-              parseError(&fork->bodies[input_case_id]->a, "fork case handled twice");
+              parseError(fork->bodies[input_case_id], "fork case handled twice");
               attach("constructor", &ctor->t);
             }
             else
             {
-              buildSequence(arena, env, fork->bodies[input_case_id], expected_type);
-              correct_bodies[ctor->id] = fork->bodies[input_case_id];
+              if (BuildExpression body = buildExpression(arena, env, fork->bodies[input_case_id], goal))
+              {
+                assert(body.ast);
+                correct_bodies[ctor->id] = body.ast;
+              }
             }
           }
           else parseError(ctor_name, "expected a constructor");
@@ -3289,7 +2979,7 @@ buildFork(MemoryArena *arena, Environment *env, Fork *fork, Term *expected_type)
 
         if (noError())
         {
-          fork->a.cat  = AC_Fork;
+          fork->a.cat  = AC_ForkAst;
           fork->uni    = uni;
           fork->bodies = correct_bodies;
         }
@@ -3303,6 +2993,11 @@ buildFork(MemoryArena *arena, Environment *env, Fork *fork, Term *expected_type)
       parseError(fork->subject, "cannot fork expression of type");
       attach("type", getType(subject.value));
     }
+  }
+  if (noError())
+  {
+    for (i32 id=0; id < fork->case_count; id++)
+      assert(fork->bodies[id]);
   }
 }
 
@@ -3320,7 +3015,7 @@ fillHole(MemoryArena *arena, Environment *env, Token *token, Term *goal)
     if (eq->op == builtins.equal)
     {
       if (equal(normalize(temp_arena, env, eq->args[1]),
-                   normalize(temp_arena, env, eq->args[2])))
+                normalize(temp_arena, env, eq->args[2])))
       {
         ComputationAst *computation = newAst(arena, ComputationAst, token);
         computation->lhs = termToAst(arena, env, eq->args[1]);
@@ -3332,18 +3027,19 @@ fillHole(MemoryArena *arena, Environment *env, Token *token, Term *goal)
   return out;
 }
 
-forward_declare internal BuildOutput
+
+forward_declare internal BuildExpression
 buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
 {
-  // todo #mem: we just put everything in the arena, including scope values.
-  // todo #speed: normalizing expected_type.
+  // todo #cleanup #mem: sort out what we need and what we don't need to persist
+  // todo #cleanup #speed: returning the value is just a waste of time most of the time. Just call evaluate whenever you need the value.
+  // todo #cleanup remove the default typecheck at the end? just check whenever you need to.
   // beware: Usually we mutate in-place, but we may also allocate anew.
   i32 serial = global_debug_serial++;
-  if (serial == 85)
-    breakhere;
-  BuildOutput out = {};
+  BuildExpression out = {};
   assert(goal);
-  b32 should_check_type = (goal != holev);
+  b32 should_check_type = true;
+  b32 recursed = false;
 
   switch (in0->cat) check_switch(expression)
   {
@@ -3354,7 +3050,8 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
       Ast *fill = fillHole(arena, env, &in0->token, goal);
       if (fill)
       {
-        return buildExpression(arena, env, fill, goal);
+        out = buildExpression(arena, env, fill, goal);
+        recursed = true;
       }
       else
       {
@@ -3479,7 +3176,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
       {
         local_persist i32 serial = 0;
         serial++;
-        if (BuildOutput op = buildExpression(arena, env, in->op, holev))
+        if (BuildExpression op = buildExpression(arena, env, in->op, holev))
         {
           in->op = op.ast;
 
@@ -3537,7 +3234,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
                 }
                 else
                 {
-                  if (BuildOutput arg = buildExpression(arena, env, in->args[arg_id], expected_arg_type))
+                  if (BuildExpression arg = buildExpression(arena, env, in->args[arg_id], expected_arg_type))
                   {
                     in->args[arg_id] = arg.ast;
                     args[arg_id]     = arg.value;
@@ -3586,7 +3283,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
       extendBindings(temp_arena, env);
       for (s32 id=0; id < in->param_count && noError(); id++)
       {
-        BuildOutput param_type = buildExpression(arena, env, in->param_types[id], holev);
+        BuildExpression param_type = buildExpression(arena, env, in->param_types[id], holev);
         if (param_type)
         {
           in->param_types[id] = param_type.ast;
@@ -3600,7 +3297,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
       {
         if (in->output_type)
         {
-          if (BuildOutput output_type = buildExpression(arena, env, in->output_type, holev))
+          if (BuildExpression output_type = buildExpression(arena, env, in->output_type, holev))
             in->output_type = output_type.ast;
         }
       }
@@ -3616,7 +3313,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
     case AC_AccessorAst:
     {
       AccessorAst *in = castAst(in0, AccessorAst);
-      if (BuildOutput build_record = buildExpression(arena, env, in->record, holev))
+      if (BuildExpression build_record = buildExpression(arena, env, in->record, holev))
       {
         Ast  *recorda = build_record.ast;
         Term *record0 = overwriteTerm(env, build_record.value);
@@ -3652,12 +3349,6 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
       }
     } break;
 
-    case AC_ComputationAst:
-    {
-      out.ast   = in0;
-      out.value = evaluate(arena, env, in0);
-    } break;
-
     case AC_Lambda:
     {
       if (Arrow *signature = castTerm(goal, Arrow))
@@ -3677,7 +3368,10 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
         assert(noError());
 
         Term *expected_body_type = evaluateArrow(arena, env->stack->items, signature->output_type, 0);
-        if (buildSequence(arena, env, in->body, expected_body_type))
+        if (BuildExpression body = buildExpression(arena, env, in->body, expected_body_type))
+          in->body = body.ast;
+        unwindBindingsAndStack(env);
+        if (noError())
         {
           in->signature = castAst(termToAst(arena, env, goal), ArrowAst);
           assert(in->signature);
@@ -3686,8 +3380,6 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
           out.ast   = in0;
           out.value = &fun->t;
         }
-
-        unwindBindingsAndStack(env);
       }
       else
       {
@@ -3696,10 +3388,335 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
       }
     } break;
 
+    case AC_RewriteAst:
+    {
+      RewriteAst *rewrite = castAst(in0, RewriteAst);
+      Term *new_goal = 0;
+      if (!rewrite->eq_proof)
+      {
+        if (!rewrite->to_expression)
+        {
+          new_goal = normalize(arena, env, goal);
+          rewrite->to_expression = termToAst(arena, env, new_goal);
+        }
+        else if (BuildExpression build = buildExpression(arena, env, rewrite->to_expression, holev))
+        {
+          rewrite->to_expression = build.ast;
+          new_goal               = build.value;
+        }
+
+        if (noError())
+        {
+          if (equal(new_goal, goal))
+          {// superfluous rewrite -> remove
+            recursed = true;
+            out = buildExpression(arena, env, rewrite->body, goal);
+          }
+          else
+          {
+            Term *new_goal_norm = normalize(arena, env, new_goal);
+            Term *goal_norm = normalize(arena, env, goal);
+            if (equal(new_goal_norm, goal_norm))
+            {
+              ComputationAst *computation = newAst(arena, ComputationAst, &in0->token);
+              computation->lhs = termToAst(arena, env, goal);
+              computation->rhs = termToAst(arena, env, new_goal);
+              rewrite->eq_proof = &computation->a;
+            }
+            else
+            {
+              parseError(in0, "new goal does not match original");
+              equal(new_goal_norm, goal_norm);
+              attach("new goal normalized", new_goal_norm);
+              attach("current goal normalized", goal_norm);
+            }
+          }
+        }
+      }
+      else if (rewrite->to_expression)
+      {// diff
+        if (BuildExpression to_expression = buildExpression(arena, env, rewrite->to_expression, holev))
+        {
+          Term *expected_result = to_expression.value;
+          CompareValues compare = compareValues(arena, goal, expected_result);
+          if (compare.result.v == Trinary_True)
+            parseError(in0, "new goal same as current goal");
+          else
+          {
+            rewrite->path = compare.diff_path;
+            Term *from = subExpressionAtPath(goal, compare.diff_path);
+            Term *to   = subExpressionAtPath(to_expression.value, compare.diff_path);
+
+            int retry_count = 1;
+            ValueArray global_overloads = {};
+            Identifier *op_ident = 0;
+            if ((op_ident = castAst(rewrite->eq_proof, Identifier)))
+            {
+              global_overloads = getGlobalOverloads(env, op_ident, holev);
+              if (global_overloads.count > 1)
+                retry_count = global_overloads.count;
+            }
+
+            for (int attempt=0; attempt < retry_count; attempt++)
+            {
+              Term *hint = 0;
+              if (retry_count > 1)
+              {
+                Constant *constant = newAst(arena, Constant, &op_ident->token);
+                constant->value    = global_overloads.items[attempt];
+                hint = constant->value;
+              }
+              else if (BuildExpression build_hint = buildExpression(arena, env, rewrite->eq_proof, holev))
+              {
+                rewrite->eq_proof = build_hint.ast;
+                hint              = build_hint.value;
+              }
+
+              if (noError())
+              {
+                Term *eq_proof = 0;
+                if (Arrow *arrowv = castTerm(getType(hint), Arrow))
+                {
+                  Composite *eq = newTerm(temp_arena, Composite, builtins.Set);
+                  eq->op        = builtins.equal;
+                  eq->arg_count = 3;
+                  allocateArray(temp_arena, 3, eq->args);
+                  eq->args[0]   = getType(from);
+                  eq->args[1]   = from;
+                  eq->args[2]   = to;
+
+                  Value **unify_args = pushArray(temp_arena, arrowv->param_count, Value *, true);
+                  if (unify(unify_args, arrowv->param_types, arrowv->output_type, &eq->t))
+                  {
+                    // todo: make a standalone typecheck function, to check type of these things
+                    Composite *eq_proofc = newTerm(arena, Composite, &eq->t);
+                    eq_proofc->op        = hint;
+                    eq_proofc->arg_count = arrowv->param_count;
+                    allocateArray(arena, arrowv->param_count, eq_proofc->args);
+                    for (int id=0; id < arrowv->param_count; id++)
+                    {
+                      eq_proofc->args[id] = unify_args[id];
+                    }
+                    eq_proof = &eq_proofc->t;
+                    rewrite->eq_proof = termToAst(arena, env, eq_proof);
+                  }
+                  else
+                  {
+                    parseError(rewrite->eq_proof, "unification failed");
+                    attach("lhs", arrowv->output_type);
+                    attach("rhs", &eq->t);
+                    attach("goal", goal);
+                    attach("serial", serial);
+                  }
+                }
+                else if (Composite *composite = castTerm(getType(hint), Composite))
+                {
+                  if (composite->op == builtins.equal)
+                    eq_proof = hint;
+                  else
+                  {
+                    parseError(rewrite->eq_proof, "invalid proof pattern");
+                    attach("type", getType(hint));
+                  }
+                }
+                else
+                {
+                  parseError(rewrite->eq_proof, "invalid proof pattern");
+                  attach("type", getType(hint));
+                }
+
+                if (noError())
+                {
+                  if (Composite *eq = castTerm(getType(eq_proof), Composite))
+                  {
+                    if (eq->op == builtins.equal)
+                    {
+                      Term *from, *to;
+                      if (rewrite->right_to_left) {from = eq->args[2]; to = eq->args[1];}
+                      else                        {from = eq->args[1]; to = eq->args[2];}
+                      Term *actual_result = rewriteExpression(arena, to, rewrite->path, goal);
+                      if (equal(actual_result, expected_result))
+                        new_goal = actual_result;
+                      else
+                      {
+                        parseError(in0, "invalid full-rewrite");
+                        dump("rewrite path"); print(0, rewrite->path); dump();
+                        attach("original goal", goal);
+                        attach("expected rewrite result", expected_result);
+                        attach("actual rewrite result", actual_result);
+                        attach("rewrite from", from);
+                        attach("rewrite to", to);
+                      }
+                    }
+                  }
+                }
+              }
+
+              if (retry_count > 1)
+              {
+                if (hasError())
+                {
+                  wipeError();
+                  if (attempt == retry_count-1)
+                    parseError(&op_ident->a, "found no suitable overload");
+                }
+                else break;
+              }
+            }
+          }
+        }
+      }
+      else
+      {// search
+        if (BuildExpression eq_proof = buildExpression(arena, env, rewrite->eq_proof, holev))
+        {
+          b32 rule_valid = false;
+          rewrite->eq_proof = eq_proof.ast;
+          if (Composite *eq = castTerm(getType(eq_proof.value), Composite))
+          {
+            if (eq->op == builtins.equal)
+            {
+              Term *from, *to;
+              rule_valid = true;
+              if (rewrite->right_to_left) {from = eq->args[2]; to = eq->args[1];}
+              else                        {from = eq->args[1]; to = eq->args[2];}
+
+              SearchOutput search = searchExpression(arena, from, goal);
+              if (search.found)
+              {
+                rewrite->path = search.path;
+                new_goal = rewriteExpression(arena, to, rewrite->path, goal);
+              }
+              else
+              {
+                parseError(in0, "substitution has no effect");
+                attach("substitution", getType(eq_proof.value));
+                attach("goal", goal);
+              }
+            }
+          }
+
+          if (!rule_valid)
+          {
+            parseError(eq_proof.ast, "please provide a proof of equality that can be used for substitution");
+            attach("got", getType(eq_proof.value));
+            attach("goal", goal);
+          }
+        }
+      }
+
+      if (noError() && !recursed)
+      {
+        assert(new_goal);
+        if (BuildExpression body = buildExpression(arena, env, rewrite->body, new_goal))
+        {
+          rewrite->body = body.ast;
+          out.value = evaluate(arena, env, in0);
+          out.ast   = in0;
+        }
+      }
+      should_check_type = false;
+    } break;
+
+    case AC_Let:
+    {
+      Let  *let = castAst(in0, Let);
+      Term *type_hint = holev;
+      if (let->type && let->type != LET_TYPE_NORMALIZE)
+      {
+        if (BuildExpression type = buildExpression(arena, env, let->type, holev))
+          type_hint = type.value;
+      }
+      if (noError())
+      {
+        if (BuildExpression rhs = buildExpression(arena, env, let->rhs, type_hint))
+        {
+          let->rhs = rhs.ast;
+          Value *value0 = 0;
+          if (let->type == LET_TYPE_NORMALIZE)
+          {// type manipulation (TODO: this wouldn't preserve the proof structure)
+            switch (rhs.value->cat)
+            {
+              case Term_StackPointer:
+              {
+                StackPointer *in    = castTerm(rhs.value, StackPointer);
+                StackPointer *value = copyStruct(arena, in);
+                value0 = &value->t;
+              } break;
+
+              case Term_Composite:
+              {value0 = rhs.value;} break;
+
+              default:
+              {todoIncomplete;}
+            }
+            setType(value0, normalize(arena, env, getType(rhs.value)));
+          }
+          else value0 = rhs.value;
+          addLocalBinding(env, &let->lhs);
+          addStackValue(env, value0);
+
+          if (BuildExpression body = buildExpression(arena, env, let->body, goal))
+          {
+            let->body = body.ast;
+            out.ast   = in0;
+            should_check_type = false;
+          }
+        }
+      }
+    } break;
+
+    case AC_ComputationAst:
+    {
+      ComputationAst *computation = castAst(in0, ComputationAst);
+      if (!computation->lhs)
+      {
+        b32 goal_valid = false;
+        if (Composite *eq = castTerm(goal, Composite))
+        {
+          if (eq->op == builtins.equal)
+          {
+            goal_valid = true;
+            Term *lhs = normalize(temp_arena, env, eq->args[1]);
+            Term *rhs = normalize(temp_arena, env, eq->args[2]);
+            if (equal(lhs, rhs))
+            {
+              computation->lhs = termToAst(arena, env, eq->args[1]);
+              computation->rhs = termToAst(arena, env, eq->args[2]);
+            }
+            else
+            {
+              parseError(in0, "equality cannot be proven by computation");
+              attach("lhs", lhs);
+              attach("rhs", rhs);
+            }
+          }
+        }
+        if (!goal_valid)
+        {
+          parseError(in0, "computation can only prove equality");
+          attach("got", goal);
+        }
+      }
+      if (!hasError())
+      {
+        out.ast   = in0;
+        out.value = evaluate(arena, env, in0);
+      }
+    } break;
+
+    case AC_ForkAst:
+    {// no need to return value since nobody uses the value of a fork
+      ForkAst *fork = castAst(in0, ForkAst);
+      buildFork(arena, env, fork, goal);
+      out.ast = in0;
+      recursed = true;
+    } break;
+
     invalidDefaultCase;
   }
 
-  if (noError() && should_check_type)
+  if (noError() && (goal != holev) && should_check_type && !recursed)
   {// one last typecheck if needed
     Term *actual   = getType(out.value);
     Term *expected = goal;
@@ -3709,26 +3726,26 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
       attach("got", actual);
       attach("expected", expected);
       attach("serial", serial);
-      // if (serial == 320) {global_debug_mode = true; matchType(env, actual, expected);}
     }
   }
 
   if (ParseError *error = getError())
+  {
     error->code = ErrorWrongType;
-
-  NULL_WHEN_ERROR(out);
+    out = {};
+  }
   return out;
 }
 
-inline BuildOutput
+inline BuildExpression
 parseExpression(MemoryArena *arena, LocalBindings *bindings, Term *expected_type)
 {
-  BuildOutput out = {};
+  BuildExpression out = {};
   if (Ast *ast = parseExpressionToAst(arena))
   {
     Environment env = {};
     env.bindings = bindings;
-    if (BuildOutput build = buildExpression(arena, &env, ast, expected_type))
+    if (BuildExpression build = buildExpression(arena, &env, ast, expected_type))
     {
       out.ast   = build.ast;
       out.value = build.value;
@@ -3745,7 +3762,7 @@ parseExpression(MemoryArena *arena)
   return parseExpression(arena, 0, holev).ast;
 }
 
-inline BuildOutput
+inline BuildExpression
 parseExpressionFull(MemoryArena *arena)
 {
   return parseExpression(arena, 0, holev);
@@ -3755,7 +3772,6 @@ forward_declare internal FunctionDecl *
 parseFunction(MemoryArena *arena, Token *name, b32 is_theorem)
 {
   FunctionDecl *out = newAst(arena, FunctionDecl, name);
-
   assert(isIdentifier(name));
 
   if (Ast *signature0 = parseExpressionToAst(arena))
@@ -3766,7 +3782,7 @@ parseFunction(MemoryArena *arena, Token *name, b32 is_theorem)
 
       if (requireChar('{', "open function body"))
       {
-        if (Sequence *body = parseSequence(arena, is_theorem, false))
+        if (Ast *body = parseSequence(arena, is_theorem, false))
         {
           if (requireChar('}'))
           {
@@ -3784,10 +3800,10 @@ parseFunction(MemoryArena *arena, Token *name, b32 is_theorem)
   return out;
 }
 
-forward_declare internal Fork *
+forward_declare internal ForkAst *
 parseFork(MemoryArena *arena, b32 is_theorem)
 {
-  Fork *out = 0;
+  ForkAst *out = 0;
   Token token = global_tokenizer->last_token;
   Ast *subject = parseExpressionToAst(arena);
   if (requireChar('{', "to open the typedef body"))
@@ -3797,7 +3813,7 @@ parseFork(MemoryArena *arena, b32 is_theorem)
     if (noError(&tk_copy))
     {
       ForkParsing *parsing = pushStruct(temp_arena, ForkParsing);
-      Sequence **bodies = pushArray(temp_arena, case_count, Sequence*);
+      Ast **bodies = pushArray(temp_arena, case_count, Ast*);
       allocateArray(temp_arena, case_count, parsing->ctors);
 
       s32 actual_case_count = 0;
@@ -3831,7 +3847,7 @@ parseFork(MemoryArena *arena, b32 is_theorem)
             if (requireChar(':', "syntax: CASE: BODY"))
             {
               b32 auto_normalize = is_theorem ? true : false;
-              if (Sequence *body = parseSequence(arena, is_theorem, auto_normalize))
+              if (Ast *body = parseSequence(arena, is_theorem, auto_normalize))
               {
                 bodies[input_case_id] = body;
                 if (!optionalChar(','))
@@ -3849,7 +3865,7 @@ parseFork(MemoryArena *arena, b32 is_theorem)
       if (noError())
       {
         assert(case_count == actual_case_count);
-        out = newAst(arena, Fork, &token);
+        out = newAst(arena, ForkAst, &token);
         out->a.token    = token;
         out->subject    = subject;
         out->case_count = case_count;
@@ -4230,7 +4246,7 @@ parseConstructor(MemoryArena *arena, Union *uni)
         Environment env_ = {}; Environment *env = &env_;
         // todo there are hacks we have to do to accept arrow type without
         // output type, which is dumb since the output type exists.
-        if (BuildOutput build = buildExpression(arena, env, &ast->a, holev))
+        if (BuildExpression build = buildExpression(arena, env, &ast->a, holev))
           struct_ = castTerm(build.value, Arrow);
       }
       popContext();
@@ -4260,7 +4276,7 @@ parseUnion(MemoryArena *arena, Token *name)
   if (optionalChar(':'))
   {// type override
     b32 valid_type = false;
-    if (BuildOutput type_parsing = parseExpressionFull(arena))
+    if (BuildExpression type_parsing = parseExpressionFull(arena))
     {
       Term *norm_type = evaluate(arena, type_parsing.ast);
       if (Arrow *arrow = castTerm(norm_type, Arrow))
@@ -4399,163 +4415,166 @@ parseTopLevel(EngineState *state)
     }
     else
     {
-      if (token.cat == TC_KeywordBreakhere)
+      switch (token.cat)
       {
-        breakhere;
-        global_debug_mode = true;
-      }
-      else if (equal(token, "compare_expressions"))
-      {
-        if (BuildOutput lhs = parseExpressionFull(temp_arena))
+        case TC_KeywordTestEval:
         {
-          requireChar(',');
-          if (BuildOutput rhs = parseExpressionFull(temp_arena))
+          if (BuildExpression expr = parseExpressionFull(temp_arena))
+            normalize(arena, empty_env, expr.value);
+        } break;
+
+        case TC_KeywordBreakhere:
+        {
+          global_debug_mode = true;
+        } break;
+
+        case TC_KeywordPrint:
+        {
+          if (BuildExpression expr = parseExpressionFull(temp_arena))
           {
-            CompareValues compare = compareValues(temp_arena, lhs.value, rhs.value);
-            (void)compare;
+            Term *norm = normalize(arena, empty_env, expr.value);
+            print(0, norm, {.detailed=true, .print_type=true});
+            print(0, "\n");
           }
-        }
-      }
-      else if (equal(token, "print"))
-      {
-        if (BuildOutput expr = parseExpressionFull(temp_arena))
+        } break;
+
+        case TC_KeywordPrintRaw:
         {
-          Term *norm = normalize(arena, empty_env, expr.value);
-          print(0, norm, {.detailed=true, .print_type=true});
-          print(0, "\n");
-        }
-      }
-      else if (equal(token, "print_raw"))
-      {
-        if (auto parsing = parseExpressionFull(temp_arena))
-        {
-          print(0, parsing.value, {.detailed=true});
-          print(0, ": ");
-          print(0, getType(parsing.value), {});
-          print(0, "\n");
-        }
-      }
-      else if (equal(token, "print_debug"))
-      {
-        if (Ast *exp = parseExpression(temp_arena))
-        {
-          print(0, exp, {.detailed=true, .print_type=true});
-        }
-      }
-      else if (equal(token, "check"))
-      {
-        Term *expected_type = 0;
-        if (Ast *ast = parseExpressionToAst(temp_arena))
-        {
-          if (optionalChar(':'))
+          if (auto parsing = parseExpressionFull(temp_arena))
           {
-            if (Ast *type = parseExpression(temp_arena))
-              expected_type = evaluate(temp_arena, type);
+            print(0, parsing.value, {.detailed=true});
+            print(0, ": ");
+            print(0, getType(parsing.value), {});
+            print(0, "\n");
           }
-          if (noError())
-            buildExpression(temp_arena, empty_env, ast, expected_type);
-        }
-      }
-      else if (equal(token, "check_truth"))
-      {
-        if (Term *goal = parseExpressionFull(temp_arena).value)
+        } break;
+
+        case TC_KeywordPrintDebug:
         {
-          if (Composite *eq = castTerm(goal, Composite))
+          if (Ast *exp = parseExpression(temp_arena))
+            print(0, exp, {.detailed=true, .print_type=true});
+        } break;
+
+        case TC_KeywordCheck:
+        {
+          Term *expected_type = 0;
+          if (Ast *ast = parseExpressionToAst(temp_arena))
           {
-            b32 goal_valid = false;
-            if (eq->op == builtins.equal)
+            if (optionalChar(':'))
             {
-              goal_valid = true;
-              Term *lhs = normalize(temp_arena, empty_env, eq->args[1]);
-              Term *rhs = normalize(temp_arena, empty_env, eq->args[2]);
-              if (!equal(lhs, rhs))
+              if (Ast *type = parseExpression(temp_arena))
+                expected_type = evaluate(temp_arena, type);
+            }
+            if (noError())
+              buildExpression(temp_arena, empty_env, ast, expected_type);
+          }
+        } break;
+
+        case TC_KeywordCheckTruth:
+        {
+          if (Term *goal = parseExpressionFull(temp_arena).value)
+          {
+            if (Composite *eq = castTerm(goal, Composite))
+            {
+              b32 goal_valid = false;
+              if (eq->op == builtins.equal)
               {
-                parseError(&token, "equality cannot be proven by computation");
-                setErrorCode(ErrorWrongType);
+                goal_valid = true;
                 Term *lhs = normalize(temp_arena, empty_env, eq->args[1]);
-                attach("lhs", lhs);
-                attach("rhs", rhs);
-              }
-            }
-            if (!goal_valid)
-            {
-              parseError(&token, "computation can only prove equality");
-              attach("got", goal);
-            }
-          }
-        }
-      }
-      else if (isIdentifier(&token))
-      {
-        Token after_name = nextToken();
-        if (isIdentifier(&after_name) &&
-            areSequential(&token, &after_name))
-        {// token combination
-          token.string.length += after_name.string.length;
-          after_name = nextToken();
-        }
-
-        switch (after_name.cat)
-        {
-          case TC_ColonEqual:
-          {
-            pushContext("constant definition: CONSTANT := VALUE;");
-            if (Ast *rhs = parseExpression(arena))
-            {
-              Term *value = evaluate(arena, rhs);
-              addGlobalBinding(&token, value);
-              requireChar(';');
-            }
-            popContext();
-          } break;
-
-          case TC_DoubleColon:
-          {
-            Token after_dcolon = peekToken();
-            if (equal(after_dcolon, "union"))
-            {
-              nextToken();
-              parseUnion(arena, &token);
-            }
-            else
-            {
-              b32 is_theorem;
-              if (equal(after_dcolon, "fn"))
-              {
-                is_theorem = false;
-                nextToken();
-              }
-              else is_theorem = true;
-              if (FunctionDecl *fun = parseFunction(arena, &token, is_theorem))
-                buildFunction(arena, empty_env, fun);
-            }
-          } break;
-
-          case ':':
-          {
-            if (BuildOutput parse_type = parseExpressionFull(arena))
-            {
-              if (requireCategory(TC_ColonEqual, "require :=, syntax: name : type := value"))
-              {
-                Term *type = evaluate(arena, parse_type.ast);
-                if (BuildOutput parse_value = parseExpression(arena, 0, type))
+                Term *rhs = normalize(temp_arena, empty_env, eq->args[2]);
+                if (!equal(lhs, rhs))
                 {
-                  Term *value = evaluate(arena, parse_value.ast);
-                  addGlobalBinding(&token, value);
+                  parseError(&token, "equality cannot be proven by computation");
+                  setErrorCode(ErrorWrongType);
+                  Term *lhs = normalize(temp_arena, empty_env, eq->args[1]);
+                  attach("lhs", lhs);
+                  attach("rhs", rhs);
                 }
               }
+              if (!goal_valid)
+              {
+                parseError(&token, "computation can only prove equality");
+                attach("got", goal);
+              }
             }
-          } break;
+          }
+        } break;
 
-          default:
+        default:
+        {
+          if (isIdentifier(&token))
           {
-            tokenError("unexpected token after identifier");
-          } break;
-        }
+            Token after_name = nextToken();
+            if (isIdentifier(&after_name) &&
+                areSequential(&token, &after_name))
+            {// token combination
+              token.string.length += after_name.string.length;
+              after_name = nextToken();
+            }
+
+            switch (after_name.cat)
+            {
+              case TC_ColonEqual:
+              {
+                pushContext("constant definition: CONSTANT := VALUE;");
+                if (Ast *rhs = parseExpression(arena))
+                {
+                  Term *value = evaluate(arena, rhs);
+                  addGlobalBinding(&token, value);
+                  requireChar(';');
+                }
+                popContext();
+              } break;
+
+              case TC_DoubleColon:
+              {
+                Token after_dcolon = peekToken();
+                if (equal(after_dcolon, "union"))
+                {
+                  nextToken();
+                  parseUnion(arena, &token);
+                }
+                else
+                {
+                  b32 is_theorem;
+                  if (equal(after_dcolon, "fn"))
+                  {
+                    is_theorem = false;
+                    nextToken();
+                  }
+                  else is_theorem = true;
+                  if (FunctionDecl *fun = parseFunction(arena, &token, is_theorem))
+                    buildFunction(arena, empty_env, fun);
+                }
+              } break;
+
+              case ':':
+              {
+                if (BuildExpression parse_type = parseExpressionFull(arena))
+                {
+                  if (requireCategory(TC_ColonEqual, "require :=, syntax: name : type := value"))
+                  {
+                    Term *type = evaluate(arena, parse_type.ast);
+                    if (BuildExpression parse_value = parseExpression(arena, 0, type))
+                    {
+                      Term *value = evaluate(arena, parse_value.ast);
+                      addGlobalBinding(&token, value);
+                    }
+                  }
+                }
+              } break;
+
+              default:
+              {
+                tokenError("unexpected token after identifier");
+              } break;
+            }
+          }
+          else tokenError("unexpected token to begin top-level form");
+        } break;
       }
-      else
-        tokenError("unexpected token to begin top-level form");
     }
+
 #if CLEAN_TEMPORARY_MEMORY
     endTemporaryMemory(top_level_temp);
 #endif
@@ -4658,14 +4677,14 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
   return success;
 }
 
-forward_declare inline BuildOutput
+forward_declare inline BuildExpression
 parseExpressionFromString(MemoryArena *arena, char *string)
 {
   Tokenizer tk = newTokenizer(String{}, 0);
   Tokenizer *tk_save = global_tokenizer;
   global_tokenizer = &tk;
   tk.at = string;
-  BuildOutput out = parseExpressionFull(arena);
+  BuildExpression out = parseExpressionFull(arena);
   global_tokenizer = tk_save;
   return out;
 }
@@ -4695,12 +4714,12 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
       Tokenizer builtin_tk = newTokenizer(print(temp_arena, "<builtin>"), 0);
       global_tokenizer = &builtin_tk;
       builtin_tk.at = "(_A: Set, a, b: _A) -> Set";
-      BuildOutput equal_type = parseExpressionFull(arena); 
+      BuildExpression equal_type = parseExpressionFull(arena); 
       builtins.equal = newTerm(arena, Builtin, equal_type.value);
       addBuiltinGlobalBinding("=", builtins.equal);
 
       builtin_tk.at = "(_A: Set, x: _A) -> =(_A, x, x)";
-      BuildOutput refl_type = parseExpressionFull(arena);
+      BuildExpression refl_type = parseExpressionFull(arena);
       assert(noError());
       builtins.refl = newTerm(arena, Constructor, refl_type.value);
       builtins.refl->name = newToken("refl");
