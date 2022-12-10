@@ -175,38 +175,7 @@ deepCopy(MemoryArena *arena, Ast *in0)
   {
     case AC_Hole:
     case AC_Identifier:
-    {
-      out0 = in0;
-    } break;
-
-#if 0
-    case AC_Fork:
-    {
-      Fork *in = castAst(in0, Fork);
-      Fork *out = copyStruct(arena, in);
-      out->subject = deepCopy(arena, in->subject);
-      allocateArray(arena, in->case_count, out->bodies);
-      for (s32 id=0; id < in->case_count; id++)
-      {
-        out->bodies[id] = deepCopy(arena, in->bodies[id]);
-      }
-      out0 = &out->a;
-    } break;
-#endif
-
-#if 0
-    case AC_Sequence:
-    {
-      Sequence *in = castAst(in0, Sequence);
-      Sequence *out = copyStruct(arena, in);
-      allocateArray(arena, out->count, out->items);
-      for (s32 id=0; id < in->count; id++)
-      {
-        out->items[id] = deepCopy(arena, in->items[id]);
-      }
-      out0 = &out->a;
-    } break;
-#endif
+    {out0 = in0;} break;
 
     case AC_CompositeAst:
     {
@@ -323,6 +292,8 @@ extendBindings(MemoryArena *arena, Environment *env)
   env->bindings = out;
   return out;
 }
+
+inline LocalBindings * extendBindings(Environment *env) {return extendBindings(temp_arena, env);}
 
 forward_declare inline void
 dump(Trinary trinary)
@@ -2029,6 +2000,7 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
       }
     } break;
 
+#if 0
     case AC_Let:
     {
       Let *in = castAst(in0, Let);
@@ -2036,6 +2008,7 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
       addStackValue(env, rhs);
       out0 = evaluate(arena, env, in->body);
     } break;
+#endif
 
     case AC_ForkAst:
     {
@@ -2460,7 +2433,10 @@ buildFunction(MemoryArena *arena, Environment *env, FunctionDecl *fun)
       assert(noError());
 
       Term *expected_body_type = evaluate(temp_arena, env, fun->signature->output_type);
-      buildExpression(arena, env, fun->body, expected_body_type);
+      if (BuildExpression body = buildExpression(arena, env, fun->body, expected_body_type))
+      {
+        fun->body = body.ast;
+      }
       unwindBindingsAndStack(env);
     }
 
@@ -2471,7 +2447,7 @@ buildFunction(MemoryArena *arena, Environment *env, FunctionDecl *fun)
 }
 
 internal Ast *
-termToAst(MemoryArena *arena, i32 env_depth, Term* term)
+toAst(MemoryArena *arena, i32 env_depth, Term* term)
 {
   Ast *out0 = 0;
   Token token = newToken("<synthetic>");
@@ -2493,12 +2469,12 @@ termToAst(MemoryArena *arena, i32 env_depth, Term* term)
     {
       Composite *compositev = castTerm(term, Composite);
       CompositeAst  *composite  = newAst(arena, CompositeAst, &token);
-      composite->op        = termToAst(arena, env_depth, compositev->op);
+      composite->op        = toAst(arena, env_depth, compositev->op);
       composite->arg_count = compositev->arg_count;
       allocateArray(arena, composite->arg_count, composite->args);
       for (int id=0; id < composite->arg_count; id++)
       {
-        composite->args[id] = termToAst(arena, env_depth, compositev->args[id]);
+        composite->args[id] = toAst(arena, env_depth, compositev->args[id]);
       }
       out0 = &composite->a;
     } break;
@@ -2507,7 +2483,7 @@ termToAst(MemoryArena *arena, i32 env_depth, Term* term)
     {
       Accessor *accessorv = castTerm(term, Accessor);
       AccessorAst  *accessor  = newAst(arena, AccessorAst, &token);
-      accessor->record      = termToAst(arena, env_depth, accessorv->record);
+      accessor->record      = toAst(arena, env_depth, accessorv->record);
       accessor->field_id    = accessorv->field_id;
       accessor->field_name  = newToken(accessorv->field_name);
       out0 = &accessor->a;
@@ -2521,8 +2497,8 @@ termToAst(MemoryArena *arena, i32 env_depth, Term* term)
       out->param_names = in->param_names;
       allocateArray(arena, in->param_count, out->param_types);
       for (i32 id=0; id < in->param_count; id++)
-        out->param_types[id] = termToAst(arena, env_depth+1, in->param_types[id]);
-      out->output_type = termToAst(arena, env_depth+1, in->output_type);
+        out->param_types[id] = toAst(arena, env_depth+1, in->param_types[id]);
+      out->output_type = toAst(arena, env_depth+1, in->output_type);
       out0 = &out->a;
     } break;
 
@@ -2554,7 +2530,7 @@ termToAst(MemoryArena *arena, i32 env_depth, Term* term)
 inline Ast *
 termToAst(MemoryArena *arena, Environment *env, Term* term)
 {
-  return termToAst(arena, getStackDepth(env), term);
+  return toAst(arena, getStackDepth(env), term);
 }
 
 internal SearchOutput
@@ -3027,7 +3003,6 @@ fillHole(MemoryArena *arena, Environment *env, Token *token, Term *goal)
   return out;
 }
 
-
 forward_declare internal BuildExpression
 buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
 {
@@ -3394,9 +3369,11 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
       Term *new_goal = 0;
       if (!rewrite->eq_proof)
       {
+        b32 skip_goal_comparison = false;
         if (!rewrite->to_expression)
         {
           new_goal = normalize(arena, env, goal);
+          skip_goal_comparison = true;
           rewrite->to_expression = termToAst(arena, env, new_goal);
         }
         else if (BuildExpression build = buildExpression(arena, env, rewrite->to_expression, holev))
@@ -3416,7 +3393,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
           {
             Term *new_goal_norm = normalize(arena, env, new_goal);
             Term *goal_norm = normalize(arena, env, goal);
-            if (equal(new_goal_norm, goal_norm))
+            if (skip_goal_comparison || equal(new_goal_norm, goal_norm))
             {
               ComputationAst *computation = newAst(arena, ComputationAst, &in0->token);
               computation->lhs = termToAst(arena, env, goal);
@@ -3633,6 +3610,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
         {
           let->rhs = rhs.ast;
           Value *value0 = 0;
+          Value *let_type = rhs.value->type;
           if (let->type == LET_TYPE_NORMALIZE)
           {// type manipulation (TODO: this wouldn't preserve the proof structure)
             switch (rhs.value->cat)
@@ -3650,18 +3628,44 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
               default:
               {todoIncomplete;}
             }
-            setType(value0, normalize(arena, env, getType(rhs.value)));
+            let_type = normalize(arena, env, rhs.value->type);
+            setType(value0, let_type);
           }
-          else value0 = rhs.value;
+          else
+            value0 = rhs.value;
+
+          extendBindings(env);
           addLocalBinding(env, &let->lhs);
+          addStackFrame(env);
           addStackValue(env, value0);
 
+          // todo #cleanup We could recurse on this, but the complexity might go up, so idk.
           if (BuildExpression body = buildExpression(arena, env, let->body, goal))
           {
             let->body = body.ast;
-            out.ast   = in0;
+            auto composite = newAst(arena, CompositeAst, &let->token);
+
+            auto lambda  = newAst(arena, Lambda, &let->body->token);
+            lambda->body = body.ast;
+            // evaluate cares about the signature, since atm it produces the type.
+            // todo allow ignoring the type
+            auto signature = newAst(arena, ArrowAst, &let->token);
+            allocateArray(arena, 1, signature->param_names);
+            allocateArray(arena, 1, signature->param_types);
+            signature->param_count    = 1;
+            signature->param_names[0] = let->lhs;
+            signature->param_types[0] = termToAst(arena, env, let_type);
+            signature->output_type    = termToAst(arena, env, goal);
+            lambda->signature = signature;
+
+            allocateArray(arena, 1, composite->args);
+            composite->op        = &lambda->a;
+            composite->arg_count = 1;
+            composite->args[0] = let->rhs;
+            out.ast   = &composite->a;
             should_check_type = false;
           }
+          unwindBindingsAndStack(env);
         }
       }
     } break;
@@ -3734,6 +3738,8 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
     error->code = ErrorWrongType;
     out = {};
   }
+  else
+    assert(out.ast->cat != AC_Let);
   return out;
 }
 
@@ -4059,7 +4065,9 @@ parseOperand(MemoryArena *arena)
       {
         Ast **args = pushArray(arena, expected_arg_count, Ast*);
         CompositeAst *branch = newAst(arena, CompositeAst, &op->token);
-        initComposite(branch, op, expected_arg_count, args);
+        branch->op        = op;
+        branch->arg_count = expected_arg_count;
+        branch->args      = args;
         out = &branch->a;
         s32 parsed_arg_count = 0;
         for (s32 stop = false;
@@ -4187,7 +4195,9 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
               args[1] = recurse;
 
               CompositeAst *new_operand = newAst(arena, CompositeAst, &op_token);
-              initComposite(new_operand, &op->a, arg_count, args);
+              new_operand->op        = &op->a;
+              new_operand->arg_count = arg_count;
+              new_operand->args      = args;
               operand = &new_operand->a;
             }
           }

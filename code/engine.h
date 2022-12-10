@@ -33,10 +33,9 @@ enum AstCategory {
   AC_Lambda,
 
   // Stuff in "sequence" context only, not general expressions.
-  /* AC_Sequence, */
   AC_ForkAst,
   AC_RewriteAst,
-  AC_FunctionDecl,
+  AC_FunctionDecl,  // todo: #cleanup probably don't need this anymore
   AC_Let,
 };
 
@@ -45,7 +44,7 @@ enum TermCategory {
   Term_Builtin = 2,
 
   Term_Union       = 3,
-  Term_Constructor = 5,
+  Term_Constructor = 5,  // todo: constructors can be removed if we have record
   Term_Function    = 6,
 
   Term_StackPointer = 8,
@@ -301,22 +300,21 @@ struct StackPointer {
 };
 
 struct TreePath {
-  s32       first;  // -1 for op
+  i32       first;  // -1 for op
   TreePath *next;
 };
 
 struct Accessor {
   embed_Term(t);
   Term   *record;
-  s32     field_id;
+  i32     field_id;
   String  field_name;           // #todo #debug_only
 };
 
-struct CompositeAst
-{
+struct CompositeAst {
   embed_Ast(a);
   Ast  *op;
-  s32   arg_count;
+  i32   arg_count;
   Ast **args;
 };
 
@@ -326,14 +324,6 @@ struct Composite {
   i32    arg_count;
   Term **args;
 };
-
-inline void
-initComposite(CompositeAst *app, Ast *op, s32 arg_count, Ast **args)
-{
-  app->op        = op;
-  app->arg_count = arg_count;
-  app->args      = args;
-}
 
 struct ArrowAst {
   embed_Ast(a);
