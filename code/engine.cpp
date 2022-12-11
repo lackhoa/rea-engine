@@ -14,7 +14,6 @@ global_variable i32 debug_normalization_depth;
 global_variable i32 global_debug_serial;
 
 global_variable Builtins builtins;
-global_variable Ast  dummy_function_being_built_ast;
 global_variable Term dummy_function_being_built;
 global_variable Term  holev_ = {.cat = Term_Hole};
 global_variable Term *holev = &holev_;
@@ -24,16 +23,6 @@ inline FunctionId getNextFunctionId()
 {
   next_function_id.id++;  // :reserved-0-for-function-id
   return FunctionId{next_function_id.id};
-}
-
-inline void
-debugMatchBodies(Function *fun)
-{
-  if (fun->body_ast->cat == AC_CompositeAst
-      && fun->body->cat == Term_Function)
-  {
-    invalidCodePath;
-  }
 }
 
 inline Term *
@@ -847,7 +836,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
         {
           newlineAndIndent(buffer, opt.indentation);
           print(buffer, "{");
-          print(buffer, in->body_ast, new_opt);
+          print(buffer, in->body, new_opt);
           print(buffer, "}");
         }
       } break;
@@ -1269,8 +1258,6 @@ evaluateTerm(MemoryArena *arena, Environment *env, Term *in0, i32 offset)
         Function *out = copyStruct(arena, in);
         out->type     = evaluateTerm(arena, env, in->type, offset+1);
         out->body     = evaluateTerm(arena, env, in->body, offset+1);
-        out->body_ast = in->body_ast;
-        debugMatchBodies(out);
         out->stack    = env->stack;
         out0 = &out->t;
       }
@@ -1715,8 +1702,7 @@ normalize(MemoryArena *arena, Environment *env, Term *in0)
       if (norm_op->cat == Term_Function)
       {// Function application
         Function *funv = castTerm(norm_op, Function);
-        if (funv->body_ast != &dummy_function_being_built_ast &&
-            funv->body     != &dummy_function_being_built)
+        if (funv->body != &dummy_function_being_built)
         {
           Stack *original_stack = env->stack;
           env->stack = funv->stack;
@@ -2216,7 +2202,6 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
       Term *type = evaluate(arena, env, &in->signature->a);
       Function *out = newTerm(arena, Function, type);
       out->body      = 0;  // deprecated route
-      out->body_ast  = in->body;
       out->stack = env->stack;
       out0 = &out->t;
     } break;
@@ -2654,9 +2639,8 @@ buildGlobalFunction(MemoryArena *arena, Environment *env, FunctionDecl *decl)
     SmuggledTerm *smuggled = castAst(build_signature.ast, SmuggledTerm);
     Arrow *signature = castTerm(smuggled->term, Arrow);
     funv = newTerm(arena, Function, build_signature.value);
-    funv->name     = decl->a.token;
-    funv->body     = &dummy_function_being_built;
-    funv->body_ast = &dummy_function_being_built_ast;
+    funv->name = decl->a.token;
+    funv->body = &dummy_function_being_built;
     funv->id   = getNextFunctionId();
 
     // note: add binding first to support recursion
@@ -2680,8 +2664,6 @@ buildGlobalFunction(MemoryArena *arena, Environment *env, FunctionDecl *decl)
       {
         decl->body = body.ast;
         funv->body     = body.term;
-        funv->body_ast = decl->body;
-        debugMatchBodies(funv);
       }
       unwindBindingsAndStack(env);
     }
@@ -3592,8 +3574,6 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
         {
           in->signature = castAst(termToAst(arena, env, goal), ArrowAst);
           assert(in->signature);
-          fun->body_ast = in->body;
-          debugMatchBodies(fun);
           fun->stack    = env->stack;
 
           out0.term  = &fun->t;
@@ -3918,8 +3898,6 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
 
             Function *fun = newTerm(arena, Function, 0);
             fun->body     = body.term;
-            fun->body_ast = body.ast;
-            debugMatchBodies(fun);
             // evaluate cares about the signature, since atm it produces the type.
             // todo allow ignoring the type
             Arrow *signature = newTerm(arena, Arrow, builtins.Type);
