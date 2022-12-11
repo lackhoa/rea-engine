@@ -80,5 +80,4 @@ check_truth ((a,b: Nat) -> a+b = b+a) = ((A,B: Nat) -> A+B = B+B);
 testArrowEvaluation :: fn (A: Type) -> (a: A) -> A
 {_ => {a}}
 
-testComputationAsExpression :: fn (b: Bool) -> false = false & b
-{computation}
+testComputationAsExpression :: fn (b: Bool) -> false = false & b {_}

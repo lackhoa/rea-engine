@@ -7,28 +7,21 @@ check truth: true = false;
 
 ;; todo this can be just be a struct
 RatTest :: union
-{
- / : struct {n,d: Nat, _dnot0: d != 0}
- }
+{/ : struct {n,d: Nat, _dnot0: d != 0}}
 
 BigStruct :: union
-{
- makeBigStruct : struct {r: RatTest}
- }
+{makeBigStruct : struct {r: RatTest}}
 
-testBigStruct :: fn (big : BigStruct) -> (big.r.d != 0)
-{
- big.r._dnot0
- }
+;; todo re-enable type coercion
+testBigStruct :: (big : BigStruct) -> (big.r.d != 0)
+{big.r._dnot0}
 
 testRatArrow :: fn (r: RatTest) -> r.d != 0 { r._dnot0 }
 
 + :: fn (a, b: RatTest) -> RatTest
-{
- /(a.n * b.d + b.n * a.d,
+{/(a.n * b.d + b.n * a.d,
    a.d * b.d,
-   multiplyPos(a.d, b.d, a._dnot0, b._dnot0))
- }
+   multiplyPos(a.d, b.d, a._dnot0, b._dnot0))}
 
 Nat+ :: union
 {1,

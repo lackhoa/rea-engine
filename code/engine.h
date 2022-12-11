@@ -14,7 +14,7 @@ global_variable MemoryArena UNUSED_VAR*permanent_arena;
 struct Term;
 struct ArrowAst;
 struct LocalBindings;
-typedef Term Value;
+typedef Term Value;  // todo #removeme
 
 enum AstCategory {
   AC_Null = 0,
@@ -37,6 +37,7 @@ enum AstCategory {
   AC_RewriteAst,
   AC_FunctionDecl,  // todo: #cleanup probably don't need this anymore
   AC_Let,
+  AC_TermSmuggle,  // todo #temporary
 };
 
 enum TermCategory {
@@ -458,8 +459,8 @@ struct AstArray {
 struct Rewrite {
   embed_Term(t);
   TreePath *path;
-  Term     *eq_proof;
   b32       right_to_left;
+  Term     *eq_proof;
   Term     *body;
 };
 
@@ -477,12 +478,16 @@ struct Computation {
 
 struct SearchOutput {b32 found; TreePath *path;};
 
-struct CompareValues {Trinary result; TreePath *diff_path;};
+struct CompareTerms {Trinary result; TreePath *diff_path;};
 
 struct Lambda {
   embed_Ast(a);
   ArrowAst *signature;
   Ast      *body;
 };
+
+struct TermSmuggle {embed_Ast(a); Term *term;};
+
+struct ValuePair {Term *lhs; Term *rhs;};
 
 #include "generated/engine_forward.h"

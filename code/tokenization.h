@@ -24,7 +24,6 @@ enum TokenCategory
   TC_KeywordUnion,
   TC_KeywordStruct,
   TC_KeywordRewrite,
-  TC_KeywordComputation,
   TC_KeywordNorm,
 
   TC_KeywordTestEval,
@@ -39,7 +38,7 @@ enum TokenCategory
 
 const char *keywords[] = {
   "", "define", "fork", "union", "struct",
-  "rewrite", "computation", "norm",
+  "rewrite", "norm",
   "test_eval", "print", "print_raw", "print_debug", "check", "check_truth", "breakhere"
 };
 
