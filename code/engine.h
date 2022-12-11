@@ -279,7 +279,8 @@ struct Function
   embed_Term(t);
   Token       name;
   FunctionId  id;               // :reserved-0-for-function-id
-  Ast        *body;
+  Ast        *body_ast;
+  Term       *body;
   Stack      *stack;
 };
 
