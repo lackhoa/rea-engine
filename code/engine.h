@@ -48,6 +48,7 @@ enum TermCategory {
   Term_Constructor = 5,  // todo: constructors can be removed if we have record
   Term_Function    = 6,
 
+  Term_Fork         = 7,
   Term_StackPointer = 8,
   Term_Computation  = 9,
   Term_Accessor     = 10,
@@ -155,7 +156,7 @@ struct ForkAst {
 
   Union  *uni;
   Ast    *subject;
-  s32     case_count;
+  i32     case_count;
   Ast   **bodies;
 
   // temporary parsing data
@@ -242,7 +243,7 @@ initValue(Term *in, TermCategory cat, Term *type)
 }
 
 inline Term *
-newTerm_(MemoryArena *arena, TermCategory cat, Term *type, size_t size)
+_newTerm(MemoryArena *arena, TermCategory cat, Term *type, size_t size)
 {
   Term *out = (Term *)pushSize(arena, size, true);
   initValue(out, cat, type);
@@ -250,7 +251,7 @@ newTerm_(MemoryArena *arena, TermCategory cat, Term *type, size_t size)
 }
 
 #define newTerm(arena, cat, type)              \
-  ((cat *) newTerm_(arena, Term_##cat, type, sizeof(cat)))
+  ((cat *) _newTerm(arena, Term_##cat, type, sizeof(cat)))
 
 struct Constructor {
   embed_Term(t);
@@ -378,8 +379,9 @@ getConstructorOf(Term *in0)
 
 struct BuildExpression
 {
-  Ast   *ast;  // todo: this should be replaced with term
-  Value *value;  // note: values are ground, and contain type (which are of course ground)
+  Ast   *ast;                   // todo: #removeme
+  Term  *term;
+  Value *value;                 // note: values are ground, and contain type (which are of course ground)
   operator bool() { return ast; }
 };
 
@@ -489,5 +491,13 @@ struct Lambda {
 struct SmuggledTerm {embed_Ast(a); Term *term;};
 
 struct ValuePair {Term *lhs; Term *rhs;};
+
+struct Fork {
+  embed_Term(t);
+  Union  *uni;
+  Term   *subject;
+  i32     case_count;
+  Term  **bodies;
+};
 
 #include "generated/engine_forward.h"
