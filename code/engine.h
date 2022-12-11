@@ -37,7 +37,7 @@ enum AstCategory {
   AC_RewriteAst,
   AC_FunctionDecl,  // todo: #cleanup probably don't need this anymore
   AC_Let,
-  AC_TermSmuggle,  // todo #temporary
+  AC_SmuggledTerm,  // todo #temporary
 };
 
 enum TermCategory {
@@ -486,7 +486,7 @@ struct Lambda {
   Ast      *body;
 };
 
-struct TermSmuggle {embed_Ast(a); Term *term;};
+struct SmuggledTerm {embed_Ast(a); Term *term;};
 
 struct ValuePair {Term *lhs; Term *rhs;};
 

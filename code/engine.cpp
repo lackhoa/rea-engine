@@ -611,8 +611,8 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
 
     switch (in0->cat)
     {
-      case AC_TermSmuggle:
-      {print(buffer, castAst(in0, TermSmuggle)->term);} break;
+      case AC_SmuggledTerm:
+      {print(buffer, castAst(in0, SmuggledTerm)->term);} break;
 
       case AC_Null:
       {print(buffer, "<NULL>");} break;
@@ -1980,7 +1980,7 @@ toAbstractTerm(MemoryArena *arena, i32 env_depth, Term *in0, i32 zero_depth)
         if (in->is_absolute && in->stack_frame > env_depth)
         {
           StackPointer *out = copyStruct(arena, in);
-          out->stack_frame    = zero_depth - in->stack_frame;
+          out->stack_frame = zero_depth - in->stack_frame;
           out->is_absolute = false;
           out0 = &out->t;
         }
@@ -2080,9 +2080,9 @@ evaluate(MemoryArena *arena, Environment *env, Ast *in0)
 
   switch (in0->cat)
   {
-    case AC_TermSmuggle:
+    case AC_SmuggledTerm:
     {
-      TermSmuggle *in = castAst(in0, TermSmuggle);
+      SmuggledTerm *in = castAst(in0, SmuggledTerm);
       out0 = evaluateTerm(arena, env, in->term);
     } break;
 
@@ -2603,11 +2603,12 @@ internal Function *
 buildFunction(MemoryArena *arena, Environment *env, FunctionDecl *fun)
 {
   Function *funv = 0;
-  if (BuildExpression signature = buildExpression(arena, env, &fun->signature->a, holev))
+  if (BuildExpression build_signature = buildExpression(arena, env, &fun->signature->a, holev))
   {
     // note: store the built signature, maybe to display it later.
-    fun->signature = castAst(signature.ast, ArrowAst);
-    funv = newTerm(arena, Function, signature.value);
+    SmuggledTerm *smuggled = castAst(build_signature.ast, SmuggledTerm);
+    Arrow *signature = castTerm(smuggled->term, Arrow);
+    funv = newTerm(arena, Function, build_signature.value);
     funv->name = fun->a.token;
     funv->body = &dummy_function_under_construction;
     funv->id   = getNextFunctionId();
@@ -2619,15 +2620,16 @@ buildFunction(MemoryArena *arena, Environment *env, FunctionDecl *fun)
     {
       addStackFrame(env);
       extendBindings(temp_arena, env);
-      for (s32 id=0; id < fun->signature->param_count; id++)
+      for (s32 id=0; id < signature->param_count; id++)
       {
-        Token *name = fun->signature->param_names+id;
-        introduceOnStack(arena, env, name, fun->signature->param_types[id]);
+        Token *name = signature->param_names+id;
+        Term *type = evaluateTerm(arena, env, signature->param_types[id]);
+        introduceOnStack(arena, env, name, type);
         addLocalBinding(env, name);
       }
       assert(noError());
 
-      Term *expected_body_type = evaluate(temp_arena, env, fun->signature->output_type);
+      Term *expected_body_type = evaluateTerm(temp_arena, env, signature->output_type);
       if (BuildExpression body = buildExpression(arena, env, fun->body, expected_body_type))
       {
         fun->body = body.ast;
@@ -3182,7 +3184,7 @@ fillHole(MemoryArena *arena, Environment *env, Term *goal)
 inline Ast *
 newSmuggledTerm(MemoryArena *arena, Term *term, Token *token)
 {
-  TermSmuggle *out = newAst(arena, TermSmuggle, token);
+  SmuggledTerm *out = newAst(arena, SmuggledTerm, token);
   out->term = term;
   return &out->a;
 }
@@ -3241,7 +3243,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
         ptr->name        = in0->token;
         ptr->id          = local.var_id;
         ptr->stack_frame = local.stack_delta;
-        TermSmuggle *smuggle = newAst(arena, TermSmuggle, &in0->token);
+        SmuggledTerm *smuggle = newAst(arena, SmuggledTerm, &in0->token);
         smuggle->term = &ptr->t;
         out0.ast   = &smuggle->a;
         out0.value = evaluateTerm(arena, env, &ptr->t);
@@ -3424,7 +3426,10 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
     case AC_ArrowAst:
     {
       ArrowAst *in = castAst(in0, ArrowAst);
-
+      Arrow *value = newTerm(arena, Arrow, builtins.Type);
+      value->param_count = in->param_count;
+      value->param_names = in->param_names;
+      allocateArray(arena, in->param_count, value->param_types);
       addStackFrame(env);
       extendBindings(temp_arena, env);
       for (s32 id=0; id < in->param_count && noError(); id++)
@@ -3432,7 +3437,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
         BuildExpression param_type = buildExpression(arena, env, in->param_types[id], holev);
         if (param_type)
         {
-          in->param_types[id] = param_type.ast;
+          value->param_types[id] = evaluate(arena, env, param_type.ast);
           Token *name = in->param_names+id;
           introduceOnStack(arena, env, name, param_type.value);
           addLocalBinding(env, name);
@@ -3444,28 +3449,30 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
         if (in->output_type)
         {
           if (BuildExpression output_type = buildExpression(arena, env, in->output_type, holev))
-            in->output_type = output_type.ast;
+            value->output_type = evaluate(arena, env, output_type.ast);
         }
       }
       unwindBindingsAndStack(env);
 
       if (noError())
       {
-        out0.ast   = in0;
-        out0.value = evaluate(arena, env, in0);
+        Term *out = toCompletelyAbstractTerm(arena, env, &value->t);
+        out0.ast   = newSmuggledTerm(arena, out, &in0->token);
+        out0.value = toPartiallyAbstractTerm(arena, env, &value->t);
       }
     } break;
 
     case AC_AccessorAst:
     {
       AccessorAst *in = castAst(in0, AccessorAst);
+      Accessor *value = newTerm(arena, Accessor, 0);
+      value->field_name = in->field_name;
       if (BuildExpression build_record = buildExpression(arena, env, in->record, holev))
       {
-        Ast  *recorda = build_record.ast;
         Term *record0 = overwriteTerm(env, build_record.value);
         if (Composite *record = castTerm(record0, Composite))
         {
-          in->record = recorda;
+          value->record = build_record.value;
           Arrow *op_type = castTerm(getType(record->op), Arrow);
           s32 param_count = op_type->param_count;
           b32 valid_param_name = false;
@@ -3473,7 +3480,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
           {// figure out the param id
             if (equal(in->field_name, op_type->param_names[param_id]))
             {
-              in->field_id = param_id;
+              value->field_id  = param_id;
               valid_param_name = true;
               break;
             }
@@ -3481,8 +3488,9 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
 
           if (valid_param_name)
           {
-            out0.ast   = in0;
-            out0.value = evaluate(arena, env, in0);
+            Term *out = toCompletelyAbstractTerm(arena, env, &value->t);
+            out0.ast   = newSmuggledTerm(arena, out, &in0->token);
+            out0.value = evaluateTerm(arena, env, out);
           }
           else
           {
@@ -3491,7 +3499,8 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
             attach("in type", op_type->output_type);
           }
         }
-        else parseError(recorda, "cannot access a non-record");
+        else
+          parseError(build_record.ast, "cannot access a non-record");
       }
     } break;
 
@@ -3832,7 +3841,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
             allocateArray(arena, 1, composite->args);
             composite->op        = &lambda->a;
             composite->arg_count = 1;
-            composite->args[0] = let->rhs;
+            composite->args[0]   = let->rhs;
             out0.ast   = &composite->a;
             should_check_type = false;
           }
@@ -3843,43 +3852,13 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
 
     case AC_ComputationAst:
     {
-#if 0
-      ComputationAst *computation = castAst(in0, ComputationAst);
-      if (!computation->lhs)
-      {
-        b32 goal_valid = false;
-        if (Composite *eq = castTerm(goal, Composite))
-        {
-          if (eq->op == builtins.equal)
-          {
-            goal_valid = true;
-            Term *lhs = normalize(temp_arena, env, eq->args[1]);
-            Term *rhs = normalize(temp_arena, env, eq->args[2]);
-            if (equal(lhs, rhs))
-            {
-              computation->lhs = termToAst(arena, env, eq->args[1]);
-              computation->rhs = termToAst(arena, env, eq->args[2]);
-            }
-            else
-            {
-              parseError(in0, "equality cannot be proven by computation");
-              attach("lhs", lhs);
-              attach("rhs", rhs);
-            }
-          }
-        }
-        if (!goal_valid)
-        {
-          parseError(in0, "computation can only prove equality");
-          attach("got", goal);
-        }
-      }
-#endif
-      if (!hasError())
-      {
-        out0.ast   = in0;
-        out0.value = evaluate(arena, env, in0);
-      }
+      ComputationAst *in    = castAst(in0, ComputationAst);
+      Computation    *value = newTerm(arena, Computation, 0);
+      value->lhs = evaluate(arena, env, in->lhs);
+      value->rhs = evaluate(arena, env, in->rhs);
+      Term *out  = toCompletelyAbstractTerm(arena, env, &value->t);
+      out0.ast   = newSmuggledTerm(arena, out, &in0->token);
+      out0.value = &value->t;
     } break;
 
     case AC_ForkAst:
