@@ -37,7 +37,6 @@ enum AstCategory {
   AC_RewriteAst,
   AC_FunctionDecl,  // todo: #cleanup probably don't need this anymore
   AC_Let,
-  AC_SmuggledTerm,  // todo #temporary
 };
 
 enum TermCategory {
@@ -154,7 +153,7 @@ struct Union;
 struct ForkAst {
   Ast a;
 
-  Union  *uni;
+  Union  *uni;  // todo #cleanup don't need this
   Ast    *subject;
   i32     case_count;
   Ast   **bodies;
@@ -379,10 +378,9 @@ getConstructorOf(Term *in0)
 
 struct BuildExpression
 {
-  Ast   *ast;                   // todo: #removeme
   Term  *term;
   Value *value;                 // note: values are ground, and contain type (which are of course ground)
-  operator bool() { return ast; }
+  operator bool() { return term; }
 };
 
 struct RewriteAst
@@ -487,8 +485,6 @@ struct Lambda {
   ArrowAst *signature;
   Ast      *body;
 };
-
-struct SmuggledTerm {embed_Ast(a); Term *term;};
 
 struct ValuePair {Term *lhs; Term *rhs;};
 

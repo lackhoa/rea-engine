@@ -23,6 +23,7 @@ Term * evaluateAndNormalize(MemoryArena * arena, Environment * env, Term * in0, 
 void introduceOnStack(MemoryArena * arena, Environment * env, Token * name, Term * typev);
 void introduceOnStack(MemoryArena * arena, Environment * env, Token * name, Ast * type);
 Term * buildFork(MemoryArena * arena, Environment * env, ForkAst * in, Term * goal);
+void doubleCheckType(Value * in0);
 BuildExpression buildExpression(MemoryArena * arena, Environment * env, Ast * in0, Term * goal);
 FunctionDecl * parseFunction(MemoryArena * arena, Token * name, b32 is_theorem);
 ForkAst * parseFork(MemoryArena * arena, b32 is_theorem);
