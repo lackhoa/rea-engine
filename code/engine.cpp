@@ -38,6 +38,7 @@ newEquality(MemoryArena *arena, Term *lhs, Term *rhs)
   return &eq->t;
 }
 
+// todo #typesafe error out when the sides don't match
 inline Term *
 newComputation(MemoryArena *arena, Term *lhs, Term *rhs)
 {
@@ -48,7 +49,8 @@ newComputation(MemoryArena *arena, Term *lhs, Term *rhs)
   return &out->t;
 }
 
-inline ValuePair getEqualitySides(Term *eq0)
+inline ValuePair
+getEqualitySides(Term *eq0)
 {
   Composite *eq = castTerm(eq0, Composite);
   assert(eq->op == builtins.equal);
@@ -196,11 +198,7 @@ inline Term * getTypeOk(Term *term) {return term->type;}
 inline void
 setType(Term *term, Term *type)
 {
-  if (isFree(term, 0))
-  {
-    dump(); dump(term); dump();
-    invalidCodePath;
-  }
+  assert(!isFree(term, 0));
   term->type = type;
 }
 
@@ -1302,7 +1300,6 @@ evaluateTerm(MemoryArena *arena, Environment *env, Term *in0, i32 offset)
     {
       Fork *in = castTerm(in0, Fork);
       Term *subject = evaluateAndNormalize(arena, env, in->subject, offset);
-      addStackFrame(env);
       switch (subject->cat)
       {// note: we fail if the fork is undetermined
         case Term_Constructor:
@@ -1320,7 +1317,6 @@ evaluateTerm(MemoryArena *arena, Environment *env, Term *in0, i32 offset)
 
         default: {}
       }
-      unwindStack(env);
     } break;
 
     case Term_Builtin:
@@ -2819,8 +2815,6 @@ buildFork(MemoryArena *arena, Environment *env, ForkAst *in, Term *goal)
         {
           Environment env_ = *outer_env;
           Environment *env = &env_;
-          extendBindings(temp_arena, env);
-          addStackFrame(env);
           Token *ctor_name = &in->parsing->ctors[input_case_id].token;
 
           Constructor *ctor = 0;
@@ -2851,8 +2845,6 @@ buildFork(MemoryArena *arena, Environment *env, ForkAst *in, Term *goal)
             }
           }
           else parseError(ctor_name, "expected a constructor");
-
-          unwindBindingsAndStack(env);
         }
 
         if (noError())
@@ -2916,6 +2908,32 @@ doubleCheckType(Value *in0)
     default:
     {todoIncomplete;} break;
   }
+}
+
+inline Value *
+newComposite(MemoryArena *arena, Value *op, i32 arg_count, Value **args)
+{
+  Arrow *signature = castTerm(op->type, Arrow);
+  Value *type = evaluateWithArgs(arena, arg_count, args, signature->output_type);
+  Composite *out = newTerm(arena, Composite, type);
+  out->op        = op;
+  out->arg_count = arg_count;
+  out->args      = args;
+  return &out->t;
+}
+
+inline Value *
+newRewrite(MemoryArena *arena, Value *eq_proof, Value *body, TreePath *path, b32 right_to_left)
+{
+  auto [lhs, rhs] = getEqualitySides(eq_proof->type);
+  Value *rewrite_to = right_to_left ? rhs : lhs;
+  Value *type = rewriteTerm(arena, rewrite_to, path, body->type);
+  Rewrite *out = newTerm(arena, Rewrite, type);
+  out->eq_proof      = eq_proof;
+  out->body          = body;
+  out->path          = path;
+  out->right_to_left = right_to_left;
+  return &out->t;
 }
 
 forward_declare internal BuildExpression
@@ -3270,6 +3288,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
       }
     } break;
 
+    // todo #cleanup #typesafe this giant complexity has to be typechecked, it went.
     case AC_RewriteAst:
     {
       RewriteAst *in  = castAst(in0, RewriteAst);
@@ -3299,11 +3318,6 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
             Term *goal_norm = normalize(arena, env, goal);
             if (skip_goal_comparison || equal(new_goal_norm, goal_norm))
             {
-              ComputationAst *com_ast = newAst(arena, ComputationAst, &in0->token);
-              com_ast->lhs = termToAst(arena, env, goal);
-              com_ast->rhs = termToAst(arena, env, new_goal);
-              in->eq_proof  = &com_ast->a;
-
               Term *com = newComputation(arena, goal, new_goal);
               out->eq_proof = toAbstractTerm(arena, env, com);
             }
@@ -3327,7 +3341,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
             parseError(in0, "new goal same as current goal");
           else
           {
-            in->path    = compare.diff_path;
+            in->path  = compare.diff_path;
             out->path = compare.diff_path;
             Term *from = subExpressionAtPath(goal, compare.diff_path);
             Term *to   = subExpressionAtPath(to_expression.value, compare.diff_path);
@@ -3360,37 +3374,23 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
               if (noError())
               {
                 Term *eq_proof = 0;
-                if (Arrow *arrowv = castTerm(getType(hint), Arrow))
+                if (Arrow *arrowv = castTerm(hint->type, Arrow))
                 {
-                  Composite *eq = newTerm(temp_arena, Composite, builtins.Set);
-                  eq->op        = builtins.equal;
-                  eq->arg_count = 3;
-                  allocateArray(temp_arena, 3, eq->args);
-                  eq->args[0]   = getType(from);
-                  eq->args[1]   = from;
-                  eq->args[2]   = to;
-
+                  Term *eq = newEquality(temp_arena, from, to);
                   Value **unify_args = pushArray(temp_arena, arrowv->param_count, Value *, true);
-                  if (unify(unify_args, arrowv->param_types, arrowv->output_type, &eq->t))
+                  if (unify(unify_args, arrowv->param_types, arrowv->output_type, eq))
                   {
-                    // todo: make a standalone typecheck function, to check type of these things
-                    Composite *eq_proofc = newTerm(arena, Composite, &eq->t);
-                    eq_proofc->op        = hint;
-                    eq_proofc->arg_count = arrowv->param_count;
-                    allocateArray(arena, arrowv->param_count, eq_proofc->args);
+                    Value **proof_args = pushArray(arena, arrowv->param_count, Value *);
                     for (int id=0; id < arrowv->param_count; id++)
-                    {
-                      eq_proofc->args[id] = unify_args[id];
-                    }
-                    eq_proof = &eq_proofc->t;
-                    in->eq_proof  = termToAst(arena, env, eq_proof);
+                      proof_args[id] = unify_args[id];
+                    eq_proof = newComposite(arena, hint, arrowv->param_count, proof_args);
                     out->eq_proof = toAbstractTerm(arena, env, eq_proof);
                   }
                   else
                   {
                     parseError(in->eq_proof, "unification failed");
                     attach("lhs", arrowv->output_type);
-                    attach("rhs", &eq->t);
+                    attach("rhs", eq);
                     attach("goal", goal);
                     attach("serial", serial);
                   }
@@ -3525,12 +3525,9 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
           {// type coercion
             rhs_type = normalize(arena, env, rhs.value->type);
             Term *computation = newComputation(arena, rhs_type, rhs.value->type);
-            Rewrite *rewrite = newTerm(arena, Rewrite, rhs_type);
-            rewrite->eq_proof = computation;
-            rewrite->body     = rhs.value;
-            rhs_term = toAbstractTerm(arena, env, &rewrite->t);
-            rhs_value = &rewrite->t;
-            doubleCheckType(&rewrite->t);
+            rhs_value = newRewrite(arena, computation, rhs.value, 0, false);
+            rhs_term  = toAbstractTerm(arena, env, rhs_value);
+            assert(equal(rhs_value->type, rhs_type));
           }
 
           extendBindings(env);
@@ -3538,13 +3535,13 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
           addStackFrame(env);
           addStackValue(env, rhs_value);
 
-          // todo #cleanup We could recurse on this, but the complexity might go up, so idk.
+          // todo #cleanup #typesafe
           if (BuildExpression body = buildExpression(arena, env, let->body, goal))
           {
             Function *fun = newTerm(arena, Function, 0);
             fun->body     = body.term;
             // evaluate cares about the signature, since atm it produces the type.
-            // todo allow ignoring the type
+            // todo here we don't care about the type at all.
             Arrow *signature = newTerm(arena, Arrow, builtins.Type);
             allocateArray(arena, 1, signature->param_names);
             allocateArray(arena, 1, signature->param_types);
