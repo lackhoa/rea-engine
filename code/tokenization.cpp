@@ -245,19 +245,19 @@ eatAllSpaces(Tokenizer *tk)
 inline MetaDirective
 matchMetaDirective(Token *token)
 {
-    auto out = (MetaDirective)0;
-    if (token->cat == TC_Alphanumeric)
+  auto out = (MetaDirective)0;
+  if (token->cat == TC_Alphanumeric)
+  {
+    for (int id = 1; id < arrayCount(metaDirectives); id++)
     {
-        for (int id = 1; id < arrayCount(metaDirectives); id++)
-        {
-            if (equal(token, metaDirectives[id]))
-            {
-                out = (MetaDirective)(id);
-                break;
-            }
-        }
+      if (equal(token, metaDirectives[id]))
+      {
+        out = (MetaDirective)(id);
+        break;
+      }
     }
-    return out;
+  }
+  return out;
 }
 
 forward_declare inline Token

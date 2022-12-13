@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <ctype.h>
 #include <stdio.h>
 
 //
@@ -392,26 +391,12 @@ belongsToArena(MemoryArena *arena, u8 *memory)
 #define embed_struct
 #define check_switch(tag)
 
-inline b32
-isSubstring(char *full, char* sub, b32 case_sensitive=true)
+inline char
+toLowerCase(char c)
 {
-  b32 out = true;
-  if (sub && full)
-  {
-    for (char *f = full, *s = sub; *s && *f; s++, f++)
-    {
-      b32 mismatch = case_sensitive ? (*s != *f) : (tolower(*s) != tolower(*f));
-      if (mismatch)
-      {
-        if (*s)
-          out = false;
-        break;
-      }
-    }
-  }
-  else
-    out = false;
-  return out;
+  if (('a' <= c) && (c <= 'z'))
+    return c - 32;
+  return c;
 }
 
 inline b32
@@ -430,7 +415,7 @@ isSubstring(String full, String sub, b32 case_sensitive=true)
     {
       char s = sub.chars[id];
       char f = full.chars[id];
-      b32 mismatch = case_sensitive ? (s != f) : (tolower(s) != tolower(f));
+      b32 mismatch = case_sensitive ? (s != f) : (toLowerCase(s) != toLowerCase(f));
       if (mismatch)
       {
         out = false;
@@ -441,23 +426,9 @@ isSubstring(String full, String sub, b32 case_sensitive=true)
   return out;
 }
 
-inline void
-dump()
-{
-  print(0, "\n");
-}
-
-inline void
-dump(int d)
-{
-  printf("%d", d);
-}
-
-inline void
-dump(char *c)
-{
-  printf("%s", c);
-}
+inline void dump() {printf("\n");}
+inline void dump(int d) {printf("%d", d);}
+inline void dump(char *c) {printf("%s", c);}
 
 inline b32
 inArena(MemoryArena *arena, void *p)
@@ -481,3 +452,25 @@ concat(String *a, String b)
 }
 #define UNUSED_VAR __attribute__((unused))
 #define unused_variable __attribute__((unused))
+
+// source: https://groups.google.com/g/comp.std.c/c/d-6Mj5Lko_s
+#define PP_NARG(...) PP_NARG_(__VA_ARGS__,PP_RSEQ_N())
+#define PP_NARG_(...) PP_ARG_N(__VA_ARGS__)
+#define PP_ARG_N(_1,_2,_3,_4,_5,_6,_7,_8,_9,N,...) N
+#define PP_RSEQ_N() 9,8,7,6,5,4,3,2,1,0
+
+#define CONCATENATE(arg1, arg2)   CONCATENATE1(arg1, arg2)
+#define CONCATENATE1(arg1, arg2)  CONCATENATE2(arg1, arg2)
+#define CONCATENATE2(arg1, arg2)  arg1##arg2
+
+#define DUMP_1(x) dump(x)
+#define DUMP_2(x, ...) dump(x); DUMP_1(__VA_ARGS__)
+#define DUMP_3(x, ...) dump(x); DUMP_2(__VA_ARGS__)
+#define DUMP_4(x, ...) dump(x); DUMP_3(__VA_ARGS__)
+#define DUMP_5(x, ...) dump(x); DUMP_4(__VA_ARGS__)
+#define DUMP_6(x, ...) dump(x); DUMP_5(__VA_ARGS__)
+#define DUMP_7(x, ...) dump(x); DUMP_6(__VA_ARGS__)
+#define DUMP_8(x, ...) dump(x); DUMP_7(__VA_ARGS__)
+#define DUMP_9(x, ...) dump(x); DUMP_8(__VA_ARGS__)
+#define DUMP_N(N, ...) CONCATENATE(DUMP_, N)
+#define DUMP(...) DUMP_N(PP_NARG(__VA_ARGS__), __VA_ARGS__)(__VA_ARGS__)

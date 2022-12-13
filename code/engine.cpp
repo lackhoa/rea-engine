@@ -387,13 +387,8 @@ dump(OverwriteRules *rewrite)
   }
 }
 
-forward_declare inline void
-dump(Term *in0)
-{
-  print(0, in0, {});
-}
-
-inline void dump(Ast *in0) {print(0, in0, {});}
+forward_declare inline void dump(Term *in0) {print(0, in0, {});}
+forward_declare inline void dump(Ast *in0) {print(0, in0, {});}
 
 inline void
 print(MemoryArena *buffer, Stack *stack)
@@ -970,30 +965,28 @@ print(MemoryArena *buffer, void *in0, b32 is_absolute, PrintOptions opt)
 }
 
 inline void
-addStackFrame(Environment *env)
+extendStack(Environment *env, i32 cap, Value **items)
 {
-  Stack *stack = pushStruct(temp_arena, Stack);
+  Stack *stack = pushStruct(temp_arena, Stack, true);
   stack->depth = getStackDepth(env) + 1;
   stack->outer = env->stack;
-  stack->count = 0;
+  stack->cap   = cap;
+  if (items)
+  {
+    stack->count = cap;
+    stack->items = items;
+  }
+  else
+    allocateArray(temp_arena, cap, stack->items);
   env->stack = stack;
 }
 
 inline void
-addStackValue(Environment *env, Term *value)
+addStackValue(Environment *env, Value *value)
 {
-  env->stack->items[env->stack->count++] = value;
-}
-
-inline void
-extendStack(Environment *env, s32 count, Term **args)
-{
-  assert(count <= arrayCount(env->stack->items));
-  addStackFrame(env);
-  for (s32 arg_id = 0; arg_id < count; arg_id++)
-  {// todo: #speed copying values around
-    addStackValue(env, args[arg_id]);
-  }
+  i32 id = env->stack->count++;
+  assert(id < env->stack->cap);
+  env->stack->items[id] = value;
 }
 
 inline b32
@@ -1061,7 +1054,7 @@ isCompositeConstructor(Term *in0)
 }
 
 internal Term *
-evaluateWithArgs(MemoryArena *arena, i32 arg_count, Term **args, Term *in0)
+evaluateWithArgs(MemoryArena *arena, i32 arg_count, Value **args, Term *in0)
 {
   Environment env = {};
   extendStack(&env, arg_count, args);
@@ -1157,11 +1150,9 @@ evaluateTerm(MemoryArena *arena, Environment *env, Term *in0, i32 offset)
 {
   Term *out0 = 0;
   i32 serial = global_debug_serial++;
-  b32 debug = false;
+  b32 debug = true;
   if (debug && global_debug_mode)
-  {
-    debugIndent(); dump("evaluateTerm("); dump(serial); dump("): "); dump(in0); dump();
-  }
+  {debugIndent(); DUMP("evaluateTerm(", serial, "): ", in0, "\n");}
   switch (in0->cat)
   {
     case Term_StackPointer:
@@ -1328,7 +1319,7 @@ evaluateTerm(MemoryArena *arena, Environment *env, Term *in0, i32 offset)
   if (!isSequenced(in0))
     assert(out0);
   if (debug && global_debug_mode)
-  {debugDedent(); dump("=> "); dump(out0); dump();}
+  {debugDedent(); DUMP("=> ", out0, "\n");}
   return out0;
 }
 
@@ -1580,7 +1571,7 @@ lookupCurrentFrame(LocalBindings *bindings, String key, b32 add_if_missing)
 }
 
 struct RewriteChain {
-  Rewrite     *first;
+  Rewrite      *first;
   RewriteChain *next;
 };
 
@@ -1588,8 +1579,6 @@ forward_declare internal Term *
 normalize(MemoryArena *arena, Environment *env, Term *in0) 
 {
   debug_normalization_depth++;
-  // NOTE: I'm kinda convinced that this is only gonna be a best-effort
-  // thing. Handling all cases is a waste of time.
   Term *out0 = {};
 
   b32 debug = false;
@@ -2354,94 +2343,6 @@ getGlobalOverloads(Environment *env, Identifier *ident, Term *expected_type)
   return out;
 }
 
-internal Ast *
-toAst(MemoryArena *arena, i32 env_depth, Term* term)
-{
-  Ast *out0 = 0;
-  Token token = newToken("<synthetic>");
-  switch (term->cat)
-  {
-    case Term_StackPointer:
-    {
-      StackPointer *ptr = castTerm(term, StackPointer);
-      Variable     *var = newAst(arena, Variable, &ptr->name);
-      out0 = &var->a;
-      if (ptr->is_absolute)
-        var->stack_delta = env_depth - ptr->stack_frame;
-      else
-        var->stack_delta = ptr->stack_frame;
-      var->id          = ptr->id;  // :stack-ref-id-has-significance
-    } break;
-
-    case Term_Composite:
-    {
-      Composite *compositev = castTerm(term, Composite);
-      CompositeAst  *composite  = newAst(arena, CompositeAst, &token);
-      composite->op        = toAst(arena, env_depth, compositev->op);
-      composite->arg_count = compositev->arg_count;
-      allocateArray(arena, composite->arg_count, composite->args);
-      for (int id=0; id < composite->arg_count; id++)
-      {
-        composite->args[id] = toAst(arena, env_depth, compositev->args[id]);
-      }
-      out0 = &composite->a;
-    } break;
-
-    case Term_Accessor:
-    {
-      Accessor *accessorv = castTerm(term, Accessor);
-      AccessorAst  *accessor  = newAst(arena, AccessorAst, &token);
-      accessor->record      = toAst(arena, env_depth, accessorv->record);
-      accessor->field_id    = accessorv->field_id;
-      accessor->field_name  = newToken(accessorv->field_name);
-      out0 = &accessor->a;
-    } break;
-
-    case Term_Arrow:
-    {
-      Arrow *in  = castTerm(term, Arrow);
-      ArrowAst  *out = newAst(arena, ArrowAst, &token);
-      out->param_count = in->param_count;
-      out->param_names = in->param_names;
-      allocateArray(arena, in->param_count, out->param_types);
-      for (i32 id=0; id < in->param_count; id++)
-        out->param_types[id] = toAst(arena, env_depth+1, in->param_types[id]);
-      out->output_type = toAst(arena, env_depth+1, in->output_type);
-      out0 = &out->a;
-    } break;
-
-    case Term_Builtin:
-    case Term_Union:
-    case Term_Function:
-    case Term_Constructor:
-    {
-      Constant *synthetic = newSyntheticConstant(arena, term);
-      out0 = &synthetic->a;
-    } break;
-
-    case Term_Rewrite:
-    {
-      dump(); dump("-------------------"); dump(term);
-      todoIncomplete;  // really we don't need it tho?
-    } break;
-
-    case Term_Hole:
-    case Term_Computation:
-    case Term_Fork:
-    {todoIncomplete;}
-  }
-
-  assert(out0);
-
-  return out0;
-}
- 
-inline Ast *
-termToAst(MemoryArena *arena, Environment *env, Term* term)
-{
-  return toAst(arena, getStackDepth(env), term);
-}
-
 internal SearchOutput
 searchExpression(MemoryArena *arena, Term *lhs, Term* in0)
 {
@@ -3171,12 +3072,13 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
     {
       ArrowAst *in = castAst(in0, ArrowAst);
       Arrow *value = newTerm(arena, Arrow, builtins.Type);
-      value->param_count = in->param_count;
+      i32 param_count = in->param_count;
+      value->param_count = param_count;
       value->param_names = in->param_names;
-      allocateArray(arena, in->param_count, value->param_types);
-      addStackFrame(env);
+      allocateArray(arena, param_count, value->param_types);
+      extendStack(env, param_count, 0);
       extendBindings(temp_arena, env);
-      for (s32 id=0; id < in->param_count && noError(); id++)
+      for (s32 id=0; id < param_count && noError(); id++)
       {
         BuildExpression param_type = buildExpression(arena, env, in->param_types[id], holev);
         if (param_type)
@@ -3253,9 +3155,9 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
         Lambda   *in  = castAst(in0, Lambda);
         Function *fun = newTerm(arena, Function, goal);
 
-        addStackFrame(env);
-        extendBindings(temp_arena, env);
         i32 param_count = signature->param_count;
+        extendStack(env, param_count, 0);
+        extendBindings(temp_arena, env);
         for (s32 id=0; id < param_count; id++)
         {
           Token *name = signature->param_names+id;
@@ -3273,9 +3175,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
         unwindBindingsAndStack(env);
         if (noError())
         {
-          in->signature = castAst(termToAst(arena, env, goal), ArrowAst);
-          assert(in->signature);
-          fun->stack    = env->stack;
+          fun->stack = env->stack;
 
           out0.term  = &fun->t;
           out0.value = &fun->t;
@@ -3532,7 +3432,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
 
           extendBindings(env);
           addLocalBinding(env, &let->lhs);
-          addStackFrame(env);
+          extendStack(env, 1, 0);
           addStackValue(env, rhs_value);
 
           // todo #cleanup #typesafe
@@ -4203,7 +4103,7 @@ buildGlobalFunction(MemoryArena *arena, Environment *env, FunctionDecl *decl)
 
     if (noError())
     {
-      addStackFrame(env);
+      extendStack(env, signature->param_count, 0);
       extendBindings(temp_arena, env);
       for (s32 id=0; id < signature->param_count; id++)
       {
@@ -4249,7 +4149,7 @@ parseTopLevel(EngineState *state)
       token = nextToken();
       switch (MetaDirective directive = matchMetaDirective(&token))
       {
-        case MetaDirective_Null_:
+        case MetaDirective_NULL:
         {
           tokenError("unknown meta directive");
         } break;
@@ -4300,6 +4200,14 @@ parseTopLevel(EngineState *state)
           }
         } break;
 
+        case MetaDirective_debug:
+        {
+          if (optionalString("off"))
+            global_debug_mode = false;
+          else
+            global_debug_mode = true;
+        } break;
+
         invalidDefaultCase;
       }
     }
@@ -4311,12 +4219,6 @@ parseTopLevel(EngineState *state)
         {
           if (BuildExpression expr = parseExpressionFull(temp_arena))
             normalize(arena, empty_env, expr.value);
-        } break;
-
-        // todo #cleanup change to meta directive #debug
-        case TC_KeywordBreakhere:
-        {
-          global_debug_mode = true;
         } break;
 
         case TC_KeywordPrint:
@@ -4648,7 +4550,7 @@ int engineMain()
 #endif
 
   assert(arrayCount(keywords)       == TC_KeywordEnd_ - TC_KeywordBegin_);
-  assert(arrayCount(metaDirectives) == MetaDirective_Count_);
+  assert(arrayCount(metaDirectives) == MetaDirective_COUNT);
 
   void   *permanent_memory_base = (void*)teraBytes(2);
   size_t  permanent_memory_size = megaBytes(256);

@@ -190,10 +190,11 @@ struct OverwriteRules
 
 struct Stack
 {
-  Stack *outer;
-  s32    depth;
-  s32    count;
-  Value *items[32];             // todo: compute this cap
+  Stack  *outer;
+  i32     depth;
+  i32     cap;
+  i32     count;
+  Value **items;
 };
 
 // used in normalization, build/typecheck, etc.
