@@ -214,6 +214,9 @@ getStackDepth(Environment *env)
 
 // todo #cleanup a lot of the copies are unnecessary, we must think about where
 // we can put stack values. and whether to have stack values at all.
+//
+// todo #cleanup I think this is now only for the global overloads typecheck for
+// composites?  If so then just copy the composite, no need to deepcopy
 internal Ast *
 deepCopy(MemoryArena *arena, Ast *in0)
 {
@@ -1068,7 +1071,7 @@ evaluateWithArgs(MemoryArena *arena, i32 arg_count, Term **args, Term *in0)
 }
 
 internal Term *
-rewriteExpression(MemoryArena *arena, Term *rhs, TreePath *path, Term *in0)
+rewriteTerm(MemoryArena *arena, Term *rhs, TreePath *path, Term *in0)
 {
   if (path)
   {
@@ -1076,7 +1079,7 @@ rewriteExpression(MemoryArena *arena, Term *rhs, TreePath *path, Term *in0)
     Composite *out = copyStruct(arena, in);
     if (path->first == -1)
     {
-      out->op = rewriteExpression(arena, rhs, path->next, in->op);
+      out->op = rewriteTerm(arena, rhs, path->next, in->op);
     }
     else
     {
@@ -1086,7 +1089,7 @@ rewriteExpression(MemoryArena *arena, Term *rhs, TreePath *path, Term *in0)
       {
         if (arg_id == (i32)path->first)
         {
-          out->args[arg_id] = rewriteExpression(arena, rhs, path->next, in->args[arg_id]);
+          out->args[arg_id] = rewriteTerm(arena, rhs, path->next, in->args[arg_id]);
         }
         else
           out->args[arg_id] = in->args[arg_id];
@@ -1284,7 +1287,7 @@ evaluateTerm(MemoryArena *arena, Environment *env, Term *in0, i32 offset)
         {
           auto [lhs, rhs] = getEqualitySides(getType(eq_proof));
           Term *rewrite_to  = in->right_to_left ? rhs : lhs;
-          Term *type = rewriteExpression(arena, rewrite_to, in->path, getType(body));
+          Term *type = rewriteTerm(arena, rewrite_to, in->path, getType(body));
           Rewrite *out = copyStruct(arena, in);
           out->type     = type;
           out->eq_proof = eq_proof;
@@ -1580,96 +1583,10 @@ lookupCurrentFrame(LocalBindings *bindings, String key, b32 add_if_missing)
   return out;
 }
 
-forward_declare internal Term *
-evaluateFork(MemoryArena *arena, Environment *env, ForkAst *fork)
-{
-  Term *out = 0;
-  Term *subject = evaluateAndNormalize(arena, env, fork->subject);
-  addStackFrame(env);
-  switch (subject->cat)
-  {// note: we fail if the fork is undetermined
-    case Term_Constructor:
-    {
-      Constructor *ctor = castTerm(subject, Constructor);
-      out = evaluate(arena, env, fork->bodies[ctor->id]);
-    } break;
-
-    case Term_Composite:
-    {
-      Composite *record = castTerm(subject, Composite);
-      if (Constructor *ctor = castTerm(record->op, Constructor))
-        out = evaluate(arena, env, fork->bodies[ctor->id]);
-    } break;
-
-    default: break;
-  }
-  unwindStack(env);
-  return out;
-}
-
 struct RewriteChain {
   Rewrite     *first;
   RewriteChain *next;
 };
-
-#if 0
-internal Term *
-evaluateSequence(MemoryArena *arena, Environment *env, Sequence *sequence)
-{
-  // todo not sure what the normalization should be, but we're probably only
-  // called from "normalize", so I guess it's ok to always normalize.
-  Environment env_ = *env; env = &env_;
-  RewriteChain *rewrite_chain = 0;
-  Term **body_to_fill = 0;
-  for (s32 id = 0;  id < sequence->count-1;  id++)
-  {
-    Ast *item = sequence->items[id];
-    switch (item->cat)
-    {
-      invalidDefaultCase;
-    }
-  }
-
-  Term *last = 0;
-  Ast *last_ast = sequence->items[sequence->count-1];
-  if (ForkAst *fork = castAst(last_ast, ForkAst))
-    last = evaluateFork(arena, env, fork);
-  else
-    last = evaluateAndNormalize(arena, env, last_ast);
-
-  Term *out = 0;
-  if (last)
-  {
-    if (body_to_fill) *body_to_fill = last;
-
-    if (rewrite_chain)
-    {
-      RewriteChain *chain = rewrite_chain;
-      Term *debug_previous_type = 0;
-      while (true)
-      {
-        Rewrite *rewrite = chain->first;
-        auto [lhs, rhs] = getEqualitySides(getType(rewrite->eq_proof));
-        Term *rewrite_to  = rewrite->right_to_left ? rhs : lhs;
-        if (debug_previous_type)
-        {
-          assert(equal(debug_previous_type, getType(rewrite->body)));
-        }
-        Term *type = rewriteExpression(arena, rewrite_to, rewrite->path, getType(rewrite->body));
-
-        setType(&rewrite->t, type);
-        debug_previous_type = getType(&rewrite->t);
-
-        if (chain->next) chain=chain->next;
-        else             break;
-      }
-      out = &chain->first->t;
-    }
-    else out = last;
-  }
-  return out;
-}
-#endif
 
 forward_declare internal Term *
 normalize(MemoryArena *arena, Environment *env, Term *in0) 
@@ -1710,11 +1627,7 @@ normalize(MemoryArena *arena, Environment *env, Term *in0)
           env->stack = funv->stack;
           extendStack(env, in->arg_count, norm_args);
           // note: evaluation might fail, in which case we back out.
-#if 0
-          out0 = evaluate(arena, env, funv->body_ast);
-#else
           out0 = evaluateTerm(arena, env, funv->body);
-#endif
           if (out0)
             out0 = normalize(arena, env, out0);
           env->stack = original_stack;
@@ -1723,21 +1636,16 @@ normalize(MemoryArena *arena, Environment *env, Term *in0)
       else
       {
         assert((norm_op == builtins.equal) || (norm_op->cat == Term_Constructor));
-#if 1  // special casing for equality
+        // special casing for equality
         if (norm_op == builtins.equal)
         {// special case for equality
           Term *lhs = norm_args[1];
           Term *rhs = norm_args[2];
           Trinary compare = equalTrinary(lhs, rhs);
-#if 0
-          if (compare == Trinary_True)
-            out0 = &builtins.True->v;
-#endif
           // I don't know how to handle inconsistency otherwise
           if (compare.v == Trinary_False)
             out0 = &builtins.False->t;
         }
-#endif
       }
 
       if (!out0)
@@ -2090,180 +1998,12 @@ toAbstractTerm(MemoryArena *arena, Environment *env, Term *in0)
   return toAbstractTerm(arena, 0, in0, getStackDepth(env));
 }
 
-forward_declare internal Value *  // todo: evaluate terms instead of ast.
-evaluate(MemoryArena *arena, Environment *env, Ast *in0)
-{
-  Term *out0 = 0;
-
-#define DEBUG_EVALUATE 0
-#if DEBUG_EVALUATE
-  if (global_debug_mode)
-  {debugIndent(); dump("evaluate: "); dump(in0); dump();}
-#endif
-
-  switch (in0->cat)
-  {
-    case AC_Variable:
-    {
-      Variable *in = castAst(in0, Variable);
-      assert(in->stack_delta >= 0 && in->id >= 0);
-      Stack *stack = env->stack;
-      for (s32 delta = 0; delta < in->stack_delta; delta++)
-        stack = stack->outer;
-
-      if (in->id < stack->count)
-        out0 = stack->items[in->id];
-      else
-      {
-        dump(env->stack); dump();
-        invalidCodePath;
-      }
-    } break;
-
-    case AC_Constant:
-    {
-      Constant *in = castAst(in0, Constant);
-      out0 = in->value;
-    } break;
-
-    case AC_CompositeAst:
-    {
-      CompositeAst *in = castAst(in0, CompositeAst);
-
-      i32 arg_count = in->arg_count;
-      Term **args = pushArray(arena, arg_count, Term*);
-      for (int arg_id = 0; arg_id < arg_count; arg_id++)
-      {
-        Ast *in_arg = in->args[arg_id];
-        Term *arg = evaluate(arena, env, in_arg);
-        args[arg_id] = arg;
-      }
-
-      Value *op = evaluate(arena, env, in->op);
-      Arrow *signature = castTerm(getType(op), Arrow);
-      Term *return_type = evaluateWithArgs(arena, arg_count, args, signature->output_type);
-      Composite *out = newTerm(arena, Composite, return_type);
-      out->arg_count = arg_count;
-      out->op        = op;
-      out->args      = args;
-      out0 = &out->t;
-    } break;
-
-    case AC_ArrowAst:
-    {
-      ArrowAst *in  = castAst(in0, ArrowAst);
-      Arrow    *out = newTerm(arena, Arrow, builtins.Type);
-      out->param_count = in->param_count;
-      out->param_names = in->param_names;
-
-      addStackFrame(env);
-      allocateArray(arena, in->param_count, out->param_types);
-      for (i32 id=0; id < in->param_count; id++)
-      {
-        out->param_types[id] = evaluate(arena, env, in->param_types[id]);
-        introduceOnStack(arena, env, in->param_names+id, out->param_types[id]);
-      }
-      if (in->output_type)
-        out->output_type = evaluate(arena, env, in->output_type);
-      unwindStack(env);
-
-      out0 = toPartiallyAbstractTerm(arena, env, &out->t);
-    } break;
-
-    case AC_AccessorAst:
-    {
-      AccessorAst *in = castAst(in0, AccessorAst);
-      Term *record0 = evaluate(arena, env, in->record);
-      record0 = overwriteTerm(env, record0);
-      Composite *record = castTerm(record0, Composite);
-      out0 = record->args[in->field_id];
-    } break;
-
-    case AC_ComputationAst:
-    {
-      ComputationAst  *computation = castAst(in0, ComputationAst);
-      Term *lhs = evaluate(arena, env, computation->lhs);
-      Term *rhs = evaluate(arena, env, computation->rhs);
-
-      // TODO: the "tactics" code proliferates too much
-      Computation *out = newTerm(arena, Computation, newEquality(arena, lhs, rhs));
-      out->lhs = lhs;
-      out->rhs = rhs;
-      out0 = &out->t;
-    } break;
-
-    case AC_Lambda:
-    {
-      Lambda *in = castAst(in0, Lambda);
-      Term *type = evaluate(arena, env, &in->signature->a);
-      Function *out = newTerm(arena, Function, type);
-      out->body      = 0;  // deprecated route
-      out->stack = env->stack;
-      out0 = &out->t;
-    } break;
-
-    case AC_RewriteAst:
-    {
-      RewriteAst *in  = castAst(in0, RewriteAst);
-      if (Term *eq_proof = evaluate(arena, env, in->eq_proof))
-      {
-        if (Term *body     = evaluate(arena, env, in->body))
-        {
-          auto [lhs, rhs] = getEqualitySides(getType(eq_proof));
-          Term *rewrite_to  = in->right_to_left ? rhs : lhs;
-          Term *type = rewriteExpression(arena, rewrite_to, in->path, getType(body));
-
-          Rewrite *out = newTerm(arena, Rewrite, type);
-          out->eq_proof      = eq_proof;
-          out->body          = body;
-          out->right_to_left = in->right_to_left;
-          out->path          = in->path;
-          out0 = &out->t;
-        }
-      }
-    } break;
-
-    case AC_ForkAst:
-    {
-      out0 = evaluateFork(arena, env, castAst(in0, ForkAst));
-    } break;
-
-    invalidDefaultCase;
-  }
-
-#if DEBUG_EVALUATE
-  if (global_debug_mode)
-  {
-    debugDedent(); dump("=> "); dump(out0); dump(": "); dump(out0 ? getTypeOk(out0) : 0); dump();
-  }
-#endif
-
-  if (!isSequenced(in0))
-    assert(out0);
-  return out0;
-}
-
-forward_declare internal Term *
-evaluateAndNormalize(MemoryArena *arena, Environment *env, Ast *in0)
-{
-  Term *eval = evaluate(arena, env, in0);
-  Term *norm = normalize(arena, env, eval);
-  return norm;
-}
-
 forward_declare internal Term *
 evaluateAndNormalize(MemoryArena *arena, Environment *env, Term *in0, i32 offset)
 {
   Term *eval = evaluateTerm(arena, env, in0, offset);
   Term *norm = normalize(arena, env, eval);
   return norm;
-}
-
-internal Term *
-evaluate(MemoryArena *arena, Ast *in0)
-{
-  Environment env = {};
-  return evaluate(arena, &env, in0);
 }
 
 inline b32
@@ -2348,13 +2088,6 @@ introduceOnStack(MemoryArena* arena, Environment *env, Token *name, Term *typev)
     intro = &ref->t;
 
   addStackValue(env, intro);
-}
-
-forward_declare inline void
-introduceOnStack(MemoryArena* arena, Environment *env, Token *name, Ast *type)
-{
-  Term *typev = evaluate(arena, env, type);
-  introduceOnStack(arena, env, name, typev);
 }
 
 inline GlobalBinding *
@@ -3176,7 +2909,7 @@ doubleCheckType(Value *in0)
       Rewrite *in = castTerm(in0, Rewrite);
       auto [lhs, rhs] = getEqualitySides(in->eq_proof->type);
       Term *rewrite_to = in->right_to_left ? rhs : lhs;
-      Term *expected_type = rewriteExpression(temp_arena, rewrite_to, in->path, in->body->type);
+      Term *expected_type = rewriteTerm(temp_arena, rewrite_to, in->path, in->body->type);
       assert(equal(expected_type, in0->type));
     } break;
 
@@ -3687,7 +3420,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
                       Term *from, *to;
                       if (in->right_to_left) {from = eq->args[2]; to = eq->args[1];}
                       else                   {from = eq->args[1]; to = eq->args[2];}
-                      Term *actual_result = rewriteExpression(arena, to, in->path, goal);
+                      Term *actual_result = rewriteTerm(arena, to, in->path, goal);
                       if (equal(actual_result, expected_result))
                         new_goal = actual_result;
                       else
@@ -3739,7 +3472,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
               {
                 in->path  = search.path;
                 out->path = search.path;
-                new_goal = rewriteExpression(arena, to, in->path, goal);
+                new_goal = rewriteTerm(arena, to, in->path, goal);
               }
               else
               {
