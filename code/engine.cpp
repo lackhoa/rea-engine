@@ -1079,7 +1079,7 @@ evaluateTerm(MemoryArena *arena, Environment *env, Term *in0, i32 offset)
 {
   Term *out0 = 0;
   i32 serial = global_debug_serial++;
-  b32 debug = true;
+  b32 debug = false;
   if (debug && global_debug_mode)
   {debugIndent(); DUMP("evaluateTerm(", serial, "): ", in0, "\n");}
   switch (in0->cat)
