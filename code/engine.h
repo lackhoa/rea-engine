@@ -24,8 +24,6 @@ enum AstCategory {
   AC_Identifier,
 
   // Expressions
-  AC_Constant,
-  AC_Variable,
   AC_CompositeAst,
   AC_ArrowAst,
   AC_AccessorAst,
@@ -92,74 +90,20 @@ newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
 #define castTerm(exp, Cat) ((exp)->cat == Term_##Cat ? (Cat*)(exp) : 0)
 
 struct Hole       {embed_Ast(a)};
-struct Identifier {embed_Ast(a)};
-
-struct Variable
-{
+struct Identifier {
   embed_Ast(a);
-
-  s32  id;
-  s32  stack_delta;
+  Value *value;
 };
-
-inline void
-initVariable(Variable *var, u32 id)
-{
-  var->stack_delta = 0;
-  var->id          = id;
-}
-
-struct Constant
-{
-  Ast   a;
-  Term *value;
-  b32   is_synthetic;
-};
-
-#if 0
-struct Sequence
-{
-  Ast a;
-
-  Ast **items;
-  s32   count;
-};
-#endif
-
-inline Constant *
-newSyntheticConstant(MemoryArena *arena, Term *value)
-{
-  Token token = newToken("<synthetic>");
-  Constant *out = newAst(arena, Constant, &token);
-  out->is_synthetic = true;
-  out->value        = value;
-  return out;
-}
-
-inline Constant *
-newSyntheticConstant(MemoryArena *arena, Term *value, Token *token)
-{
-  Constant *out = newAst(arena, Constant, token);
-  out->is_synthetic = true;
-  out->value        = value;
-  return out;
-}
-
-// todo #cleanup just put this in the ForkAst
-struct ForkParsing {Identifier *ctors;};
 
 struct Union;
 
 struct ForkAst {
-  Ast a;
+  embed_Ast(a);
 
-  Union  *uni;  // todo #cleanup don't need this
   Ast    *subject;
   i32     case_count;
   Ast   **bodies;
-
-  // temporary parsing data
-  ForkParsing *parsing;
+  Token  *ctors;
 };
 
 struct ParseExpressionOptions

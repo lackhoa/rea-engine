@@ -41,7 +41,7 @@ check_truth  2*3 = 6;
 - :: fn (n, m : Nat) -> Nat
 {fork n
  {0  : 0,
-  ++ : fork(m) {0 : n, ++(m1) : n.p - m.p}}}
+  ++ : fork(m) {0 : n, ++ : n.p - m.p}}}
 
 check_truth 3 - 2 = 1;
 check_truth 4 - 1 = 3;
@@ -86,11 +86,10 @@ mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*b*c
   => (b + a.p*b)*c  = b*c + (a.p*b)*c {<- mulAssociative(a.p, b, c)}
   => (b + a.p*b)*c  = (b + a.p*b)*c {mulDistributive(b, a.p*b, c)}}}
 ;; test_eval mulAssociative(1,0,0);
-print mulAssociative(1,0,0);
+;; print mulAssociative(1,0,0);
 
 != :: fn (_A: Set, a, b: _A) -> Type
 { (E: a = b) -> False }
-print_raw !=;
 
 testFillingHole :: (a: Nat, a_positive: a != 0, P: a=0) -> False
 {norm a_positive;

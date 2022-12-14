@@ -522,12 +522,7 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_absolute, PrintOptions opt
     CompositeAst *in = castAst(ast, CompositeAst);
     op       = in->op;
     raw_args = (void **)in->args;
-    if (Constant *op = castAst(in->op, Constant))
-    {
-      op_type = castTerm(getTypeOk(op->value), Arrow);
-      assert(op_type);
-    }
-    else arg_count = in->arg_count;
+    arg_count = in->arg_count;
 
     precedence = precedenceOf(&in->op->token);
   }
@@ -633,23 +628,6 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
       case AC_Identifier:
       {print(buffer, in0->token);} break;
 
-      case AC_Constant:
-      {
-        Constant *in = castAst(in0, Constant);
-        if (in->is_synthetic)
-          print(buffer, in->value, opt);
-        else
-          print(buffer, in->a.token);
-      } break;
-
-      case AC_Variable:
-      {
-        Variable *in = castAst(in0, Variable);
-        print(buffer, in->token);
-        if (global_debug_mode)
-          print(buffer, "[%d]", in->stack_delta);
-      } break;
-
       case AC_RewriteAst:
       {
         RewriteAst *in = castAst(in0, RewriteAst);
@@ -672,16 +650,16 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         print(buffer, in->subject, new_opt);
         newlineAndIndent(buffer, opt.indentation);
         print(buffer, "{");
-        Union *form = in->uni;
+        i32 case_count = in->case_count;
         for (s32 ctor_id = 0;
-             ctor_id < form->ctor_count;
+             ctor_id < case_count;
              ctor_id++)
         {
-          Constructor *ctor = form->ctors + ctor_id;
-          print(buffer, &ctor->t, new_opt);
+          Token *ctor = in->ctors + ctor_id;
+          print(buffer, ctor->string);
           print(buffer, ": ");
           print(buffer, in->bodies[ctor_id], new_opt);
-          if (ctor_id != form->ctor_count-1)
+          if (ctor_id != case_count)
           {
             print(buffer, ", ");
             newlineAndIndent(buffer, opt.indentation+1);
@@ -995,55 +973,6 @@ equal(Term *lhs, Term *rhs)
   return equalTrinary(lhs, rhs).v == Trinary_True;
 }
 
-inline b32 equal(Ast *lhs, Ast *rhs)
-{
-  if (lhs == rhs)
-    return true;
-  if (lhs->cat == rhs->cat)
-  {
-    switch (lhs->cat)
-    {
-      case AC_Variable:
-      {
-        auto l = castAst(lhs, Variable);
-        auto r = castAst(rhs, Variable);
-        return (l->id == r->id && l->stack_delta == r->stack_delta);
-      } break;
-
-      case AC_CompositeAst:
-      {
-        auto l = castAst(lhs, CompositeAst);
-        auto r = castAst(rhs, CompositeAst);
-        if (l->op == r->op)
-        {
-          if (l->arg_count == r->arg_count)
-          {
-            for (int id=0; id < l->arg_count; id++)
-            {
-              if (l->args[id] != r->args[id])
-                return false;
-            }
-            return true;
-          }
-        }
-      } break;
-
-      case AC_Constant:
-      {
-        auto l = castAst(lhs, Constant);
-        auto r = castAst(rhs, Constant);
-        return equal(l->value, r->value);
-      } break;
-
-      default:
-      {
-        // todo #incomplete
-      } break;
-    }
-  }
-  return false;
-}
-
 inline b32
 isCompositeConstructor(Term *in0)
 {
@@ -1249,9 +1178,9 @@ evaluateTerm(MemoryArena *arena, Environment *env, Term *in0, i32 offset)
       else
       {
         Function *out = copyStruct(arena, in);
-        out->type     = evaluateTerm(arena, env, in->type, offset+1);
-        out->body     = evaluateTerm(arena, env, in->body, offset+1);
-        out->stack    = env->stack;
+        out->type  = evaluateTerm(arena, env, in->type, offset+1);
+        out->body  = in->body;
+        out->stack = env->stack;
         out0 = &out->t;
       }
     } break;
@@ -1730,88 +1659,6 @@ normalize(MemoryArena *arena, Environment *env, Term *in0)
 
   assert(out0);
   debug_normalization_depth--;
-  return out0;
-}
-
-inline Ast *
-replaceFreeVars(MemoryArena* arena, Environment *env, Ast *in0, s32 stack_offset)
-{
-  Ast *out0 = 0;
-  switch (in0->cat)
-  {
-    case AC_Variable:
-    {
-      Variable *in = castAst(in0, Variable);
-      s32 stack_delta = in->stack_delta - stack_offset;
-      if (stack_delta >= 0)
-      {
-        Stack *stack = env->stack;
-        for (s32 delta = 0; delta < stack_delta ; delta++)
-          stack = stack->outer;
-        if (in->id >= stack->count)
-        {
-          dump(env->stack);
-          invalidCodePath;
-        }
-        Term *norm_stack_value = normalize(arena, env, stack->items[in->id]);
-        Constant *out = newSyntheticConstant(arena, norm_stack_value);
-        out0 = &out->a;
-      }
-      else
-        out0 = in0;
-    } break;
-
-    case AC_Constant:
-    {
-      out0 = in0;
-    } break;
-
-    case AC_CompositeAst:
-    {
-      CompositeAst *in = castAst(in0, CompositeAst);
-      CompositeAst *out = copyStruct(arena, in);
-      out->op   = replaceFreeVars(arena, env, in->op, stack_offset);
-      out->args = pushArray(arena, in->arg_count, Ast*);
-      for (s32 arg_id = 0; arg_id < in->arg_count; arg_id++)
-      {
-        out->args[arg_id] = replaceFreeVars(arena, env, in->args[arg_id], stack_offset);
-      }
-      out0 = &out->a;
-    } break;
-
-    case AC_ArrowAst:
-    {
-      ArrowAst *in = castAst(in0, ArrowAst);
-      ArrowAst *out = copyStruct(arena, in);
-      stack_offset++;
-      out->output_type    = replaceFreeVars(arena, env, in->output_type, stack_offset);
-      out->param_types = pushArray(arena, in->param_count, Ast*);
-      for (s32 param_id = 0; param_id < in->param_count; param_id++)
-      {
-        out->param_types[param_id] = replaceFreeVars(arena, env, in->param_types[param_id], stack_offset);
-      }
-      out0 = &out->a;
-    } break;
-
-    case AC_AccessorAst:
-    {
-      AccessorAst *in = castAst(in0, AccessorAst);
-      AccessorAst *out = copyStruct(arena, in);
-      out->record = replaceFreeVars(arena, env, in->record, stack_offset);
-      out0 = &out->a;
-    } break;
-
-    case AC_RewriteAst:
-    case AC_Let:
-    case AC_FunctionDecl:
-    case AC_ForkAst:
-    {
-      todoIncomplete;
-    } break;
-
-    invalidDefaultCase;
-  }
-  assert(out0);
   return out0;
 }
 
@@ -2706,7 +2553,7 @@ buildFork(MemoryArena *arena, Environment *env, ForkAst *in, Term *goal)
     {
       if (uni->ctor_count == case_count)
       {
-        Term **correct_bodies = pushArray(arena, case_count, Term *, true);
+        Term **ordered_bodies = pushArray(arena, case_count, Term *, true);
         Term *subjectv = subject.value;
         Environment *outer_env = env;
 
@@ -2716,7 +2563,7 @@ buildFork(MemoryArena *arena, Environment *env, ForkAst *in, Term *goal)
         {
           Environment env_ = *outer_env;
           Environment *env = &env_;
-          Token *ctor_name = &in->parsing->ctors[input_case_id].token;
+          Token *ctor_name = in->ctors + input_case_id;
 
           Constructor *ctor = 0;
           for (i32 id = 0; id < uni->ctor_count; id++)
@@ -2732,7 +2579,7 @@ buildFork(MemoryArena *arena, Environment *env, ForkAst *in, Term *goal)
           {
             Term *record = introduceRecord(temp_arena, env, subjectv, ctor);
             addOverwriteRule(env, subjectv, record);
-            if (correct_bodies[ctor->id])
+            if (ordered_bodies[ctor->id])
             {
               parseError(in->bodies[input_case_id], "fork case handled twice");
               attach("constructor", &ctor->t);
@@ -2741,7 +2588,7 @@ buildFork(MemoryArena *arena, Environment *env, ForkAst *in, Term *goal)
             {
               if (BuildExpression body = buildExpression(arena, env, in->bodies[input_case_id], goal))
               {
-                correct_bodies[ctor->id] = body.term;
+                ordered_bodies[ctor->id] = body.term;
               }
             }
           }
@@ -2750,9 +2597,8 @@ buildFork(MemoryArena *arena, Environment *env, ForkAst *in, Term *goal)
 
         if (noError())
         {
-          in->uni = uni;
           out->uni    = uni;
-          out->bodies = correct_bodies;
+          out->bodies = ordered_bodies;
         }
       }
       else
@@ -2859,7 +2705,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
       Term *fill = fillHole(arena, env, goal);
       if (fill)
       {
-        out0.term   = toAbstractTerm(arena, env, fill);
+        out0.term  = toAbstractTerm(arena, env, fill);
         out0.value = fill;
       }
       else
@@ -2875,17 +2721,16 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
       }
     } break;
 
-    case AC_Constant:
-    {
-      Constant *in = castAst(in0, Constant);
-      out0.term  = in->value;
-      out0.value = in->value;
-    } break;
-
     case AC_Identifier:
     {
+      Identifier *in = castAst(in0, Identifier);
       Token *name = &in0->token;
-      if (LookupLocalName local = lookupLocalName(env, name))
+      if (in->value)
+      {
+        out0.term  = in->value;
+        out0.value = in->value;
+      }
+      else if (LookupLocalName local = lookupLocalName(env, name))
       {
         StackPointer *ptr = newTerm(arena, StackPointer, 0);
         ptr->name        = in0->token;
@@ -2933,41 +2778,43 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
 
     case AC_CompositeAst:
     {
-      CompositeAst *in = castAst(in0, CompositeAst);
-      Composite *out = newTerm(arena, Composite, 0);
+      CompositeAst *in  = castAst(in0, CompositeAst);
+      Composite    *out = newTerm(arena, Composite, 0);
 
-      b32 has_multiple_overloads;
+      b32 has_multiple_overloads = false;
       if (Identifier *op_ident = castAst(in->op, Identifier))
       {
-        ValueArray global_overloads = getGlobalOverloads(env, op_ident, goal);
-        has_multiple_overloads = global_overloads.count > 1;
-        if (has_multiple_overloads)
+        if (!op_ident->value)
         {
-          // NOTE: pre-empt operator overloads.
-          // play with op.globals to figure out the output type;
-          // we'd have to pretty much build, typecheck and evaluate the whole thing.
-          // todo #mem
-          for (s32 candidate_id=0; candidate_id < global_overloads.count; candidate_id++)
+          ValueArray global_overloads = getGlobalOverloads(env, op_ident, goal);
+          has_multiple_overloads = global_overloads.count > 1;
+          if (has_multiple_overloads)
           {
-            Constant *constant = newAst(arena, Constant, &in->op->token);
-            constant->value    = global_overloads.items[candidate_id];
-            CompositeAst *in_copy = castAst(deepCopy(arena, in0), CompositeAst);
-            in_copy->op           = &constant->a;
-            out0 = buildExpression(arena, env, &in_copy->a, goal);
-            if (out0) break; else wipeError();
+            // NOTE: pre-empt operator overloads.
+            // play with op.globals to figure out the output type;
+            // we'd have to pretty much build, typecheck and evaluate the whole thing.
+            // todo #mem
+            for (s32 candidate_id=0; candidate_id < global_overloads.count; candidate_id++)
+            {
+              Identifier *constant = newAst(arena, Identifier, &in->op->token);
+              constant->value      = global_overloads.items[candidate_id];
+              // todo #cleanup don't change the ast, so we don't have to do copy nonsense
+              CompositeAst *in_copy = castAst(deepCopy(arena, in0), CompositeAst);
+              in_copy->op           = &constant->a;
+              out0 = buildExpression(arena, env, &in_copy->a, goal);
+              if (out0) break; else wipeError();
+            }
+            if (!out0)
+              parseError(in->op, "there is no suitable function overload");
           }
-          if (!out0)
-            parseError(in->op, "there is no suitable function overload");
-        }
-        else if (global_overloads.count == 1)
-        {
-          Constant *constant = newAst(arena, Constant, &in->op->token);
-          constant->value    = global_overloads.items[0];
-          in->op = &constant->a;
+          else if (global_overloads.count == 1)
+          {
+            Identifier *constant = newAst(arena, Identifier, &in->op->token);
+            constant->value      = global_overloads.items[0];
+            in->op = &constant->a;
+          }
         }
       }
-      else
-        has_multiple_overloads = false;
 
       if (!has_multiple_overloads)
       {
@@ -3261,8 +3108,8 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
               Term *hint = 0;
               if (retry_count > 1)
               {
-                Constant *constant = newAst(arena, Constant, &op_ident->token);
-                constant->value    = global_overloads.items[attempt];
+                Identifier *constant = newAst(arena, Identifier, &op_ident->token);
+                constant->value      = global_overloads.items[attempt];
                 hint = constant->value;
               }
               else if (BuildExpression build_hint = buildExpression(arena, env, in->eq_proof, holev))
@@ -3441,7 +3288,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Term *goal)
             Function *fun = newTerm(arena, Function, 0);
             fun->body     = body.term;
             // evaluate cares about the signature, since atm it produces the type.
-            // todo here we don't care about the type at all.
+            // todo here we don't care about the type at all since we can just get the body type.
             Arrow *signature = newTerm(arena, Arrow, builtins.Type);
             allocateArray(arena, 1, signature->param_names);
             allocateArray(arena, 1, signature->param_types);
@@ -3562,49 +3409,35 @@ parseFork(MemoryArena *arena, b32 is_theorem)
     s32 case_count = getCommaSeparatedListLength(&tk_copy);
     if (noError(&tk_copy))
     {
-      ForkParsing *parsing = pushStruct(temp_arena, ForkParsing);
+      Token *ctors = pushArray(temp_arena, case_count, Token);
       Ast **bodies = pushArray(temp_arena, case_count, Ast*);
-      allocateArray(temp_arena, case_count, parsing->ctors);
 
       s32 actual_case_count = 0;
       for (b32 stop = false;
-           !stop && noError();)
+           !stop && hasMore();)
       {
         if (optionalChar('}'))
           stop = true;
         else
         {
           pushContext("fork case");
-          auto input_case_id = actual_case_count++;
-          if (Ast *pattern0 = parseExpressionToAst(temp_arena))
-          {
-            if (Identifier *ctor = castAst(pattern0, Identifier))
-            {
-              parsing->ctors[input_case_id]  = *ctor;
-            }
-            else if (CompositeAst *pattern = castAst(pattern0, CompositeAst))
-            {// todo don't need this case anymore
-              if ((ctor = castAst(pattern->op, Identifier)))
-              {
-                parsing->ctors[input_case_id] = *ctor;
-              }
-              else
-                parseError(&pattern->a, "expected constructor");
-            }
-            else
-                parseError(pattern0, "malformed fork pattern");
+          i32 input_case_id = actual_case_count++;
+          Token ctor = nextToken();
+          if (isIdentifier(&ctor))
+            ctors[input_case_id] = ctor;
+          else
+            parseError(&ctor, "expected a constructor name");
 
-            if (requireChar(':', "syntax: CASE: BODY"))
+          if (requireChar(':', "syntax: CASE: BODY"))
+          {
+            b32 auto_normalize = is_theorem ? true : false;
+            if (Ast *body = parseSequence(arena, is_theorem, auto_normalize))
             {
-              b32 auto_normalize = is_theorem ? true : false;
-              if (Ast *body = parseSequence(arena, is_theorem, auto_normalize))
+              bodies[input_case_id] = body;
+              if (!optionalChar(','))
               {
-                bodies[input_case_id] = body;
-                if (!optionalChar(','))
-                {
-                  requireChar('}', "to end fork expression; or use ',' to end the fork case");
-                  stop = true;
-                }
+                requireChar('}', "to end fork expression; or use ',' to end the fork case");
+                stop = true;
               }
             }
           }
@@ -3620,7 +3453,7 @@ parseFork(MemoryArena *arena, b32 is_theorem)
         out->subject    = subject;
         out->case_count = case_count;
         out->bodies     = bodies;
-        out->parsing    = parsing;
+        out->ctors      = ctors;
       }
     }
   }
