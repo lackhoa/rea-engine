@@ -394,8 +394,8 @@ nextToken(Tokenizer *tk = global_tokenizer)
       {
         if (equal(out, keywords[i]))
         {
-          out.cat = (TokenCategory)((int)TC_KeywordBegin_ + i);
-          if (out.cat == TC_KeywordNorm)
+          out.cat = (TokenCategory)((int)TC_Keyword_START + i);
+          if (out.cat == TC_Keyword_norm)
             breakhere;
           break;
         }

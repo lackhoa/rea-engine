@@ -136,6 +136,7 @@ struct Stack
   i32     cap;
   i32     count;
   Value **items;
+  i32     last_function_id;
 };
 
 // used in normalization, build/typecheck, etc.
@@ -214,14 +215,14 @@ struct FunctionDecl {
   Ast      *body;
 };
 
-struct FunctionId {s32 id;};
-struct Function
-{
+struct FunctionId {i32 v;};
+struct Function {
   embed_Term(t);
   Token       name;
   FunctionId  id;               // :reserved-0-for-function-id
   Term       *body;
   Stack      *stack;
+  i32         stack_delta;
 };
 
 Ast LET_TYPE_NORMALIZE_;
@@ -355,7 +356,13 @@ struct EngineState {
   FileList    *file_list;
 };
 
-struct PrintOptions{b32 detailed; b32 print_type; s32 indentation; int no_paren_precedence;};
+struct PrintOptions{
+  b32 detailed;
+  b32 lock_detailed;
+  b32 print_type;
+  s32 indentation;
+  int no_paren_precedence;
+};
 
 struct Builtins {
   Union       *True;

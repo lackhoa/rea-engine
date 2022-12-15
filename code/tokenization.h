@@ -18,27 +18,27 @@ enum TokenCategory
   TC_Arrow         = 264,
   TC_StrongArrow   = 265,
 
-  TC_KeywordBegin_,
-  TC_KeywordDefine,
-  TC_KeywordFork,
-  TC_KeywordUnion,
-  TC_KeywordStruct,
-  TC_KeywordRewrite,
-  TC_KeywordNorm,
+  TC_Keyword_START,
+  TC_Keyword_define,
+  TC_Keyword_fork,
+  TC_Keyword_union,
+  TC_Keyword_struct,
+  TC_Keyword_rewrite,
+  TC_Keyword_norm,
 
-  TC_KeywordTestEval,
-  TC_KeywordPrint,
-  TC_KeywordPrintRaw,
-  TC_KeywordPrintDebug,
-  TC_KeywordCheck,
-  TC_KeywordCheckTruth,
-  TC_KeywordEnd_,
+  TC_Keyword_test_eval,
+  TC_Keyword_print,
+  TC_Keyword_print_raw,
+  TC_Keyword_print_ast,
+  TC_Keyword_check,
+  TC_Keyword_check_truth,
+  TC_Keyword_END,
 };
 
 const char *keywords[] = {
   "", "define", "fork", "union", "struct",
   "rewrite", "norm",
-  "test_eval", "print", "print_raw", "print_debug", "check", "check_truth"
+  "test_eval", "print", "print_raw", "print_ast", "check", "check_truth"
 };
 
 enum MetaDirective {

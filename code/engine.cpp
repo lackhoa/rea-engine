@@ -17,11 +17,11 @@ global_variable Term dummy_function_being_built;
 global_variable Term  holev_ = {.cat = Term_Hole};
 global_variable Term *holev = &holev_;
 
-global_variable FunctionId next_function_id;
-inline FunctionId getNextFunctionId()
+global_variable i32 last_global_function_id;
+inline FunctionId nextGlobalFunctionId()
 {
-  next_function_id.id++;  // :reserved-0-for-function-id
-  return FunctionId{next_function_id.id};
+  i32 id = ++last_global_function_id;  // :reserved-0-for-function-id
+  return FunctionId{id};
 }
 
 inline Value *
@@ -149,7 +149,7 @@ isFree(Term *in0, i32 offset)
     {
       Function *in = castTerm(in0, Function);
       // todo #hack
-      out = in->id.id == 0 && in->stack == 0;
+      out = in->id.v == 0 && in->stack == 0;
     } break;
 
     case Term_Computation:
@@ -753,7 +753,8 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
   if (in0)
   {
     PrintOptions new_opt = opt;
-    new_opt.detailed   = false;
+    if (!opt.lock_detailed)
+      new_opt.detailed = false;
     new_opt.print_type = false;
     new_opt.indentation = opt.indentation + 1;
 
@@ -1097,8 +1098,20 @@ evaluate(MemoryArena *arena, Environment *env, Term *in0, i32 offset)
   Value *out0 = 0;
   i32 serial = global_debug_serial++;
   b32 debug = true;
+  if (serial == 17176)
+    breakhere;
   if (debug && global_debug_mode)
-  {debugIndent(); DUMP("evaluate(", serial, "): ", in0, "\n");}
+  {
+    debugIndent(); DUMP("evaluate(", serial, "): ", in0, "\n");
+#if 0
+    if (Function *function = castTerm(in0, Function))
+    {
+      dump();
+      print(0, in0, PrintOptions{.detailed=true, .lock_detailed=true});
+      dump();
+    }
+#endif
+  }
   switch (in0->cat)
   {
     case Term_StackPointer:
@@ -1187,13 +1200,16 @@ evaluate(MemoryArena *arena, Environment *env, Term *in0, i32 offset)
     case Term_Function:
     {
       Function *in = castTerm(in0, Function);
-      if (in->id.id)
+      if (in->id.v)
         out0 = in0;
       else
       {
         Function *out = copyStruct(arena, in);
         out->type  = evaluate(arena, env, in->type, offset);
-        out->stack = env->stack;
+        Stack *stack = env->stack;
+        for (i32 delta=0; delta < out->stack_delta; delta++)
+          stack = stack->outer;
+        out->stack = stack;
         out0 = &out->t;
       }
     } break;
@@ -1406,7 +1422,7 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
       {
         Function *lhs = castTerm(lhs0, Function);
         Function *rhs = castTerm(rhs0, Function);
-        if (lhs->id.id == rhs->id.id)
+        if (lhs->id.v == rhs->id.v)
           out.result.v = Trinary_True;
       } break;
 
@@ -1719,7 +1735,7 @@ isGlobalValue(Value *value)
 inline b32
 isGlobalFunction(Term *in0)
 {
-  return (in0->cat == Term_Function && castTerm(in0, Function)->id.id);
+  return (in0->cat == Term_Function && castTerm(in0, Function)->id.v);
 }
 
 inline Term *
@@ -1757,8 +1773,7 @@ newConstant(MemoryArena *arena, Value *value)
 // constant "2"
 internal Term *
 toAbstractTerm(MemoryArena *arena, i32 env_depth, Value *in0, i32 offset)
-{// todo #mem #copy-festival: If this stays longer than 3 days, then we
- // gotta clean it up.
+{
   i32 serial = global_debug_serial++;
   b32 debug = false;
   if (global_debug_mode && debug) {debugIndent(); dump("toAbstractTerm("); dump(serial); dump("): ");
@@ -1833,9 +1848,19 @@ toAbstractTerm(MemoryArena *arena, i32 env_depth, Value *in0, i32 offset)
     case Term_Function:
     {
       Function *in = castTerm(in0, Function);
-      if (in->id.id)
+      if (in->id.v)
         out0 = newConstant(arena, in0);
-      else  // todo sometimes this is a function pointer
+      else if (in->stack)
+      {
+        Function *out = copyStruct(arena, in);
+        out->stack       = 0;
+        i32 stack_delta = offset - in->stack->depth;
+        out->stack_delta = stack_delta;
+        assert(stack_delta >= 0);
+        // todo: stack_delta currently adjusted elsewhere, due to technical difficulty.
+        out0 = &out->t;
+      }
+      else
         out0 = in0;
     } break;
 
@@ -2421,7 +2446,7 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
     Ast *ast = 0;
     switch (token.cat)
     {
-      case TC_KeywordNorm:
+      case TC_Keyword_norm:
       {
         pushContext("norm [LOCAL_VARIABLE]");
         if (optionalChar(';'))
@@ -2446,7 +2471,7 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
         popContext();
       } break;
 
-      case TC_KeywordRewrite:
+      case TC_Keyword_rewrite:
       {
         RewriteAst *rewrite = newAst(arena, RewriteAst, &token);
 
@@ -2545,7 +2570,7 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
     {
       *global_tokenizer = tk_save;
       Token token = peekToken();
-      if (token.cat == TC_KeywordFork)
+      if (token.cat == TC_Keyword_fork)
       {
         nextToken();
         ast = &parseFork(arena, is_theorem)->a;
@@ -3056,6 +3081,7 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *goal)
       {
         Lambda   *in  = castAst(in0, Lambda);
         Function *fun = newTerm(arena, Function, goal);
+        fun->stack_delta = 0;
 
         i32 param_count = signature->param_count;
         extendStack(env, param_count, 0);
@@ -3071,16 +3097,16 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *goal)
 
         Term *expected_body_type = evaluateWithArgs(arena, param_count, env->stack->items, signature->output_type);
         if (BuildExpression body = buildExpression(arena, env, in->body, expected_body_type))
-        {
           fun->body = body.term;
-        }
         unwindBindingsAndStack(env);
         if (noError())
         {
-          fun->stack = env->stack;
+          Function *funv = copyStruct(temp_arena, fun);
+          funv->stack = env->stack;
+          assert(funv->stack);
 
           out0.term  = &fun->t;
-          out0.value = &fun->t;
+          out0.value = &funv->t;
         }
       }
       else
@@ -3856,7 +3882,7 @@ parseConstructor(MemoryArena *arena, Union *uni)
     {// subtype
       Arrow *struct_;
       pushContext("struct {FIELD: TYPE ...}");
-      if (requireCategory(TC_KeywordStruct))
+      if (requireCategory(TC_Keyword_struct))
       {
         ArrowAst *ast = parseArrowType(arena, true);
         Environment env_ = {}; Environment *env = &env_;
@@ -3958,7 +3984,7 @@ buildGlobalFunction(MemoryArena *arena, Environment *env, FunctionDecl *decl)
     funv = newTerm(arena, Function, build_signature.value);
     funv->name = decl->a.token;
     funv->body = &dummy_function_being_built;
-    funv->id   = getNextFunctionId();
+    funv->id   = nextGlobalFunctionId();
 
     // note: add binding first to support recursion
     addGlobalBinding(&decl->a.token, &funv->t);
@@ -3978,9 +4004,7 @@ buildGlobalFunction(MemoryArena *arena, Environment *env, FunctionDecl *decl)
 
       Term *expected_body_type = evaluate(temp_arena, env, signature->output_type);
       if (BuildExpression body = buildExpression(arena, env, decl->body, expected_body_type))
-      {
         funv->body = body.term;
-      }
       unwindBindingsAndStack(env);
     }
   }
@@ -4077,13 +4101,13 @@ parseTopLevel(EngineState *state)
     {
       switch (token.cat)
       {
-        case TC_KeywordTestEval:
+        case TC_Keyword_test_eval:
         {
           if (BuildExpression expr = parseExpressionFull(temp_arena))
             normalize(arena, empty_env, expr.value);
         } break;
 
-        case TC_KeywordPrint:
+        case TC_Keyword_print:
         {
           if (BuildExpression expr = parseExpressionFull(temp_arena))
           {
@@ -4093,24 +4117,24 @@ parseTopLevel(EngineState *state)
           }
         } break;
 
-        case TC_KeywordPrintRaw:
+        case TC_Keyword_print_raw:
         {
           if (auto parsing = parseExpressionFull(temp_arena))
           {
-            print(0, parsing.value, {.detailed=true});
+            print(0, parsing.value, PrintOptions{.detailed=true, .lock_detailed=true});
             print(0, ": ");
             print(0, getType(parsing.value), {});
             print(0, "\n");
           }
         } break;
 
-        case TC_KeywordPrintDebug:
+        case TC_Keyword_print_ast:
         {
           if (Ast *exp = parseExpressionToAst(temp_arena))
             print(0, exp, {.detailed=true});
         } break;
 
-        case TC_KeywordCheck:
+        case TC_Keyword_check:
         {
           Term *expected_type = 0;
           if (Ast *ast = parseExpressionToAst(temp_arena))
@@ -4125,7 +4149,7 @@ parseTopLevel(EngineState *state)
           }
         } break;
 
-        case TC_KeywordCheckTruth:
+        case TC_Keyword_check_truth:
         {
           pushContext("check_truth EQUALITY");
           if (Term *goal = parseExpressionFull(temp_arena).value)
@@ -4409,7 +4433,7 @@ int engineMain()
   setvbuf(stdout, NULL, _IONBF, 0);
 #endif
 
-  assert(arrayCount(keywords)       == TC_KeywordEnd_ - TC_KeywordBegin_);
+  assert(arrayCount(keywords)       == TC_Keyword_END - TC_Keyword_START);
   assert(arrayCount(metaDirectives) == MetaDirective_COUNT);
 
   void   *permanent_memory_base = (void*)teraBytes(2);

@@ -79,3 +79,12 @@ testArrowEvaluation :: fn (A: Type) -> (a: A) -> A
 {_ => {a}}
 
 testComputationAsExpression :: fn (b: Bool) -> false = false & b {_}
+
+testFunctionPointer :: fn (a,b: Bool) -> Bool
+{
+ foo : (x: Bool) -> Bool := _ => {x & b}
+ d := false;
+ foo(a);
+ }
+print_raw testFunctionPointer;
+check_truth testFunctionPointer(true,true) = true;
