@@ -71,13 +71,15 @@ addAssociative :: (a, b, c: Nat) -> (a+b)+c = a+b+c
   ++:
   rewrite addAssociative(a.p,b,c)}}
 
+#debug off
 mulDistributive :: (a,b,c: Nat) -> a*c+b*c = (a+b)*c
 {fork a
- {0: refl(b*c),
+ {0:,
   ++:
   => c + a.p*c + b*c = c + (a.p+b)*c {addAssociative(c, (a.p * c), (b * c))}
   => c + (a.p+b)*c   = c + (a.p+b)*c {mulDistributive(a.p, b, c)}}}
 test_eval mulDistributive(1+1,0,0);
+#debug off
 
 mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*b*c
 {fork a

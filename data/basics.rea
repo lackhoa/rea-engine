@@ -10,8 +10,6 @@ check True: Set;
 
 ;; print_raw =(_, true, false);
 
-check refl(true): true = true;
-
 check_truth false & true | true = true;
 
 testAbstraction :: fn (a, b: Bool) -> Bool

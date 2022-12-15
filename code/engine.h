@@ -12,9 +12,9 @@ global_variable b32 UNUSED_VAR global_debug_mode;
 global_variable MemoryArena UNUSED_VAR*permanent_arena;
 
 struct Term;
+typedef Term Value;
 struct ArrowAst;
 struct LocalBindings;
-typedef Term Value;  // todo #removeme
 
 enum AstCategory {
   AC_Null = 0,
@@ -41,8 +41,9 @@ enum TermCategory {
   Term_Hole    = 1,
   Term_Builtin = 2,
 
-  Term_Union       = 3,
-  Term_Constructor = 5,  // todo: constructors can be removed if we have record
+  Term_Constant    = 3,
+  Term_Union       = 4,
+  Term_Constructor = 5,
   Term_Function    = 6,
 
   Term_Fork         = 7,
@@ -54,8 +55,7 @@ enum TermCategory {
   Term_Rewrite      = 13,
 };
 
-embed_struct struct Ast
-{
+embed_struct struct Ast {
   AstCategory cat;
   Token       token;
 };
@@ -89,11 +89,8 @@ newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
 
 #define castTerm(exp, Cat) ((exp)->cat == Term_##Cat ? (Cat*)(exp) : 0)
 
-struct Hole       {embed_Ast(a)};
-struct Identifier {
-  embed_Ast(a);
-  Value *value;
-};
+struct Hole       {embed_Ast(a);};
+struct Identifier {embed_Ast(a);};
 
 struct Union;
 
@@ -177,17 +174,17 @@ embed_struct struct Term
   Term         *type;
 };
 
-typedef Term Builtin;
+struct Builtin {embed_Term(t); String name;};
 
 inline void
-initValue(Term *in, TermCategory cat, Term *type)
+initValue(Term *in, TermCategory cat, Value *type)
 {
   in->cat  = cat;
   in->type = type;
 }
 
 inline Term *
-_newTerm(MemoryArena *arena, TermCategory cat, Term *type, size_t size)
+_newTerm(MemoryArena *arena, TermCategory cat, Value *type, size_t size)
 {
   Term *out = (Term *)pushSize(arena, size, true);
   initValue(out, cat, type);
@@ -332,8 +329,8 @@ struct RewriteAst
 {
   embed_Ast(a);
   TreePath *path;
-  Ast      *eq_proof;
-  Ast      *to_expression;
+  Ast      *eq_proof_hint;
+  Ast      *new_goal;
   Ast      *body;
   b32       right_to_left;
 };
@@ -367,13 +364,12 @@ struct Builtins {
   Builtin     *equal;
   Builtin     *Set;
   Builtin     *Type;
-  Constructor *refl;
 };
 
 enum MatcherCategory {
   MC_Unknown,
   MC_Exact,
-  MC_OutType,
+  MC_OutputType,
 };
 
 struct Matcher {
@@ -381,14 +377,19 @@ struct Matcher {
   union
   {
     Term *Exact;
-    Term *OutType;
+    Term *Output;
   };
   operator bool() { return (cat == MC_Exact) && (Exact == 0); }
 };
 
-inline Matcher exactMatch(Term *value)
+inline Matcher exactMatcher(Value *value)
 {
   return Matcher{.cat=MC_Exact, .Exact=value};
+}
+
+inline Matcher outputMatcher(Value *value)
+{
+  return Matcher{.cat=MC_Exact, .Output=value};
 }
 
 struct ValueArray {
@@ -431,7 +432,12 @@ struct Lambda {
   Ast      *body;
 };
 
-struct ValuePair {Term *lhs; Term *rhs;};
+struct ValuePair
+{
+  Value *lhs;
+  Value *rhs;
+  operator bool() {return lhs && rhs;};
+};
 
 struct Fork {
   embed_Term(t);
@@ -439,6 +445,13 @@ struct Fork {
   Term   *subject;
   i32     case_count;
   Term  **bodies;
+  Stack   stack;
+};
+
+struct Constant {
+  embed_Term(t);
+  String name;  // todo #debug-only
+  Value *value;
 };
 
 #include "generated/engine_forward.h"

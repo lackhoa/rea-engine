@@ -261,15 +261,15 @@ equal(String a, String b)
 inline String
 toString(const char *c)
 {
-    String out;
-    out.chars  = (char*)c;
-    out.length = 0;
-    while (*c)
-    {
-        out.length++;
-        c++;
-    }
-    return out;
+  String out;
+  out.chars  = (char*)c;
+  out.length = 0;
+  while (*c)
+  {
+    out.length++;
+    c++;
+  }
+  return out;
 }
 
 inline b32
