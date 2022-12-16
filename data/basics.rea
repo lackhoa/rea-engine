@@ -85,8 +85,7 @@ testFunctionPointer :: fn (a,b: Bool) -> Bool
  foo(a);}
 check_truth testFunctionPointer(true,true) = true;
 
-testFunctionPointerHelper :: fn () -> (a,b,c: Bool) -> Bool
-{_ => {c}}
+testFunctionPointerHelper :: fn () -> (a,b,c: Bool) -> Bool {_ => {c}}
 testFunctionPointerMore :: fn (a: Bool) -> Bool
 {foo := testFunctionPointerHelper();
  foo(true,false,a);}
@@ -109,3 +108,11 @@ multiplyPosv2 :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
 oneIsNotZero :: () -> 1 != 0 {norm; _ => {E}}
 ;; print multiplyPos(1,1,oneIsNotZero(),oneIsNotZero());
 print multiplyPos;
+
+StructWithFunction :: union {makeStructWithFunction: struct {a: Nat, b: (E: a=0) -> False}}
+oneEqualZeroImpliesFalse :: fn () -> ((E: 1=0) -> False) {norm; _ => {E}}
+testFunctionInComposite :: fn (x: StructWithFunction, E: x.a = 0) -> False {norm; x.b(E)}
+
+testFunctionInCompositeCrash :: fn () -> Nat
+{x := makeStructWithFunction(1, oneEqualZeroImpliesFalse())
+ }

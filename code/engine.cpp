@@ -3657,11 +3657,11 @@ areSequential(Token *first, Token *next)
 internal Ast *
 parseOperand(MemoryArena *arena)
 {
-  Ast *out = 0;
+  Ast *operand = 0;
   Token token = nextToken();
   if (equal(&token, '_'))
   {
-    out = &newAst(arena, Hole, &token)->a;
+    operand = &newAst(arena, Hole, &token)->a;
   }
   else if (isIdentifier(&token))
   {// token combination. TODO combine more than 2, allow combination in local
@@ -3680,23 +3680,21 @@ parseOperand(MemoryArena *arena)
       }
     }
 
-    out = &newAst(arena, Identifier, tokenp)->a;
+    operand = &newAst(arena, Identifier, tokenp)->a;
   }
   else if (equal(&token, '('))
   {
-    out = parseExpressionToAst(arena);
+    operand = parseExpressionToAst(arena);
     requireChar(')');
   }
   else
     tokenError("expected start of expression");
 
-  if (hasMore())
+  while (hasMore())
   {
-    Token funcall = peekToken();
-    if (equal(&funcall, '('))
+    if (optionalChar('('))
     {// function call syntax, let's keep going
-      nextToken();
-      Ast *op = out;
+      Ast *op = operand;
 
       Tokenizer tk_copy = *global_tokenizer;
       s32 expected_arg_count = getCommaSeparatedListLength(&tk_copy);
@@ -3707,7 +3705,7 @@ parseOperand(MemoryArena *arena)
         branch->op        = op;
         branch->arg_count = expected_arg_count;
         branch->args      = args;
-        out = &branch->a;
+        operand = &branch->a;
         s32 parsed_arg_count = 0;
         for (s32 stop = false;
              hasMore () && !stop;
@@ -3736,9 +3734,20 @@ parseOperand(MemoryArena *arena)
         }
       }
     }
+    else if (optionalChar('.'))
+    {// member accessor
+      AccessorAst *accessor = newAst(arena, AccessorAst, &global_tokenizer->last_token);
+      accessor->record      = operand; // todo: I guess it works?
+      if (requireIdentifier("expected identifier as accessor member"))
+      {
+        accessor->field_name = global_tokenizer->last_token;
+        operand              = &accessor->a;
+      }
+    }
+    else break;
   }
-  NULL_WHEN_ERROR(out);
-  return out;
+  NULL_WHEN_ERROR(operand);
+  return operand;
 }
 
 inline b32
@@ -3798,21 +3807,7 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
       for (b32 stop = false; !stop && hasMore();)
       {
         Token op_token = peekToken();
-        if (equal(op_token, "."))
-        {// member accessor
-          nextToken();
-          AccessorAst *new_operand = newAst(arena, AccessorAst, &op_token);
-          new_operand->record   = operand; // todo: I guess it works?
-          Token member = nextToken();
-          if (isIdentifier(&member))
-          {
-            new_operand->field_name = member;
-            operand             = &new_operand->a;
-          }
-          else
-            parseError(&member, "expected identifier as member accessor");
-        }
-        else if (isIdentifier(&op_token))
+        if (isIdentifier(&op_token))
         {// infix operator syntax
           // (a+b) * c
           //        ^
@@ -3851,10 +3846,7 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
         else if (isExpressionEndMarker(&op_token))
           stop = true;
         else
-        {
-          tokenError(&op_token, "expected operator token, got");
-          // todo push token attachment omg
-        }
+          tokenError(&op_token, "expected operator token");
       }
       if (noError())
         out = operand;
