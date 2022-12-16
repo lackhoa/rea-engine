@@ -415,7 +415,7 @@ print(MemoryArena *buffer, Stack *stack)
     print(buffer, "[");
     for (s32 arg_id = 0; arg_id < stack->count; arg_id++)
     {
-      print(buffer, stack->items[arg_id], PrintOptions{.print_type=true});
+      print(buffer, stack->items[arg_id], PrintOptions{PrintFlag_PrintType});
       if (arg_id != stack->count-1)
         print(buffer, ", ");
     }
@@ -478,7 +478,7 @@ isHiddenParameter(Arrow *arrow, s32 param_id)
 }
 
 inline s32
-precedenceOf(Token *op)
+precedenceOf(String op)
 {
   int out = 0;
 
@@ -500,13 +500,6 @@ precedenceOf(Token *op)
   return out;
 }
 
-inline Token *
-getFunctionName(Function *fun)
-{
-  if (fun->name.string.chars) return &fun->name;
-  else                        return 0;
-}
-
 inline void
 printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
 {
@@ -517,23 +510,26 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
 
   Ast  *ast   = (Ast *)in0;
   Term *value = (Term *)in0;
-  Arrow *op_type = 0;
+  Arrow *op_signature = 0;
   if (is_term)
   {
     Composite *in = castTerm(value, Composite);
-    op        = in->op;
-    raw_args  = (void **)in->args;
-    arg_count = in->arg_count;
-    if (Constant *op_constant = castTerm(in->op, Constant))
-    {
-      op_type  = castTerm(op_constant->value->type, Arrow);
-      assert(op_type);
-    }
+    op           = in->op;
+    op_signature = 0;
+    raw_args     = (void **)in->args;
+    arg_count    = in->arg_count;
+    Value *op_value = in->op;
 
-    if (Function *op_fun = castTerm(in->op, Function))
+    if (Constant *op_constant = castTerm(in->op, Constant))
+      op_value = op_constant->value;
+
+    if (op_value)
     {
-      if (Token *name = getFunctionName(op_fun))
-        precedence = precedenceOf(name);
+      op_signature = castTerm(op_value->type, Arrow);
+      assert(op_signature);
+      if (Value *anchor = op_value->anchor)
+        if (Constant *op_constant = castTerm(anchor, Constant))
+          precedence = precedenceOf(op_constant->name);
     }
   }
   else
@@ -543,22 +539,22 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
     raw_args = (void **)in->args;
     arg_count = in->arg_count;
 
-    precedence = precedenceOf(&in->op->token);
+    precedence = precedenceOf(in->op->token);
   }
 
-  void **args;
-  if (op_type)
+  void **printed_args;
+  if (op_signature)
   {// print out unignored args only
     arg_count = 0;
-    args = pushArray(temp_arena, op_type->param_count, void*);
-    for (s32 param_id = 0; param_id < op_type->param_count; param_id++)
+    printed_args = pushArray(temp_arena, op_signature->param_count, void*);
+    for (s32 param_id = 0; param_id < op_signature->param_count; param_id++)
     {
-      if (!isHiddenParameter(op_type, param_id))
-        args[arg_count++] = raw_args[param_id];
+      if (!isHiddenParameter(op_signature, param_id))
+        printed_args[arg_count++] = raw_args[param_id];
     }
   }
   else
-    args = raw_args;
+    printed_args = raw_args;
 
   if (arg_count == 2)
   {// special path for infix operator
@@ -567,14 +563,14 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
 
     PrintOptions arg_opt = opt;
     arg_opt.no_paren_precedence = precedence+1;
-    print(buffer, args[0], is_term, arg_opt);
+    print(buffer, printed_args[0], is_term, arg_opt);
 
     print(buffer, " ");
     print(buffer, op, is_term, opt);
     print(buffer, " ");
 
     arg_opt.no_paren_precedence = precedence;
-    print(buffer, args[1], is_term, arg_opt);
+    print(buffer, printed_args[1], is_term, arg_opt);
     if (precedence < opt.no_paren_precedence)
       print(buffer, ")");
   }
@@ -586,7 +582,7 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
     arg_opt.no_paren_precedence = 0;
     for (s32 arg_id = 0; arg_id < arg_count; arg_id++)
     {
-      print(buffer, args[arg_id], is_term, arg_opt);
+      print(buffer, printed_args[arg_id], is_term, arg_opt);
       if (arg_id < arg_count-1)
         print(buffer, ", ");
     }
@@ -634,8 +630,8 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
   if (in0)
   {
     PrintOptions new_opt = opt;
-    new_opt.detailed    = false;
-    new_opt.indentation = opt.indentation+1;
+    unsetFlag(&new_opt.flags, PrintFlag_Detailed);
+    new_opt.indentation += 1;
 
     switch (in0->cat)
     {
@@ -756,6 +752,15 @@ print(MemoryArena *buffer, Ast *in0)
   return print(buffer, in0, {});
 }
 
+inline String
+globalNameOf(Value *value)
+{
+  if (Term *anchor = value->anchor)
+    if (Constant *constant = castTerm(anchor, Constant))
+      return constant->name.string;
+  return {};
+}
+
 forward_declare internal char *
 print(MemoryArena *buffer, Term *in0, PrintOptions opt)
 {// mark: printTerm
@@ -763,10 +768,11 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
   if (in0)
   {
     PrintOptions new_opt = opt;
-    if (!opt.lock_detailed)
-      new_opt.detailed = false;
-    new_opt.print_type = false;
+    if (!flagIsSet(opt.flags, PrintFlag_LockDetailed))
+      unsetFlag(&new_opt.flags, PrintFlag_Detailed);
+    unsetFlag(&new_opt.flags, PrintFlag_PrintType);
     new_opt.indentation = opt.indentation + 1;
+    b32 skip_print_type = false;
 
     switch (in0->cat)
     {
@@ -778,33 +784,6 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
           print(buffer, "[%d]", in->stack_frame);
       } break;
 
-#if 0
-      case Term_FakeValue:
-      {
-        FakeValue *in = castTerm(in0, FakeValue);
-        switch (in->anchor->cat)
-        {
-          case AnchorType_Stack:
-          {
-            auto anchor = &in->anchor->Stack;
-            print(buffer, anchor->name);
-            if (global_debug_mode)
-              print(buffer, "<%d>", anchor->stack_depth);
-          } break;
-
-          case AnchorType_Accessor:
-          {
-            auto anchor = &in->anchor->Accessor;
-            print(buffer, anchor->record, opt);
-            print(buffer, ".");
-            anchor->field_name;
-          } break;
-
-          invalidDefaultCase;
-        }
-      } break;
-#endif
-
       case Term_Constant:
       {
         Constant *in = castTerm(in0, Constant);
@@ -812,48 +791,47 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
       } break;
 
       case Term_Hole:
-      {
-        print(buffer, "_");
-      } break;
+      {print(buffer, "_");} break;
 
       case Term_Composite:
-      {
-        printComposite(buffer, in0, true, new_opt);
-      } break;
+      {printComposite(buffer, in0, true, new_opt);} break;
 
       case Term_Union:
       {
         Union *in = castTerm(in0, Union);
-        if (opt.detailed)
+        print(buffer, globalNameOf(in0));
+        if (flagIsSet(opt.flags, PrintFlag_Detailed))
         {
-          print(buffer, in->name);
-
           if (in->ctor_count)
           {
             print(buffer, " {");
+            unsetFlag(&new_opt.flags, PrintFlag_Detailed);
             for (s32 ctor_id = 0; ctor_id < in->ctor_count; ctor_id++)
             {
-              Constructor *subset = in->ctors + ctor_id;
-              print(buffer, subset->name);
+              Constructor *ctor = in->ctors + ctor_id;
+              print(buffer, globalNameOf(&ctor->t));
               print(buffer, ": ");
-              print(buffer, getTypeOk(&subset->t), new_opt);
+              print(buffer, getTypeOk(&ctor->t), new_opt);
             }
             print(buffer, " }");
           }
         }
-        else
-          print(buffer, in->name);
       } break;
 
       case Term_Function:
       {
         Function *in = castTerm(in0, Function);
-        if (Token *name = getFunctionName(in))
+        b32 is_anonymous = false;
+        if (String name = globalNameOf(in0))
+          print(buffer, name);
+        else
+          is_anonymous = true;
+
+        if (flagIsSet(opt.flags, PrintFlag_Detailed) || is_anonymous)
         {
-          print(buffer, name->string);
-        }
-        if (opt.detailed)
-        {
+          skip_print_type = true;
+          if (in->type) print(buffer, in->type, new_opt);
+
           newlineAndIndent(buffer, opt.indentation);
           print(buffer, "{");
           print(buffer, in->body, new_opt);
@@ -892,25 +870,29 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
 
       case Term_Constructor:
       {
-        Constructor *in = castTerm(in0, Constructor);
-        print(buffer, in->name);
+        // Constructor *in = castTerm(in0, Constructor);
+        print(buffer, globalNameOf(in0));
       } break;
 
       case Term_Rewrite:
       {
         Rewrite *rewrite = castTerm(in0, Rewrite);
-        print(buffer, getTypeOk(&rewrite->t), new_opt);
+        print(buffer, rewrite->type, new_opt);
+        skip_print_type = true;
         print(buffer, " <=>");
         newlineAndIndent(buffer, opt.indentation);
-        print(buffer, getTypeOk(rewrite->body), new_opt);
+        print(buffer, rewrite->body->type, new_opt);
         newlineAndIndent(buffer, opt.indentation);
 
         print(buffer, "rewrite");
         if (rewrite->right_to_left) print(buffer, "<-");
         print(buffer, rewrite->path);
-        print(buffer, " justification: ");
-        newlineAndIndent(buffer, new_opt.indentation);
-        print(buffer, rewrite->eq_proof, new_opt);
+        if (rewrite->eq_proof->cat != Term_Computation)
+        {
+          print(buffer, " justification: ");
+          newlineAndIndent(buffer, new_opt.indentation);
+          print(buffer, rewrite->eq_proof, new_opt);
+        }
         newlineAndIndent(buffer, opt.indentation);
 
         print(buffer, "body: ");
@@ -964,7 +946,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
 
     }
 
-    if (opt.print_type)
+    if (flagIsSet(opt.flags, PrintFlag_PrintType) && !skip_print_type)
     {
       print(buffer, ": ");
       print(buffer, getTypeOk(in0), new_opt);
@@ -1134,17 +1116,7 @@ evaluate(MemoryArena *arena, Environment *env, Term *in0, i32 offset)
   if (serial == 17176)
     breakhere;
   if (debug && global_debug_mode)
-  {
-    debugIndent(); DUMP("evaluate(", serial, "): ", in0, "\n");
-#if 0
-    if (Function *function = castTerm(in0, Function))
-    {
-      dump();
-      print(0, in0, PrintOptions{.detailed=true, .lock_detailed=true});
-      dump();
-    }
-#endif
-  }
+  {debugIndent(); DUMP("evaluate(", serial, "): ", in0, "\n");}
   switch (in0->cat)
   {
     case Term_Variable:
@@ -1761,6 +1733,7 @@ isGlobalValue(Value *value)
   }
 }
 
+#if 0
 inline Term *
 newConstant(MemoryArena *arena, Value *value)
 {
@@ -1790,6 +1763,7 @@ newConstant(MemoryArena *arena, Value *value)
   out->name  = name;
   return &out->t;
 }
+#endif
 
 internal Term *
 toAbstractTerm(MemoryArena *arena, i32 env_depth, Value *in0, i32 offset)
@@ -2698,7 +2672,7 @@ buildFork(MemoryArena *arena, Environment *env, ForkAst *in, Term *goal)
           Constructor *ctor = 0;
           for (i32 id = 0; id < uni->ctor_count; id++)
           {
-            if (equal((uni->ctors+id)->name.string, ctor_name->string))
+            if (equal(globalNameOf(&uni->ctors[id].t), ctor_name->string))
             {
               ctor = uni->ctors+id;
               break;
@@ -2888,14 +2862,17 @@ buildExpression(MemoryArena *arena, Environment *env, Ast *in0, Value *goal)
           {
             parseError(name, "global name does not match expected type");
             attach("name", name);
-            attach("expected_type", normalize(temp_arena, env, goal));
+            attach("expected_type", goal);
+            if (globals->count == 1)
+              attach("actual_type", globals->items[0]->type);
           }
         }
 
         if (value)
         {
           should_check_type = false;
-          out0.term  = newConstant(arena, value);
+          assert(value->anchor);
+          out0.term  = value->anchor;
           out0.value = value;
         }
       }
@@ -3840,7 +3817,7 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
           // (a+b) * c
           //        ^
           Identifier *op = newAst(arena, Identifier, &op_token);
-          s32 precedence = precedenceOf(&op_token);
+          s32 precedence = precedenceOf(op_token);
           if (precedence >= opt.min_precedence)
           {
             // recurse
@@ -3902,11 +3879,10 @@ parseConstructor(MemoryArena *arena, Union *uni)
   Constructor *ctor = uni->ctors + ctor_id;
   initValue(&ctor->t, Term_Constructor, 0);
   ctor->uni  = uni;
-  ctor->name = nextToken();
+  Token ctor_name = nextToken();
   ctor->id   = ctor_id;
-  Token *ctor_name = &ctor->name;
 
-  if (isIdentifier(ctor_name))
+  if (isIdentifier(&ctor_name))
   {
     if (optionalChar(':'))
     {// subtype
@@ -3925,17 +3901,18 @@ parseConstructor(MemoryArena *arena, Union *uni)
 
       if (noError())
       {
-        struct_->output_type = newConstant(arena, &uni->t);
+        struct_->output_type = uni->anchor;
         ctor->type = &struct_->t;
       }
     }
     else
     {// enum constructor
       if (uni->type == &builtins.Set->t) ctor->type = &uni->t;
-      else parseError(ctor_name, "constructors must construct a set member");
+      else parseError(&ctor_name, "constructors must construct a set member");
     }
 
-    if (noError()) addGlobalBinding(ctor_name, &ctor->t);
+    if (noError())
+      addGlobalBinding(&ctor_name, &ctor->t);
   }
   else tokenError("expected an identifier as constructor name");
 }
@@ -3970,7 +3947,6 @@ parseUnion(MemoryArena *arena, Token *name)
   if (noError())
   {
     Union *uni = newTerm(arena, Union, type);
-    uni->name = *name;
     addGlobalBinding(name, &uni->t);
 
     if (requireChar('{', "open typedef body"))
@@ -4012,7 +3988,6 @@ buildGlobalFunction(MemoryArena *arena, Environment *env, FunctionDecl *decl)
     // note: store the built signature, maybe to display it later.
     Arrow *signature = castTerm(build_signature.term, Arrow);
     funv = newTerm(arena, Function, build_signature.value);
-    funv->name = decl->a.token;
     funv->body = &dummy_function_being_built;
 
     // note: add binding first to support recursion
@@ -4138,10 +4113,13 @@ parseTopLevel(EngineState *state)
 
         case TC_Keyword_print:
         {
+          u32 flags = PrintFlag_Detailed|PrintFlag_PrintType;
+          if (optionalString("lock_detailed"))
+            setFlag(&flags, PrintFlag_LockDetailed);
           if (BuildExpression expr = parseExpressionFull(temp_arena))
           {
             Term *norm = normalize(arena, empty_env, expr.value);
-            print(0, norm, {.detailed=true, .print_type=true});
+            print(0, norm, {.flags=flags});
             print(0, "\n");
           }
         } break;
@@ -4149,18 +4127,16 @@ parseTopLevel(EngineState *state)
         case TC_Keyword_print_raw:
         {
           if (auto parsing = parseExpressionFull(temp_arena))
-          {
-            print(0, parsing.value, PrintOptions{.detailed=true, .lock_detailed=true});
-            print(0, ": ");
-            print(0, getType(parsing.value), {});
-            print(0, "\n");
-          }
+            print(0, parsing.value, {.flags = (PrintFlag_Detailed     |
+                                               PrintFlag_LockDetailed |
+                                               PrintFlag_PrintType)});
+          print(0, "\n");
         } break;
 
         case TC_Keyword_print_ast:
         {
           if (Ast *exp = parseExpressionToAst(temp_arena))
-            print(0, exp, {.detailed=true});
+            print(0, exp, {.flags = PrintFlag_Detailed});
         } break;
 
         case TC_Keyword_check:
@@ -4409,11 +4385,9 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
       // Token superset_name = newToken("Type");
       builtins.Type = newTerm(arena, Builtin, 0);
       builtins.Type->type = &builtins.Type->t; // NOTE: circular types
-      builtins.Type->name = toString("Type");
       addBuiltinGlobalBinding("Type", &builtins.Type->t);
 
       builtins.Set = newTerm(arena, Builtin, &builtins.Type->t);
-      builtins.Set->name = toString("Set");
       addBuiltinGlobalBinding("Set", &builtins.Set->t);
     }
 
@@ -4423,7 +4397,6 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
       builtin_tk.at = "(_A: Set, a, b: _A) -> Set";
       BuildExpression equal_type = parseExpressionFull(arena); 
       builtins.equal = newTerm(arena, Builtin, equal_type.value);
-      builtins.equal->name = toString("=");
       addBuiltinGlobalBinding("=", &builtins.equal->t);
 
       EngineState builtin_engine_state = EngineState{.arena=arena};

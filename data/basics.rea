@@ -75,24 +75,37 @@ check_truth ((a,b: Nat) -> a+b = b+a) = ((A,B: Nat) -> A+B = B+A);
 check_truth ((a,b: Nat) -> a+b = b+a) = ((A,B: Nat) -> A+B = B+B);
 #should_fail off
 
-testArrowEvaluation :: fn (A: Type) -> (a: A) -> A
-{_ => {a}}
+testArrowEvaluation :: fn (A: Type) -> (a: A) -> A {_ => {a}}
 
 testComputationAsExpression :: fn (b: Bool) -> false = false & b {_}
 
 testFunctionPointer :: fn (a,b: Bool) -> Bool
-{
- foo : (x: Bool) -> Bool := _ => {x & b}
+{foo : (x: Bool) -> Bool := _ => {x & b}
  d := false;
- foo(a);
- }
+ foo(a);}
 check_truth testFunctionPointer(true,true) = true;
 
 testFunctionPointerHelper :: fn () -> (a,b,c: Bool) -> Bool
 {_ => {c}}
 testFunctionPointerMore :: fn (a: Bool) -> Bool
-{
- foo := testFunctionPointerHelper();
- foo(true,false,a);
- }
+{foo := testFunctionPointerHelper();
+ foo(true,false,a);}
 check_truth testFunctionPointerMore(false) = false;
+
+testConstantInFunctionHelper :: fn () -> Nat {a := 4; a}
+testConstantInFunction :: fn () -> Nat {b := testConstantInFunctionHelper(); b}
+check_truth testConstantInFunction() = 4;
+
+;; showing off now that we have arrow type normalization
+multiplyPosv2 :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
+{norm a_positive; norm b_positive;
+ fork a
+ {0 : _ => {a_positive(_)},
+  ++: ;; goal: (E: b + a.p * b = 0) -> False
+  _ => {fork b {0: b_positive(_), ++: norm E; E}}
+  }}
+
+;; todo: ridiculous that we can't normalize without a function
+oneIsNotZero :: () -> 1 != 0 {norm; _ => {E}}
+;; print multiplyPos(1,1,oneIsNotZero(),oneIsNotZero());
+print multiplyPos;

@@ -54,7 +54,6 @@ enum TermCategory {
   Term_Composite   = 11,
   Term_Arrow       = 12,
   Term_Rewrite     = 13,
-  /* Term_FakeValue   = 14, */
 };
 
 embed_struct struct Ast {
@@ -197,7 +196,7 @@ embed_struct struct Term
   Anchor       *anchor;
 };
 
-struct Builtin {embed_Term(t); String name;};
+struct Builtin {embed_Term(t);};
 
 inline void
 initValue(Term *in, TermCategory cat, Value *type)
@@ -220,13 +219,11 @@ _newTerm(MemoryArena *arena, TermCategory cat, Value *type, size_t size)
 struct Constructor {
   embed_Term(t);
   Union *uni;
-  Token  name;
   i32    id;
 };
 
 struct Union {
   embed_Term(t);
-  Token        name;
   i32          ctor_count;
   Constructor *ctors;
 };
@@ -240,7 +237,6 @@ struct FunctionDecl {
 /* struct GlobalId {i32 v;}; */
 struct Function {
   embed_Term(t);
-  Token  name;
   Term  *body;
   Stack *stack;
   i32    stack_delta;
@@ -383,12 +379,14 @@ struct EngineState {
   FileList    *file_list;
 };
 
+u32 PrintFlag_Detailed     = 1 << 1;
+u32 PrintFlag_LockDetailed = 1 << 2;
+u32 PrintFlag_PrintType    = 1 << 3;
+
 struct PrintOptions{
-  b32 detailed;
-  b32 lock_detailed;
-  b32 print_type;
-  s32 indentation;
-  int no_paren_precedence;
+  u32 flags;
+  u16 indentation;
+  u16 no_paren_precedence;
 };
 
 struct Builtins {
@@ -484,7 +482,7 @@ struct Fork {
 
 struct Constant {
   embed_Term(t);
-  String name;
+  Token  name;
   Value *value;
 };
 

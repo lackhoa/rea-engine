@@ -195,7 +195,8 @@ inRange(s32 min, s32 val, s32 max)
 struct String
 {
   char *chars;
-  s32   length;               // note: does not include the nil terminator
+  s32   length;                 // note: does not include the nil terminator
+  operator bool() {return chars;}
 };
 
 inline s32
@@ -474,3 +475,21 @@ concat(String *a, String b)
 #define DUMP_9(x, ...) dump(x); DUMP_8(__VA_ARGS__)
 #define DUMP_N(N, ...) CONCATENATE(DUMP_, N)
 #define DUMP(...) DUMP_N(PP_NARG(__VA_ARGS__), __VA_ARGS__)(__VA_ARGS__)
+
+inline b32
+flagIsSet(u32 flag_group, u32 flag)
+{
+  return flag_group & flag;
+}
+
+inline void
+setFlag(u32 *flag_group, u32 flag)
+{
+  *flag_group |= flag;
+}
+
+inline void
+unsetFlag(u32 *flag_group, u32 flag)
+{
+  *flag_group &= ~flag;
+}
