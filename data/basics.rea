@@ -86,5 +86,13 @@ testFunctionPointer :: fn (a,b: Bool) -> Bool
  d := false;
  foo(a);
  }
-print_raw testFunctionPointer;
 check_truth testFunctionPointer(true,true) = true;
+
+testFunctionPointerHelper :: fn () -> (a,b,c: Bool) -> Bool
+{_ => {c}}
+testFunctionPointerMore :: fn (a: Bool) -> Bool
+{
+ foo := testFunctionPointerHelper();
+ foo(true,false,a);
+ }
+check_truth testFunctionPointerMore(false) = false;

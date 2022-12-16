@@ -14,14 +14,14 @@ Value * evaluate(MemoryArena * arena, Environment * env, Term * in0, i32 offset)
 Term * evaluate(MemoryArena * arena, Environment * env, Term * in0);
 CompareTerms compareTerms(MemoryArena * arena, Term * lhs0, Term * rhs0);
 Trinary equalTrinary(Term * lhs0, Term * rhs0);
-Term * normalize(MemoryArena * arena, Environment * env, Term * in0);
+Value * normalize(MemoryArena * arena, Environment * env, Value * in0);
 Term * toPartiallyAbstractTerm(MemoryArena * arena, Environment * env, Term * in0);
 Term * toAbstractTerm(MemoryArena * arena, Environment * env, Term * in0);
 Term * evaluateAndNormalize(MemoryArena * arena, Environment * env, Term * in0, i32 offset);
 void introduceOnStack(MemoryArena * arena, Environment * env, Token * name, Term * typev);
 Term * buildFork(MemoryArena * arena, Environment * env, ForkAst * in, Term * goal);
 void doubleCheckType(Value * in0);
-BuildExpression buildExpression(MemoryArena * arena, Environment * env, Ast * in0, Term * goal);
+BuildExpression buildExpression(MemoryArena * arena, Environment * env, Ast * in0, Value * goal);
 FunctionDecl * parseFunction(MemoryArena * arena, Token * name, b32 is_theorem);
 ForkAst * parseFork(MemoryArena * arena, b32 is_theorem);
 Ast * parseExpressionToAst(MemoryArena * arena);

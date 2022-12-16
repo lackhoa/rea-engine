@@ -7,14 +7,17 @@
 #include "tokenization.h"
 
 // NOTE: This should work like the function stack, we'll clean it after every top-level form.
-global_variable MemoryArena UNUSED_VAR *temp_arena;
-global_variable b32 UNUSED_VAR global_debug_mode;
-global_variable MemoryArena UNUSED_VAR*permanent_arena;
+global_variable MemoryArena *temp_arena;
+global_variable b32          global_debug_mode;
+global_variable MemoryArena *global_arena;
+global_variable i32          global_debug_serial;
 
 struct Term;
-typedef Term Value;
 struct ArrowAst;
 struct LocalBindings;
+
+typedef Term  Value;
+typedef Value Anchor;
 
 enum AstCategory {
   AC_Null = 0,
@@ -38,21 +41,20 @@ enum AstCategory {
 };
 
 enum TermCategory {
-  Term_Hole    = 1,
-  Term_Builtin = 2,
-
+  Term_Hole        = 1,
+  Term_Builtin     = 2,
   Term_Constant    = 3,
   Term_Union       = 4,
   Term_Constructor = 5,
   Term_Function    = 6,
-
-  Term_Fork         = 7,
-  Term_StackPointer = 8,
-  Term_Computation  = 9,
-  Term_Accessor     = 10,
-  Term_Composite    = 11,
-  Term_Arrow        = 12,
-  Term_Rewrite      = 13,
+  Term_Fork        = 7,
+  Term_Variable    = 8,
+  Term_Computation = 9,
+  Term_Accessor    = 10,
+  Term_Composite   = 11,
+  Term_Arrow       = 12,
+  Term_Rewrite     = 13,
+  /* Term_FakeValue   = 14, */
 };
 
 embed_struct struct Ast {
@@ -169,10 +171,30 @@ struct LocalBindings
   s32 count;
 };
 
+#if 0  // This feels a bit duplicated for this stage of development.
+enum AnchorType {AnchorType_Stack, AnchorType_Accessor,};
+struct Anchor {
+  AnchorType type;
+  union {
+    struct {
+      Token name;
+      i32   id;
+      i32   stack_depth;
+    } Stack;
+    struct {
+      Value  *record;
+      i32     field_id;
+      String  field_name;       // #todo #debug_only
+    } Accessor;
+  };
+};
+#endif
+
 embed_struct struct Term
 {
   TermCategory  cat;
-  Term         *type;
+  Value        *type;
+  Anchor       *anchor;
 };
 
 struct Builtin {embed_Term(t); String name;};
@@ -215,14 +237,13 @@ struct FunctionDecl {
   Ast      *body;
 };
 
-struct FunctionId {i32 v;};
+/* struct GlobalId {i32 v;}; */
 struct Function {
   embed_Term(t);
-  Token       name;
-  FunctionId  id;               // :reserved-0-for-function-id
-  Term       *body;
-  Stack      *stack;
-  i32         stack_delta;
+  Token  name;
+  Term  *body;
+  Stack *stack;
+  i32    stack_delta;
 };
 
 Ast LET_TYPE_NORMALIZE_;
@@ -235,13 +256,19 @@ struct Let {
   Ast   *body;
 };
 
-struct StackPointer {
+struct Variable {
   embed_Term(t);
   Token name;
-  s32   id;
-  s32   stack_frame;
-  b32   is_absolute;
+  i32   id;
+  i32   stack_frame;
+  b32   is_absolute;  // #debug-only
 };
+
+#if 0
+struct FakeValue {
+  embed_Term(t);
+};
+#endif
 
 struct TreePath {
   i32       first;  // -1 for op
@@ -457,7 +484,7 @@ struct Fork {
 
 struct Constant {
   embed_Term(t);
-  String name;  // todo #debug-only
+  String name;
   Value *value;
 };
 

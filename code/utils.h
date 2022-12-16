@@ -15,9 +15,11 @@
 #    define COMPILER_MSVC 1
 #endif
 
+#define UNUSED_VAR __attribute__((unused))
+#define unused_variable __attribute__((unused))
 
 #define internal        static
-#define global_variable static
+#define global_variable unused_variable static
 #define local_persist   static
 
 typedef uint8_t  u8;
@@ -450,8 +452,6 @@ concat(String *a, String b)
 {
   a->length += b.length;
 }
-#define UNUSED_VAR __attribute__((unused))
-#define unused_variable __attribute__((unused))
 
 // source: https://groups.google.com/g/comp.std.c/c/d-6Mj5Lko_s
 #define PP_NARG(...) PP_NARG_(__VA_ARGS__,PP_RSEQ_N())
