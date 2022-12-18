@@ -10,6 +10,9 @@ check True: Set;
 
 ;; print_raw =(_, true, false);
 
+typecheck :: fn (id: (A: Set, a: A) -> a=a, b: Bool) -> b=b
+{id(Bool, b)}
+
 check_truth false & true | true = true;
 
 testAbstraction :: fn (a, b: Bool) -> Bool
@@ -112,7 +115,3 @@ print multiplyPos;
 StructWithFunction :: union {makeStructWithFunction: struct {a: Nat, b: (E: a=0) -> False}}
 oneEqualZeroImpliesFalse :: fn () -> ((E: 1=0) -> False) {norm; _ => {E}}
 testFunctionInComposite :: fn (x: StructWithFunction, E: x.a = 0) -> False {norm; x.b(E)}
-
-testFunctionInCompositeCrash :: fn () -> Nat
-{x := makeStructWithFunction(1, oneEqualZeroImpliesFalse())
- }

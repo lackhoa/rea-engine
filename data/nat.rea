@@ -88,14 +88,17 @@ mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*b*c
 test_eval mulAssociative(1,0,0);
 ;; print mulAssociative(1,0,0);
 
-!= :: fn (_A: Set, a, b: _A) -> Type
-{ (E: a = b) -> False }
+!= :: fn (_A: Set, a,b: _A) -> Type
+{ (E: a=b) -> False }
 
-testFillingHole :: (a: Nat, a_positive: a != 0, P: a=0) -> False
-{norm a_positive;
- fork (a)
- {0 : a_positive(_),
-  ++: norm P; P}}
+#debug
+testFillingHole :: (x: Nat, x_positive: x!=0, P: x=0) -> False
+{norm x_positive;
+ fork (x)
+ {0 : norm x_positive; x_positive(_),
+  ++: norm P; P}
+ }
+#debug off
 
 multiplyPos :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
 {norm b_positive; norm a_positive;

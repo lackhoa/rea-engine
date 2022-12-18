@@ -146,6 +146,7 @@ struct Environment
   LocalBindings  *bindings;
   Stack          *stack;
   OverwriteRules *overwrite;
+  /* i32             offset; */
 };
 
 struct AstList
@@ -189,11 +190,11 @@ struct Anchor {
 };
 #endif
 
-embed_struct struct Term
-{
+embed_struct struct Term {
   TermCategory  cat;
   Value        *type;
   Anchor       *anchor;
+  i32           serial;
 };
 
 struct Builtin {embed_Term(t);};
@@ -210,6 +211,7 @@ _newTerm(MemoryArena *arena, TermCategory cat, Value *type, size_t size)
 {
   Term *out = (Term *)pushSize(arena, size, true);
   initValue(out, cat, type);
+  out->serial = global_debug_serial++;
   return out;
 }
 
@@ -239,7 +241,6 @@ struct Function {
   embed_Term(t);
   Term  *body;
   Stack *stack;
-  i32    stack_delta;
 };
 
 Ast LET_TYPE_NORMALIZE_;
@@ -256,15 +257,9 @@ struct Variable {
   embed_Term(t);
   Token name;
   i32   id;
-  i32   stack_frame;
-  b32   is_absolute;  // #debug-only
+  i32   stack_delta;
+  /* b32   is_absolute;  // #debug-only */
 };
-
-#if 0
-struct FakeValue {
-  embed_Term(t);
-};
-#endif
 
 struct TreePath {
   i32       first;  // -1 for op
@@ -345,7 +340,6 @@ getConstructorOf(Term *in0)
 struct BuildExpression
 {
   Term  *term;
-  Value *value;                 // note: values are ground, and contain type (which are of course ground)
   operator bool() { return term; }
 };
 
