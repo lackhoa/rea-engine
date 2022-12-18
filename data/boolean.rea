@@ -2,7 +2,6 @@ Bool :: union {false, true}
 
 typecheck :: fn (id: (A: Set, a: A) -> a=a, b: Bool) -> b=b
 {id(Bool, b)}
-print typecheck;
 
 #should_fail
 typecheck1 :: fn (id: (A: Set, a: A) -> a=a, b: Bool) -> b=b

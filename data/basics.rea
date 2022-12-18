@@ -13,6 +13,7 @@ check True: Set;
 typecheck :: fn (id: (A: Set, a: A) -> a=a, b: Bool) -> b=b
 {id(Bool, b)}
 
+check_truth false & true = false;
 check_truth false & true | true = true;
 
 testAbstraction :: fn (a, b: Bool) -> Bool

@@ -473,6 +473,7 @@ struct Fork {
   Stack   stack;
 };
 
+// todo don't need it, throw it away!
 struct Constant {
   embed_Term(t);
   Token  name;
