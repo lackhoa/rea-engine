@@ -146,7 +146,7 @@ struct Environment
   LocalBindings  *bindings;
   Stack          *stack;
   OverwriteRules *overwrite;
-  /* i32             offset; */
+  i32             offset;
 };
 
 struct AstList
@@ -240,7 +240,6 @@ struct FunctionDecl {
 struct Function {
   embed_Term(t);
   Term  *body;
-  Stack *stack;
 };
 
 Ast LET_TYPE_NORMALIZE_;
@@ -339,7 +338,7 @@ getConstructorOf(Term *in0)
 
 struct BuildExpression
 {
-  Term  *term;
+  Term *term;
   operator bool() { return term; }
 };
 
