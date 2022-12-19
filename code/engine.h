@@ -16,8 +16,6 @@ struct Term;
 struct ArrowAst;
 struct LocalBindings;
 
-typedef Term  Value;
-
 enum AstCategory {
   AC_Null = 0,
   // hole left in for type-checking
@@ -135,7 +133,7 @@ struct Stack
   i32     depth;
   i32     cap;
   i32     count;
-  Value **items;
+  Term **items;
   i32     last_function_id;
 };
 
@@ -170,7 +168,7 @@ struct LocalBindings
 
 embed_struct struct Term {
   TermCategory  cat;
-  Value        *type;
+  Term         *type;
   Token        *global_name;
   i32           serial;
 };
@@ -178,17 +176,17 @@ embed_struct struct Term {
 struct Builtin {embed_Term(t);};
 
 inline void
-initValue(Term *in, TermCategory cat, Value *type)
+initTerm(Term *in, TermCategory cat, Term *type)
 {
   in->cat  = cat;
   in->type = type;
 }
 
 inline Term *
-_newTerm(MemoryArena *arena, TermCategory cat, Value *type, size_t size)
+_newTerm(MemoryArena *arena, TermCategory cat, Term *type, size_t size)
 {
   Term *out = (Term *)pushSize(arena, size, true);
-  initValue(out, cat, type);
+  initTerm(out, cat, type);
   out->serial = global_debug_serial++;
   return out;
 }
@@ -386,17 +384,17 @@ struct Matcher {
   operator bool() { return (cat == MC_Exact) && (Exact == 0); }
 };
 
-inline Matcher exactMatcher(Value *value)
+inline Matcher exactMatcher(Term *value)
 {
   return Matcher{.cat=MC_Exact, .Exact=value};
 }
 
-inline Matcher outputMatcher(Value *value)
+inline Matcher outputMatcher(Term *value)
 {
   return Matcher{.cat=MC_Exact, .Output=value};
 }
 
-struct ValueArray {
+struct TermArray {
   i32    count;
   Term **items;
 };
@@ -436,10 +434,10 @@ struct Lambda {
   Ast      *body;
 };
 
-struct ValuePair
+struct TermPair
 {
-  Value *lhs;
-  Value *rhs;
+  Term *lhs;
+  Term *rhs;
   operator bool() {return lhs && rhs;};
 };
 
