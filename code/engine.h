@@ -141,8 +141,9 @@ struct Stack
 
 struct Typer
 {
-  LocalBindings *bindings;
-  Stack         *type_stack;
+  LocalBindings  *bindings;
+  Stack          *type_stack;
+  OverwriteRules *overwrite;
 };
 
 struct AstList
@@ -450,14 +451,5 @@ struct Fork {
   Term  **bodies;
   Stack   stack;
 };
-
-#if 0
-// todo don't need it, throw it away!
-struct Constant {
-  embed_Term(t);
-  Token  name;
-  Value *value;
-};
-#endif
 
 #include "generated/engine_forward.h"

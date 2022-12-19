@@ -20,7 +20,7 @@ typecheck2 :: fn (id: (A: Set, a: A) -> a=a, a,b: Bool) -> b=b
  {true:  true,
   false: b}}
 
-andAssociative :: fn (a, b, c: Bool) -> (a & b) & c = a & b & c
+andAssociative :: (a, b, c: Bool) -> (a & b) & c = a & b & c
 {fork a
  {false: ,
   true : }}
