@@ -141,7 +141,7 @@ struct Typer
 {
   LocalBindings  *bindings;
   Stack          *type_stack;
-  OverwriteRules *overwrite;
+  OverwriteRules *rules;
 };
 
 struct AstList
