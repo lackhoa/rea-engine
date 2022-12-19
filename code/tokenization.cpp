@@ -392,7 +392,7 @@ nextToken(Tokenizer *tk = global_tokenizer)
            i < arrayCount(keywords);
            i++)
       {
-        if (equal(out, keywords[i]))
+        if (equal(out.string, keywords[i]))
         {
           out.cat = (TokenCategory)((int)TC_Keyword_START + i);
           if (out.cat == TC_Keyword_norm)

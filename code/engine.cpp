@@ -15,6 +15,15 @@ global_variable Term dummy_function_being_built;
 global_variable Term  holev_ = {.cat = Term_Hole};
 global_variable Term *holev = &holev_;
 
+inline String
+globalNameOf(Term *term)
+{
+  if (term->global_name)
+    return term->global_name->string;
+  else
+    return {};
+}
+
 inline void
 print(MemoryArena *buffer, Stack *stack)
 {
@@ -587,18 +596,13 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
     op_signature = 0;
     raw_args     = (void **)in->args;
     arg_count    = in->arg_count;
-    Value *op_value = in->op;
 
-    if (Constant *op_constant = castTerm(in->op, Constant))
-      op_value = op_constant->value;
-
-    if (op_value && op_value->cat != Term_Variable)
+    if (in->op && in->op->cat != Term_Variable)
     {
-      op_signature = castTerm((getTypeNoEnv(op_value)), Arrow);
+      op_signature = castTerm((getTypeNoEnv(in->op)), Arrow);
       assert(op_signature);
-      if (Value *anchor = op_value->anchor)
-        if (Constant *op_constant = castTerm(anchor, Constant))
-          precedence = precedenceOf(op_constant->name);
+      if (Token *global_name = in->op->global_name)
+        precedence = precedenceOf(global_name->string);
     }
   }
   else
@@ -608,7 +612,7 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
     raw_args = (void **)in->args;
     arg_count = in->arg_count;
 
-    precedence = precedenceOf(in->op->token);
+    precedence = precedenceOf(in->op->token.string);
   }
 
   void **printed_args;
@@ -711,7 +715,7 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
       {print(buffer, "_");} break;
 
       case AC_Identifier:
-      {print(buffer, in0->token);} break;
+      {print(buffer, in0->token.string);} break;
 
       case AC_RewriteAst:
       {
@@ -761,7 +765,7 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
              param_id < in->param_count;
              param_id++)
         {
-          print(buffer, in->param_names[param_id]);
+          print(buffer, in->param_names[param_id].string);
           print(buffer, ": ");
           print(buffer, in->param_types[param_id], new_opt);
           if (param_id < in->param_count-1)
@@ -777,7 +781,7 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         AccessorAst *in = castAst(in0, AccessorAst);
         print(buffer, in->record, new_opt);
         print(buffer, ".");
-        print(buffer, in->field_name);
+        print(buffer, in->field_name.string);
       } break;
 
       case AC_FunctionDecl: {print(buffer, "function decl");} break;
@@ -787,7 +791,7 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
       case AC_Let:
       {
         Let *in = castAst(in0, Let);
-        print(buffer, in->lhs);
+        print(buffer, in->lhs.string);
         if (in->type)
         {
           print(buffer, " : ");
@@ -821,15 +825,6 @@ print(MemoryArena *buffer, Ast *in0)
   return print(buffer, in0, {});
 }
 
-inline String
-globalNameOf(Value *value)
-{
-  if (Term *anchor = value->anchor)
-    if (Constant *constant = castTerm(anchor, Constant))
-      return constant->name.string;
-  return {};
-}
-
 forward_declare internal char *
 print(MemoryArena *buffer, Term *in0, PrintOptions opt)
 {// mark: printTerm
@@ -848,15 +843,9 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
       case Term_Variable:
       {
         Variable *in = castTerm(in0, Variable);
-        print(buffer, in->name);
+        print(buffer, in->name.string);
         if (global_debug_mode)
           print(buffer, "[%d,%d]", in->stack_delta, in->id);
-      } break;
-
-      case Term_Constant:
-      {
-        Constant *in = castTerm(in0, Constant);
-        print(buffer, in->name);
       } break;
 
       case Term_Hole:
@@ -868,7 +857,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
       case Term_Union:
       {
         Union *in = castTerm(in0, Union);
-        print(buffer, globalNameOf(in0));
+        print(buffer, in0->global_name->string);
         if (flagIsSet(opt.flags, PrintFlag_Detailed))
         {
           if (in->ctor_count)
@@ -891,7 +880,8 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
       {
         Function *in = castTerm(in0, Function);
         b32 is_anonymous = false;
-        if (String name = globalNameOf(in0))
+        String name = globalNameOf(in0);
+        if (name.chars)
           print(buffer, name);
         else
           is_anonymous = true;
@@ -916,7 +906,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
              param_id < in->param_count;
              param_id++)
         {
-          print(buffer, in->param_names[param_id]);
+          print(buffer, in->param_names[param_id].string);
           print(buffer, ": ");
           print(buffer, in->param_types[param_id], new_opt);
           if (param_id < in->param_count-1)
@@ -1141,7 +1131,6 @@ isOverwritable(Term *in)
     case Term_Constructor:
     case Term_Function:
     case Term_Fork:
-    case Term_Constant:
     {return false;} break;
   }
 }
@@ -1171,7 +1160,7 @@ overwriteTerm(Environment *env, Term *in)
 inline b32
 isGlobalConstant(Value *in0)
 {
-  if (in0->anchor && in0->anchor->cat == Term_Constant)
+  if (in0->global_name)
     return true;
 
   switch (in0->cat)
@@ -1205,7 +1194,6 @@ isGlobalConstant(Value *in0)
     case Term_Builtin:
     case Term_Union:
     case Term_Constructor:
-    case Term_Constant:
     {return true;} break;
 
     case Term_Accessor:
@@ -1404,12 +1392,6 @@ evaluate(MemoryArena *arena, Stack *stack, Term *in0, i32 offset)
           out0 = 0;
       } break;
 
-      case Term_Constant:
-      {
-        Constant *in = castTerm(in0, Constant);
-        out0 = in->value;
-      } break;
-
       case Term_Builtin:
       case Term_Union:
       case Term_Constructor:
@@ -1550,27 +1532,7 @@ compareTerms(MemoryArena *arena, Typer *env, Term *lhs0, Term *rhs0)
         out.result.v = Trinary_True;
       } break;
 
-      case Term_Constant:
-      {
-        Constant *lhs = castTerm(lhs0, Constant);
-        Constant *rhs = castTerm(rhs0, Constant);
-        // todo: are we supposed to be comparing terms or values?
-        out = compareTerms(arena, env, lhs->value, rhs->value);
-      } break;
-
-      // todo: just say don't change the address?
       case Term_Function:
-#if 0
-      {
-        Function *lhs = castTerm(lhs0, Function);
-        Function *rhs = castTerm(rhs0, Function);
-        if (lhs->id.v == rhs->id.v)
-          out.result.v = Trinary_True;
-      } break;
-#else
-      {} break;
-#endif
-
       case Term_Hole:
       case Term_Union:
       case Term_Rewrite:
@@ -1804,7 +1766,6 @@ normalize(MemoryArena *arena, Typer *env, Value *in0)
     case Term_Fork:
     {invalidCodePath;} break;
 
-    case Term_Constant:
     case Term_Variable:
     case Term_Hole:
     case Term_Constructor:
@@ -2003,7 +1964,7 @@ freshVariable(MemoryArena *arena, Environment *env, Token *name, Value *type)
 {
   Variable *var = newTerm(arena, Variable, type);
   var->name        = *name;
-  var->id          = env->stack->count; // :stack-ref-id-has-significance
+  var->id          = env->stack->count;
   var->stack_frame = getStackDepth(env);
   var->is_absolute = true;
   assert(var->stack_frame);
@@ -2019,7 +1980,7 @@ introduceOnStack(MemoryArena* arena, Environment *env, Token *name, Value *type)
   Variable *var = newTerm(arena, Variable, type);
   var->name        = *name;
   var->stack_delta = 0;
-  var->id          = env->stack->count; // :stack-ref-id-has-significance
+  var->id          = env->stack->count;
   intro = &var->t;
 
   addToStack(env, intro);
@@ -2084,12 +2045,8 @@ addGlobalBinding(Token *name, Value *value)
   // TODO #cleanup check for type conflict
   slot->items[slot->count++] = value;
   assert(slot->count < arrayCount(slot->items));
-
-  // note: kind of #hack because constants are terms, but it's harmless.
-  Constant *constant = newTerm(global_arena, Constant, value->type);
-  constant->name  = *name;
-  constant->value = value;
-  value->anchor   = &constant->t;
+  Token *name_copy = copyStruct(global_arena, name);
+  value->global_name = name_copy;
 }
 
 inline void
@@ -2345,12 +2302,7 @@ unify(Typer *env, Value **args, Term **types, Term *lhs0, Value *rhs0)
       }
     } break;
 
-    case Term_Constant:
-    {
-      Constant *lhs = castTerm(lhs0, Constant);
-      success = equal(env, lhs->value, rhs0);
-    } break;
-
+    case Term_Function:
     case Term_Union:
     case Term_Constructor:
     {
@@ -2374,7 +2326,7 @@ inline ValueArray
 getFunctionOverloads(Typer *env, Identifier *ident, Value *output_type_goal)
 {
   ValueArray out = {};
-  if (GlobalBinding *slot = lookupGlobalNameSlot(ident->token, false))
+  if (GlobalBinding *slot = lookupGlobalNameSlot(ident->token.string, false))
   {
     if (output_type_goal->cat == Term_Hole)
     {
@@ -2455,7 +2407,6 @@ searchExpression(MemoryArena *arena, Typer *env, Term *lhs, Term* in0)
       case Term_Arrow:
       case Term_Rewrite:
       case Term_Fork:
-      case Term_Constant:
       {} break;
     }
   }
@@ -2522,7 +2473,7 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
 
         rewrite->right_to_left = false;
         Token next = peekToken();
-        if (equal(next, "<-"))
+        if (equal(next.string, "<-"))
         {
           nextToken();
           rewrite->right_to_left = true;
@@ -3356,7 +3307,7 @@ buildFork(MemoryArena *arena, Typer *env, ForkAst *in, Term *goal)
           Constructor *ctor = 0;
           for (i32 id = 0; id < uni->ctor_count; id++)
           {
-            if (equal(globalNameOf(&uni->ctors[id].t), ctor_name->string))
+            if (equal(uni->ctors[id].global_name->string, ctor_name->string))
             {
               ctor = uni->ctors+id;
               break;
@@ -3380,7 +3331,8 @@ buildFork(MemoryArena *arena, Typer *env, ForkAst *in, Term *goal)
               }
             }
           }
-          else parseError(ctor_name, "expected a constructor");
+          else
+            parseError(ctor_name, "expected a constructor");
         }
 
         if (noError())
@@ -3848,7 +3800,7 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
           // (a+b) * c
           //        ^
           Identifier *op = newAst(arena, Identifier, &op_token);
-          s32 precedence = precedenceOf(op_token);
+          s32 precedence = precedenceOf(op_token.string);
           if (precedence >= opt.min_precedence)
           {
             // recurse
@@ -3929,7 +3881,7 @@ parseConstructor(MemoryArena *arena, Union *uni)
 
       if (noError())
       {
-        struct_->output_type = uni->anchor;
+        struct_->output_type = &uni->t;
         ctor->type = &struct_->t;
       }
     }
@@ -4231,7 +4183,7 @@ parseTopLevel(EngineState *state)
               case TC_DoubleColon:
               {
                 Token after_dcolon = peekToken();
-                if (equal(after_dcolon, "union"))
+                if (equal(after_dcolon.string, "union"))
                 {
                   nextToken();
                   parseUnion(arena, &token);
@@ -4239,7 +4191,7 @@ parseTopLevel(EngineState *state)
                 else
                 {
                   b32 is_theorem;
-                  if (equal(after_dcolon, "fn"))
+                  if (equal(after_dcolon.string, "fn"))
                   {
                     is_theorem = false;
                     nextToken();
@@ -4286,7 +4238,7 @@ parseTopLevel(EngineState *state)
     }
 
     token = nextToken();
-    while (equal(token, ";"))
+    while (equal(token.string, ";"))
     {// todo: should we do "eat all semicolons after the first one?"
       token = nextToken();
     }

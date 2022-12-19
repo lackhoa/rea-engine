@@ -196,7 +196,6 @@ struct String
 {
   char *chars;
   s32   length;                 // note: does not include the nil terminator
-  operator bool() {return chars;}
 };
 
 inline s32

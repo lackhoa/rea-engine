@@ -17,7 +17,6 @@ struct ArrowAst;
 struct LocalBindings;
 
 typedef Term  Value;
-typedef Value Anchor;
 
 enum AstCategory {
   AC_Null = 0,
@@ -43,7 +42,7 @@ enum AstCategory {
 enum TermCategory {
   Term_Hole        = 1,
   Term_Builtin     = 2,
-  Term_Constant    = 3,
+  /* Term_Constant    = 3, */
   Term_Union       = 4,
   Term_Constructor = 5,
   Term_Function    = 6,
@@ -168,29 +167,10 @@ struct LocalBindings
   s32 count;
 };
 
-#if 0  // This feels a bit duplicated for this stage of development.
-enum AnchorType {AnchorType_Stack, AnchorType_Accessor,};
-struct Anchor {
-  AnchorType type;
-  union {
-    struct {
-      Token name;
-      i32   id;
-      i32   stack_depth;
-    } Stack;
-    struct {
-      Value  *record;
-      i32     field_id;
-      String  field_name;       // #todo #debug_only
-    } Accessor;
-  };
-};
-#endif
-
 embed_struct struct Term {
   TermCategory  cat;
   Value        *type;
-  Anchor       *anchor;
+  Token        *global_name;
   i32           serial;
 };
 
@@ -471,11 +451,13 @@ struct Fork {
   Stack   stack;
 };
 
+#if 0
 // todo don't need it, throw it away!
 struct Constant {
   embed_Term(t);
   Token  name;
   Value *value;
 };
+#endif
 
 #include "generated/engine_forward.h"
