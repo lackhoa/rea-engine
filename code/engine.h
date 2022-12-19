@@ -140,13 +140,10 @@ struct Stack
   i32     last_function_id;
 };
 
-// used in normalization, build/typecheck, etc.
-struct Environment
+struct Typer
 {
-  LocalBindings  *bindings;
-  Stack          *stack;
-  OverwriteRules *overwrite;
-  i32             offset;
+  LocalBindings *bindings;
+  Stack         *type_stack;
 };
 
 struct AstList
@@ -240,6 +237,7 @@ struct FunctionDecl {
 struct Function {
   embed_Term(t);
   Term  *body;
+  Stack *stack;
 };
 
 Ast LET_TYPE_NORMALIZE_;
@@ -336,7 +334,7 @@ getConstructorOf(Term *in0)
   return out;
 }
 
-struct BuildExpression
+struct BuildTerm
 {
   Term *term;
   operator bool() { return term; }
