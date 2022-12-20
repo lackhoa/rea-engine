@@ -55,9 +55,9 @@ fillHole(MemoryArena *arena, Typer *env, Term *goal)
   {
     if (eq->op == &builtins.equal->t)
     {
-      Term *lhs_norm = normalize(temp_arena, env->rules, eq->args[1]);
-      Term *rhs_norm = normalize(temp_arena, env->rules, eq->args[2]);
-      if (equal(lhs_norm, rhs_norm))
+      Term *lhs_norm = normalize(temp_arena, env->map, eq->args[1]);
+      Term *rhs_norm = normalize(temp_arena, env->map, eq->args[2]);
+      if (equal(env->map, lhs_norm, rhs_norm))
       {
         out = newComputation(arena, eq->args[1], eq->args[2]);
       }
@@ -266,6 +266,111 @@ lookupStack(Environment *env, Variable *var)
 }
 #endif
 
+inline Composite *
+makeFakeRecord(MemoryArena *arena, Term *parent, Constructor *ctor)
+{
+  Composite *record = 0;
+  Arrow *ctor_sig = castTerm(ctor->type, Arrow);
+  i32 param_count = ctor_sig->param_count;
+  record = newTerm(arena, Composite, 0);
+  record->op        = &ctor->t;
+  record->arg_count = param_count;
+  record->args      = pushArray(arena, param_count, Term*);
+  for (i32 field_id=0; field_id < param_count; field_id++)
+  {
+    String field_name = ctor_sig->param_names[field_id].string;
+    Accessor *accessor = newTerm(arena, Accessor, 0);
+    accessor->record     = parent;
+    accessor->field_id   = field_id;
+    accessor->field_name = field_name;
+    record->args[field_id] = &accessor->t;
+  }
+  return record;
+}
+
+inline Composite *
+castRecord(Term *term)
+{
+  Composite *out = 0;
+  if (Composite *composite = castTerm(term, Composite))
+    if (Constructor *ctor = castTerm(composite->op, Constructor))
+      out = composite;
+  return out;
+}
+
+internal b32
+isPotentialRecord(Term *in)
+{
+  switch (in->cat)
+  {
+    case Term_Variable:
+    case Term_Accessor:
+    case Term_Composite:
+    {return true;} break;
+
+    case Term_Hole:
+    case Term_Rewrite:
+    case Term_Arrow:
+    case Term_Computation:
+    case Term_Builtin:
+    case Term_Union:
+    case Term_Constructor:
+    case Term_Function:
+    case Term_Fork:
+    {return false;} break;
+  }
+}
+
+
+internal Constructor *
+getMappedConstructor(ConstructorMap *ctor_map, Term *in0)
+{
+  Constructor *ctor = 0;
+  i32 serial = global_debug_serial++;
+  b32 debug = true;
+  if (debug && global_debug_mode)
+  {debugIndent(); DUMP("getMappedConstructor(", serial, "): ", in0, "\n");}
+  if (isPotentialRecord(in0))
+  {
+    for (ConstructorMap *map = ctor_map; map; map=map->next)
+    {
+      if (equal(0, in0, map->term))
+      {
+        ctor = map->ctor;
+        break;
+      }
+    }
+  }
+  if (debug && global_debug_mode)
+  {debugDedent(); DUMP("=> ", &ctor->t, "\n");}
+  return ctor;
+}
+
+internal Constructor *
+getConstructor(ConstructorMap *map, Term *in0)
+{
+  Constructor *ctor = 0;
+  if (Composite *in = castTerm(in0, Composite))
+    ctor = castTerm(in->op, Constructor);
+  if (!ctor)
+    ctor = getMappedConstructor(map, in0);
+  return ctor;
+}
+
+internal Composite *
+toRecord(MemoryArena *arena, ConstructorMap *map, Term *in0)
+{
+  Composite *out = 0;
+  if (Composite *in = castRecord(in0))
+    out = in;
+  if (!out)
+  {
+    if (Constructor *ctor = getMappedConstructor(map, in0))
+      out = makeFakeRecord(arena, in0, ctor);
+  }
+  return out;
+}
+
 forward_declare inline Term *
 getType(MemoryArena *arena, Typer *env, Term *in0)
 {
@@ -288,7 +393,7 @@ getType(MemoryArena *arena, Typer *env, Term *in0)
         Composite *in = castTerm(in0, Composite);
         Term *op_type0 = getType(arena, env, in->op);
         Arrow *op_type = castTerm(op_type0, Arrow);
-        out0 = evaluateWithArgs(arena, in->arg_count, in->args, op_type->output_type);
+        out0 = evaluateWithArgs(arena, env->map, in->arg_count, in->args, op_type->output_type);
       } break;
 
       case Term_Arrow:
@@ -310,9 +415,9 @@ getType(MemoryArena *arena, Typer *env, Term *in0)
       case Term_Accessor:
       {
         Accessor *in = castTerm(in0, Accessor);
-        Composite *record    = castTerm(normalize(arena, env->rules, in->record), Composite);
+        Composite *record    = toRecord(arena, env->map, in->record);
         Arrow     *signature = castTerm(getType(env, record->op), Arrow);
-        out0 = evaluateWithArgs(arena, signature->param_count, record->args, signature->param_types[in->field_id]);
+        out0 = evaluateWithArgs(arena, env->map, signature->param_count, record->args, signature->param_types[in->field_id]);
       } break;
 
       default: todoIncomplete
@@ -481,8 +586,8 @@ inline LocalBindings * extendBindings(Typer *env) {return extendBindings(temp_ar
 forward_declare inline void
 dump(Trinary trinary)
 {
-  if (trinary.v == Trinary_True) dump("True");
-  else if (trinary.v == Trinary_False) dump("False");
+  if (trinary == Trinary_True) dump("True");
+  else if (trinary == Trinary_False) dump("False");
   else dump("Unknown");
 }
 
@@ -493,19 +598,6 @@ unwindBindingsAndStack(Typer *env)
 {
   env->bindings = env->bindings->next;
   unwindStack(env);
-}
-
-inline void
-dump(OverwriteRules *rewrite)
-{
-  for (; rewrite; rewrite = rewrite->next)
-  {
-    print(0, rewrite->lhs, {});
-    print(0, " => ");
-    print(0, rewrite->rhs, {});
-    if (rewrite->next)
-      print(0, ", ");
-  }
 }
 
 forward_declare inline void dump(Term *in0) {print(0, in0, {});}
@@ -1049,9 +1141,9 @@ addToStack(Typer *env, Term *value)
 }
 
 forward_declare inline b32
-equal(Term *lhs, Term *rhs)
+equal(ConstructorMap *map, Term *lhs, Term *rhs)
 {
-  return equalTrinary(lhs, rhs).v == Trinary_True;
+  return equalTrinary(map, lhs, rhs) == Trinary_True;
 }
 
 inline b32
@@ -1102,61 +1194,6 @@ rewriteTerm(MemoryArena *arena, Term *rhs, TreePath *path, Term *in0)
 #endif
     return rhs;
   }
-}
-
-internal b32
-isOverwritable(Term *in)
-{
-  switch (in->cat)
-  {
-    case Term_Variable:
-    case Term_Accessor:
-    case Term_Composite:
-    {return true;} break;
-
-    case Term_Hole:
-    case Term_Rewrite:
-    case Term_Arrow:
-    case Term_Computation:
-    case Term_Builtin:
-    case Term_Union:
-    case Term_Constructor:
-    case Term_Function:
-    case Term_Fork:
-    {return false;} break;
-  }
-}
-
-// TODO surely a #hack but darn it works so well!
-internal Term *
-overwriteTerm(OverwriteRules *rules, Term *in)
-{
-  Term *out0 = in;
-  if (true || isOverwritable(in))
-  {
-    for (OverwriteRules *rule = rules;
-         rule;
-         rule = rule->next)
-    {
-      if (equal(in, rule->lhs))
-      {
-        if (Composite *record = castTerm(rule->rhs, Composite))
-        {
-          Composite *out = copyStruct(temp_arena, record);
-          allocateArray(temp_arena, record->arg_count, out->args);
-          for (i32 id=0; id < record->arg_count; id++)
-          {
-            out->args[id] = overwriteTerm(rules, record->args[id]);
-          }
-          out0 = &out->t;
-        }
-        else
-          out0 = rule->rhs;
-        break;
-      }
-    }
-  }
-  return out0;
 }
 
 inline b32
@@ -1260,22 +1297,12 @@ rebase(MemoryArena *arena, Term *in0, i32 delta)
   return rebase(arena, in0, delta, 0);
 }
 
-inline Composite *
-castRecord(Term *term)
-{
-  Composite *out = 0;
-  if (Composite *composite = castTerm(term, Composite))
-    if (Constructor *ctor = castTerm(composite->op, Constructor))
-      out = composite;
-  return out;
-}
-
 forward_declare internal Term *
-evaluate(MemoryArena *arena, Stack *stack, OverwriteRules *rules, Term *in0, i32 offset)
+evaluate(MemoryArena *arena, Stack *stack, ConstructorMap *map, Term *in0, i32 offset)
 {
   Term *out0 = in0;
   i32 serial = global_debug_serial++;
-  b32 debug = true;
+  b32 debug = false;
   if (debug && global_debug_mode)
   {debugIndent(); DUMP("evaluate(", serial, "): ", in0, "\n");}
   if (!isGlobalConstant(in0))
@@ -1288,8 +1315,6 @@ evaluate(MemoryArena *arena, Stack *stack, OverwriteRules *rules, Term *in0, i32
         if (in->stack_delta >= offset)
         {
           out0 = lookupStack(stack, in->stack_delta - offset, in->id);
-          if (offset != 0)
-            __debugbreak();
           out0 = rebase(arena, out0, offset);
         }
       } break;
@@ -1300,8 +1325,8 @@ evaluate(MemoryArena *arena, Stack *stack, OverwriteRules *rules, Term *in0, i32
         Composite *out = copyStruct(arena, in);
         allocateArray(arena, in->arg_count, out->args);
         for (i32 id=0; id < in->arg_count; id++)
-          out->args[id] = evaluate(arena, stack, rules, in->args[id], offset);
-        out->op = evaluate(arena, stack, rules, in->op, offset);
+          out->args[id] = evaluate(arena, stack, map, in->args[id], offset);
+        out->op = evaluate(arena, stack, map, in->op, offset);
 
         out0 = &out->t;
       } break;
@@ -1314,9 +1339,9 @@ evaluate(MemoryArena *arena, Stack *stack, OverwriteRules *rules, Term *in0, i32
         allocateArray(arena, out->param_count, out->param_types);
         for (i32 id=0; id < out->param_count; id++)
         {
-          out->param_types[id] = evaluate(arena, stack, rules, in->param_types[id], offset+1);
+          out->param_types[id] = evaluate(arena, stack, map, in->param_types[id], offset+1);
         }
-        out->output_type = evaluate(arena, stack, rules, out->output_type, offset+1);
+        out->output_type = evaluate(arena, stack, map, out->output_type, offset+1);
 
         out0 = &out->t;
       } break;
@@ -1334,7 +1359,7 @@ evaluate(MemoryArena *arena, Stack *stack, OverwriteRules *rules, Term *in0, i32
       case Term_Accessor:
       {
         Accessor *in  = castTerm(in0, Accessor);
-        Term *record0 = evaluate(arena, stack, rules, in->record, offset);
+        Term *record0 = evaluate(arena, stack, map, in->record, offset);
         if (Composite *record = castRecord(record0))
           out0 = record->args[in->field_id];
         else
@@ -1349,8 +1374,8 @@ evaluate(MemoryArena *arena, Stack *stack, OverwriteRules *rules, Term *in0, i32
       {
         Computation *in  = castTerm(in0, Computation);
         Computation *out = copyStruct(arena, in);
-        out->lhs  = evaluate(arena, stack, rules, in->lhs, offset);
-        out->rhs  = evaluate(arena, stack, rules, in->rhs, offset);
+        out->lhs  = evaluate(arena, stack, map, in->lhs, offset);
+        out->rhs  = evaluate(arena, stack, map, in->rhs, offset);
         out0 = &out->t;
       } break;
 
@@ -1381,27 +1406,9 @@ evaluate(MemoryArena *arena, Stack *stack, OverwriteRules *rules, Term *in0, i32
       case Term_Fork:
       {
         Fork *in = castTerm(in0, Fork);
-        Term *subject = evaluate(temp_arena, stack, rules, in->subject, offset);
-        subject = normalize(temp_arena, rules, subject);
-        Constructor *ctor = 0;
-        switch (subject->cat)
-        {// note: we fail if the fork is undetermined
-          case Term_Constructor:
-          {
-            ctor = castTerm(subject, Constructor);
-          } break;
-
-          case Term_Composite:
-          {
-            Composite *record = castTerm(subject, Composite);
-            ctor = castTerm(record->op, Constructor);
-          } break;
-
-          default: {}
-        }
-
-        if (ctor)
-          out0 = evaluate(arena, stack, rules, in->bodies[ctor->id], offset);
+        Term *subject = evaluate(temp_arena, stack, map, in->subject, offset);
+        if (Constructor *ctor = getConstructor(map, subject))
+          out0 = evaluate(arena, stack, map, in->bodies[ctor->id], offset);
         else
           out0 = 0;
       } break;
@@ -1421,20 +1428,32 @@ evaluate(MemoryArena *arena, Stack *stack, OverwriteRules *rules, Term *in0, i32
 }
 
 forward_declare inline Term *
-evaluateWithArgs(MemoryArena *arena, i32 arg_count, Term **args, Term *in0)
+evaluateWithArgs(MemoryArena *arena, ConstructorMap *map, i32 arg_count, Term **args, Term *in0)
 {
   Stack *stack = pushStruct(temp_arena, Stack, true);
   stack->depth = 1;
   stack->cap   = stack->count = arg_count;
   stack->items = args;
-  return evaluate(arena, stack, 0, in0, 0);
+  return evaluate(arena, stack, map, in0, 0);
+}
+
+inline Constructor *
+getSoleConstructor(Term *type)
+{
+  if (Union *uni = castTerm(type, Union))
+  {
+    if (uni->ctor_count == 1)
+      // sole constructor
+      return uni->ctors + 0;
+  }
+  return 0;
 }
 
 forward_declare internal CompareTerms
-compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
+compareTerms(MemoryArena *arena, ConstructorMap *map, Term *lhs0, Term *rhs0)
 {
   CompareTerms out = {};
-  out.result.v = Trinary_Unknown;
+  out.result = Trinary_Unknown;
 
   b32 debug = true;
   i32 serial = global_debug_serial++;
@@ -1457,7 +1476,7 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
         Variable *lhs = castTerm(lhs0, Variable);
         Variable *rhs = castTerm(rhs0, Variable);
         if ((lhs->stack_delta == rhs->stack_delta) && (lhs->id == rhs->id))
-          out.result.v = Trinary_True;
+          out.result = Trinary_True;
       } break;
 
       case Term_Arrow:
@@ -1470,17 +1489,17 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
           b32 type_mismatch = false;
           for (s32 id = 0; id < param_count; id++)
           {
-            if (!equal(lhs->param_types[id], rhs->param_types[id]))
+            if (!equal(map, lhs->param_types[id], rhs->param_types[id]))
             {
               type_mismatch = true;
               break;
             }
           }
           if (!type_mismatch)
-            out.result = equalTrinary(lhs->output_type, rhs->output_type);
+            out.result = equalTrinary(map, lhs->output_type, rhs->output_type);
         }
         else
-          out.result.v = Trinary_False;
+          out.result = Trinary_False;
       } break;
 
       case Term_Composite:
@@ -1488,14 +1507,14 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
         Composite *lhs = castTerm(lhs0, Composite);
         Composite *rhs = castTerm(rhs0, Composite);
 
-        Trinary op_compare = equalTrinary(lhs->op, rhs->op);
-        if ((op_compare.v == Trinary_False) &&
+        Trinary op_compare = equalTrinary(map, lhs->op, rhs->op);
+        if ((op_compare == Trinary_False) &&
             (lhs->op->cat == Term_Constructor) &&
             (rhs->op->cat == Term_Constructor))
         {
-          out.result.v = Trinary_False;
+          out.result = Trinary_False;
         }
-        else if (op_compare.v == Trinary_True)
+        else if (op_compare == Trinary_True)
         {
           s32 count = lhs->arg_count;
           assert(lhs->arg_count == rhs->arg_count);
@@ -1503,11 +1522,11 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
           int mismatch_count = 0;
           int       unique_diff_id   = 0;
           TreePath *unique_diff_path = 0;
-          out.result.v = Trinary_True;
+          out.result = Trinary_True;
           for (i32 id=0; id < count; id++)
           {
-            CompareTerms recurse = compareTerms(arena, lhs->args[id], rhs->args[id]);
-            if (recurse.result.v != Trinary_True)
+            CompareTerms recurse = compareTerms(arena, map, lhs->args[id], rhs->args[id]);
+            if (recurse.result != Trinary_True)
             {
               mismatch_count++;
               if (mismatch_count == 1)
@@ -1518,7 +1537,7 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
             }
           }
           if (mismatch_count > 0)
-            out.result.v = Trinary_Unknown;
+            out.result = Trinary_Unknown;
           if ((mismatch_count == 1) && arena)
           {
             allocate(arena, out.diff_path);
@@ -1539,12 +1558,12 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
       {
         Accessor *lhs = castTerm(lhs0, Accessor);
         Accessor *rhs = castTerm(rhs0, Accessor);
-        out.result = compareTerms(arena, lhs->record, rhs->record).result;
+        out.result = compareTerms(arena, map, lhs->record, rhs->record).result;
       } break;
 
       case Term_Builtin:
       {
-        out.result.v = Trinary_True;
+        out.result = toTrinary(lhs0 == rhs0);
       } break;
 
       case Term_Function:
@@ -1556,10 +1575,15 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
       {} break;
     }
   }
-  else if (((lhs0->cat == Term_Constructor) && isCompositeConstructor(rhs0)) ||
-           ((rhs0->cat == Term_Constructor) && isCompositeConstructor(lhs0)))
+  else
   {
-    out.result.v = Trinary_False;
+    if (isPotentialRecord(lhs0) || isPotentialRecord(rhs0))
+    {
+      Composite *new_lhs0 = toRecord(temp_arena, map, lhs0);
+      Composite *new_rhs0 = toRecord(temp_arena, map, rhs0);
+      if (new_lhs0 && new_rhs0)
+        out = compareTerms(arena, map, &new_lhs0->t, &new_rhs0->t);
+    }
   }
 
   if (debug && global_debug_mode)
@@ -1568,9 +1592,9 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
 }
 
 forward_declare internal Trinary
-equalTrinary(Term *lhs0, Term *rhs0)
+equalTrinary(ConstructorMap *map, Term *lhs0, Term *rhs0)
 {
-  return compareTerms(0, lhs0, rhs0).result;
+  return compareTerms(0, map, lhs0, rhs0).result;
 }
 
 global_variable GlobalBindings *global_bindings;
@@ -1659,7 +1683,7 @@ lookupCurrentFrame(LocalBindings *bindings, String key, b32 add_if_missing)
 
 // todo #cleanup #mem don't allocate too soon
 forward_declare internal Term *
-normalize(MemoryArena *arena, OverwriteRules *rules, Term *in0) 
+normalize(MemoryArena *arena, ConstructorMap *map, Term *in0) 
 {
   Term *out0 = {};
 
@@ -1680,20 +1704,20 @@ normalize(MemoryArena *arena, OverwriteRules *rules, Term *in0)
            arg_id < in->arg_count;
            arg_id++)
       {
-        norm_args[arg_id] = normalize(arena, rules, in->args[arg_id]);
+        norm_args[arg_id] = normalize(arena, map, in->args[arg_id]);
         progressed = progressed || (norm_args[arg_id] != in->args[arg_id]);
       }
 
-      Term *norm_op = normalize(arena, rules, in->op);
+      Term *norm_op = normalize(arena, map, in->op);
       progressed = progressed || (norm_op != in->op);
       if (norm_op->cat == Term_Function)
       {// Function application
         Function *fun = castTerm(norm_op, Function);
         if (fun->body != &dummy_function_being_built)
         {
-          Term *eval = evaluateWithArgs(arena, in->arg_count, norm_args, fun->body);
+          Term *eval = evaluateWithArgs(arena, map, in->arg_count, norm_args, fun->body);
           if (eval)
-            out0 = normalize(arena, rules, eval);
+            out0 = normalize(arena, map, eval);
         }
       }
       else
@@ -1704,9 +1728,9 @@ normalize(MemoryArena *arena, OverwriteRules *rules, Term *in0)
         {// special case for equality
           Term *lhs = norm_args[1];
           Term *rhs = norm_args[2];
-          Trinary compare = equalTrinary(lhs, rhs);
+          Trinary compare = equalTrinary(map, lhs, rhs);
           // #hack to handle inconsistency
-          if (compare.v == Trinary_False)
+          if (compare == Trinary_False)
             out0 = &builtins.False->t;
         }
       }
@@ -1734,9 +1758,9 @@ normalize(MemoryArena *arena, OverwriteRules *rules, Term *in0)
       allocateArray(arena, out->param_count, out->param_types);
       for (i32 id=0; id < out->param_count; id++)
       {
-        out->param_types[id] = normalize(arena, rules, in->param_types[id]);
+        out->param_types[id] = normalize(arena, map, in->param_types[id]);
       }
-      out->output_type = normalize(arena, rules, out->output_type);
+      out->output_type = normalize(arena, map, out->output_type);
 
       out0 = &out->t;
     } break;
@@ -1744,8 +1768,8 @@ normalize(MemoryArena *arena, OverwriteRules *rules, Term *in0)
     case Term_Rewrite:
     {
       Rewrite *in   = castTerm(in0, Rewrite);
-      Term *body     = normalize(arena, rules, in->body);
-      Term *eq_proof = normalize(arena, rules, in->eq_proof);
+      Term *body     = normalize(arena, map, in->body);
+      Term *eq_proof = normalize(arena, map, in->eq_proof);
       if ((body != in->body) || (eq_proof != in->eq_proof))
       {
         Rewrite *out = copyStruct(arena, in);
@@ -1760,7 +1784,7 @@ normalize(MemoryArena *arena, OverwriteRules *rules, Term *in0)
     {
       out0 = in0;
       Accessor *in = castTerm(in0, Accessor);
-      Term *record0 = normalize(arena, rules, in->record);
+      Term *record0 = normalize(arena, map, in->record);
       if (Composite *record = castRecord(record0))
         out0 = record->args[in->field_id];
     } break;
@@ -1780,9 +1804,6 @@ normalize(MemoryArena *arena, OverwriteRules *rules, Term *in0)
 
   if (debug && global_debug_mode)
   {debugDedent(); dump("=> "); dump(out0); dump();}
-
-  if (out0)
-    out0 = overwriteTerm(rules, out0);
 
   assert(isSequenced(in0) || out0);
   return out0;
@@ -1910,56 +1931,6 @@ addLocalBinding(Typer *env, Token *key)
 {
   auto lookup = lookupCurrentFrame(env->bindings, key->string, true);
   lookup.slot->value = env->bindings->count++;
-}
-
-inline Constructor *
-getSoleConstructor(Term *type)
-{
-  if (Union *uni = castTerm(type, Union))
-  {
-    if (uni->ctor_count == 1)
-      // sole constructor
-      return uni->ctors + 0;
-  }
-  return 0;
-}
-
-inline Term *
-makeFakeRecord(MemoryArena *arena, Typer *env, Term *parent, Constructor *ctor)
-{
-  Term *out = 0;
-  if (Arrow *ctor_sig = castTerm(ctor->type, Arrow))
-  {
-    i32 param_count = ctor_sig->param_count;
-    Composite *record = newTerm(arena, Composite, 0);
-    record->op        = &ctor->t;
-    record->arg_count = param_count;
-    record->args      = pushArray(arena, param_count, Term*);
-    for (i32 field_id=0; field_id < param_count; field_id++)
-    {
-      String field_name = ctor_sig->param_names[field_id].string;
-      Term *member_type = evaluateWithArgs(arena, param_count, record->args, ctor_sig->param_types[field_id]);
-      Accessor *accessor = newTerm(arena, Accessor, member_type);
-      accessor->record     = parent;
-      accessor->field_id   = field_id;
-      accessor->field_name = field_name;
-
-      if (Constructor *field_ctor = getSoleConstructor(member_type))
-      {// recursive case
-        Term *intro = makeFakeRecord(arena, env, &accessor->t, field_ctor);
-        record->args[field_id] = intro;
-      }
-      else  // base case
-        record->args[field_id] = &accessor->t;
-    }
-    out = &record->t;
-  }
-  else
-  {
-    assert(ctor->type->cat == Term_Union);
-    out = &ctor->t;
-  }
-  return out;
 }
 
 #if 0
@@ -2194,32 +2165,21 @@ isExpressionEndMarker(Token *token)
     return false;
 }
 
-#if 1
 internal b32
-addOverwriteRule(Typer *env, Term *lhs0, Term *rhs0)
+addConstructorMap(Typer *env, Term *in0, Constructor *ctor)
 {
   b32 added = false;
-  if (isOverwritable(lhs0))
+  if (isPotentialRecord(in0))
   {
-    if (!equal(lhs0, rhs0))
-    {
-      OverwriteRules *rule = pushStruct(temp_arena, OverwriteRules);
-      rule->lhs  = lhs0;
-      rule->rhs  = rhs0;
-      rule->next = env->rules;
-      env->rules = rule;
-      added= true;
-    }
+    ConstructorMap *map = pushStruct(temp_arena, ConstructorMap);
+    map->term  = in0;
+    map->ctor  = ctor;
+    map->next  = env->map;
+    env->map = map;
+    added= true;
   }
   return added;
 }
-
-inline void
-removeRewriteRule(Typer *env)
-{
-  env->rules = env->rules->next;
-}
-#endif
 
 inline s32
 getExplicitParamCount(ArrowAst *in)
@@ -2246,12 +2206,12 @@ getExplicitParamCount(Arrow *in)
 }
 
 inline b32
-matchType(Term *actual, Term *expected)
+matchType(ConstructorMap *map, Term *actual, Term *expected)
 {
   b32 out = false;
   if (expected->cat == Term_Hole)
     out = true;
-  else if (equal(actual, expected))
+  else if (equal(map, actual, expected))
     out = true;
   return out;
 }
@@ -2278,7 +2238,7 @@ unify(Typer *env, Term **args, Term **types, Term *lhs0, Term *rhs0)
         todoIncomplete;
       if (Term *replaced = args[lhs->id])
       {
-        if (equal(replaced, rhs0))
+        if (equal(env->map, replaced, rhs0))
           success = true;
       }
       else if (unify(env, args, types, types[lhs->id], getType(env, rhs0)))
@@ -2312,7 +2272,7 @@ unify(Typer *env, Term **args, Term **types, Term *lhs0, Term *rhs0)
     case Term_Union:
     case Term_Constructor:
     {
-      success = equal(lhs0, rhs0);
+      success = equal(env->map, lhs0, rhs0);
     } break;
 
     default:
@@ -2364,7 +2324,7 @@ internal SearchOutput
 searchExpression(MemoryArena *arena, Typer *env, Term *lhs, Term* in0)
 {
   SearchOutput out = {};
-  if (equal(in0, lhs))
+  if (equal(env->map, in0, lhs))
     out.found = true;
   else
   {
@@ -2692,7 +2652,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           for (s32 value_id = 0; value_id < globals->count; value_id++)
           {
             Term *slot_value = globals->items[value_id];
-            if (matchType(getTypeNoEnv(slot_value), goal))
+            if (matchType(0, getTypeNoEnv(slot_value), goal))
             {
               if (value)
               {// ambiguous
@@ -2793,7 +2753,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                  arg_id++)
             {
               Term *param_type0 = signature->param_types[arg_id];
-              Term *expected_arg_type = evaluateWithArgs(temp_arena, signature->param_count, args, param_type0);
+              Term *expected_arg_type = evaluateWithArgs(temp_arena, env->map, signature->param_count, args, param_type0);
 
               // Typecheck & Inference for the arguments.
               if (in->args[arg_id]->cat == AC_Hole)
@@ -2819,7 +2779,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                     Term *placeholder_arg = args[param_type->id];
                     assert(placeholder_arg->cat == Term_Hole);
                     Term *arg_type = getType(env, arg.term);
-                    if (equal(getType(env, placeholder_arg), getType(env, arg_type)))
+                    if (equal(env->map, getType(env, placeholder_arg), getType(env, arg_type)))
                       args[param_type->id] = arg_type;
                     else
                     {
@@ -2921,38 +2881,32 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       out->field_name = in->field_name.string;
       if (BuildTerm build_record = buildTerm(arena, env, in->record, holev))
       {
-        Term *record0 = overwriteTerm(env->rules, build_record.term);
-        b32 is_record = false;
-        if (Composite *record = castTerm(record0, Composite))
+        if (Constructor *ctor = getConstructor(env->map, build_record.term))
         {
-          if (Constructor *ctor = castTerm(record->op, Constructor))
-          {
-            is_record = true;
-            out->record = build_record.term;
-            Arrow *op_type = castTerm(getType(env, record->op), Arrow);
-            s32 param_count = op_type->param_count;
-            b32 valid_param_name = false;
-            for (s32 param_id=0; param_id < param_count; param_id++)
-            {// figure out the param id
-              if (equal(in->field_name.string, op_type->param_names[param_id].string))
-              {
-                out->field_id  = param_id;
-                valid_param_name = true;
-                break;
-              }
-            }
-
-            if (valid_param_name)
-              out0.term = &out->t;
-            else
+          out->record = build_record.term;
+          Arrow *op_type = castTerm(ctor->type, Arrow);
+          s32 param_count = op_type->param_count;
+          b32 valid_param_name = false;
+          for (s32 param_id=0; param_id < param_count; param_id++)
+          {// figure out the param id
+            if (equal(in->field_name.string, op_type->param_names[param_id].string))
             {
-              tokenError(&in->field_name, "accessor has invalid member");
-              attach("expected a member of constructor", record->op);
-              attach("in type", op_type->output_type);
+              out->field_id  = param_id;
+              valid_param_name = true;
+              break;
             }
           }
+
+          if (valid_param_name)
+            out0.term = &out->t;
+          else
+          {
+            tokenError(&in->field_name, "accessor has invalid member");
+            attach("expected a member of constructor", &ctor->t);
+            attach("in type", op_type->output_type);
+          }
         }
-        if (!is_record)
+        else
           parseError(in->record, "cannot access a non-record");
       }
     } break;
@@ -2994,7 +2948,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         b32 skip_goal_comparison = false;
         if (!in->new_goal)
         {
-          new_goal = normalize(arena, env->rules, goal);
+          new_goal = normalize(arena, env->map, goal);
           skip_goal_comparison = true;
         }
         else if (BuildTerm build = buildTerm(arena, env, in->new_goal, holev))
@@ -3002,7 +2956,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 
         if (noError())
         {
-          if (equal(new_goal, goal))
+          if (equal(env->map, new_goal, goal))
           {// superfluous rewrite -> remove
             recursed = true;
             out0 = buildTerm(arena, env, in->body, goal);
@@ -3011,12 +2965,12 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           {
             if (!skip_goal_comparison)
             {
-              Term *new_goal_norm = normalize(arena, env->rules, new_goal);
-              Term *goal_norm     = normalize(arena, env->rules, goal);
-              if (!equal(new_goal_norm, goal_norm))
+              Term *new_goal_norm = normalize(arena, env->map, new_goal);
+              Term *goal_norm     = normalize(arena, env->map, goal);
+              if (!equal(env->map, new_goal_norm, goal_norm))
               {
                 parseError(in0, "new goal does not match original");
-                equal(new_goal_norm, goal_norm);
+                equal(env->map, new_goal_norm, goal_norm);
                 attach("new goal normalized", new_goal_norm);
                 attach("current goal normalized", goal_norm);
               }
@@ -3259,7 +3213,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
   if (noError() && (goal != holev) && should_check_type && !recursed)
   {// one last typecheck if needed
     Term *actual = getType(env, out0.term);
-    if (!matchType(actual, goal))
+    if (!matchType(env->map, actual, goal))
     {
       parseError(in0, "actual type differs from expected type");
       attach("got", actual);
@@ -3312,7 +3266,7 @@ buildFork(MemoryArena *arena, Typer *env, ForkAst *in, Term *goal)
           Constructor *ctor = 0;
           for (i32 id = 0; id < uni->ctor_count; id++)
           {
-            if (equal(uni->ctors[id].global_name->string, ctor_name->string))
+            if (equal(uni->ctors[id].name.string, ctor_name->string))
             {
               ctor = uni->ctors+id;
               break;
@@ -3321,20 +3275,23 @@ buildFork(MemoryArena *arena, Typer *env, ForkAst *in, Term *goal)
 
           if (ctor)
           {
-            Term *record = makeFakeRecord(temp_arena, env, subject.term, ctor);
-            addOverwriteRule(env, subject.term, record);
-            if (ordered_bodies[ctor->id])
+            if (addConstructorMap(env, subject.term, ctor))
             {
-              parseError(in->bodies[input_case_id], "fork case handled twice");
-              attach("constructor", &ctor->t);
-            }
-            else
-            {
-              if (BuildTerm body = buildTerm(arena, env, in->bodies[input_case_id], goal))
+              if (ordered_bodies[ctor->id])
               {
-                ordered_bodies[ctor->id] = body.term;
+                parseError(in->bodies[input_case_id], "fork case handled twice");
+                attach("constructor", &ctor->t);
+              }
+              else
+              {
+                if (BuildTerm body = buildTerm(arena, env, in->bodies[input_case_id], goal))
+                {
+                  ordered_bodies[ctor->id] = body.term;
+                }
               }
             }
+            else
+              parseError(in->subject, "cannot fork this term");
           }
           else
             parseError(ctor_name, "expected a constructor");
@@ -3864,10 +3821,10 @@ parseConstructor(MemoryArena *arena, Union *uni)
   Constructor *ctor = uni->ctors + ctor_id;
   initTerm(&ctor->t, Term_Constructor, 0);
   ctor->uni  = uni;
-  Token ctor_name = nextToken();
+  ctor->name = nextToken();
   ctor->id   = ctor_id;
 
-  if (isIdentifier(&ctor_name))
+  if (isIdentifier(&ctor->name))
   {
     if (optionalChar(':'))
     {// subtype
@@ -3888,18 +3845,26 @@ parseConstructor(MemoryArena *arena, Union *uni)
       {
         struct_->output_type = &uni->t;
         ctor->type = &struct_->t;
+        addGlobalBinding(&ctor->name, &ctor->t);
       }
     }
     else
-    {// enum constructor
-      if (uni->type == &builtins.Set->t) ctor->type = &uni->t;
-      else parseError(&ctor_name, "constructors must construct a set member");
+    {// atomic constructor
+      if (uni->type == &builtins.Set->t)
+      {
+        Arrow *signature = newTerm(arena, Arrow, 0);
+        signature->output_type = &uni->t;
+        ctor->type = &signature->t;
+        Composite *record = newTerm(arena, Composite, 0);
+        record->op = &ctor->t;
+        addGlobalBinding(&ctor->name, &record->t);
+      }
+      else
+        parseError(&ctor->name, "constructors must construct a set member");
     }
-
-    if (noError())
-      addGlobalBinding(&ctor_name, &ctor->t);
   }
-  else tokenError("expected an identifier as constructor name");
+  else
+    tokenError("expected an identifier as constructor name");
 }
 
 internal void
@@ -4141,7 +4106,7 @@ parseTopLevel(EngineState *state)
                 goal_valid = true;
                 Term *lhs = normalize(temp_arena, 0, eq->args[1]);
                 Term *rhs = normalize(temp_arena, 0, eq->args[2]);
-                if (!equal(lhs, rhs))
+                if (!equal(0, lhs, rhs))
                 {
                   parseError(&token, "equality cannot be proven by computation");
                   setErrorCode(ErrorWrongType);

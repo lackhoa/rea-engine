@@ -12,6 +12,7 @@ global_variable b32          global_debug_mode;
 global_variable MemoryArena *global_arena;
 global_variable i32          global_debug_serial;
 
+struct Constructor;
 struct Term;
 struct ArrowAst;
 struct LocalBindings;
@@ -106,25 +107,31 @@ struct ParseExpressionOptions
   s32 min_precedence = -9999;
 };
 
-// NOTE: bool can be converted directly to this
-enum TrinaryValue
-{
-  Trinary_False   = 0,
-  Trinary_True    = 1,
-  Trinary_Unknown = 2,
-};
-struct Trinary {TrinaryValue v;};
+
+struct Trinary {i32 v;};
+Trinary Trinary_False   = Trinary{0};
+Trinary Trinary_True    = Trinary{1};
+Trinary Trinary_Unknown = Trinary{2};
 Trinary toTrinary(b32 v)
 {
-  if (v == 0) return Trinary{Trinary_False};
-  else return Trinary{Trinary_True};
+  if (v == 0) return Trinary_False;
+  else return Trinary_True;
 }
 
-struct OverwriteRules
+b32 operator==(Trinary a, Trinary b)
 {
-  Term *lhs;
-  Term *rhs;
-  OverwriteRules *next;
+  return a.v == b.v;
+}
+
+b32 operator!=(Trinary a, Trinary b)
+{
+  return a.v != b.v;
+}
+
+struct ConstructorMap {
+  Term           *term;
+  Constructor    *ctor;
+  ConstructorMap *next;
 };
 
 struct Stack
@@ -141,7 +148,7 @@ struct Typer
 {
   LocalBindings  *bindings;
   Stack          *type_stack;
-  OverwriteRules *rules;
+  ConstructorMap *map;
 };
 
 struct AstList
@@ -196,6 +203,7 @@ _newTerm(MemoryArena *arena, TermCategory cat, Term *type, size_t size)
 
 struct Constructor {
   embed_Term(t);
+  Token  name;
   Union *uni;
   i32    id;
 };
@@ -290,28 +298,6 @@ struct GlobalBindings  // :global-bindings-zero-at-startup
 {
     GlobalBinding table[1024];
 };
-
-inline Union *
-getConstructorOf(Term *in0)
-{
-  Union *out = 0;
-  switch (in0->cat)
-  {
-    case Term_Composite:
-    {
-      if (Composite *in = castTerm(in0, Composite))
-        out = castTerm(in->op, Union);
-    } break;
-
-    case Term_Union:
-    {
-      out = castTerm(in0, Union);
-    } break;
-
-    invalidDefaultCase;
-  }
-  return out;
-}
 
 struct BuildTerm
 {
