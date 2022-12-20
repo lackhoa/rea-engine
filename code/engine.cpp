@@ -447,7 +447,7 @@ getType(MemoryArena *arena, Typer *env, Term *in0)
         Composite *in = castTerm(in0, Composite);
         Term *op_type0 = getType(arena, env, in->op);
         Arrow *op_type = castTerm(op_type0, Arrow);
-        out0 = evaluateWithArgs(arena, env, in->arg_count, in->args, op_type->output_type);
+        out0 = evaluate(arena, env, in->args, op_type->output_type);
       } break;
 
       case Term_Arrow:
@@ -471,7 +471,7 @@ getType(MemoryArena *arena, Typer *env, Term *in0)
         Accessor *in = castTerm(in0, Accessor);
         Composite *record    = toRecord(arena, env, in->record);
         Arrow     *signature = castTerm(getType(arena, env, record->op), Arrow);
-        out0 = evaluateWithArgs(arena, env, signature->param_count, record->args, signature->param_types[in->field_id]);
+        out0 = evaluate(arena, env, record->args, signature->param_types[in->field_id]);
       } break;
 
       case Term_Rewrite:
@@ -1303,82 +1303,121 @@ rebase(MemoryArena *arena, Term *in0, i32 delta)
   return rebaseMain(arena, in0, delta, 0);
 }
 
-forward_declare internal Term *
-evaluate(MemoryArena *arena, Stack *stack, Typer *env, Term *in0, i32 offset)
+internal Term *
+apply(MemoryArena *arena, Typer *env, Term *op, Term **args)
 {
-  Term *out0 = in0;
+  Term *out0 = 0;
+  if (Function *fun = castTerm(op, Function))
+  {// Function application
+    if (fun->body != &dummy_function_being_built)
+      out0 = evaluateAndNormalize(arena, env, args, fun->body);
+  }
+  else
+  {
+    assert((op == &builtins.equal->t) || (op->cat == Term_Constructor));
+    // special casing for equality
+    if (op == &builtins.equal->t)
+    {// special case for equality
+      Term *lhs = args[1];
+      Term *rhs = args[2];
+      Trinary compare = equalTrinary(env, lhs, rhs);
+      // #hack to handle inconsistency
+      if (compare == Trinary_False)
+        out0 = &builtins.False->t;
+    }
+  }
+  return out0;
+}
+
+forward_declare internal Term *
+evaluateMain(EvaluationContext *ctx, Term *in0)
+{
+  Term *out0 = 0;
   i32 serial = global_debug_serial++;
-  b32 debug = false;
+  b32 debug = true;
   if (debug && global_debug_mode)
   {debugIndent(); DUMP("evaluate(", serial, "): ", in0, "\n");}
-  assert(offset >= 0);
-  if (!isGlobalConstant(in0))
+  assert(ctx->offset >= 0);
+  if (isGlobalConstant(in0))
+    out0 = in0;
+  else
   {
     switch (in0->cat)
     {
       case Term_Variable:
       {
         Variable *in = castTerm(in0, Variable);
-        if (in->stack_delta == offset)
+        if (in->stack_delta == ctx->offset)
         {
-          out0 = lookupStack(stack, in->stack_delta - offset, in->id);
-          out0 = rebase(arena, out0, offset);
+          out0 = ctx->args[in->id];
+          out0 = rebase(ctx->arena, out0, ctx->offset);
         }
-        else if (in->stack_delta > offset)
+        else if (in->stack_delta > ctx->offset)
         {
-          // TODO this is rocket science in here...
-          Variable *out = copyStruct(arena, in);
-          out->stack_delta--;
+          Variable *out = copyStruct(ctx->arena, in);
+          out->stack_delta--;  // TODO this is rocket science in here...
           out0 = &out->t;
         }
+        else
+          out0 = in0;
       } break;
 
       case Term_Composite:
       {
         Composite *in  = castTerm(in0, Composite);
-        Composite *out = copyStruct(arena, in);
-        allocateArray(arena, in->arg_count, out->args);
+        Term **args = pushArray(ctx->arena, in->arg_count, Term *);
+        Term *op = evaluateMain(ctx, in->op);
         for (i32 id=0; id < in->arg_count; id++)
-          out->args[id] = evaluate(arena, stack, env, in->args[id], offset);
-        out->op = evaluate(arena, stack, env, in->op, offset);
+          args[id] = evaluateMain(ctx, in->args[id]);
 
-        out0 = &out->t;
+        if (ctx->normalize)
+          out0 = apply(ctx->arena, ctx->env, op, args);
+
+        if (!out0)
+        {
+          Composite *out = copyStruct(ctx->arena, in);
+          out->op   = op;
+          out->args = args;
+          out0 = &out->t;
+        }
       } break;
 
       case Term_Arrow:
       {
         Arrow *in  = castTerm(in0, Arrow);
-        Arrow *out = copyStruct(arena, in);
+        Arrow *out = copyStruct(ctx->arena, in);
 
-        allocateArray(arena, out->param_count, out->param_types);
+        allocateArray(ctx->arena, out->param_count, out->param_types);
+        ctx->offset++;
         for (i32 id=0; id < out->param_count; id++)
         {
-          out->param_types[id] = evaluate(arena, stack, env, in->param_types[id], offset+1);
+          out->param_types[id] = evaluateMain(ctx, in->param_types[id]);
         }
-        out->output_type = evaluate(arena, stack, env, out->output_type, offset+1);
+        out->output_type = evaluateMain(ctx, out->output_type);
+        ctx->offset--;
 
         out0 = &out->t;
       } break;
 
       case Term_Function:
       {
-        if (offset)
+        todoIncomplete;
+        if (ctx->offset)
           todoIncomplete;  // we can outlaw this, but possible to handle if we must
         Function *in = castTerm(in0, Function);
-        Function *out = copyStruct(arena, in);
-        out->stack = stack;
+        Function *out = copyStruct(ctx->arena, in);
         out0 = &out->t;
       } break;
 
       case Term_Accessor:
       {
         Accessor *in  = castTerm(in0, Accessor);
-        Term *record0 = evaluate(arena, stack, env, in->record, offset);
+        Term *record0 = evaluateMain(ctx, in->record);
         if (Composite *record = castRecord(record0))
           out0 = record->args[in->field_id];
         else
         {
-          Accessor *out = copyStruct(arena, in);
+          Accessor *out = copyStruct(ctx->arena, in);
           out->record = record0;
           out0 = &out->t;
         }
@@ -1387,21 +1426,24 @@ evaluate(MemoryArena *arena, Stack *stack, Typer *env, Term *in0, i32 offset)
       case Term_Computation:
       {
         Computation *in  = castTerm(in0, Computation);
-        Computation *out = copyStruct(arena, in);
-        out->lhs  = evaluate(arena, stack, env, in->lhs, offset);
-        out->rhs  = evaluate(arena, stack, env, in->rhs, offset);
+        Computation *out = copyStruct(ctx->arena, in);
+        // todo #theory temporary hacking so it doesn't normalize our propositions
+        b32 old_normalize = ctx->normalize;
+        ctx->normalize = false;
+        out->lhs = evaluateMain(ctx, in->lhs);
+        out->rhs = evaluateMain(ctx, in->rhs);
+        ctx->normalize = old_normalize;
         out0 = &out->t;
       } break;
 
       case Term_Rewrite:
       {
         Rewrite *in  = castTerm(in0, Rewrite);
-        out0 = in0;
-        if (Term *eq_proof = evaluate(arena, stack, env, in->eq_proof, offset))
+        if (Term *eq_proof = evaluateMain(ctx, in->eq_proof))
         {
-          if (Term *body = evaluate(arena, stack, env, in->body, offset))
+          if (Term *body = evaluateMain(ctx, in->body))
           {
-            Rewrite *out = copyStruct(arena, in);
+            Rewrite *out = copyStruct(ctx->arena, in);
             out->eq_proof = eq_proof;
             out->body     = body;
             out0 = &out->t;
@@ -1412,11 +1454,9 @@ evaluate(MemoryArena *arena, Stack *stack, Typer *env, Term *in0, i32 offset)
       case Term_Fork:
       {
         Fork *in = castTerm(in0, Fork);
-        Term *subject = evaluate(temp_arena, stack, env, in->subject, offset);
-        if (Constructor *ctor = getConstructor(env, subject))
-          out0 = evaluate(arena, stack, env, in->bodies[ctor->id], offset);
-        else
-          out0 = 0;
+        Term *subject = evaluateMain(ctx, in->subject);
+        if (Constructor *ctor = getConstructor(ctx->env, subject))
+          out0 = evaluateMain(ctx, in->bodies[ctor->id]);
       } break;
 
       case Term_Builtin:
@@ -1434,13 +1474,17 @@ evaluate(MemoryArena *arena, Stack *stack, Typer *env, Term *in0, i32 offset)
 }
 
 forward_declare inline Term *
-evaluateWithArgs(MemoryArena *arena, Typer *env, i32 arg_count, Term **args, Term *in0)
+evaluate(MemoryArena *arena, Typer *env, Term **args, Term *in0)
 {
-  Stack *stack = pushStruct(temp_arena, Stack, true);
-  stack->depth = 1;
-  stack->cap   = stack->count = arg_count;
-  stack->items = args;
-  return evaluate(arena, stack, env, in0, 0);
+  EvaluationContext ctx = {.arena=arena, .env=env, .args=args, .normalize=false};
+  return evaluateMain(&ctx, in0);
+}
+
+forward_declare inline Term *
+evaluateAndNormalize(MemoryArena *arena, Typer *env, Term **args, Term *in0)
+{
+  EvaluationContext ctx = {.arena=arena, .env=env, .args=args, .normalize=true};
+  return evaluateMain(&ctx, in0);
 }
 
 inline Constructor *
@@ -1716,30 +1760,8 @@ normalize(MemoryArena *arena, Typer *env, Term *in0)
 
       Term *norm_op = normalize(arena, env, in->op);
       progressed = progressed || (norm_op != in->op);
-      if (norm_op->cat == Term_Function)
-      {// Function application
-        Function *fun = castTerm(norm_op, Function);
-        if (fun->body != &dummy_function_being_built)
-        {
-          Term *eval = evaluateWithArgs(arena, env, in->arg_count, norm_args, fun->body);
-          if (eval)
-            out0 = normalize(arena, env, eval);
-        }
-      }
-      else
-      {
-        assert((norm_op == &builtins.equal->t) || (norm_op->cat == Term_Constructor));
-        // special casing for equality
-        if (norm_op == &builtins.equal->t)
-        {// special case for equality
-          Term *lhs = norm_args[1];
-          Term *rhs = norm_args[2];
-          Trinary compare = equalTrinary(env, lhs, rhs);
-          // #hack to handle inconsistency
-          if (compare == Trinary_False)
-            out0 = &builtins.False->t;
-        }
-      }
+
+      out0 = apply(arena, env, norm_op, norm_args);
 
       if (!out0)
       {
@@ -1921,14 +1943,6 @@ forward_declare inline Term *
 toAbstractTerm(MemoryArena *arena, Environment *env, Term *in0)
 {
   return toAbstractTerm(arena, in0, getStackDepth(env));
-}
-
-forward_declare internal Term *
-evaluateAndNormalize(MemoryArena *arena, Environment *env, Term *in0)
-{
-  Term *eval = evaluate(arena, env, in0);
-  Term *norm = normalize(arena, env, eval);
-  return norm;
 }
 #endif
 
@@ -2745,7 +2759,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
               {
                 DUMP("\n", &signature->t, "\n");
               }
-              Term *expected_arg_type = evaluateWithArgs(temp_arena, env, signature->param_count, args, param_type0);
+              Term *expected_arg_type = evaluate(temp_arena, env, args, param_type0);
 
               // Typecheck & Inference for the arguments.
               if (in->args[arg_id]->cat == AC_Hole)

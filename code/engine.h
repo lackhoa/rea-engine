@@ -439,4 +439,12 @@ struct SyntheticAst {
   Term *term;
 };
 
+struct EvaluationContext {
+  MemoryArena  *arena;
+  Typer        *env;
+  Term        **args;
+  b32           normalize;
+  i32           offset;
+};
+
 #include "generated/engine_forward.h"

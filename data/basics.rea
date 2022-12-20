@@ -36,7 +36,9 @@ testComplexFork :: fn (a, b: Nat) -> Nat
 {fork a+b
  {0 : 0,
   ++: (a+b).p}}
+#debug
 check_truth testComplexFork(0, 0) = 0;
+#debug off
 check_truth testComplexFork(1, 1) = 1;
 
 testLocalVariable :: fn (x: Nat) -> Nat
