@@ -57,6 +57,8 @@ typedef long     i64;
 #define invalidCodePath assert(false)
 #define todoErrorReport assert(false)
 #define todoIncomplete  assert(false)
+#define todoOutlaw      assert(false)
+#define todoUnknown     assert(false)
 #define invalidDefaultCase default: { assert(false) };
 #define breakhere  { int x = 5; (void)x; }
 
