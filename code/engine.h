@@ -18,11 +18,9 @@ struct ArrowAst;
 struct LocalBindings;
 
 enum AstCategory {
-  AC_Null = 0,
-  // hole left in for type-checking
-  AC_Hole,
-  // result after initial parsing
-  AC_Identifier,
+  AC_Hole = 1,  // hole left in for type-checking
+  AC_SyntheticAst,
+  AC_Identifier, // result after initial parsing
 
   // Expressions
   AC_CompositeAst,
@@ -31,7 +29,6 @@ enum AstCategory {
   AC_ComputationAst,
   AC_Lambda,
 
-  // Stuff in "sequence" context only, not general expressions.
   AC_ForkAst,
   AC_RewriteAst,
   AC_FunctionDecl,  // todo: #cleanup probably don't need this anymore
@@ -130,6 +127,7 @@ b32 operator!=(Trinary a, Trinary b)
 
 struct ConstructorMap {
   Term           *term;
+  i32             depth;
   Constructor    *ctor;
   ConstructorMap *next;
 };
@@ -416,8 +414,8 @@ struct CompareTerms {Trinary result; TreePath *diff_path;};
 
 struct Lambda {
   embed_Ast(a);
-  ArrowAst *signature;
-  Ast      *body;
+  Ast *signature;
+  Ast *body;
 };
 
 struct TermPair
@@ -434,6 +432,11 @@ struct Fork {
   i32     case_count;
   Term  **bodies;
   Stack   stack;
+};
+
+struct SyntheticAst {
+  embed_Ast(a);
+  Term *term;
 };
 
 #include "generated/engine_forward.h"

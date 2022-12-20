@@ -23,9 +23,14 @@ testAbstraction :: fn (a, b: Bool) -> Bool
 
 check andAssociative(true, false, true) : ((true & false) & true = true & false & true);
 
-dependentTypeTest :: fn (T: Type, A: T, a: A) -> (a = a)
+#should_fail
+dependentTypeFailTest :: fn (T: Type, A: T, a: A) -> a=a
 {_}
-check dependentTypeTest(Set, Bool, true): (true = true);
+#should_fail off
+
+dependentTypeTest :: fn (A: Set, a: A) -> a=a
+{_}
+check dependentTypeTest(Bool, true): true=true;
 
 testComplexFork :: fn (a, b: Nat) -> Nat
 {fork a+b
