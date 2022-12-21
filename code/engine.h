@@ -222,7 +222,6 @@ struct FunctionDecl {
 struct Function {
   embed_Term(t);
   Term  *body;
-  Stack *stack;
 };
 
 Ast LET_TYPE_NORMALIZE_;

@@ -645,8 +645,8 @@ unwindBindingsAndStack(Typer *env)
   unwindStack(env);
 }
 
-forward_declare inline void dump(Term *in0) {print(0, in0, {});}
-forward_declare inline void dump(Ast *in0)  {print(0, in0, {});}
+forward_declare inline void dump(Term *in0) {global_debug_mode=false; print(0, in0, {}); global_debug_mode=true;}
+forward_declare inline void dump(Ast *in0)  {global_debug_mode=false; print(0, in0, {}); global_debug_mode=true;}
 
 inline void
 dump(Typer *env)
@@ -718,6 +718,7 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
   Ast  *ast   = (Ast *)in0;
   Term *value = (Term *)in0;
   Arrow *op_signature = 0;
+  b32 op_is_constructor = false;
   if (is_term)
   {
     Composite *in = castTerm(value, Composite);
@@ -732,6 +733,8 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
       assert(op_signature);
       if (Token *global_name = in->op->global_name)
         precedence = precedenceOf(global_name->string);
+      if (in->op->cat == Term_Constructor)
+        op_is_constructor = true;
     }
   }
   else
@@ -779,7 +782,7 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
   else
   {// normal prefix path
     print(buffer, op, is_term, opt);
-    if (arg_count != 0)
+    if (!(op_is_constructor && arg_count == 0))
     {
       print(buffer, "(");
       PrintOptions arg_opt        = opt;
@@ -1207,32 +1210,30 @@ isCompositeConstructor(Term *in0)
 }
 
 inline b32
-isGlobalConstant(Term *in0)
+isGround(Term *in0)
 {
   if (in0->global_name)
     return true;
 
   switch (in0->cat)
   {
-    case Term_Hole:
-    case Term_Variable:
-    {return false;} break;
-
     case Term_Composite:
     {
       Composite *composite = castTerm(in0, Composite);
-      if (!isGlobalConstant(composite->op))
+      if (!isGround(composite->op))
         return false;
 
       for (int id=0; id < composite->arg_count; id++)
       {
-        if (!isGlobalConstant(composite->args[id]))
+        if (!isGround(composite->args[id]))
           return false;
       }
 
       return true;
     } break;
 
+    case Term_Hole:
+    case Term_Variable:
     case Term_Arrow:
     case Term_Function:
     case Term_Fork:
@@ -1248,12 +1249,13 @@ isGlobalConstant(Term *in0)
   }
 }
 
+// todo make this an inline mutation
 forward_declare internal Term *
 rebaseMain(MemoryArena *arena, Term *in0, i32 delta, i32 offset)
 {
   assert(delta >= 0);
   Term *out0 = in0;
-  if (!isGlobalConstant(in0) && (delta > 0))
+  if (!isGround(in0) && (delta > 0))
   {
     switch (in0->cat)
     {
@@ -1290,6 +1292,40 @@ rebaseMain(MemoryArena *arena, Term *in0, i32 delta, i32 offset)
         out0 = &out->t;
       } break;
 
+      case Term_Accessor:
+      {
+        Accessor *in  = castTerm(in0, Accessor);
+        Accessor *out = copyStruct(arena, in);
+        out->record = rebaseMain(arena, in->record, delta, offset);
+        out0 = &out->t;
+      } break;
+
+      case Term_Rewrite:
+      {
+        Rewrite *in  = castTerm(in0, Rewrite);
+        Rewrite *out = copyStruct(arena, in);
+        out->eq_proof = rebaseMain(arena, in->eq_proof, delta, offset);
+        out->body     = rebaseMain(arena, in->body, delta, offset);
+        out0 = &out->t;
+      } break;
+
+      case Term_Computation:
+      {
+        Computation *in  = castTerm(in0, Computation);
+        Computation *out = copyStruct(arena, in);
+        out->lhs = rebaseMain(arena, in->lhs, delta, offset);
+        out->rhs = rebaseMain(arena, in->rhs, delta, offset);
+        out0 = &out->t;
+      } break;
+
+      case Term_Function:
+      {
+        Function *in  = castTerm(in0, Function);
+        Function *out = copyStruct(arena, in);
+        out->body = rebaseMain(arena, in->body, delta, offset+1);
+        out0 = &out->t;
+      } break;
+
       default:
         todoIncomplete;
     }
@@ -1307,6 +1343,11 @@ internal Term *
 apply(MemoryArena *arena, Typer *env, Term *op, Term **args)
 {
   Term *out0 = 0;
+  i32 serial = global_debug_serial++;
+  b32 debug = true;
+  if (debug && global_debug_mode)
+  {debugIndent(); DUMP("apply(", serial, "): ", op, "(...)\n");}
+
   if (Function *fun = castTerm(op, Function))
   {// Function application
     if (fun->body != &dummy_function_being_built)
@@ -1314,7 +1355,6 @@ apply(MemoryArena *arena, Typer *env, Term *op, Term **args)
   }
   else
   {
-    assert((op == &builtins.equal->t) || (op->cat == Term_Constructor));
     // special casing for equality
     if (op == &builtins.equal->t)
     {// special case for equality
@@ -1326,6 +1366,8 @@ apply(MemoryArena *arena, Typer *env, Term *op, Term **args)
         out0 = &builtins.False->t;
     }
   }
+
+  if (debug && global_debug_mode) {debugDedent(); DUMP("=> ", out0, "\n");}
   return out0;
 }
 
@@ -1338,8 +1380,14 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
   if (debug && global_debug_mode)
   {debugIndent(); DUMP("evaluate(", serial, "): ", in0, "\n");}
   assert(ctx->offset >= 0);
-  if (isGlobalConstant(in0))
-    out0 = in0;
+
+  if (isGround(in0))
+  {
+    if (ctx->normalize)
+      out0 = normalize(ctx->arena, ctx->env, in0);
+    else
+      out0 = in0;
+  }
   else
   {
     switch (in0->cat)
@@ -1401,11 +1449,12 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
 
       case Term_Function:
       {
-        todoIncomplete;
-        if (ctx->offset)
-          todoIncomplete;  // we can outlaw this, but possible to handle if we must
         Function *in = castTerm(in0, Function);
         Function *out = copyStruct(ctx->arena, in);
+        ctx->offset++;
+        out->body = evaluateMain(ctx, in->body);
+        ctx->offset--;
+        out->type = evaluateMain(ctx, in->type);
         out0 = &out->t;
       } break;
 
@@ -1468,8 +1517,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
   }
 
   assert(isSequenced(in0) || out0);
-  if (debug && global_debug_mode)
-  {debugDedent(); DUMP("=> ", out0, "\n");}
+  if (debug && global_debug_mode) {debugDedent(); DUMP("=> ", out0, "\n");}
   return out0;
 }
 
@@ -1738,7 +1786,7 @@ normalize(MemoryArena *arena, Typer *env, Term *in0)
   Term *out0 = {};
 
   i32 serial = global_debug_serial++;
-  b32 debug = false;
+  b32 debug = true;
   if (debug && global_debug_mode)
   {debugIndent(); DUMP("normalize(", serial, "): ", in0, "\n");}
 
@@ -2706,7 +2754,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 
       if (noError() && !is_global)
       {
-        if (BuildTerm build_op = buildTerm(temp_arena, env, in->op, holev))
+        if (BuildTerm build_op = buildTerm(arena, env, in->op, holev))
         {
           op_overloads.count = 1;
           allocateArray(temp_arena, 1, op_overloads.items);
@@ -2755,10 +2803,6 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                  arg_id++)
             {
               Term *param_type0 = signature->param_types[arg_id];
-              if (serial == 5915)
-              {
-                DUMP("\n", &signature->t, "\n");
-              }
               Term *expected_arg_type = evaluate(temp_arena, env, args, param_type0);
 
               // Typecheck & Inference for the arguments.
@@ -2861,8 +2905,6 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           if (param_type)
           {
             out->param_types[id] = param_type.term;
-            if (out->param_types[id] == (Term*)0x2000002F462)
-              __debugbreak();
             Token *name = in->param_names+id;
             addToStack(env, param_type.term);
             addLocalBinding(env, name);
@@ -2871,6 +2913,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 
         if (noError())
         {
+          out0.term = &out->t;
           if (in->output_type)
           {
             if (BuildTerm output_type = buildTerm(arena, env, in->output_type, holev))
@@ -2879,8 +2922,6 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         }
         unwindBindingsAndStack(env);
       }
-      if (noError())
-        out0.term  = &out->t;
     } break;
 
     case AC_AccessorAst:
@@ -3161,7 +3202,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         if (BuildTerm build_rhs = buildTerm(arena, env, in->rhs, type_hint))
         {
           Term *rhs = build_rhs.term;
-          Term *rhs_type = getType(temp_arena, env, build_rhs.term);
+          Term *rhs_type = getType(arena, env, build_rhs.term);
           if (in->type == LET_TYPE_NORMALIZE)
           {// type coercion
             Term *norm_rhs_type = normalize(arena, env, rhs_type);
@@ -3179,11 +3220,11 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           allocateArray(temp_arena, 1, signature->param_types);
           signature->param_count    = 1;
           signature->param_names[0] = in->lhs;
-          signature->param_types[0] = synthesizeAst(temp_arena, rebase(temp_arena, rhs_type, 1), token);
-          signature->output_type    = synthesizeAst(temp_arena, rebase(temp_arena, goal, 1), token);
+          signature->param_types[0] = synthesizeAst(temp_arena, rebase(arena, rhs_type, 1), token);
+          signature->output_type    = synthesizeAst(temp_arena, rebase(arena, goal, 1), token);
           lambda->signature = &signature->a;
 
-          Ast *rhs_ast = synthesizeAst(temp_arena, rhs, token);
+          Ast *rhs_ast = synthesizeAst(arena, rhs, token);
 
           CompositeAst *com = newAst(arena, CompositeAst, token);
           allocateArray(temp_arena, 1, com->args);
@@ -4105,6 +4146,7 @@ parseTopLevel(EngineState *state)
                 {
                   parseError(&token, "equality cannot be proven by computation");
                   setErrorCode(ErrorWrongType);
+                  global_debug_mode = true;
                   Term *lhs = normalize(temp_arena, 0, eq->args[1]);
                   attach("lhs", lhs);
                   attach("rhs", rhs);
