@@ -138,7 +138,7 @@ struct Stack
   i32     depth;
   i32     cap;
   i32     count;
-  Term **items;
+  Term  **items;
   i32     last_function_id;
 };
 

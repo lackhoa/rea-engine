@@ -268,14 +268,6 @@ lookupStack(Stack *stack, i32 stack_delta, i32 id)
   return out0;
 }
 
-#if 0
-inline Term *
-lookupStack(Environment *env, Variable *var)
-{
-  lookupStack(env, var->stack_delta, var->id);
-}
-#endif
-
 inline Composite *
 makeFakeRecord(MemoryArena *arena, Term *parent, Constructor *ctor)
 {
@@ -365,7 +357,15 @@ getConstructor(Typer *env, Term *in0)
   if (Composite *in = castTerm(in0, Composite))
     ctor = castTerm(in->op, Constructor);
   if (!ctor)
-    ctor = getMappedConstructor(env, in0);
+  {
+    if (Union *uni = castTerm(getType(temp_arena, env, in0), Union))
+    {
+      if (uni->ctor_count == 1)
+        ctor = uni->ctors + 0;
+      else
+        ctor = getMappedConstructor(env, in0);
+    }
+  }
   return ctor;
 }
 
@@ -377,7 +377,7 @@ toRecord(MemoryArena *arena, Typer *env, Term *in0)
     out = in;
   if (!out)
   {
-    if (Constructor *ctor = getMappedConstructor(env, in0))
+    if (Constructor *ctor = getConstructor(env, in0))
       out = makeFakeRecord(arena, in0, ctor);
   }
   return out;
@@ -1436,6 +1436,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
         Arrow *out = copyStruct(ctx->arena, in);
 
         allocateArray(ctx->arena, out->param_count, out->param_types);
+        introduceSignature(ctx->env, in, false);
         ctx->offset++;
         for (i32 id=0; id < out->param_count; id++)
         {
@@ -1443,6 +1444,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
         }
         out->output_type = evaluateMain(ctx, out->output_type);
         ctx->offset--;
+        unwindStack(ctx->env);
 
         out0 = &out->t;
       } break;
@@ -1451,10 +1453,19 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
       {
         Function *in = castTerm(in0, Function);
         Function *out = copyStruct(ctx->arena, in);
+        out->type = evaluateMain(ctx, in->type);
+
+        b32 old_normalize = ctx->normalize;
+        ctx->normalize = false;
+        Arrow *signature = castTerm(in->type, Arrow);
+        assert(signature);
+        introduceSignature(ctx->env, signature, false);
         ctx->offset++;
         out->body = evaluateMain(ctx, in->body);
         ctx->offset--;
-        out->type = evaluateMain(ctx, in->type);
+        unwindStack(ctx->env);
+        ctx->normalize = old_normalize;
+
         out0 = &out->t;
       } break;
 
@@ -1675,7 +1686,7 @@ compareTerms(MemoryArena *arena, Typer *env, Term *lhs0, Term *rhs0)
   }
   else
   {
-    if (isPotentialRecord(lhs0) || isPotentialRecord(rhs0))
+    if (env && (isPotentialRecord(lhs0) || isPotentialRecord(rhs0)))
     {
       Composite *new_lhs0 = toRecord(temp_arena, env, lhs0);
       Composite *new_rhs0 = toRecord(temp_arena, env, rhs0);
@@ -1832,11 +1843,13 @@ normalize(MemoryArena *arena, Typer *env, Term *in0)
       Arrow *out = copyStruct(arena, in);
 
       allocateArray(arena, out->param_count, out->param_types);
+      introduceSignature(env, in, false);
       for (i32 id=0; id < out->param_count; id++)
       {
         out->param_types[id] = normalize(arena, env, in->param_types[id]);
       }
       out->output_type = normalize(arena, env, out->output_type);
+      unwindStack(env);
 
       out0 = &out->t;
     } break;
@@ -1997,8 +2010,6 @@ toAbstractTerm(MemoryArena *arena, Environment *env, Term *in0)
 inline void
 addLocalBinding(Typer *env, Token *key)
 {
-  if (equal(key->string, "x_positive"))
-    breakhere;
   auto lookup = lookupCurrentFrame(env->bindings, key->string, true);
   lookup.slot->value = env->bindings->count++;
 }
@@ -3996,7 +4007,8 @@ parseTopLevel(EngineState *state)
 {
   MemoryArena *arena = state->arena;
   b32 should_fail_active = false;
-  Typer empty_env_ = {}; Typer *empty_env = &empty_env_;
+  Typer  empty_env_ = {};
+  Typer *empty_env  = &empty_env_;
 
   Token token = nextToken(); 
   while (hasMore())
@@ -4083,7 +4095,7 @@ parseTopLevel(EngineState *state)
         case TC_Keyword_test_eval:
         {
           if (BuildTerm expr = parseExpressionFull(temp_arena))
-            normalize(arena, 0, expr.term);
+            normalize(arena, empty_env, expr.term);
         } break;
 
         case TC_Keyword_print:
@@ -4140,14 +4152,14 @@ parseTopLevel(EngineState *state)
               if (eq->op == &builtins.equal->t)
               {
                 goal_valid = true;
-                Term *lhs = normalize(temp_arena, 0, eq->args[1]);
-                Term *rhs = normalize(temp_arena, 0, eq->args[2]);
+                Term *lhs = normalize(temp_arena, empty_env, eq->args[1]);
+                Term *rhs = normalize(temp_arena, empty_env, eq->args[2]);
                 if (!equal(0, lhs, rhs))
                 {
                   parseError(&token, "equality cannot be proven by computation");
                   setErrorCode(ErrorWrongType);
                   global_debug_mode = true;
-                  Term *lhs = normalize(temp_arena, 0, eq->args[1]);
+                  Term *lhs = normalize(temp_arena, empty_env, eq->args[1]);
                   attach("lhs", lhs);
                   attach("rhs", rhs);
                 }
