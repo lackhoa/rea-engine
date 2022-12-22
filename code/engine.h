@@ -12,6 +12,7 @@ global_variable b32          global_debug_mode;
 global_variable MemoryArena *global_arena;
 global_variable i32          global_debug_serial;
 
+struct Arrow;
 struct Constructor;
 struct Term;
 struct ArrowAst;
@@ -132,20 +133,15 @@ struct ConstructorMap {
   ConstructorMap *next;
 };
 
-struct Stack
-{
-  Stack  *outer;
-  i32     depth;
-  i32     cap;
-  i32     count;
-  Term  **items;
-  i32     last_function_id;
+struct Scope {
+  Arrow *first;
+  Scope *outer;
 };
 
 struct Typer
 {
   LocalBindings  *bindings;
-  Stack          *type_stack;
+  Scope          *scope;
   ConstructorMap *map;
 };
 
@@ -155,20 +151,10 @@ struct AstList
   AstList *next;
 };
 
-struct LocalBinding
+struct TermList
 {
-  s32           hash;
-  String        key;
-  s32           value;
-  LocalBinding *next;
-};
-
-struct LocalBindings
-{
-  MemoryArena   *arena;
-  LocalBinding   table[128];
-  LocalBindings *next;
-  s32 count;
+  Term     *first;
+  TermList *next;
 };
 
 embed_struct struct Term {
@@ -234,12 +220,45 @@ struct Let {
   Ast   *body;
 };
 
+typedef u64 VarId;
+global_variable VarId next_variable_id = 1;
+inline VarId reserveVariableIds(i32 count)
+{
+  VarId out = next_variable_id;
+  next_variable_id += count;
+  return out;
+}
+
+struct LocalBinding
+{
+  i32           hash;
+  String        key;
+  VarId         var_id;
+  i32           var_index;
+  LocalBinding *next;
+};
+
+struct LookupLocalName {
+  b32   found;
+  s32   stack_delta;
+  VarId var_id;
+  i32   var_index;
+  operator bool() {return found;}
+};
+
+struct LocalBindings
+{
+  MemoryArena   *arena;
+  LocalBinding   table[128];
+  LocalBindings *next;
+};
+
 struct Variable {
   embed_Term(t);
   Token name;
-  i32   id;
+  i32   index;
+  VarId id;
   i32   stack_delta;
-  /* b32   is_absolute;  // #debug-only */
 };
 
 struct TreePath {
@@ -278,6 +297,7 @@ struct ArrowAst {
 
 struct Arrow {
   embed_Term(t);
+  VarId   first_id;
   s32     param_count;
   Token  *param_names;
   Term  **param_types;
@@ -430,7 +450,7 @@ struct Fork {
   Term   *subject;
   i32     case_count;
   Term  **bodies;
-  Stack   stack;
+  Scope   stack;
 };
 
 struct SyntheticAst {

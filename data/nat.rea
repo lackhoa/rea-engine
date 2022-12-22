@@ -91,9 +91,9 @@ test_eval mulAssociative(1,0,0);
 != :: fn (_A: Set, a,b: _A) -> Type
 { (E: a=b) -> False }
 
-testFillingHole :: (x: Nat, x_positive: x!=0, P: x=0) -> False
+testFillingHole :: (xdebug: Nat, x_positive: xdebug!=0, P: xdebug=0) -> False
 {norm x_positive;
- fork (x)
+ fork (xdebug)
  {0 : norm x_positive; x_positive(_),
   ++: norm P; P}
  }
