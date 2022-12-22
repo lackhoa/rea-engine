@@ -133,6 +133,12 @@ struct ConstructorMap {
   ConstructorMap *next;
 };
 
+struct Stack {
+  i32     count;
+  Term  **items;
+  Stack  *outer;
+};
+
 struct Scope {
   Arrow *first;
   Scope *outer;
@@ -228,6 +234,7 @@ inline VarId reserveVariableIds(i32 count)
   next_variable_id += count;
   return out;
 }
+inline void resetVariableIds() {next_variable_id = 1;}
 
 struct LocalBinding
 {

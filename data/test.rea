@@ -5,14 +5,6 @@
 check truth: true = false;
 #should_fail off
 
-;; todo important we CRASHED HARD here
-;; #debug
-;; somethingWicked :: fn (a,b,c: Nat) -> Set {(p: a=b) -> (q: b=c) -> a=c}
-;; somethingWickedUsage :: () -> (x,y,z: Nat) -> (somethingWicked(x,y,z))
-;; {norm;
-;;  _ => {_ => {}}}
-;; #debug off
-
 ;; todo this can be just be a struct
 RatTest :: union
 {/ : struct {n,d: Nat, _dnot0: d != 0}}
