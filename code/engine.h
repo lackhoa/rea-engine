@@ -13,10 +13,12 @@ global_variable MemoryArena *global_arena;
 global_variable i32          global_debug_serial;
 
 struct Arrow;
+struct Composite;
 struct Constructor;
 struct Term;
 struct ArrowAst;
 struct LocalBindings;
+struct DataMap;
 
 enum AstCategory {
   AC_Hole = 1,  // hole left in for type-checking
@@ -126,11 +128,27 @@ b32 operator!=(Trinary a, Trinary b)
   return a.v != b.v;
 }
 
-struct ConstructorMap {
-  Term           *term;
-  i32             depth;
-  Constructor    *ctor;
-  ConstructorMap *next;
+struct DataTree {
+  Constructor *ctor;
+  i32          member_count;
+  DataTree   **members;
+};
+
+struct DataMapAddHistory {
+  // option A: root 
+  DataMap      *map;
+  // option B: branch
+  DataTree     *parent;
+  i32           field_index;
+
+  DataMapAddHistory *next;
+};
+
+struct DataMap {
+  i32       depth;
+  i32       index;
+  DataTree  tree;
+  DataMap  *next;
 };
 
 struct Stack {
@@ -142,13 +160,15 @@ struct Stack {
 struct Scope {
   Arrow *first;
   Scope *outer;
+  i32    depth;
 };
 
 struct Typer
 {
-  LocalBindings  *bindings;
-  Scope          *scope;
-  ConstructorMap *map;
+  LocalBindings *bindings;
+  Scope         *scope;
+  DataMap       *map;
+  DataMapAddHistory *add_history;
 };
 
 struct AstList
@@ -265,7 +285,7 @@ struct Variable {
   Token name;
   i32   index;
   VarId id;
-  i32   stack_delta;
+  i32   delta;
 };
 
 struct TreePath {
@@ -457,7 +477,6 @@ struct Fork {
   Term   *subject;
   i32     case_count;
   Term  **bodies;
-  Scope   stack;
 };
 
 struct SyntheticAst {
@@ -467,7 +486,6 @@ struct SyntheticAst {
 
 struct EvaluationContext {
   MemoryArena  *arena;
-  Typer        *env;
   Term        **args;
   b32           normalize;
   i32           offset;

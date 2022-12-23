@@ -33,9 +33,10 @@ dependentTypeTest :: fn (A: Set, a: A) -> a=a
 check dependentTypeTest(Bool, true): true=true;
 
 testComplexFork :: fn (a, b: Nat) -> Nat
-{fork a+b
+{apb := a+b;
+ fork apb
  {0 : 0,
-  ++: (a+b).p}}
+  ++: apb.p}}
 check_truth testComplexFork(0, 0) = 0;
 check_truth testComplexFork(1, 1) = 1;
 
@@ -132,3 +133,6 @@ testFunctionInCompositeUsage :: (Wrong: 1=0) -> False
  obj
  }
 print testFunctionInCompositeUsage;
+
+;; todo important test arrow type unification by using this "arrowTypeUnification" to do things
+;; arrowTypeUnification :: (x: True) -> (a: True) -> a=x {_ => {fork a {truth: fork x {truth: }}}}

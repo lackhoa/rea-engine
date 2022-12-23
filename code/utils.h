@@ -54,6 +54,8 @@ typedef long     i64;
 #  define assert(claim)
 #endif
 
+#define debugbreak __debugbreak();
+
 #define invalidCodePath assert(false)
 #define todoErrorReport assert(false)
 #define todoIncomplete  assert(false)
