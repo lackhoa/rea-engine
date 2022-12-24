@@ -62,7 +62,7 @@ inline Token
 newToken(String text)
 {
   Token out;
-  out.string   = text;
+  out.string = text;
   out.line   = 0;
   out.column = 0;
   out.cat    = TC_Alphanumeric;

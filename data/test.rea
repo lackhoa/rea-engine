@@ -277,20 +277,53 @@ add1Associative :: (b,c: Z) -> (+(1)+b)+c = +(1)+b+c
                             add1Associative(+(c.v.p), -(b.v.p))}},
                  -: fork b.v {1 :, ++:}}}}
 
-sumCancellation :: (a,b,c: Z, P: a+b=a+c) -> (b=c)
+differentFromPlus :: (a: Nat+, b: Nat+, P: a = a+b) -> False
+{
+ fork a
+ {
+  1: norm P; P,
+  ++: norm P; Q := destruct_0(P); differentFromPlus(a.p, b, Q),
+  }
+ }
+
+;; todo this really should be built-in
+differentFromSuccessor :: (a: Nat+, P: ++(a) = a) -> False
+{
+ fork a
+ {
+  1:  norm P; P,
+  ++: norm P; Q := destruct_0(P); differentFromSuccessor(a.p, Q),
+  }
+ }
+
+sumCancellation :: (a,b,c: Z, P: a + b = a + c) -> (b = c)
 {
  fork a
  {0: norm P; P,
-  +: norm P,
-  ;; fork a.v {1: _
-  ;;              ;; norm P;
-  ;;              ;; fork b
-  ;;              ;; {0: fork c {0:, +:, -:},
-  ;;              ;;  +:,
-  ;;              ;;  -:,}
-  ;;              ,
-
-  ;;              ++:},
+  +: fork a.v {1: 
+               fork b
+               {0: fork c {0:, +: norm P; P, -: norm P; fork c.v {1: norm P; P, ++: norm P; P,}},
+                +: fork c {0: norm P; P,
+                           +: norm P; rewrite destruct_0(destruct_0(P)),
+                           -: norm P; fork c.v {1: norm P; P, ++: norm P; P}},
+                -: fork b.v {1: fork c {0: norm P; P,
+                                        +: norm P; P,
+                                        -: fork c.v {1:  norm P, ++: norm P; P}},
+                             ++: fork c {0: norm P; P,
+                                         +: norm P; P,
+                                         -: fork c.v {1: norm P; P, ++: norm P; rewrite destruct_0(P)}}}},
+               ++: fork b {0: fork c {
+                                      0: norm P;,
+                                      +: fork c.v
+                                      {
+                                       1: norm P; P := destruct_0(destruct_0(P)); differentFromPlus(a.v.p, 1, P),
+                                       ++: norm P; P := destruct_0(P); P := destruct_0(P); differentFromPlus(a.v.p, ++(c.v.p), P)},
+                                      -: fork c.v
+                                      {1: norm P; P:=destruct_0(P); norm P; differentFromSuccessor(a.v.p, P),
+                                       ++: norm P; },
+                                      },
+                           +: norm P,
+                           -: norm P,}},
   -: }
  }
 

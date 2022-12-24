@@ -121,9 +121,9 @@ pushSize(MemoryArena *arena, size_t size, b32 zero = false)
 }
 
 #define pushStruct(arena, type, ...) (type *) pushSize(arena, sizeof(type), __VA_ARGS__)
-#define pushArray(arena, count, type, ...) (type *) pushSize(arena, count*sizeof(type), __VA_ARGS__)
+#define pushArray(arena, count, type, ...) (type *) pushSize(arena, (count)*sizeof(type), __VA_ARGS__)
 #define allocate(arena, x, ...) x = (mytypeof(x)) pushSize(arena, sizeof(*x), __VA_ARGS__)
-#define allocateArray(arena, count, x, ...) x = (mytypeof(x)) pushSize(arena, count*sizeof(*x), __VA_ARGS__)
+#define allocateArray(arena, count, x, ...) x = (mytypeof(x)) pushSize(arena, (count)*sizeof(*x), __VA_ARGS__)
 
 inline MemoryArena
 subArena(MemoryArena *parent, size_t size)

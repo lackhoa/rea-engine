@@ -9,7 +9,6 @@
 // NOTE: This should work like the function stack, we'll clean it after every top-level form.
 global_variable MemoryArena *temp_arena;
 global_variable b32          global_debug_mode;
-global_variable MemoryArena *global_arena;
 global_variable i32          global_debug_serial;
 
 struct Arrow;
@@ -106,7 +105,6 @@ struct ParseExpressionOptions
 {
   s32 min_precedence = -9999;
 };
-
 
 struct Trinary {i32 v;};
 Trinary Trinary_False   = Trinary{0};
@@ -283,9 +281,9 @@ struct LocalBindings
 struct Variable {
   embed_Term(t);
   Token name;
-  i32   index;
-  VarId id;
+  VarId id;                     // nocheckin: if you don't remove this, you're not a man
   i32   delta;
+  i32   index;
 };
 
 struct TreePath {
@@ -324,7 +322,7 @@ struct ArrowAst {
 
 struct Arrow {
   embed_Term(t);
-  VarId   first_id;
+  VarId   first_id;  // todo #removeme
   s32     param_count;
   Token  *param_names;
   Term  **param_types;
@@ -374,9 +372,17 @@ struct FileList {
   FileList *next;
 };
 
+struct BuiltinCompareList {
+  Constructor         *ctor;
+  Term               **compares;
+  BuiltinCompareList  *next;
+};
+
 struct EngineState {
-  MemoryArena *arena;
-  FileList    *file_list;
+  MemoryArena        *arena;
+  FileList           *file_list;
+  GlobalBindings     *bindings;
+  BuiltinCompareList *builtin_compare_list;
 };
 
 u32 PrintFlag_Detailed     = 1 << 1;

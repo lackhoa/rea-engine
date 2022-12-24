@@ -159,3 +159,132 @@ toAbstractTerm(MemoryArena *arena, Term *in0, i32 zero_depth)
   return out0;
 } 
 
+
+#if 0
+internal b32
+isFree(Term *in0, i32 offset)
+{
+  b32 out = false;
+  b32 debug = false;
+  if (debug && global_debug_mode)
+  {debugIndent(); dump("isFree: "); dump(in0); dump(" with offset: "); dump(offset); dump();}
+
+  switch (in0->cat)
+  {
+    case Term_FakeTerm:
+    {
+      // FakeTerm *in = castTerm(in0, FakeTerm);
+      todoIncomplete;
+    } break;
+
+    case Term_Variable:
+    {
+      Variable *in = castTerm(in0, Variable);
+      out = in->stack_frame >= offset;
+    } break;
+
+    case Term_Composite:
+    {
+      Composite *in = castTerm(in0, Composite);
+      if (isFree(in->op, offset)) out = true;
+      else
+      {
+        for (s32 arg_id=0; arg_id < in->arg_count; arg_id++)
+        {
+          if (isFree(in->args[arg_id], offset))
+          {
+            out = true;
+            break;
+          }
+        }
+      }
+    } break;
+
+    case Term_Arrow:
+    {
+      Arrow *in = castTerm(in0, Arrow);
+      for (s32 param_id = 0; param_id < in->param_count; param_id++)
+      {
+        if (isFree(in->param_types[param_id], offset+1))
+        {
+          out = true;
+          break;
+        }
+      }
+      if (!out && in->output_type)
+        out = isFree(in->output_type, offset+1);
+    } break;
+
+    case Term_Accessor:
+    {
+      Accessor *in = castTerm(in0, Accessor);
+      out = isFree(in->record, offset);
+    } break;
+
+    case Term_Function:
+    {
+      Function *in = castTerm(in0, Function);
+      // todo #hack
+      out = in->id.v == 0 && in->stack == 0;
+    } break;
+
+    case Term_Computation:
+    {
+      Computation *in = castTerm(in0, Computation);
+      out = isFree(in->lhs, offset);
+      if (!out) out = isFree(in->rhs, offset);
+    } break;
+
+    case Term_Constant:
+    case Term_Builtin:
+    case Term_Union:
+    case Term_Constructor:
+    {out = false;} break;
+
+    case Term_Rewrite:
+    {
+      Rewrite *in = castTerm(in0, Rewrite);
+      if (isFree(in->eq_proof, offset)) out = true;
+      else if (isFree(in->body, offset)) out = true;
+    } break;
+
+    case Term_Fork:
+    {out = true;} break;
+
+    case Term_Hole:
+    {todoIncomplete;}
+  }
+
+  if (debug && global_debug_mode) {debugDedent(); dump("=> "); dump(out); dump();}
+  return out;
+}
+
+inline b32 isGround(Term *in0) {return !isFree(in0, 0);}
+#endif
+
+#if 0
+inline Term *
+lookupStack(Stack *stack, i32 stack_delta, i32 id)
+{
+  Term *out0 = 0;
+  for (i32 delta = 0; delta < stack_delta; delta++)
+  {
+    stack = stack->outer;
+    if (!stack)
+    {
+      dump(stack); dump();
+      invalidCodePath;
+    }
+  }
+  if (id < stack->count)
+    out0 = stack->items[id];
+  else
+  {
+    dump(stack); dump();
+    invalidCodePath;
+  }
+  assert(out0);
+  return out0;
+}
+#endif
+
