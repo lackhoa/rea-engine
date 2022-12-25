@@ -13,6 +13,13 @@ check True: Set;
 typecheck :: fn (id: (A: Set, a: A) -> a=a, b: Bool) -> b=b
 {id(Bool, b)}
 
+#should_fail
+typecheck1 :: fn (id: (A: Set, a: A) -> a=a, b: Bool) -> b=b
+{b}
+typecheck2 :: fn (id: (A: Set, a: A) -> a=a, a,b: Bool) -> b=b
+{id(Bool, a)}
+#should_fail off
+
 check_truth false & true = false;
 check_truth false & true | true = true;
 

@@ -23,6 +23,7 @@ enum TokenCategory
   TC_Keyword_fork,
   TC_Keyword_union,
   TC_Keyword_struct,
+  TC_Keyword_seq,
   TC_Keyword_rewrite,
   TC_Keyword_norm,
 
@@ -33,22 +34,22 @@ enum TokenCategory
   TC_Keyword_check,
   TC_Keyword_check_truth,
   TC_Keyword_END,
+
+  TC_Directive_START,
+  TC_Directive_load,
+  TC_Directive_should_fail,
+  TC_Directive_debug,
+  TC_Directive_norm,
+  TC_Directive_END,
 };
 
 const char *keywords[] = {
-  "", "define", "fork", "union", "struct",
+  "", "define", "fork", "union", "struct", "seq",
   "rewrite", "norm",
   "test_eval", "print", "print_raw", "print_ast", "check", "check_truth"
 };
 
-enum MetaDirective {
-  MetaDirective_NULL        = 0,
-  MetaDirective_load        = 1,
-  MetaDirective_should_fail = 2,
-  MetaDirective_debug       = 3,
-  MetaDirective_COUNT,
-};
-const char *metaDirectives[] = {"", "load", "should_fail", "debug"};
+const char *metaDirectives[] = {"", "load", "should_fail", "debug", "norm"};
 
 struct Token
 {

@@ -46,11 +46,11 @@ check_truth  2*3 = 6;
 check_truth 3 - 2 = 1;
 check_truth 4 - 1 = 3;
 
-add0Right :: (n: Nat) -> n + 0 = n
+add0 :: (n: Nat) -> n + 0 = n
 {fork n
  {0 :,
   ++:
-  => ++(n.p) = ++(n.p) {add0Right}
+  => ++(n.p) = ++(n.p) {add0}
   }}
 
 addSRight :: (n, m: Nat) -> n + ++(m) = ++(n+m)
@@ -60,7 +60,7 @@ addSRight :: (n, m: Nat) -> n + ++(m) = ++(n+m)
 
 addCommutative :: (n, m: Nat) -> (n+m = m+n)
 {fork n
- {0 : => m = m {add0Right},
+ {0 : => m = m {add0},
   ++:
   => ++(m + n.p) = m + ++(n.p) {addCommutative}
   => ++(m + n.p) = ++(m + n.p) {addSRight}}}
@@ -103,3 +103,12 @@ multiplyPos :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
  norm;
  _ => {fork a {0: a_positive(_),
                ++: fork b {0: b_positive(_), ++: norm E; E}}}}
+
+mul0 :: (a: Nat) -> a * 0 = 0
+{
+ fork a
+ {
+  0: ,
+  ++: rewrite mul0(a.p),
+  }
+ }

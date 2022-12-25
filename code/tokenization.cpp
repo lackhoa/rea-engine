@@ -241,23 +241,61 @@ eatAllSpaces(Tokenizer *tk)
   }
 }
 
-// todo: #speed use hash table
-inline MetaDirective
-matchMetaDirective(Token *token)
+internal void
+parseErrorVA(s32 line, s32 column, char *format, va_list arg_list, Tokenizer *tk = global_tokenizer)
 {
-  auto out = (MetaDirective)0;
-  if (token->cat == TC_Alphanumeric)
-  {
-    for (int id = 1; id < arrayCount(metaDirectives); id++)
-    {
-      if (equal(token, metaDirectives[id]))
-      {
-        out = (MetaDirective)(id);
-        break;
-      }
-    }
-  }
-  return out;
+  if (global_debug_serial == 71846)
+    breakhere;
+  assert(!tk->error);  // note: prevent parser from doing useless work after failure.
+
+  tk->error = pushStruct(temp_arena, ParseError, true);
+  tk->error->message = printVA(temp_arena, format, arg_list);
+  tk->error->line    = line;
+  tk->error->column  = column;
+  tk->error->context = tk->context ? tk->context->first : 0;
+  attach("serial", global_debug_serial, tk);
+}
+
+internal void
+parseError(Ast *in, char *format, ...)
+{
+  va_list arg_list;
+  __crt_va_start(arg_list, format);
+  Token *token = &in->token;
+  parseErrorVA(token->line, token->column, format, arg_list);
+  __crt_va_end(arg_list);
+}
+
+internal void
+parseError(Tokenizer *tk, Token *token, char *format, ...)
+{
+  va_list arg_list;
+  __crt_va_start(arg_list, format);
+  parseErrorVA(token->line, token->column, format, arg_list, tk);
+  __crt_va_end(arg_list);
+}
+
+internal void
+tokenError(Token *token, char *message, Tokenizer *tk=global_tokenizer)
+{
+  parseError(tk, token, "%s", message);
+  attach("token", token, tk);
+}
+
+internal void
+tokenError(char *message, Tokenizer *tk=global_tokenizer)
+{
+  tokenError(&tk->last_token, message, tk);
+}
+
+
+internal void
+parseError(Token *token, char *format, ...)
+{
+  va_list arg_list;
+  __crt_va_start(arg_list, format);
+  parseErrorVA(token->line, token->column, format, arg_list);
+  __crt_va_end(arg_list);
 }
 
 forward_declare inline Token
@@ -270,6 +308,14 @@ nextToken(Tokenizer *tk = global_tokenizer)
 
   switch (char first_char = nextChar(tk))
   {
+    case '#':
+    {
+      out.string.chars++; // advance past the hash
+      out.cat = TC_Directive_START;
+      while (isAlphaNumeric(*tk->at))
+        nextChar(tk);
+    } break;
+
     case '"':
     {
       out.string.chars++; // advance past the opening double quote
@@ -385,23 +431,39 @@ nextToken(Tokenizer *tk = global_tokenizer)
       out.string.length = (s32)(tk->at - out.string.chars);
     assert(out.string.length);
 
-    if (out.cat == TC_Alphanumeric)
+    switch (out.cat)
     {
-      // todo: lookup keywords with hash table
-      for (int i = 1;
-           i < arrayCount(keywords);
-           i++)
+      case TC_Alphanumeric:
       {
-        if (equal(out.string, keywords[i]))
+        // todo: lookup keywords with hash table
+        for (int id = 1; id < arrayCount(keywords); id++)
         {
-          out.cat = (TokenCategory)((int)TC_Keyword_START + i);
-          if (out.cat == TC_Keyword_norm)
-            breakhere;
-          break;
+          if (equal(out.string, keywords[id]))
+          {
+            out.cat = (TokenCategory)((int)TC_Keyword_START + id);
+            break;
+          }
         }
-      }
-    }
+      } break;
 
+      case TC_Directive_START:
+      {
+        b32 found = false;
+        for (int id = 1; id < arrayCount(metaDirectives); id++)
+        {
+          if (equal(out.string, metaDirectives[id]))
+          {
+            out.cat = (TokenCategory)((int)TC_Directive_START + id);
+            found = true;
+            break;
+          }
+        }
+        if (!found)
+          tokenError(&out, "unknown directive");
+      } break;
+
+      default: {};
+    }
   }
 
   tk->last_token = out;
@@ -463,63 +525,6 @@ isIdentifier(Token *token)
 {
     return ((token->cat == TC_Alphanumeric)
             || (token->cat == TC_Special));
-}
-
-internal void
-parseErrorVA(s32 line, s32 column, char *format, va_list arg_list, Tokenizer *tk = global_tokenizer)
-{
-  if (global_debug_mode)
-    breakhere;
-  assert(!tk->error);  // note: prevent parser from doing useless work after failure.
-
-  tk->error = pushStruct(temp_arena, ParseError, true);
-  tk->error->message = printVA(temp_arena, format, arg_list);
-
-  tk->error->line   = line;
-  tk->error->column = column;
-  if (tk->context)
-    tk->error->context = tk->context->first;
-}
-
-internal void
-parseError(Token *token, char *format, ...)
-{
-  va_list arg_list;
-  __crt_va_start(arg_list, format);
-  parseErrorVA(token->line, token->column, format, arg_list);
-  __crt_va_end(arg_list);
-}
-
-internal void
-parseError(Ast *in, char *format, ...)
-{
-  va_list arg_list;
-  __crt_va_start(arg_list, format);
-  Token *token = &in->token;
-  parseErrorVA(token->line, token->column, format, arg_list);
-  __crt_va_end(arg_list);
-}
-
-internal void
-parseError(Tokenizer *tk, Token *token, char *format, ...)
-{
-  va_list arg_list;
-  __crt_va_start(arg_list, format);
-  parseErrorVA(token->line, token->column, format, arg_list, tk);
-  __crt_va_end(arg_list);
-}
-
-internal void
-tokenError(Token *token, char *message, Tokenizer *tk=global_tokenizer)
-{
-  parseError(tk, token, "%s", message);
-  attach("token", token, tk);
-}
-
-internal void
-tokenError(char *message, Tokenizer *tk=global_tokenizer)
-{
-  tokenError(&tk->last_token, message, tk);
 }
 
 inline b32

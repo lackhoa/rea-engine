@@ -5,6 +5,7 @@
   - Try to remove recursion, we pass a bunch of things in the signature and it's annoying to change.
   - #speed evaluating functions by substituting the body is really bad in case of "let"
   - make "computation" be a builtin
+  - debug serial situation
  */
 
 #include "utils.h"
@@ -685,15 +686,17 @@ precedenceOf(String op)
   // TODO: implement for real
   if (equal(op, "->"))
     out = 40;
-  if (equal(op, "=") || equal(op, "!="))
+  else if (equal(op, "=") || equal(op, "!="))
     out = 50;
-  else if (equal(op, "&")
-           || equal(op, "*"))
-    out = 70;
+  else if (equal(op, "<") || equal(op, ">") || equal(op, "=?"))
+    out = 55;
   else if (equal(op, "|")
            || equal(op, "+")
            || equal(op, "-"))
     out = 60;
+  else if (equal(op, "&")
+           || equal(op, "*"))
+    out = 70;
   else
     out = 100;
 
@@ -1571,6 +1574,8 @@ getSoleConstructor(Term *type)
   return 0;
 }
 
+// todo important we can't guarantee that compare would be of the same type,
+// because the search needs it.
 forward_declare internal CompareTerms
 compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
 {
@@ -1584,9 +1589,7 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
     debugIndent(); DUMP("comparing(", serial, "): ", lhs0, " and ", rhs0, "\n");
   }
 
-  if (!lhs0 | !rhs0)
-    out.result = {Trinary_False};
-  else if (lhs0 == rhs0)
+  if (lhs0 == rhs0)
     out.result = {Trinary_True};
   else if (lhs0->cat == rhs0->cat)
   {
@@ -1683,9 +1686,9 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
 
       case Term_Constructor:
       {
-        Constructor *lhs = castTerm(lhs0, Constructor);
-        Constructor *rhs = castTerm(rhs0, Constructor);
-        out.result = toTrinary(lhs->id == rhs->id);
+        // Constructor *lhs = castTerm(lhs0, Constructor);
+        // Constructor *rhs = castTerm(rhs0, Constructor);
+        out.result = Trinary_False;
       } break;
 
       case Term_Accessor:
@@ -2050,7 +2053,10 @@ requireChar(char c, char *reason = 0, Tokenizer *tk=global_tokenizer)
     if (token.string.length == 1 && token.string.chars[0] == c)
       out = true;
     else
+    {
+      auto serial = global_debug_serial++;
       parseError(tk, &token, "expected character '%c' (%s)", c, reason);
+    }
   }
   return out;
 }
@@ -2126,19 +2132,23 @@ struct OptionalU32 { b32 success; u32 value; };
 inline b32
 isExpressionEndMarker(Token *token)
 {
-  // IMPORTANT: Really want "." to be part of expresions.
-  if (token->cat == TC_DoubleColon)
+  if (inString("{},);:", token))
     return true;
-  else if (token->cat == TC_ColonEqual)
+
+  if (token->cat > TC_Directive_START && token->cat < TC_Directive_END)
     return true;
-  else if (token->cat == TC_DoubleDash)
-    return true;
-  else if (token->cat == TC_StrongArrow)
-    return true;
-  else if (inString("{},);:", token))
-    return true;
-  else
-    return false;
+
+  switch (token->cat)
+  {
+    case TC_DoubleColon:
+    case TC_ColonEqual:
+    case TC_DoubleDash:
+    case TC_StrongArrow:
+      return true;
+    default: {}
+  }
+
+  return false;
 }
 
 // todo remove recursion.
@@ -2425,21 +2435,17 @@ searchExpression(MemoryArena *arena, Typer *env, Term *lhs, Term* in0)
 }
 
 inline Ast *
-parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
+parseSequence(MemoryArena *arena, b32 require_braces=true)
 {
-  // NOTE: we mutate the crap out of this sequence.
   Ast *out = 0;
-  Token first_token = global_tokenizer->last_token;
   s32 count = 0;
   AstList *list = 0;
 
-  if (auto_normalize)
-  {
-    count++;
-    list = pushStruct(temp_arena, AstList);
-    list->first = &newAst(arena, RewriteAst, &first_token)->a;
-    list->next  = 0;
-  }
+  b32 brace_opened = false;
+  if (require_braces)
+    brace_opened = requireChar('{');
+  else
+    brace_opened = optionalChar('{');
 
   b32 stop = false;
   while (noError() && !stop)
@@ -2576,7 +2582,7 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
       if (token.cat == TC_Keyword_fork)
       {
         nextToken();
-        ast = &parseFork(arena, is_theorem)->a;
+        ast = &parseFork(arena)->a;
         stop = true;
       }
       else
@@ -2597,6 +2603,9 @@ parseSequence(MemoryArena *arena, b32 is_theorem, b32 auto_normalize)
       optionalChar(';');
     }
   }
+
+  if (brace_opened)
+    requireChar('}');
 
   if (noError())
   {
@@ -2736,7 +2745,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       Composite    *out = newTerm(arena, Composite, 0);
 
       // i32 serial = global_debug_serial++;
-      TermArray op_overloads = {};
+      TermArray op_list = {};
       b32 is_global = false;
       b32 is_builtin_compare = false;
       if (Identifier *op_ident = castAst(in->op, Identifier))
@@ -2767,15 +2776,19 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                     {
                       if ((rhs = castTerm(sides.rhs, Composite)))
                       {
-                        if (Constructor *rhs_ctor = castTerm(lhs->op, Constructor))
+                        if (Constructor *rhs_ctor = castTerm(rhs->op, Constructor))
                         {
                           if (rhs_ctor == lhs_ctor)
                             ctor = lhs_ctor;
                           else
                             parseError(in0, "lhs constructor is not equal to rhs constructor");
                         }
+                        else
+                          parseError(in0, "rhs is not a record");
                       }
                     }
+                    else
+                      parseError(in0, "lhs is not a record");
                   }
 
                   if (noError())
@@ -2826,8 +2839,8 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         }
         else if (!lookupLocalName(env, &in->op->token))
         {
-          op_overloads = getFunctionOverloads(env, op_ident, goal);
-          if (op_overloads.count == 0)
+          op_list = getFunctionOverloads(env, op_ident, goal);
+          if (op_list.count == 0)
           {
             // todo distinguish with the case where identifier is not found
             parseError(in->op, "found no suitable overload");
@@ -2843,15 +2856,15 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         {
           if (BuildTerm build_op = buildTerm(arena, env, in->op, holev))
           {
-            op_overloads.count = 1;
-            allocateArray(temp_arena, 1, op_overloads.items);
-            op_overloads.items[0] = build_op.term;
+            op_list.count = 1;
+            allocateArray(temp_arena, 1, op_list.items);
+            op_list.items[0] = build_op.term;
           }
         }
 
-        for (i32 attempt=0; attempt < op_overloads.count; attempt++)
+        for (i32 attempt=0; attempt < op_list.count; attempt++)
         {
-          Term *op = op_overloads.items[attempt];
+          Term *op = op_list.items[attempt];
           out->op = op;
           if (Arrow *signature = castTerm(getType(temp_arena, env, op), Arrow))
           {
@@ -2961,14 +2974,13 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
             attach("operator type", getType(temp_arena, env, op));
           }
 
-          if (op_overloads.count > 1)
+          if (op_list.count > 1)
           {
             if (hasError())
             {
               wipeError();
-              if (attempt == op_overloads.count-1)
+              if (attempt == op_list.count-1)
               {
-                if (global_debug_mode) debugbreak;
                 parseError(in->op, "found no suitable overload");
               }
             }
@@ -3147,12 +3159,32 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
             // Term *eq_proof = 0;
             Term *eq = 0;
 
+            TermArray op_list = {};
             if (Identifier *op_ident = castAst(in->eq_proof_hint, Identifier))
             {// operator hint
-              TermArray op_overloads = getFunctionOverloads(env, op_ident, holev);
-              for (int attempt=0; attempt < op_overloads.count; attempt++)
+              if (lookupLocalName(env, &op_ident->token))
               {
-                Term *hint = op_overloads.items[attempt];
+                if (BuildTerm build_op = buildTerm(arena, env, &op_ident->a, holev))
+                {
+                  op_list.count = 1;
+                  allocateArray(temp_arena, 1, op_list.items);
+                  op_list.items[0] = build_op.term;
+                }
+              }
+              else
+              {
+                op_list = getFunctionOverloads(env, op_ident, holev);
+                if (op_list.count == 0)
+                {
+                  // todo distinguish with the case where identifier is not found
+                  parseError(in->eq_proof_hint, "found no global overload");
+                  attach("goal", goal);
+                }
+              }
+
+              for (int attempt=0; attempt < op_list.count; attempt++)
+              {
+                Term *hint = op_list.items[attempt];
                 b32 hint_is_valid = false;
                 Term *hint_type = getType(temp_arena, env, hint);
                 if (Arrow *signature = castTerm(hint_type, Arrow))
@@ -3194,12 +3226,12 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                   attach("type", hint_type);
                 }
 
-                if (op_overloads.count > 1)
+                if (op_list.count > 1)
                 {
                   if (hasError())
                   {
                     wipeError();
-                    if (attempt == op_overloads.count-1)
+                    if (attempt == op_list.count-1)
                     {
                       if (global_debug_mode) debugbreak;
                       parseError(&op_ident->a, "found no suitable overload");
@@ -3219,6 +3251,8 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                 attach("type", eq);
               }
             }
+            else
+              parseError(in->eq_proof_hint, "invalid proof pattern");
 
             if (noError())
             {
@@ -3428,7 +3462,7 @@ buildFork(MemoryArena *arena, Typer *env, ForkAst *in, Term *goal)
               parseError(in->subject, "cannot fork this term");
           }
           else
-            parseError(ctor_name, "expected a constructor");
+            parseError(ctor_name, "not a valid constructor");  // todo print them out
         }
 
         if (noError())
@@ -3508,6 +3542,50 @@ parseExpressionFull(MemoryArena *arena)
   return parseExpression(arena, 0, holev);
 }
 
+struct NormList {
+  i32          count;
+  Identifier **items;
+};
+
+// todo what's the story of unbound identifier
+inline void
+insertAutoNormalizations(MemoryArena *arena, NormList norm_list, Ast *in0)
+{
+  switch (in0->cat)
+  {
+    case AC_ForkAst:
+    {
+      ForkAst *in = castAst(in0, ForkAst);
+      for (i32 case_id=0; case_id < in->case_count; case_id++)
+      {
+        Ast *body = in->bodies[case_id];
+        insertAutoNormalizations(arena, norm_list, body);
+        for (i32 norm_id=0; norm_id < norm_list.count; norm_id++)
+        {
+          Let *new_body = newAst(arena, Let, &body->token);
+          new_body->lhs  = norm_list.items[norm_id]->token;
+          new_body->rhs  = &norm_list.items[norm_id]->a;
+          new_body->type = LET_TYPE_NORMALIZE;
+          new_body->body = body;
+          body = &new_body->a;
+        }
+        RewriteAst *new_body = newAst(arena, RewriteAst, &body->token);
+        new_body->body = body;
+        in->bodies[case_id] = &new_body->a;
+      }
+    } break;
+
+    case AC_Let:
+    {
+      Let *in = castAst(in0, Let);
+      insertAutoNormalizations(arena, norm_list, in->body);
+    } break;
+
+    default:
+    {} break;
+  }
+}
+
 forward_declare internal FunctionDecl *
 parseFunction(MemoryArena *arena, Token *name, b32 is_theorem)
 {
@@ -3516,20 +3594,47 @@ parseFunction(MemoryArena *arena, Token *name, b32 is_theorem)
 
   if (Ast *signature0 = parseExpressionToAst(arena))
   {
+    NormList norm_list = {};
     if (ArrowAst *signature = castAst(signature0, ArrowAst))
     {
-      // NOTE: rebuild the function's local bindings from the signature
-
-      if (requireChar('{', "open function body"))
+      if (optionalCategory(TC_Directive_norm))
       {
-        if (Ast *body = parseSequence(arena, is_theorem, false))
+        pushContext("auto normalization: #norm(IDENTIFIER...)");
+        if (requireChar('('))
         {
-          if (requireChar('}'))
+          Tokenizer tk_copy = *global_tokenizer;
+          s32 norm_count = getCommaSeparatedListLength(&tk_copy);
+          if (noError(&tk_copy))
           {
-            out->body      = body;
-            out->signature = signature;
+            norm_list.items = pushArray(temp_arena, norm_count, Identifier*);
+            for (; noError(); )
+            {
+              if (optionalChar(')'))
+                break;
+              else if (requireIdentifier("expect auto-normalized parameter"))
+              {
+                Token *name = &global_tokenizer->last_token;
+                i32 norm_id = norm_list.count++;
+                assert(norm_id < norm_count);
+                norm_list.items[norm_id] = newAst(arena, Identifier, name);
+                if (!optionalChar(','))
+                {
+                  requireChar(')');
+                  break;
+                }
+              }
+            }
           }
         }
+        popContext();
+      }
+
+      if (Ast *body = parseSequence(arena))
+      {
+        if (is_theorem)
+          insertAutoNormalizations(arena, norm_list, body);
+        out->body      = body;
+        out->signature = signature;
       }
     }
     else
@@ -3541,7 +3646,7 @@ parseFunction(MemoryArena *arena, Token *name, b32 is_theorem)
 }
 
 forward_declare internal ForkAst *
-parseFork(MemoryArena *arena, b32 is_theorem)
+parseFork(MemoryArena *arena)
 {
   ForkAst *out = 0;
   Token token = global_tokenizer->last_token;
@@ -3563,7 +3668,7 @@ parseFork(MemoryArena *arena, b32 is_theorem)
           stop = true;
         else
         {
-          pushContext("fork case");
+          pushContext("fork case: CASE: BODY");
           i32 input_case_id = actual_case_count++;
           Token ctor = nextToken();
           if (isIdentifier(&ctor))
@@ -3571,17 +3676,14 @@ parseFork(MemoryArena *arena, b32 is_theorem)
           else
             parseError(&ctor, "expected a constructor name");
 
-          if (requireChar(':', "syntax: CASE: BODY"))
+          optionalChar(':');  // just decoration
+          if (Ast *body = parseSequence(arena, false))
           {
-            b32 auto_normalize = is_theorem ? true : false;
-            if (Ast *body = parseSequence(arena, is_theorem, auto_normalize))
+            bodies[input_case_id] = body;
+            if (!optionalChar(','))
             {
-              bodies[input_case_id] = body;
-              if (!optionalChar(','))
-              {
-                requireChar('}', "to end fork expression; or use ',' to end the fork case");
-                stop = true;
-              }
+              requireChar('}', "to end fork expression; or use ',' to end the fork case");
+              stop = true;
             }
           }
           popContext();
@@ -3741,9 +3843,9 @@ parseOperand(MemoryArena *arena)
   Ast *operand = 0;
   Token token = nextToken();
   if (equal(&token, '_'))
-  {
     operand = &newAst(arena, Hole, &token)->a;
-  }
+  else if (token.cat == TC_Keyword_seq)
+    operand = parseSequence(arena);
   else if (isIdentifier(&token))
   {// token combination. TODO combine more than 2, allow combination in local
    // scope.
@@ -3862,11 +3964,7 @@ parseLambda(MemoryArena *arena)
   pushContext("lambda: _ => {SEQUENCE}");
   nextToken(); nextToken();
   Lambda *out = newAst(arena, Lambda, &global_tokenizer->last_token);
-  if (requireChar('{'))
-  {
-    out->body = parseSequence(arena, true, false);
-    requireChar('}');
-  }
+  out->body = parseSequence(arena);
   popContext();
   return out;
 }
@@ -4161,228 +4259,214 @@ parseTopLevel(EngineState *state)
     TemporaryMemory top_level_temp = beginTemporaryMemory(temp_arena);
 #endif
 
-    if (equal(&token, '#'))
-    {// compile directive
-      token = nextToken();
-      switch (MetaDirective directive = matchMetaDirective(&token))
-      {
-        case MetaDirective_NULL:
-        {
-          tokenError("unknown meta directive");
-        } break;
-
-        case MetaDirective_load:
-        {
-          pushContext("#load");
-          Token file = nextToken();
-          if (file.cat != TC_StringLiteral)
-            tokenError("expect \"FILENAME\"");
-          else
-          {
-            String load_path = print(arena, global_tokenizer->directory);
-            load_path.length += print(arena, file.string).length;
-            arena->used++;
-
-            // note: this could be made more efficient but we don't care.
-            FilePath full_path = platformGetFileFullPath(arena, load_path.chars);
-
-            b32 already_loaded = false;
-            for (auto file_list = state->file_list;
-                 file_list && !already_loaded;
-                 file_list = file_list->next)
-            {
-              if (equal(file_list->first_path, load_path))
-                already_loaded = true;
-            }
-
-            if (!already_loaded)
-            {
-              auto interp_result = interpretFile(state, full_path, false);
-              if (!interp_result)
-                tokenError("failed loading file");
-            }
-          }
-          popContext();
-        } break;
-
-        case MetaDirective_should_fail:
-        {
-          if (optionalString("off"))
-            should_fail_active = false;
-          else
-          {
-            should_fail_active = true;
-            tokenError(&token, "#should_fail activated");
-            getError()->code = ErrorWrongType;
-          }
-        } break;
-
-        case MetaDirective_debug:
-        {
-          if (optionalString("off"))
-            global_debug_mode = false;
-          else
-            global_debug_mode = true;
-        } break;
-
-        invalidDefaultCase;
-      }
-    }
-    else
+    switch (token.cat)
     {
-      switch (token.cat)
+      case TC_Directive_load:
       {
-        case TC_Keyword_test_eval:
+        pushContext("#load");
+        Token file = nextToken();
+        if (file.cat != TC_StringLiteral)
+          tokenError("expect \"FILENAME\"");
+        else
         {
-          if (BuildTerm expr = parseExpressionFull(temp_arena))
-            normalize(arena, empty_env, expr.term);
-        } break;
+          String load_path = print(arena, global_tokenizer->directory);
+          load_path.length += print(arena, file.string).length;
+          arena->used++;
 
-        case TC_Keyword_print:
-        {
-          u32 flags = PrintFlag_Detailed|PrintFlag_PrintType;
-          if (optionalString("lock_detailed"))
-            setFlag(&flags, PrintFlag_LockDetailed);
-          if (BuildTerm expr = parseExpressionFull(temp_arena))
+          // note: this could be made more efficient but we don't care.
+          FilePath full_path = platformGetFileFullPath(arena, load_path.chars);
+
+          b32 already_loaded = false;
+          for (auto file_list = state->file_list;
+               file_list && !already_loaded;
+               file_list = file_list->next)
           {
-            Term *norm = normalize(arena, 0, expr.term);
-            print(0, norm, {.flags=flags});
-            print(0, "\n");
+            if (equal(file_list->first_path, load_path))
+              already_loaded = true;
           }
-        } break;
 
-        case TC_Keyword_print_raw:
+          if (!already_loaded)
+          {
+            auto interp_result = interpretFile(state, full_path, false);
+            if (!interp_result)
+              tokenError("failed loading file");
+          }
+        }
+        popContext();
+      } break;
+
+      case TC_Directive_should_fail:
+      {
+        if (optionalString("off"))
+          should_fail_active = false;
+        else
         {
-          if (auto parsing = parseExpressionFull(temp_arena))
-            print(0, parsing.term, {.flags = (PrintFlag_Detailed     |
-                                              PrintFlag_LockDetailed |
-                                              PrintFlag_PrintType)});
+          should_fail_active = true;
+          tokenError(&token, "#should_fail activated");
+          getError()->code = ErrorWrongType;
+        }
+      } break;
+
+      case TC_Directive_debug:
+      {
+        if (optionalString("off"))
+          global_debug_mode = false;
+        else
+          global_debug_mode = true;
+      } break;
+
+      case TC_Keyword_test_eval:
+      {
+        if (BuildTerm expr = parseExpressionFull(temp_arena))
+          normalize(arena, empty_env, expr.term);
+      } break;
+
+      case TC_Keyword_print:
+      {
+        u32 flags = PrintFlag_Detailed|PrintFlag_PrintType;
+        if (optionalString("lock_detailed"))
+          setFlag(&flags, PrintFlag_LockDetailed);
+        if (BuildTerm expr = parseExpressionFull(temp_arena))
+        {
+          Term *norm = normalize(arena, 0, expr.term);
+          print(0, norm, {.flags=flags});
           print(0, "\n");
-        } break;
+        }
+      } break;
 
-        case TC_Keyword_print_ast:
-        {
-          if (Ast *exp = parseExpressionToAst(temp_arena))
-            print(0, exp, {.flags = PrintFlag_Detailed});
-        } break;
+      case TC_Keyword_print_raw:
+      {
+        if (auto parsing = parseExpressionFull(temp_arena))
+          print(0, parsing.term, {.flags = (PrintFlag_Detailed     |
+                                            PrintFlag_LockDetailed |
+                                            PrintFlag_PrintType)});
+        print(0, "\n");
+      } break;
 
-        case TC_Keyword_check:
+      case TC_Keyword_print_ast:
+      {
+        if (Ast *exp = parseExpressionToAst(temp_arena))
+          print(0, exp, {.flags = PrintFlag_Detailed});
+        print(0, "\n");
+      } break;
+
+      case TC_Keyword_check:
+      {
+        Term *expected_type = 0;
+        if (Ast *ast = parseExpressionToAst(temp_arena))
         {
-          Term *expected_type = 0;
-          if (Ast *ast = parseExpressionToAst(temp_arena))
+          if (optionalChar(':'))
           {
-            if (optionalChar(':'))
-            {
-              if (BuildTerm type = parseExpressionFull(temp_arena))
-                expected_type = type.term;
-            }
-            if (noError())
-              buildTerm(temp_arena, empty_env, ast, expected_type);
+            if (BuildTerm type = parseExpressionFull(temp_arena))
+              expected_type = type.term;
           }
-        } break;
+          if (noError())
+            buildTerm(temp_arena, empty_env, ast, expected_type);
+        }
+      } break;
 
-        case TC_Keyword_check_truth:
+      case TC_Keyword_check_truth:
+      {
+        pushContext("check_truth EQUALITY");
+        if (Term *goal = parseExpressionFull(temp_arena).term)
         {
-          pushContext("check_truth EQUALITY");
-          if (Term *goal = parseExpressionFull(temp_arena).term)
+          if (Composite *eq = castTerm(goal, Composite))
           {
-            if (Composite *eq = castTerm(goal, Composite))
+            b32 goal_valid = false;
+            if (eq->op == &builtins.equal->t)
             {
-              b32 goal_valid = false;
-              if (eq->op == &builtins.equal->t)
+              goal_valid = true;
+              Term *lhs = normalize(temp_arena, empty_env, eq->args[1]);
+              Term *rhs = normalize(temp_arena, empty_env, eq->args[2]);
+              if (!equal(lhs, rhs))
               {
-                goal_valid = true;
+                parseError(&token, "equality cannot be proven by computation");
+                setErrorCode(ErrorWrongType);
+                global_debug_mode = true;
                 Term *lhs = normalize(temp_arena, empty_env, eq->args[1]);
-                Term *rhs = normalize(temp_arena, empty_env, eq->args[2]);
-                if (!equal(lhs, rhs))
-                {
-                  parseError(&token, "equality cannot be proven by computation");
-                  setErrorCode(ErrorWrongType);
-                  global_debug_mode = true;
-                  Term *lhs = normalize(temp_arena, empty_env, eq->args[1]);
-                  attach("lhs", lhs);
-                  attach("rhs", rhs);
-                }
-              }
-              if (!goal_valid)
-              {
-                parseError(&token, "computation can only prove equality");
-                attach("got", goal);
+                attach("lhs", lhs);
+                attach("rhs", rhs);
               }
             }
-          }
-          popContext();
-        } break;
-
-        default:
-        {
-          if (isIdentifier(&token))
-          {
-            Token after_name = nextToken();
-            if (isIdentifier(&after_name) &&
-                areSequential(&token, &after_name))
-            {// token combination
-              token.string.length += after_name.string.length;
-              after_name = nextToken();
-            }
-
-            switch (after_name.cat)
+            if (!goal_valid)
             {
-              case TC_ColonEqual:
-              {
-                pushContext("constant definition: CONSTANT := VALUE;");
-                if (BuildTerm rhs = parseExpressionFull(arena))
-                {
-                  addGlobalBinding(&token, rhs.term);
-                  requireChar(';');
-                }
-                popContext();
-              } break;
-
-              case TC_DoubleColon:
-              {
-                Token after_dcolon = peekToken();
-                if (equal(after_dcolon.string, "union"))
-                {
-                  nextToken();
-                  parseUnion(arena, &token);
-                }
-                else
-                {
-                  b32 is_theorem;
-                  if (equal(after_dcolon.string, "fn"))
-                  {
-                    is_theorem = false;
-                    nextToken();
-                  }
-                  else is_theorem = true;
-                  if (FunctionDecl *fun = parseFunction(arena, &token, is_theorem))
-                    buildGlobalFunction(arena, empty_env, fun);
-                }
-              } break;
-
-              case ':':
-              {
-                if (BuildTerm type = parseExpressionFull(arena))
-                {
-                  if (requireCategory(TC_ColonEqual, "require :=, syntax: name : type := value"))
-                  {
-                    if (BuildTerm rhs = parseExpression(arena, 0, type.term))
-                      addGlobalBinding(&token, rhs.term);
-                  }
-                }
-              } break;
-
-              default:
-              {
-                tokenError("unexpected token after identifier");
-              } break;
+              parseError(&token, "computation can only prove equality");
+              attach("got", goal);
             }
           }
-          else tokenError("unexpected token to begin top-level form");
-        } break;
-      }
+        }
+        popContext();
+      } break;
+
+      default:
+      {
+        if (isIdentifier(&token))
+        {
+          Token after_name = nextToken();
+          if (isIdentifier(&after_name) &&
+              areSequential(&token, &after_name))
+          {// token combination
+            token.string.length += after_name.string.length;
+            after_name = nextToken();
+          }
+
+          switch (after_name.cat)
+          {
+            case TC_ColonEqual:
+            {
+              pushContext("constant definition: CONSTANT := VALUE;");
+              if (BuildTerm rhs = parseExpressionFull(arena))
+              {
+                addGlobalBinding(&token, rhs.term);
+                requireChar(';');
+              }
+              popContext();
+            } break;
+
+            case TC_DoubleColon:
+            {
+              Token after_dcolon = peekToken();
+              if (equal(after_dcolon.string, "union"))
+              {
+                nextToken();
+                parseUnion(arena, &token);
+              }
+              else
+              {
+                b32 is_theorem;
+                if (equal(after_dcolon.string, "fn"))
+                {
+                  is_theorem = false;
+                  nextToken();
+                }
+                else is_theorem = true;
+                if (FunctionDecl *fun = parseFunction(arena, &token, is_theorem))
+                  buildGlobalFunction(arena, empty_env, fun);
+              }
+            } break;
+
+            case ':':
+            {
+              if (BuildTerm type = parseExpressionFull(arena))
+              {
+                if (requireCategory(TC_ColonEqual, "require :=, syntax: name : type := value"))
+                {
+                  if (BuildTerm rhs = parseExpression(arena, 0, type.term))
+                    addGlobalBinding(&token, rhs.term);
+                }
+              }
+            } break;
+
+            default:
+            {
+              tokenError("unexpected token after identifier");
+            } break;
+          }
+        }
+        else tokenError("unexpected token to begin top-level form");
+      } break;
     }
+    
 
 #if CLEAN_TEMPORARY_MEMORY
     endTemporaryMemory(top_level_temp);
@@ -4567,7 +4651,7 @@ int engineMain()
 #endif
 
   assert(arrayCount(keywords)       == TC_Keyword_END - TC_Keyword_START);
-  assert(arrayCount(metaDirectives) == MetaDirective_COUNT);
+  assert(arrayCount(metaDirectives) == TC_Directive_END - TC_Directive_START);
 
   void   *permanent_memory_base = (void*)teraBytes(2);
   size_t  permanent_memory_size = megaBytes(256);
