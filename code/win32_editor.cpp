@@ -8,10 +8,10 @@ struct win32_offscreen_buffer
     // NOTE: pixels are 32-bit wide, memory order "BB GG RR XX"
     BITMAPINFO info;
     void       *memory;
-    s32        width;
-    s32        height;
-    s32        pitch;
-    s32        bytes_per_pixel;
+    i32        width;
+    i32        height;
+    i32        pitch;
+    i32        bytes_per_pixel;
 };
 
 global_variable win32_offscreen_buffer globalBackBuffer;
@@ -206,12 +206,12 @@ testDraw(win32_offscreen_buffer *buffer)
 {
     u8 *row = (u8 *)buffer->memory;
     u32 color = 0x00555555;
-    for (s32 y = 0;
+    for (i32 y = 0;
          y < buffer->height;
          y++)
     {
         u32 *pixel = (u32 *)row;
-        for (s32 x = 0;
+        for (i32 x = 0;
              x < buffer->width;
              x++)
         {
@@ -255,7 +255,7 @@ platformGetFileFullPath(MemoryArena* arena, char *file)
     char *file_part;
     DWORD length = GetFullPathNameA(file, (DWORD)getArenaFree(arena), out.path, &file_part);
     out.directory.chars  = out.path;
-    out.directory.length = (s32)(file_part - out.path);
+    out.directory.length = (i32)(file_part - out.path);
     out.file             = file_part;
 
     arena->used += length+1;
@@ -263,7 +263,7 @@ platformGetFileFullPath(MemoryArena* arena, char *file)
 }
 
 #if 0
-s32 CALLBACK
+i32 CALLBACK
 WinMain(HINSTANCE instance,
         HINSTANCE prev_instance,
         LPSTR     cmd_line,

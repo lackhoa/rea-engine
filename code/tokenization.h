@@ -22,11 +22,13 @@ enum TokenCategory
   TC_Keyword_fn,
   TC_Keyword_fork,
   TC_Keyword_union,
-  TC_Keyword_struct,
+  TC_Keyword_option,
   TC_Keyword_seq,
   TC_Keyword_rewrite,
   TC_Keyword_norm,
+  TC_Keyword_destruct,
 
+  // todo these should be "commands"
   TC_Keyword_test_eval,
   TC_Keyword_print,
   TC_Keyword_print_raw,
@@ -44,8 +46,8 @@ enum TokenCategory
 };
 
 const char *keywords[] = {
-  "", "fn", "fork", "union", "struct", "seq",
-  "rewrite", "norm",
+  "", "fn", "fork", "union", "option", "seq",
+  "rewrite", "norm", "destruct",
   "test_eval", "print", "print_raw", "print_ast", "check", "check_truth"
 };
 
@@ -54,8 +56,8 @@ const char *metaDirectives[] = {"", "load", "should_fail", "debug", "norm"};
 struct Token
 {
   String        string;
-  s32           line;
-  s32           column;
+  i32           line;
+  i32           column;
   TokenCategory cat;
 };
 
@@ -98,12 +100,12 @@ enum ErrorCode
 struct ParseError
 {
   String     message;
-  s32        line;
-  s32        column;
+  i32        line;
+  i32        column;
   char      *context;
   ErrorCode  code; 
 
-  s32             attachment_count;
+  i32             attachment_count;
   ErrorAttachment attachments[8];
 };
 
@@ -119,8 +121,8 @@ struct Tokenizer
 
   char  *at;
   Token  last_token;
-  s32    line;
-  s32    column;
+  i32    line;
+  i32    column;
 
   String directory;
 };

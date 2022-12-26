@@ -107,7 +107,7 @@ generateVectors()
 
 struct FileList
 {
-  s32    count;
+  i32    count;
   char **files;
 };
 
@@ -115,7 +115,7 @@ internal FileList
 getAllCppFilesInDirectory()
 {
   FileList out = {};
-  for (s32 iter = 0; iter < 2; iter++)
+  for (i32 iter = 0; iter < 2; iter++)
   {
     if (iter == 1)
     {
@@ -132,7 +132,7 @@ getAllCppFilesInDirectory()
     }
     else
     {
-      s32 file_id = 0;
+      i32 file_id = 0;
       do
       {
         if (iter == 0)
@@ -378,7 +378,7 @@ int main()
   MemoryArena *arena = permanent_arena;
 
   char *current_dir_base = (char*)getNext(arena);
-  s32 current_dir_length = GetCurrentDirectory(arena->cap, (char *)arena->base);
+  i32 current_dir_length = GetCurrentDirectory(arena->cap, (char *)arena->base);
   arena->used += current_dir_length + 1;
   current_dir = {current_dir_base, current_dir_length};
 

@@ -949,7 +949,12 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
 
       case AC_UnionAst:
       {
-        print(buffer, "<todo union>");
+        print(buffer, "<some union>");
+      } break;
+
+      case AC_Destruct:
+      {
+        print(buffer, "<some destruct>");
       } break;
     }
   }
@@ -966,7 +971,7 @@ print(MemoryArena *buffer, Ast *in0)
 
 forward_declare internal char *
 print(MemoryArena *buffer, Term *in0, PrintOptions opt)
- {// mark: printTerm
+{// mark: printTerm
   char *out = buffer ? (char*)getNext(buffer) : 0;
   if (in0)
   {
@@ -2777,96 +2782,10 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       TermArray op_list = {};
       b32 is_global = false;
       b32 is_builtin_compare = false;
+      // I want this part to be built-in to the parsing, so it's a different thing entirely?
       if (Identifier *op_ident = castAst(in->op, Identifier))
       {
-        String op_name = in->op->token.string;
-        if (isSubstring(op_name, toString("destruct")))
-        {
-          // todo #hack
-          pushContext("destruct");
-          char last_char = op_name.chars[op_name.length-1];
-          if ('0' <= last_char && last_char <= '9')
-          {
-            i32 hack_number = last_char - '0';
-            is_builtin_compare = true;
-            if (in->arg_count == 1)
-            {
-              if (BuildTerm build_p = buildTerm(arena, env, in->args[0], holev))
-              {
-                Term *p_type = getType(arena, env, build_p.term);
-                if (TermPair sides = getEqualitySides(p_type, false))
-                {
-                  Constructor *ctor = 0;
-                  Composite *lhs = 0;
-                  Composite *rhs = 0;
-                  if ((lhs = castTerm(sides.lhs, Composite)))
-                  {
-                    if (Constructor *lhs_ctor = castTerm(lhs->op, Constructor))
-                    {
-                      if ((rhs = castTerm(sides.rhs, Composite)))
-                      {
-                        if (Constructor *rhs_ctor = castTerm(rhs->op, Constructor))
-                        {
-                          if (rhs_ctor == lhs_ctor)
-                            ctor = lhs_ctor;
-                          else
-                            parseError(in0, "lhs constructor is not equal to rhs constructor");
-                        }
-                        else
-                          parseError(in0, "rhs is not a record");
-                      }
-                    }
-                    else
-                      parseError(in0, "lhs is not a record");
-                  }
-
-                  if (noError())
-                  {
-                    i32 param_count = castTerm(ctor->type, Arrow)->param_count;
-                    if (hack_number < param_count)
-                    {
-                      for (BuiltinCompareList *builtin_compare = global_state.builtin_compare_list;
-                           builtin_compare;
-                           builtin_compare = builtin_compare->next)
-                      {
-                        // todo #speed
-                        if (builtin_compare->ctor == ctor)
-                        {
-                          Composite *out = newTerm(arena, Composite, 0);
-                          out->op        = builtin_compare->compares[hack_number];
-                          out->arg_count = lhs->arg_count*2+1;
-                          out->args      = pushArray(arena, out->arg_count, Term*);
-                          for (i32 id=0; id < out->arg_count; id++)
-                          {
-                            if (id == out->arg_count-1)
-                              out->args[id] = build_p.term;
-                            else if (id < lhs->arg_count)
-                              out->args[id] = lhs->args[id];
-                            else
-                              out->args[id] = rhs->args[id - lhs->arg_count];
-                          }
-                          out0 = buildTerm(arena, env, synthesizeAst(arena, &out->t, &in0->token), goal);
-                          recursed = true;
-                          break;
-                        }
-                      }
-                    }
-                    else
-                    {
-                      parseError(in0, "constructor only has %d parameters", param_count);
-                    }
-                  }
-                }
-                else
-                  parseError(in0, "expected an equality proof as argument");
-              }
-            }
-            else
-              parseError(in0, "expected one arguments");
-          }
-          popContext();
-        }
-        else if (!lookupLocalName(env, &in->op->token))
+        if (!lookupLocalName(env, &in->op->token))
         {
           is_global = true;
           op_list = getFunctionOverloads(env, op_ident, goal);
@@ -3406,6 +3325,77 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       out0.term = &buildUnion(arena, env, uni, 0)->t;
     } break;
 
+    case AC_Destruct:
+    {
+      Destruct *in = castAst(in0, Destruct);
+      if (BuildTerm build_eqp = buildTerm(arena, env, in->eqp, holev))
+      {
+        Term *eq = getType(arena, env, build_eqp.term);
+        if (TermPair sides = getEqualitySides(eq, false))
+        {
+          Constructor *ctor = 0;
+          Composite *lhs = 0;
+          Composite *rhs = 0;
+          if ((lhs = castTerm(sides.lhs, Composite)))
+          {
+            if (Constructor *lhs_ctor = castTerm(lhs->op, Constructor))
+            {
+              if ((rhs = castTerm(sides.rhs, Composite)))
+              {
+                if (Constructor *rhs_ctor = castTerm(rhs->op, Constructor))
+                {
+                  if (rhs_ctor == lhs_ctor)
+                    ctor = lhs_ctor;
+                  else
+                    parseError(in0, "lhs constructor is not equal to rhs constructor");
+                }
+                else
+                  parseError(in0, "rhs is not a record");
+              }
+            }
+            else
+              parseError(in0, "lhs is not a record");
+          }
+
+          if (noError())
+          {
+            i32 param_count = castTerm(ctor->type, Arrow)->param_count;
+            if (in->arg_id < param_count)
+            {
+              for (BuiltinCompareList *builtin_compare = global_state.builtin_compare_list;
+                   builtin_compare;
+                   builtin_compare = builtin_compare->next)
+              {
+                // todo #speed
+                if (builtin_compare->ctor == ctor)
+                {
+                  Composite *out = newTerm(arena, Composite, 0);
+                  out->op        = builtin_compare->compares[in->arg_id];
+                  out->arg_count = lhs->arg_count*2+1;
+                  out->args      = pushArray(arena, out->arg_count, Term*);
+                  for (i32 id=0; id < out->arg_count; id++)
+                  {
+                    if (id == out->arg_count-1)
+                      out->args[id] = build_eqp.term;
+                    else if (id < lhs->arg_count)
+                      out->args[id] = lhs->args[id];
+                    else
+                      out->args[id] = rhs->args[id - lhs->arg_count];
+                  }
+                  out0.term = &out->t;
+                  break;
+                }
+              }
+            }
+            else
+              parseError(in0, "constructor only has %d parameters", param_count);
+          }
+        }
+        else
+          parseError(in0, "expected an equality proof as argument");
+      }
+    } break;
+
     invalidDefaultCase;
   }
 
@@ -3852,30 +3842,6 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
   return out;
 }
 
-inline i32
-parseInt32()
-{
-  Token token = nextToken();
-  i32 out = 0;
-  char first_char = token.string.chars[0];
-  if ('0' <= first_char && first_char <= '9')
-  {
-    for (int char_id=0; char_id < token.string.length; char_id++)
-    {
-      char c = token.string.chars[char_id];
-      if ('0' <= c && c <= '9')
-      {
-        out += out*10 + (c - '0');
-      }
-      else
-        invalidCodePath;
-    }
-  }
-  else
-    tokenError("expected a 32-bit integer");
-  return out;
-}
-
 inline b32
 areSequential(Token *first, Token *next)
 {
@@ -4047,6 +4013,21 @@ buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
   return uni;
 }
 
+inline Destruct *
+parseDestruct(MemoryArena *arena)
+{
+  Destruct *out = newAst(arena, Destruct, &global_tokenizer->last_token);
+  if (requireChar('('))
+  {
+    out->arg_id = parseInt32();
+    if (requireChar(')'))
+    {
+      out->eqp = parseExpressionToAst(arena);
+    }
+  }
+  return out;
+}
+
 internal Ast *
 parseOperand(MemoryArena *arena)
 {
@@ -4061,6 +4042,10 @@ parseOperand(MemoryArena *arena)
   else if (token.cat == TC_Keyword_union)
   {
     operand = &parseUnion(arena)->a;
+  }
+  else if (token.cat == TC_Keyword_destruct)
+  {
+    operand = &parseDestruct(arena)->a;
   }
   else if (isIdentifier(&token))
   {

@@ -15,8 +15,8 @@ copyMemory(void *dst, void *src, size_t size)
     memcpy(dst, src, size);
 }
 
-inline s32
-absoluteValue(s32 in)
+inline i32
+absoluteValue(i32 in)
 {
     return ((in >= 0) ? in : -in);
 }

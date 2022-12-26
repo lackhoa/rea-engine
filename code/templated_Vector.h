@@ -1,15 +1,15 @@
 struct ...Vector
 {
     MemoryArena *arena;
-    s32 count;
-    s32 capacity;
+    i32 count;
+    i32 capacity;
     ... *items;
 };
 
 internal ... *
 pushItem(...Vector *vector)
 {
-    s32 capacity = vector->capacity;
+    i32 capacity = vector->capacity;
     if (vector->count >= capacity)
     {
         ... *new_items = pushArray(vector->arena, capacity, ...);
@@ -22,7 +22,7 @@ pushItem(...Vector *vector)
 }
 
 inline ...Vector
-new...Vector(MemoryArena *arena, s32 capacity)
+new...Vector(MemoryArena *arena, i32 capacity)
 {
     ...Vector result;
     result.count = 0;

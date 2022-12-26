@@ -24,7 +24,6 @@
 
 typedef uint8_t  u8;
 typedef uint16_t u16;
-typedef int32_t  s32;
 typedef int32_t  i32;
 typedef int8_t   b8;
 typedef int32_t  b32;
@@ -32,7 +31,6 @@ typedef uint32_t u32;
 typedef uint64_t u64;
 
 typedef float    r32;
-typedef long     s64;
 typedef long     i64;
 
 #define kiloBytes(value) ((value)*1024LL)
@@ -83,7 +81,7 @@ struct MemoryArena
     size_t  used;
     size_t  cap;
 
-    s32 temp_count;
+    i32 temp_count;
 };
 
 inline MemoryArena
@@ -190,7 +188,7 @@ copySize(MemoryArena *arena, void *src, size_t size)
 #define copyArray(arena, count, src) (mytypeof(src)) copySize(arena, src, count*sizeof(*(src)))
 
 inline b32
-inRange(s32 min, s32 val, s32 max)
+inRange(i32 min, i32 val, i32 max)
 {
     return (min <= val) && (val <= max);
 }
@@ -198,13 +196,13 @@ inRange(s32 min, s32 val, s32 max)
 struct String
 {
   char *chars;
-  s32   length;                 // note: does not include the nil terminator
+  i32   length;                 // note: does not include the nil terminator
 };
 
-inline s32
+inline i32
 stringLength(char *string)
 {
-    s32 out = 0;
+    i32 out = 0;
     char *c = string;
     while (*c)
     {
@@ -223,7 +221,7 @@ equal(String s, const char *cstring)
   }
   else
   {
-    s32 at = 0;
+    i32 at = 0;
     for (;
          at < s.length;
          at++)
@@ -346,10 +344,10 @@ print(MemoryArena *buffer, String s)
     out.chars = (char *)getNext(buffer);
     char *at = out.chars;
     const char *c = s.chars;
-    for (s32 index = 0; index < s.length; index++)
+    for (i32 index = 0; index < s.length; index++)
       *at++ = *c++;
     *at = 0;
-    out.length = (s32)(at - out.chars);
+    out.length = (i32)(at - out.chars);
     buffer->used += out.length;
     assert(buffer->used <= buffer->cap);
   }
@@ -369,7 +367,7 @@ print(MemoryArena *buffer, char *s)
     out = (char *)getNext(buffer);
     char *at = out;
     const char *c = s;
-    for (s32 index = 0; *c; index++)
+    for (i32 index = 0; *c; index++)
       *at++ = *c++;
     *at = 0;
     buffer->used = at - (char *)buffer->base;
@@ -414,7 +412,7 @@ isSubstring(String full, String sub, b32 case_sensitive=true)
   }
   else
   {
-    for (s32 id = 0;
+    for (i32 id = 0;
          id < sub.length;
          id++)
     {

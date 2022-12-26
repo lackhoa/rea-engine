@@ -6,7 +6,7 @@
         out->subject = norm_subject;
         allocateArray(env.arena, out->case_count, out->cases);
         Environment *outer_env = &env;
-        for (s32 case_id = 0; case_id < out->case_count; case_id++)
+        for (i32 case_id = 0; case_id < out->case_count; case_id++)
         {
           Environment env = *outer_env;
           Form *ctor = in->form->ctors + case_id;
@@ -189,7 +189,7 @@ isFree(Term *in0, i32 offset)
       if (isFree(in->op, offset)) out = true;
       else
       {
-        for (s32 arg_id=0; arg_id < in->arg_count; arg_id++)
+        for (i32 arg_id=0; arg_id < in->arg_count; arg_id++)
         {
           if (isFree(in->args[arg_id], offset))
           {
@@ -203,7 +203,7 @@ isFree(Term *in0, i32 offset)
     case Term_Arrow:
     {
       Arrow *in = castTerm(in0, Arrow);
-      for (s32 param_id = 0; param_id < in->param_count; param_id++)
+      for (i32 param_id = 0; param_id < in->param_count; param_id++)
       {
         if (isFree(in->param_types[param_id], offset+1))
         {

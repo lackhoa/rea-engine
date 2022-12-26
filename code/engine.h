@@ -31,7 +31,9 @@ enum AstCategory {
   AC_AccessorAst,
   AC_ComputationAst,
   AC_Lambda,
+  AC_Destruct,
 
+  // sequence
   AC_ForkAst,
   AC_RewriteAst,
   AC_FunctionDecl,  // todo: #cleanup probably don't need this anymore
@@ -103,7 +105,7 @@ struct ForkAst {
 
 struct ParseExpressionOptions
 {
-  s32 min_precedence = -9999;
+  i32 min_precedence = -9999;
 };
 
 struct Trinary {i32 v;};
@@ -265,7 +267,7 @@ struct LocalBinding
 
 struct LookupLocalName {
   b32   found;
-  s32   stack_delta;
+  i32   stack_delta;
   VarId var_id;
   i32   var_index;
   operator bool() {return found;}
@@ -323,7 +325,7 @@ struct ArrowAst {
 struct Arrow {
   embed_Term(t);
   VarId   first_id;  // todo #removeme
-  s32     param_count;
+  i32     param_count;
   Token  *param_names;
   Term  **param_types;
   Term   *output_type;
@@ -331,7 +333,7 @@ struct Arrow {
 
 struct GlobalBinding {
   String key;
-  s32    count;
+  i32    count;
   Term *(items[8]);           // todo: #grow
   GlobalBinding *next_hash_slot;
 };
@@ -363,7 +365,7 @@ struct AccessorAst
 
   Ast   *record;                // in parse phase we can't tell if the op is a constructor
   Token  field_name;           // parsing info
-  s32    field_id;              // after build phase
+  i32    field_id;              // after build phase
 };
 
 struct FileList {
@@ -502,6 +504,12 @@ struct UnionAst {
   i32        ctor_count;
   Token     *ctor_names;
   ArrowAst **ctor_signatures;
+};
+
+struct Destruct {
+  embed_Ast(a);
+  i32  arg_id;
+  Ast *eqp;
 };
 
 #include "generated/engine_forward.h"

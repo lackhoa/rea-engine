@@ -72,9 +72,9 @@ isSpecial(char c)
 }
 
 inline void
-printCharToBufferRepeat(char *buffer, char c, s32 repeat)
+printCharToBufferRepeat(char *buffer, char c, i32 repeat)
 {
-    for (s32 index = 0 ;
+    for (i32 index = 0 ;
          index < repeat;
          index++)
     {
@@ -237,7 +237,7 @@ eatAllSpaces(Tokenizer *tk)
 }
 
 internal void
-parseErrorVA(s32 line, s32 column, char *format, va_list arg_list, Tokenizer *tk = global_tokenizer)
+parseErrorVA(i32 line, i32 column, char *format, va_list arg_list, Tokenizer *tk = global_tokenizer)
 {
   assert(!tk->error);  // note: prevent parser from doing useless work after failure.
 
@@ -317,7 +317,7 @@ nextToken(Tokenizer *tk = global_tokenizer)
         nextChar(tk);
       // handle the closing double quote
       nextChar(tk);
-      out.string.length = (s32)(tk->at - out.string.chars - 1);
+      out.string.length = (i32)(tk->at - out.string.chars - 1);
     } break;
 
     case '=':
@@ -421,7 +421,7 @@ nextToken(Tokenizer *tk = global_tokenizer)
   if (out.cat)
   {
     if (!out.string.length)
-      out.string.length = (s32)(tk->at - out.string.chars);
+      out.string.length = (i32)(tk->at - out.string.chars);
     assert(out.string.length);
 
     switch (out.cat)
@@ -543,7 +543,7 @@ eatUntilMatchingPair(Tokenizer *tk)
   return found;
 }
 
-internal s32
+internal i32
 getCommaSeparatedListLength(Tokenizer *tk)
 {
   Token opening = tk->last_token;
@@ -551,7 +551,7 @@ getCommaSeparatedListLength(Tokenizer *tk)
   assert(closing);
   char opening_char = opening.string.chars[0];
   char previous = opening_char;
-  s32 out = 0;
+  i32 out = 0;
   for (b32 stop = false; !stop && hasMore(tk);)
   {
     Token token = nextToken(tk);
@@ -572,5 +572,29 @@ getCommaSeparatedListLength(Tokenizer *tk)
     previous = tk->last_token.string.chars[0];
 
   }
+  return out;
+}
+
+inline i32
+parseInt32()
+{
+  Token token = nextToken();
+  i32 out = 0;
+  char first_char = token.string.chars[0];
+  if ('0' <= first_char && first_char <= '9')
+  {
+    for (int char_id=0; char_id < token.string.length; char_id++)
+    {
+      char c = token.string.chars[char_id];
+      if ('0' <= c && c <= '9')
+      {
+        out += out*10 + (c - '0');
+      }
+      else
+        invalidCodePath;
+    }
+  }
+  else
+    tokenError("expected a 32-bit integer");
   return out;
 }
