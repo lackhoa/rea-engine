@@ -502,7 +502,6 @@ struct UnionAst {
   i32        ctor_count;
   Token     *ctor_names;
   ArrowAst **ctor_signatures;
-  Union     *tunnel;
 };
 
 #include "generated/engine_forward.h"

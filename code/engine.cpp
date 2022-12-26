@@ -996,8 +996,11 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
       case Term_Union:
       {
         Union *in = castTerm(in0, Union);
-        print(buffer, in0->global_name->string);
-        if (flagIsSet(opt.flags, PrintFlag_Detailed))
+        if (in0->global_name)
+        {
+          print(buffer, in0->global_name->string);
+        }
+        if (!in->global_name || flagIsSet(opt.flags, PrintFlag_Detailed))
         {
           if (in->ctor_count)
           {
@@ -1005,10 +1008,14 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
             unsetFlag(&new_opt.flags, PrintFlag_Detailed);
             for (i32 ctor_id = 0; ctor_id < in->ctor_count; ctor_id++)
             {
+              print(buffer, in->ctor_names[ctor_id]);
+#if 0  // todo: #print-need-type
               Constructor *ctor = in->ctors + ctor_id;
-              print(buffer, globalNameOf(&ctor->t));
               print(buffer, ": ");
               print(buffer, getTypeNoEnv(temp_arena, &ctor->t), new_opt);
+#endif
+              if (ctor_id != in->ctor_count-1)
+                print(buffer, ", ");
             }
             print(buffer, " }");
           }
@@ -3396,7 +3403,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
     case AC_UnionAst:
     {
       UnionAst *uni = castAst(in0, UnionAst);
-      out0.term = &buildUnion(arena, env, uni)->t;
+      out0.term = &buildUnion(arena, env, uni, 0)->t;
     } break;
 
     invalidDefaultCase;
@@ -3876,18 +3883,11 @@ areSequential(Token *first, Token *next)
 }
 
 internal void
-parseConstructor(MemoryArena *arena, UnionAst *uni, Union *uni_term)
+parseConstructor(MemoryArena *arena, UnionAst *uni, i32 ctor_id)
 {
-  i32 ctor_id = uni->ctor_count++;
-
-  Constructor *ctor = uni_term->ctors + ctor_id;
-  initTerm(&ctor->t, Term_Constructor, 0);
-  ctor->uni  = uni_term;
-  ctor->id   = ctor_id;
   Token ctor_name = nextToken();
   uni->ctor_names[ctor_id] = ctor_name;
 
-  Arrow *signature = 0;
   if (isIdentifier(&ctor_name))
   {
     if (optionalChar(':'))
@@ -3895,130 +3895,35 @@ parseConstructor(MemoryArena *arena, UnionAst *uni, Union *uni_term)
       pushContext("constructor: (FIELD: TYPE ...)");
       {
         if (ArrowAst *arrow_ast = parseArrowType(arena, true))
-        {
           uni->ctor_signatures[ctor_id] = arrow_ast;
-          Typer env_ = {}; Typer *env = &env_;
-          if (BuildTerm arrow = buildTerm(arena, env, &arrow_ast->a, holev))
-          {
-            signature = castTerm(arrow.term, Arrow);
-          }
-        }
       }
       popContext();
-
-      if (noError())
-      {
-        signature->output_type = &uni_term->t;
-        ctor->type = &signature->t;
-        addGlobalBinding(&ctor_name, &ctor->t);
-      }
     }
     else
     {// atomic constructor
-      if (uni_term->type == &builtins.Set->t)
-      {
-        signature = newTerm(arena, Arrow, 0);
-        signature->output_type = &uni_term->t;
-        ctor->type = &signature->t;
-        Composite *record = newTerm(arena, Composite, 0);
-        record->op = &ctor->t;
-        addGlobalBinding(&ctor_name, &record->t);
-      }
-      else
-        parseError(&ctor_name, "constructors must construct a set member");
+      ArrowAst *signature = newAst(arena, ArrowAst, &ctor_name);
+      uni->ctor_signatures[ctor_id] = signature;  // empty arrow: no parameter, no output.
     }
   }
   else
     tokenError("expected an identifier as constructor name");
-
-  if (noError())
-  {
-    // todo #cleanup This is a "deconstructor" builtin, which deconstructs an equality for us.
-    i32 ctor_arg_count      = signature->param_count;
-    i32 compare_param_count = ctor_arg_count*2 + 1;
-    if (compare_param_count > 0)
-    {
-      Token* param_names = pushArray(arena, compare_param_count, Token);
-      Term** param_types = pushArray(arena, compare_param_count, Term*);
-      for (i32 group=0; group <= 1; group++)
-      {
-        for (i32 arg_id=0; arg_id < ctor_arg_count; arg_id++)
-        {
-          String name = print(arena, "_");
-          concat(&name, print(arena, signature->param_names[arg_id].string));
-          concat(&name, print(arena, "%d", group));
-          i32 offset   = (group == 0) ? 0 : ctor_arg_count;
-          i32 param_id = offset + arg_id;
-          param_names[param_id] = newToken(name);
-          param_types[param_id] = signature->param_types[arg_id];
-        }
-      }
-      Term **lhs_args = pushArray(arena, ctor_arg_count, Term*);
-      Term **rhs_args = pushArray(arena, ctor_arg_count, Term*);
-      for (i32 arg_id=0; arg_id < ctor_arg_count; arg_id++)
-      {
-        i32 lhs_param_id = arg_id;
-        i32 rhs_param_id = ctor_arg_count+arg_id;
-        lhs_args[arg_id] = newVariable(arena, param_names+lhs_param_id, 0, lhs_param_id);
-        rhs_args[arg_id] = newVariable(arena, param_names+rhs_param_id, 0, rhs_param_id);
-      }
-      Term *lhs = newComposite(arena, &ctor->t, ctor_arg_count, lhs_args);
-      Term *rhs = newComposite(arena, &ctor->t, ctor_arg_count, rhs_args);
-      param_names[compare_param_count-1] = newToken(toString("P"));
-      param_types[compare_param_count-1] = newEquality(arena, &uni_term->t, lhs, rhs);
-
-      BuiltinCompareList *compare_list = pushStruct(global_state.arena, BuiltinCompareList);
-      compare_list->next = global_state.builtin_compare_list;
-      global_state.builtin_compare_list = compare_list;
-      compare_list->ctor = ctor;
-      allocateArray(arena, ctor_arg_count, compare_list->compares);
-      for (i32 arg_id=0; arg_id < ctor_arg_count; arg_id++)
-      {
-        Arrow *compare_signature = newTerm(arena, Arrow, 0);
-        compare_signature->param_count = compare_param_count;
-        compare_signature->param_names = param_names;
-        compare_signature->param_types = param_types;
-        compare_signature->output_type = newEquality(arena, signature->param_types[arg_id], lhs_args[arg_id], rhs_args[arg_id]);
-        String compare_name = print(arena, "__compare_");
-        concat(&compare_name, print(arena, ctor_name.string));
-        concat(&compare_name, print(arena, "_%d", arg_id));
-        // Token compare_name_token = newToken(compare_name);
-        // addGlobalBinding(&compare_name_token, &compare->t);
-        Builtin *compare = newTerm(arena, Builtin, &compare_signature->t);
-        compare_list->compares[arg_id] = &compare->t;
-      }
-    }
-  }
-}
-
-internal Constructor *
-buildConstructor(MemoryArena *arena, Typer *env)
-{
-  return 0;
 }
 
 internal UnionAst *
-parseUnion(MemoryArena *arena, Token *global_name)
+parseUnion(MemoryArena *arena)
 {
   UnionAst *uni = 0;
-  Term *type = &builtins.Set->t;
   Token *token = &global_tokenizer->last_token;
 
   if (requireChar('{'))
   {
-    Union *uni_term = newTerm(arena, Union, type);
-    // note: bind the type first to support recursive data structure.
-    if (global_name)
-      addGlobalBinding(global_name, &uni_term->t);
     uni = newAst(arena, UnionAst, token);
-    uni->tunnel = uni_term;
 
     Tokenizer tk_copy = *global_tokenizer;
     i32 ctor_count = getCommaSeparatedListLength(&tk_copy);
     // NOTE: init here for recursive definition
     if (noError(&tk_copy))
     {
-      allocateArray(arena, ctor_count, uni_term->ctors);
       allocateArray(arena, ctor_count, uni->ctor_signatures);
       allocateArray(arena, ctor_count, uni->ctor_names);
       while (noError())
@@ -4027,7 +3932,7 @@ parseUnion(MemoryArena *arena, Token *global_name)
           break;
         else
         {
-          parseConstructor(arena, uni, uni_term);
+          parseConstructor(arena, uni, uni->ctor_count++);
           if (!optionalChar(','))
           {
             requireChar('}');
@@ -4045,14 +3950,101 @@ parseUnion(MemoryArena *arena, Token *global_name)
 }
 
 forward_declare internal Union *
-buildUnion(MemoryArena *arena, Typer *env, UnionAst *in)
+buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
 {
-  Union *out = in->tunnel;
-  out->ctor_count = in->ctor_count;
-  allocateArray(arena, in->ctor_count, out->ctor_names);
-  for (i32 id=0; id < in->ctor_count; id++)
-    out->ctor_names[id] = in->ctor_names[id].string;
-  return out;
+  Union *uni = newTerm(arena, Union, &builtins.Set->t);
+  uni->ctor_count = in->ctor_count;
+  allocateArray(arena, in->ctor_count, uni->ctor_names);
+  allocateArray(arena, in->ctor_count, uni->ctors);
+  // note: bind the type first to support recursive data structure.
+  if (global_name)
+    addGlobalBinding(global_name, &uni->t);
+  for (i32 ctor_id=0; noError() && (ctor_id < in->ctor_count); ctor_id++)
+  {
+    Constructor *ctor = uni->ctors + ctor_id;
+    initTerm(&ctor->t, Term_Constructor, 0);
+    ctor->uni = uni;
+    ctor->id  = ctor_id;
+
+    Token *ctor_name = in->ctor_names + ctor_id;
+    uni->ctor_names[ctor_id] = ctor_name->string;
+    if (BuildTerm build_type = buildTerm(arena, env, &in->ctor_signatures[ctor_id]->a, holev))
+    {
+      Arrow *signature = castTerm(build_type.term, Arrow);
+      signature->output_type = &uni->t;
+      ctor->type = &signature->t;
+      if (global_name)
+      {
+        if (signature->param_count > 0)
+        {
+          addGlobalBinding(ctor_name, &ctor->t);
+
+          // todo #cleanup This is a "destruct" builtin, which deconstructs an equality for us.
+          i32 ctor_arg_count      = signature->param_count;
+          i32 compare_param_count = ctor_arg_count*2 + 1;
+          Token* param_names = pushArray(arena, compare_param_count, Token);
+          Term** param_types = pushArray(arena, compare_param_count, Term*);
+          for (i32 group=0; group <= 1; group++)
+          {
+            for (i32 arg_id=0; arg_id < ctor_arg_count; arg_id++)
+            {
+              String name = print(arena, "_");
+              concat(&name, print(arena, signature->param_names[arg_id].string));
+              concat(&name, print(arena, "%d", group));
+              i32 offset   = (group == 0) ? 0 : ctor_arg_count;
+              i32 param_id = offset + arg_id;
+              param_names[param_id] = newToken(name);
+              param_types[param_id] = signature->param_types[arg_id];
+            }
+          }
+          Term **lhs_args = pushArray(arena, ctor_arg_count, Term*);
+          Term **rhs_args = pushArray(arena, ctor_arg_count, Term*);
+          for (i32 arg_id=0; arg_id < ctor_arg_count; arg_id++)
+          {
+            i32 lhs_param_id = arg_id;
+            i32 rhs_param_id = ctor_arg_count+arg_id;
+            lhs_args[arg_id] = newVariable(arena, param_names+lhs_param_id, 0, lhs_param_id);
+            rhs_args[arg_id] = newVariable(arena, param_names+rhs_param_id, 0, rhs_param_id);
+          }
+          Term *lhs = newComposite(arena, &ctor->t, ctor_arg_count, lhs_args);
+          Term *rhs = newComposite(arena, &ctor->t, ctor_arg_count, rhs_args);
+          param_names[compare_param_count-1] = newToken(toString("P"));
+          param_types[compare_param_count-1] = newEquality(arena, &uni->t, lhs, rhs);
+
+          BuiltinCompareList *compare_list = pushStruct(global_state.arena, BuiltinCompareList);
+          compare_list->next = global_state.builtin_compare_list;
+          global_state.builtin_compare_list = compare_list;
+          compare_list->ctor = ctor;
+          allocateArray(arena, ctor_arg_count, compare_list->compares);
+          for (i32 arg_id=0; arg_id < ctor_arg_count; arg_id++)
+          {
+            Arrow *compare_signature = newTerm(arena, Arrow, 0);
+            compare_signature->param_count = compare_param_count;
+            compare_signature->param_names = param_names;
+            compare_signature->param_types = param_types;
+            compare_signature->output_type = newEquality(arena, signature->param_types[arg_id], lhs_args[arg_id], rhs_args[arg_id]);
+
+            // String compare_name = print(arena, "__compare_");
+            // concat(&compare_name, print(arena, ctor_name.string));
+            // concat(&compare_name, print(arena, "_%d", arg_id));
+            // Token compare_name_token = newToken(compare_name);
+            // addGlobalBinding(&compare_name_token, &compare->t);
+
+            Builtin *compare = newTerm(arena, Builtin, &compare_signature->t);
+            compare_list->compares[arg_id] = &compare->t;
+          }
+        }
+        else
+        {
+          Composite *record = newTerm(arena, Composite, 0);
+          record->op = &ctor->t;
+          addGlobalBinding(ctor_name, &record->t);
+        }
+      }
+    }
+  }
+  NULL_WHEN_ERROR(uni);
+  return uni;
 }
 
 internal Ast *
@@ -4068,11 +4060,12 @@ parseOperand(MemoryArena *arena)
   }
   else if (token.cat == TC_Keyword_union)
   {
-    operand = &parseUnion(arena, 0)->a;
+    operand = &parseUnion(arena)->a;
   }
   else if (isIdentifier(&token))
-  {// token combination. TODO combine more than 2, allow combination in local
-   // scope.
+  {
+#if 0
+    // token combination. TODO combine more than 2, allow in local scope.
     Token next = peekToken();
     Token *tokenp = &token;
     Token combined_token = token;
@@ -4086,8 +4079,9 @@ parseOperand(MemoryArena *arena)
         tokenp = &combined_token;
       }
     }
+#endif
 
-    operand = &newAst(arena, Identifier, tokenp)->a;
+    operand = &newAst(arena, Identifier, &token)->a;
   }
   else if (equal(&token, '('))
   {
@@ -4095,7 +4089,11 @@ parseOperand(MemoryArena *arena)
     requireChar(')');
   }
   else
+  {
+    if (global_debug_serial == 18814)
+      breakhere;
     tokenError("expected start of expression");
+  }
 
   while (hasMore())
   {
@@ -4481,8 +4479,8 @@ parseTopLevel(EngineState *state)
               if (after_dcolon.cat == TC_Keyword_union)
               {
                 nextToken();
-                if (UnionAst *ast = parseUnion(arena, &token))
-                  buildUnion(arena, empty_env, ast);
+                if (UnionAst *ast = parseUnion(arena))
+                  buildUnion(arena, empty_env, ast, &token);
               }
               else
               {

@@ -32,7 +32,7 @@ Term * buildFork(MemoryArena * arena, Typer * env, ForkAst * in, Term * goal);
 Term * newRewrite(MemoryArena * arena, Term * eq_proof, Term * body, TreePath * path, b32 right_to_left);
 FunctionDecl * parseFunction(MemoryArena * arena, Token * name, b32 is_theorem);
 ForkAst * parseFork(MemoryArena * arena);
-Union * buildUnion(MemoryArena * arena, Typer * env, UnionAst * in);
+Union * buildUnion(MemoryArena * arena, Typer * env, UnionAst * in, Token * global_name);
 Ast * parseExpressionToAst(MemoryArena * arena);
 b32 interpretFile(EngineState * state, FilePath input_path, b32 is_root_file);
 BuildTerm parseExpressionFromString(MemoryArena * arena, char * string);

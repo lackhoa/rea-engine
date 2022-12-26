@@ -99,6 +99,8 @@ inline void attach(char *key, char *value, Tokenizer *tk=global_tokenizer)
 
 inline void attach(char *key, Token *token, Tokenizer *tk=global_tokenizer)
 {
+  // todo #cleanup use strings don't have to do this weird buffer reservation
+  // (we did it to avoid someone forgetting a null pointer).
   MemoryArena buffer = subArena(temp_arena, 1024);
   String value = print(&buffer, token->string);
   attach(key, value.chars, tk);
@@ -237,8 +239,6 @@ eatAllSpaces(Tokenizer *tk)
 internal void
 parseErrorVA(s32 line, s32 column, char *format, va_list arg_list, Tokenizer *tk = global_tokenizer)
 {
-  if (global_debug_serial == 71846)
-    breakhere;
   assert(!tk->error);  // note: prevent parser from doing useless work after failure.
 
   tk->error = pushStruct(temp_arena, ParseError, true);
