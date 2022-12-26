@@ -19,7 +19,7 @@ enum TokenCategory
   TC_StrongArrow   = 265,
 
   TC_Keyword_START,
-  TC_Keyword_define,
+  TC_Keyword_fn,
   TC_Keyword_fork,
   TC_Keyword_union,
   TC_Keyword_struct,
@@ -44,7 +44,7 @@ enum TokenCategory
 };
 
 const char *keywords[] = {
-  "", "define", "fork", "union", "struct", "seq",
+  "", "fn", "fork", "union", "struct", "seq",
   "rewrite", "norm",
   "test_eval", "print", "print_raw", "print_ast", "check", "check_truth"
 };

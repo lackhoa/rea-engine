@@ -131,7 +131,7 @@ somethingWickedUsage :: () -> (x,y,z: Nat) -> (somethingWicked(x,y,z))
 {norm;
  _ => {_ => {_ => {rewrite p; rewrite q}}}}
 
-StructWithFunction :: union {makeStructWithFunction: struct {a: Nat, b: (E: a=0) -> False}}
+StructWithFunction :: union {makeStructWithFunction: (a: Nat, b: (E: a=0) -> False)}
 oneEqualZeroImpliesFalse :: fn () -> ((E: 1=0) -> False) {norm; _ => {E}}
 testFunctionInComposite :: fn (x: StructWithFunction, E: x.a = 0) -> False {norm; x.b(E)}
 testFunctionInCompositeUsage :: (Wrong: 1=0) -> False

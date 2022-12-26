@@ -11,6 +11,7 @@ global_variable MemoryArena *temp_arena;
 global_variable b32          global_debug_mode;
 global_variable i32          global_debug_serial;
 
+struct Union;
 struct Arrow;
 struct Composite;
 struct Constructor;
@@ -35,6 +36,7 @@ enum AstCategory {
   AC_RewriteAst,
   AC_FunctionDecl,  // todo: #cleanup probably don't need this anymore
   AC_Let,
+  AC_UnionAst,
 };
 
 enum TermCategory {
@@ -89,8 +91,6 @@ newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
 
 struct Hole       {embed_Ast(a);};
 struct Identifier {embed_Ast(a);};
-
-struct Union;
 
 struct ForkAst {
   embed_Ast(a);
@@ -211,15 +211,15 @@ _newTerm(MemoryArena *arena, TermCategory cat, Term *type, size_t size)
 
 struct Constructor {
   embed_Term(t);
-  Token  name;
-  Union *uni;
-  i32    id;
+  Union  *uni;
+  i32     id;
 };
 
 struct Union {
   embed_Term(t);
   i32          ctor_count;
   Constructor *ctors;
+  String      *ctor_names;
 };
 
 struct FunctionDecl {
@@ -495,6 +495,14 @@ struct EvaluationContext {
   Term        **args;
   b32           normalize;
   i32           offset;
+};
+
+struct UnionAst {
+  embed_Ast(a);
+  i32        ctor_count;
+  Token     *ctor_names;
+  ArrowAst **ctor_signatures;
+  Union     *tunnel;
 };
 
 #include "generated/engine_forward.h"

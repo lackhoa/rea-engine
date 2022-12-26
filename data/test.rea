@@ -7,10 +7,10 @@ check truth: true = false;
 
 ;; todo this can be just be a struct
 RatTest :: union
-{/ : struct {n,d: Nat, _dnot0: d != 0}}
+{/ : (n,d: Nat, _dnot0: d != 0)}
 
 BigStruct :: union
-{makeBigStruct : struct {r: RatTest}}
+{makeBigStruct : (r: RatTest)}
 
 ;; todo re-enable type coercion
 testBigStruct :: (big : BigStruct) -> (big.r.d != 0)
@@ -25,7 +25,7 @@ testRatArrow :: fn (r: RatTest) -> r.d != 0 { r._dnot0 }
 
 Nat+ :: union
 {1,
- ++: struct {p: Nat+}}
+ ++: (p: Nat+)}
 
 + :: fn (a, b: Nat+) -> Nat+
 {fork a
@@ -48,8 +48,8 @@ check 1+2: RatTest;
 Z :: union
 {0,
  ;; todo: These maybe not work work as unary operators?
- +: struct {v: Nat+},
- -: struct {v: Nat+}}
+ +: (v: Nat+),
+ -: (v: Nat+)}
 
 ;; - :: (a: Nat+, b: Nat+) -> Nat+
 ;; {;; assuming that a > b
@@ -95,7 +95,7 @@ Z :: union
 
 ;; Rat+ :: union { /: (n,d: Nat+) -> Rat+ }
 ;; Rat :: union { 0, +: (v: Rat+) -> Rat, -: (v: Rat+) -> Rat }
-Rat :: union { /: struct {n: Z, d: Nat+} }
+Rat :: union { /: (n: Z, d: Nat+) }
 
 + :: fn (a,b: Rat) -> Rat
 {;; todo: type coercion
@@ -316,12 +316,12 @@ successorIsLarger :: (a: Nat+) -> ++(a) > a = true
   }
  }
 
-antiSymmetric :: (a: Nat+) -> a > a = false
+gtAntiSymmetric :: (a: Nat+) -> a > a = false
 {
  fork a
  {
   1:  ,
-  ++: antiSymmetric(a.p),
+  ++: gtAntiSymmetric(a.p),
   }
  }
 
@@ -341,13 +341,13 @@ antiSymmetric :: (a: Nat+) -> a > a = false
   }
  }
 
-antiSymmetric :: (a: Z) -> a > a = false
+gtAntiSymmetric :: (a: Z) -> a > a = false
 {
  fork a
  {
   0 ,
-  + antiSymmetric(a.v),
-  - antiSymmetric(a.v)
+  + gtAntiSymmetric(a.v),
+  - gtAntiSymmetric(a.v)
   }
  }
 
@@ -360,17 +360,17 @@ successorIsLarger :: (a: Nat+) -> +(++(a)) > +(a) = true
   }
  }
 
-transitive :: (a,b,c: Nat+, P: a>b = true, Q: b>c = true) -> a>c = true
+gtTransitive :: (a,b,c: Nat+, P: a>b = true, Q: b>c = true) -> a>c = true
 #norm(P,Q)
 {
  fork a {
          1  P,
          ++ fork b {1 fork Q {},
-                    ++ fork c {1, ++ transitive(a.p,b.p,c.p, P, Q)}},
+                    ++ fork c {1, ++ gtTransitive(a.p,b.p,c.p, P, Q)}},
          }
  }
 
-transitive :: (a, b, c: Z, P: a>b = true, Q: b>c = true) -> a > c = true
+gtTransitive :: (a, b, c: Z, P: a>b = true, Q: b>c = true) -> a > c = true
 #norm(P,Q)
 {
  fork a
@@ -380,9 +380,9 @@ transitive :: (a, b, c: Z, P: a>b = true, Q: b>c = true) -> a > c = true
              -: fork c {0 Q, + Q, -}},
   -: fork b {0 fork P {},
              + fork P {},
-             - fork c {0 Q, + Q, - transitive(c.v,b.v,a.v, Q,P)}},
+             - fork c {0 Q, + Q, - gtTransitive(c.v,b.v,a.v, Q,P)}},
   +: fork b {0 fork c {0, + fork Q {}, - },
-             + fork c {0, + transitive(a.v,b.v,c.v, P,Q), - },
+             + fork c {0, + gtTransitive(a.v,b.v,c.v, P,Q), - },
              - fork c {0, + fork Q {}, - }}
   }
  }
@@ -405,7 +405,7 @@ addDifferent :: (a,b: Nat+, p: a+b = a) -> False
 {
  lem1: a + b > a = true := addIncreases(a,b);
  lem2: a > a = true     := seq {=> a + b > a = true {<- p}; lem1};
- lem3 := antiSymmetric(a);
+ lem3 := gtAntiSymmetric(a);
  => true = false;
  rewrite <- lem2;
  rewrite <- lem3;
@@ -423,7 +423,7 @@ addNegativeDecreases :: (a: Z, b: Nat+) -> a > (a + -(b)) = true
               lemma1: +(a.v.p) > (+(a.v.p) + -(b.p)) = true := addNegativeDecreases(+(a.v.p), b.p);
               lemma2: +(++(a.v.p)) > +(a.v.p) = true        := posSuccessorIsLarger(a.v.p);
 
-              transitive(+(++(a.v.p)), +(a.v.p), +(a.v.p) + -(b.p), lemma2, lemma1)
+              gtTransitive(+(++(a.v.p)), +(a.v.p), +(a.v.p) + -(b.p), lemma2, lemma1)
               }},
   -: fork b {1  rewrite add1(a.v); successorIsLarger(a.v),
              ++ addIncreases(a.v, ++(b.p))}
@@ -442,7 +442,7 @@ addPositiveIncreases :: (a: Z, b: Nat+) -> a + +(b) > a = true
              ++ rewrite addCommutative(+(b.p), -(a.v.p));
              lem1: -(a.v.p) + +(b.p) > -(a.v.p) = true := addPositiveIncreases(-(a.v.p), b.p);
              lem2: -(a.v.p) > -(++(a.v.p)) = true := seq {negSuccessorIsSmaller(a.v.p)};
-             transitive(-(a.v.p) + +(b.p), -(a.v.p), -(++(a.v.p)), lem1, lem2);
+             gtTransitive(-(a.v.p) + +(b.p), -(a.v.p), -(++(a.v.p)), lem1, lem2);
              }}
   }
  }
@@ -464,6 +464,64 @@ sumCancellation :: (a,b,c: Nat+, p: a + b = a + c) -> (b = c)
   }
  }
 
+add1DifferentFromAddS :: (a,b: Nat+) -> a + 1 =? a + ++(b) = false
+{
+ fork a
+ {
+  1,
+  ++ add1DifferentFromAddS(a.p, b);
+  }
+ }
+
+;; todo #automate
+trueNotFalse :: (a: Bool, p: a=true, q: a=false) -> False
+{
+ => true = false;
+ rewrite <- p;
+ rewrite <- q;
+ }
+
+eqSymmetric :: (a,b: Nat+, p: a=?b = true) -> (b=?a = true)
+#norm(p)
+{
+ fork a
+ {
+  1 fork b {1, ++ p},
+  ++ fork b {1 p, ++ eqSymmetric(a.p, b.p, p)}
+  }
+ }
+
+sumCancellation :: (a,b,c: Nat+, p: a+b =? a+c = true) -> (b =? c = true)
+#norm(p)
+{
+ fork a {
+         1 p,
+         ++ fork b {1 fork c {1, ++ trueNotFalse(a.p + 1 =? a.p + ++(c.p),
+                                                 p,
+                                                 add1DifferentFromAddS(a.p, c.p))},
+                    ++ fork c
+                    {1 lem1 := eqSymmetric(a.p + ++(b.p), a.p + 1, p);
+                     lem2 := add1DifferentFromAddS(a.p, b.p);
+                     trueNotFalse(a.p + 1 =? a.p + ++(b.p), lem1, lem2)
+                     ,
+                     ++
+                     lem1 : ++(b.p) + a.p =? ++(c.p) + a.p = true :=
+                     seq {=> a.p + ++(b.p) =? ++(c.p) + a.p = true {addCommutative}
+                          => a.p + ++(b.p) =? a.p + ++(c.p) = true {addCommutative}
+                          p
+                          };
+                     norm lem1;
+                     lem2: a.p + b.p =? a.p + c.p = true :=
+                     seq {
+                          => b.p + a.p =? a.p + c.p = true {addCommutative}
+                          => b.p + a.p =? c.p + a.p = true {addCommutative}
+                          lem1;
+                          };
+                     sumCancellation(a.p,b.p,c.p, lem2)
+                     }}}
+ }
+
+
 =? :: fn(a,b: Z) -> Bool
 {
  fork a
@@ -482,14 +540,6 @@ eqCorrect :: (a,b: Nat+, p: a =? b = true) -> a = b
   1  fork b {1  , ++ p},
   ++ fork b {1 p, ++ rewrite eqCorrect(a.p, b.p, p)}
   }
- }
-
-;; todo #automate
-trueNotFalse :: (a: Bool, p: a=true, q: a=false) -> False
-{
- => true = false;
- rewrite <- p;
- rewrite <- q;
  }
 
 eqCorrect :: (a,b: Z, p: a =? b = true) -> a = b
@@ -520,14 +570,14 @@ add0Infer :: (a,b: Z, p: (a+b =? a) = true) -> b=0
   p := eqCorrect(a + +(b.v), a, p);
   lem2 : a > a = true :=
   seq {=> a + +(b.v) > a = true {<- p}; lem1};
-  trueNotFalse(a > a, lem2, antiSymmetric(a)),
+  trueNotFalse(a > a, lem2, gtAntiSymmetric(a)),
 
   -
   lem1 := addNegativeDecreases(a, b.v);
   p := eqCorrect(a + -(b.v), a, p);
   lem2 : a > a = true :=
   seq {=> a > a + -(b.v) = true {<- p}; lem1};
-  trueNotFalse(a > a, lem2, antiSymmetric(a)),
+  trueNotFalse(a > a, lem2, gtAntiSymmetric(a)),
   }
  }
 
@@ -556,7 +606,18 @@ eqSymmetric :: (a,b: Z, p: a =? b = true) -> b =? a = true
  eqReflexive(b);
  }
 
-theorem :: (a,b,c: Z, p: a>b=true) -> a+c > b+c = true
+addPreservesGt :: (a,b,c: Nat+, p: a>b=true) -> a+c > b+c = true
+#norm(p)
+{
+ fork a
+ {
+  1 fork p {},
+  ++ fork b {1 rewrite addCommutative(a.p, c); addIncreases(c, a.p),
+             ++ addPreservesGt(a.p,b.p,c, p)},
+  }
+ }
+
+addPreservesGt :: (a,b,c: Z, p: a>b=true) -> a+c > b+c = true
 #norm(p)
 {
  fork a
@@ -567,20 +628,123 @@ theorem :: (a,b,c: Z, p: a>b=true) -> a+c > b+c = true
             addNegativeDecreases(c, b.v)
             },
   + fork b {0 rewrite addCommutative(+(a.v), c); addPositiveIncreases(c, a.v),
-            + fork a.v {1 fork p {}, ++ fork b.v {1, ++}},
-            - },
-  -
-  }
+            + fork a.v {1 fork p {},
+                        ++ fork b.v
+                        {1 fork c {0,
+                                   + rewrite addCommutative(a.v.p, c.v); addIncreases(c.v, a.v.p),
+                                   - fork c.v
+                                   {1,
+                                    ++ rewrite addCommutative(+(a.v.p), -(c.v.p));
+                                    addPositiveIncreases(-(c.v.p), a.v.p)}},
+                         ++ fork c {0 p,
+                                    + addPreservesGt(a.v.p,b.v.p,c.v, p),
+                                    -
+                                    lem1: +(++(a.v.p)) > +(++(b.v.p)) = true :=
+                                    seq {=> a.v.p > b.v.p = true; p};
+
+                                    fork c.v
+                                    {
+                                     1 p,
+                                     ++
+                                     lem1: +(a.v.p) > +(b.v.p) = true := seq {=> _; p};
+                                     addPreservesGt(+(a.v.p), +(b.v.p), -(c.v.p), lem1);
+                                     }
+
+                                    ;; fork c.v {1 p, ++ addPreservesGt(+(a.v.p),+(b.v.p),-(c.v.p),destruct_0(p))}
+                                    }}},
+            -
+            rewrite addCommutative(+(a.v), c);
+            rewrite addCommutative(-(b.v), c);
+            lem1 := addPositiveIncreases(c, a.v);
+            lem2 := addNegativeDecreases(c, b.v);
+            gtTransitive(c + +(a.v), c, c + -(b.v), lem1, lem2);
+            },
+  - fork b {0 fork p {},
+            + fork p {},
+            - fork a.v {1 fork b.v
+                        {1 fork p{},
+                         ++ 
+                         fork c {
+                                 0,
+                                 + fork c.v {1, ++ addNegativeDecreases(+(c.v.p), b.v.p)},
+                                 - fork c.v {1 rewrite addCommutative(b.v.p, 1); addIncreases(1, b.v.p),
+                                             ++ rewrite addCommutative(b.v.p, ++(c.v.p));
+                                             addIncreases(++(c.v.p), b.v.p)}}},
+                        ++ fork b.v
+                        {
+                         1 fork p{},
+                         ++ fork c {
+                                    0 p,
+                                    + fork c.v
+                                    {1 p,
+                                     ++
+                                     rewrite addCommutative(+(c.v.p), -(a.v.p));
+                                     rewrite addCommutative(+(c.v.p), -(b.v.p));
+                                     lem1: -(a.v.p) > -(b.v.p) = true := seq {=> _; p};
+                                     addPreservesGt(-(a.v.p), -(b.v.p), +(c.v.p), lem1);
+                                     },
+                                    -
+                                    addPreservesGt(b.v.p, a.v.p, c.v, p)}}}}}}
+
+totalOrder :: (a,b: Z) -> union {gt: (p: a > b = true),
+                                 lt: (p: b > a = true),
+                                 eq: (p: a = b)}
+{
+ 
  }
 
+;; ;; todo #automate
+;; boolDestruct :: (P: Set, Q: (b: Bool) -> P, T: Q(true), F: Q(false)) -> (b: Bool) -> Q(b)
+;; {
+;;  _ => {fork b {true: => _; T, false: => _; F}}
+;;  }
 
-sumCancellation :: (a,b,c: Z, p: a+b =? a+c = true) -> b=?c = true
+sumCancellation :: (a,b,c: Z, p: a + b =? a + c = true) -> (b =? c = true)
 #norm(p)
 {
  fork a
  {
   0 p,
-  + ,
+  + fork a.v
+  {
+   1 fork b {
+             0
+             lem1: +(1) + c =? +(1) = true := seq {eqSymmetric(+(1), +(1) + c, p)};
+             lem2 := add0Infer(+(1), c, lem1);
+             rewrite lem2;
+             ,
+
+             + fork c {0 p, + p, - fork c.v {1 p, ++ p}},
+
+             -
+             fork b.v {1 fork c {0 p, + p, - fork c.v {1, ++ p}},
+                       ++ fork c {0 p, + p, - fork c.v {1 p, ++ p}}}},
+   ++
+   fork b
+   {
+    0 lem1 := add0Infer(+(++(a.v.p)), c, eqSymmetric(+(++(a.v.p)), +(++(a.v.p)) + c, p));
+    rewrite lem1
+    ,
+    + fork c {
+              0 trueNotFalse(a.v.p + b.v =? a.v.p, p, addIsDifferent(a.v.p, b.v)),
+              +
+              sumCancellation(a.v.p, b.v, c.v, p)
+              ,
+              -
+              fork c.v
+              {
+               1
+               lem1: ++(a.v.p + b.v) =? a.v.p = false :=
+               seq {
+                    lem2: > 
+                    }
+               ,
+               ++
+               }},
+    -
+    }
+   }
+  ,
   -
   }
  }
@@ -618,7 +782,7 @@ sumCancellation :: (a,b,c: Z, P: a + b = a + c) -> (b = c)
                           := seq {rewrite P; lem1};
 
                           => true = false;
-                          rewrite <- antiSymmetric(+(++(a.v.p)));
+                          rewrite <- gtAntiSymmetric(+(++(a.v.p)));
                           rewrite <- lem2;
                           },
                +:
@@ -626,26 +790,22 @@ sumCancellation :: (a,b,c: Z, P: a + b = a + c) -> (b = c)
                        0 p := destruct_0(destruct_0(P)); addDifferent(a.v.p, b.v, p),
 
                        + p := destruct_0(destruct_0(P));
-                       lemma : b.v = c.v := sumCancellation(a.v.p,b.v,c.v, p); rewrite lemma;,
+                       lemma : b.v = c.v := sumCancellation(a.v.p,b.v,c.v, p); rewrite lemma,
 
                        -
                        lem1 : +(++(a.v.p + b.v)) > +(++(a.v.p)) = true :=
-                       ;; todo why did we take normalization out???
                        seq {=> a.v.p + b.v > a.v.p = true; addIncreases(a.v.p, b.v)};
 
                        lem2 : +(++(a.v.p)) > +(++(a.v.p)) + -(c.v) = true := addNegativeDecreases(+(++(a.v.p)), c.v);
 
-                       lem3: +(++(a.v.p + b.v)) > +(++(a.v.p)) + -(c.v) = true := transitive(+(++(a.v.p + b.v)), +(++(a.v.p)), +(++(a.v.p)) + -(c.v), lem1, lem2);
+                       lem3: +(++(a.v.p + b.v)) > +(++(a.v.p)) + -(c.v) = true := gtTransitive(+(++(a.v.p + b.v)), +(++(a.v.p)), +(++(a.v.p)) + -(c.v), lem1, lem2);
 
-                       lem4: +(++(a.v.p + b.v)) > +(++(a.v.p)) := addPositiveIncreases;
-
-                       lem6: +(++(a.v.p + b.v)) > +(++(a.v.p)) + -(c.v) = true :=
-                       seq {
-                            
-                            }
+                       lem4: +(++(a.v.p + b.v)) > +(++(a.v.p)) = true := seq {=> _; addIncreases(a.v.p, b.v)};
 
                        => true = false;
                        rewrite <- lem3;
+                       rewrite P;
+                       gtAntiSymmetric(+(++(a.v.p)) + -(c.v));
                        }
                ,
                -: ,}},

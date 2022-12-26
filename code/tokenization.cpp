@@ -113,13 +113,6 @@ inline void attach(char *key, Ast *ast, Tokenizer *tk=global_tokenizer)
 
 inline void attach(char *key, Term *value, Tokenizer *tk=global_tokenizer)
 {
-  if (global_debug_mode)
-  {
-    local_persist int count = 0;
-    if (count == 6)
-      breakhere;
-    count++;
-  }
   MemoryArena buffer = subArena(temp_arena, 1024);
   char *val = print(&buffer, value);
   attach(key, val, tk);

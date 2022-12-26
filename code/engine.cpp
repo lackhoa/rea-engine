@@ -521,7 +521,7 @@ deepCopy(MemoryArena *arena, Ast *in0)
       CompositeAst *out = copyStruct(arena, in);
       out->op = deepCopy(arena, in->op);
       allocateArray(arena, out->arg_count, out->args);
-      for (s32 id=0; id < in->arg_count; id++)
+      for (i32 id=0; id < in->arg_count; id++)
       {
         out->args[id] = deepCopy(arena, in->args[id]);
       }
@@ -534,7 +534,7 @@ deepCopy(MemoryArena *arena, Ast *in0)
       ArrowAst *out = copyStruct(arena, in);
       out->output_type = deepCopy(arena, in->output_type);
       allocateArray(arena, out->param_count, out->param_types);
-      for (s32 id=0; id < in->param_count; id++)
+      for (i32 id=0; id < in->param_count; id++)
       {
         out->param_types[id] = deepCopy(arena, in->param_types[id]);
       }
@@ -649,17 +649,17 @@ unwindBindingsAndScope(Typer *env)
 forward_declare inline void dump(Term *in0) {print(0, in0, {});}
 forward_declare inline void dump(Ast *in0)  {print(0, in0, {});}
 
-s32 global_variable debug_indentation;
+i32 global_variable debug_indentation;
 forward_declare inline void debugIndent()
 {
   debug_indentation++;
-  for (s32 id = 0; id < debug_indentation; id++)
+  for (i32 id = 0; id < debug_indentation; id++)
     dump(" ");
 }
 
 forward_declare inline void debugDedent()
 {
-  for (s32 id = 0; id < debug_indentation; id++)
+  for (i32 id = 0; id < debug_indentation; id++)
     dump(" ");
   debug_indentation--;
 }
@@ -667,18 +667,18 @@ forward_declare inline void debugDedent()
 #define NULL_WHEN_ERROR(name) if (noError()) {assert(name);} else {name = {};}
 
 inline b32
-isHiddenParameter(ArrowAst *arrow, s32 param_id)
+isHiddenParameter(ArrowAst *arrow, i32 param_id)
 {
   return arrow->param_names[param_id].string.chars[0] == '_';
 }
 
 inline b32
-isHiddenParameter(Arrow *arrow, s32 param_id)
+isHiddenParameter(Arrow *arrow, i32 param_id)
 {
   return arrow->param_names[param_id].string.chars[0] == '_';
 }
 
-inline s32
+inline i32
 precedenceOf(String op)
 {
   int out = 0;
@@ -708,7 +708,7 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
 {
   int    precedence = 0;        // todo: no idea what the default should be
   void  *op         = 0;
-  s32    arg_count  = 0;
+  i32    arg_count  = 0;
   void **raw_args   = 0;
 
   Ast  *ast   = (Ast *)in0;
@@ -748,7 +748,7 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
   {// print out unignored args only
     arg_count = 0;
     printed_args = pushArray(temp_arena, op_signature->param_count, void*);
-    for (s32 param_id = 0; param_id < op_signature->param_count; param_id++)
+    for (i32 param_id = 0; param_id < op_signature->param_count; param_id++)
     {
       if (global_debug_mode || !isHiddenParameter(op_signature, param_id))
         printed_args[arg_count++] = raw_args[param_id];
@@ -783,7 +783,7 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
       print(buffer, "(");
       PrintOptions arg_opt        = opt;
       arg_opt.no_paren_precedence = 0;
-      for (s32 arg_id = 0; arg_id < arg_count; arg_id++)
+      for (i32 arg_id = 0; arg_id < arg_count; arg_id++)
       {
         print(buffer, printed_args[arg_id], is_term, arg_opt);
         if (arg_id < arg_count-1)
@@ -815,13 +815,13 @@ dump(TreePath *tree_path)
   print(0, tree_path);
 }
 
-inline void indent(MemoryArena *buffer, s32 indentation)
+inline void indent(MemoryArena *buffer, i32 indentation)
 {
   for (int id=0; id < indentation; id++)
     print(buffer, " ");
 }
 
-inline void newlineAndIndent(MemoryArena *buffer, s32 indentation)
+inline void newlineAndIndent(MemoryArena *buffer, i32 indentation)
 {
   print(buffer, "\n");
   indent(buffer, indentation);
@@ -874,7 +874,7 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         newlineAndIndent(buffer, opt.indentation);
         print(buffer, "{");
         i32 case_count = in->case_count;
-        for (s32 ctor_id = 0;
+        for (i32 ctor_id = 0;
              ctor_id < case_count;
              ctor_id++)
         {
@@ -946,6 +946,11 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         print(buffer, computation->rhs, new_opt);
         print(buffer, ")");
       } break;
+
+      case AC_UnionAst:
+      {
+        print(buffer, "<todo union>");
+      } break;
     }
   }
   else
@@ -961,7 +966,7 @@ print(MemoryArena *buffer, Ast *in0)
 
 forward_declare internal char *
 print(MemoryArena *buffer, Term *in0, PrintOptions opt)
-{// mark: printTerm
+ {// mark: printTerm
   char *out = buffer ? (char*)getNext(buffer) : 0;
   if (in0)
   {
@@ -998,7 +1003,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
           {
             print(buffer, " {");
             unsetFlag(&new_opt.flags, PrintFlag_Detailed);
-            for (s32 ctor_id = 0; ctor_id < in->ctor_count; ctor_id++)
+            for (i32 ctor_id = 0; ctor_id < in->ctor_count; ctor_id++)
             {
               Constructor *ctor = in->ctors + ctor_id;
               print(buffer, globalNameOf(&ctor->t));
@@ -1063,17 +1068,17 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
       case Term_Constructor:
       {
         Constructor *in = castTerm(in0, Constructor);
-        print(buffer, in->name.string);
+        print(buffer, in->uni->ctor_names[in->id]);
       } break;
 
       case Term_Rewrite:
       {
         Rewrite *rewrite = castTerm(in0, Rewrite);
-        print(buffer, getTypeNoEnv(temp_arena, &rewrite->t), new_opt);
+        // print(buffer, getTypeNoEnv(temp_arena, &rewrite->t), new_opt);
         skip_print_type = true;
         print(buffer, " <=>");
         newlineAndIndent(buffer, opt.indentation);
-        print(buffer, getTypeNoEnv(temp_arena, rewrite->body), new_opt);
+        // print(buffer, getTypeNoEnv(temp_arena, rewrite->body), new_opt);
         newlineAndIndent(buffer, opt.indentation);
 
         print(buffer, "rewrite");
@@ -1088,7 +1093,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
         newlineAndIndent(buffer, opt.indentation);
 
         print(buffer, "body: ");
-        print(buffer, getTypeNoEnv(temp_arena, rewrite->body), new_opt);
+        // print(buffer, getTypeNoEnv(temp_arena, rewrite->body), new_opt);
         newlineAndIndent(buffer, new_opt.indentation);
         print(buffer, rewrite->body, new_opt);
       } break;
@@ -1119,7 +1124,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
         newlineAndIndent(buffer, opt.indentation);
         print(buffer, "{");
         Union *form = in->uni;
-        for (s32 ctor_id = 0;
+        for (i32 ctor_id = 0;
              ctor_id < form->ctor_count;
              ctor_id++)
         {
@@ -1150,9 +1155,10 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
   return out;
 }
 
-inline void
+inline char *
 print(MemoryArena *buffer, Scope *scopes)
 {
+  char *out = buffer ? (char*)getNext(buffer) : 0;
   print(buffer, "[");
   while (scopes)
   {
@@ -1175,6 +1181,7 @@ print(MemoryArena *buffer, Scope *scopes)
       print(buffer, ", ");
   }
   print(buffer, "]");
+  return out;
 }
 
 inline void dump(Scope *stack) {print(0, stack);}
@@ -1607,12 +1614,12 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
       {
         Arrow* lhs = castTerm(lhs0, Arrow);
         Arrow* rhs = castTerm(rhs0, Arrow);
-        s32 param_count = lhs->param_count;
+        i32 param_count = lhs->param_count;
         if (rhs->param_count == param_count)
         {
           b32 type_mismatch = false;
           // env->scope = extendScope(env->scope, lhs);  // I guess this is right but who knows
-          for (s32 id = 0; id < param_count; id++)
+          for (i32 id = 0; id < param_count; id++)
           {
             if (!equal(lhs->param_types[id], rhs->param_types[id]))
             {
@@ -1965,7 +1972,7 @@ introduceSignature(Typer *env, Arrow *signature, b32 add_bindings)
   if (add_bindings)
   {
     extendBindings(temp_arena, env);
-    for (s32 index=0; index < param_count; index++)
+    for (i32 index=0; index < param_count; index++)
     {
       Token *name = signature->param_names + index;
       addLocalBinding(env, name, signature->first_id + index, index);
@@ -2021,7 +2028,7 @@ lookupLocalName(Typer *env, Token *token)
 {
   LocalBindings *bindings = env->bindings;
   LookupLocalName out = {};
-  for (s32 stack_delta = 0;
+  for (i32 stack_delta = 0;
        bindings;
        stack_delta++)
   {
@@ -2054,7 +2061,6 @@ requireChar(char c, char *reason = 0, Tokenizer *tk=global_tokenizer)
       out = true;
     else
     {
-      auto serial = global_debug_serial++;
       parseError(tk, &token, "expected character '%c' (%s)", c, reason);
     }
   }
@@ -2189,11 +2195,11 @@ treePathFromAccessor(MemoryArena *arena, Accessor *accessor)
 }
 #endif
 
-inline s32
+inline i32
 getExplicitParamCount(ArrowAst *in)
 {
-  s32 out = 0;
-  for (s32 param_id = 0; param_id < in->param_count; param_id++)
+  i32 out = 0;
+  for (i32 param_id = 0; param_id < in->param_count; param_id++)
   {
     if (!isHiddenParameter(in, param_id))
       out++;
@@ -2201,11 +2207,11 @@ getExplicitParamCount(ArrowAst *in)
   return out;
 }
 
-inline s32
+inline i32
 getExplicitParamCount(Arrow *in)
 {
-  s32 out = 0;
-  for (s32 param_id = 0; param_id < in->param_count; param_id++)
+  i32 out = 0;
+  for (i32 param_id = 0; param_id < in->param_count; param_id++)
   {
     if (!isHiddenParameter(in, param_id))
       out++;
@@ -2344,6 +2350,18 @@ unify(Typer *env, Arrow *lhs_signature, Term *lhs, Term *rhs)
   return out;
 }
 
+inline void
+attachTerms(char *key, i32 count, Term **terms)
+{
+  attach(key, (char *)getNext(temp_arena));
+  for (i32 id=0; id < count; id++)
+  {
+    print(temp_arena, "\n");
+    print(temp_arena, terms[id]->type);
+  }
+  print(temp_arena, "\0");
+}
+
 inline TermArray
 getFunctionOverloads(Typer *env, Identifier *ident, Term *output_type_goal)
 {
@@ -2370,8 +2388,16 @@ getFunctionOverloads(Typer *env, Identifier *ident, Term *output_type_goal)
             out.items[out.count++] = slot->items[slot_id];
         }
       }
+      if (out.count == 0)
+      {
+        parseError(&ident->a, "found no matching overload");
+        attach("output_type", output_type_goal);
+        attachTerms("available_overloads", slot->count, slot->items);
+      }
     }
   }
+  else
+    parseError(&ident->a, "identifier not found");
   return out;
 }
 
@@ -2438,7 +2464,7 @@ inline Ast *
 parseSequence(MemoryArena *arena, b32 require_braces=true)
 {
   Ast *out = 0;
-  s32 count = 0;
+  i32 count = 0;
   AstList *list = 0;
 
   b32 brace_opened = false;
@@ -2654,7 +2680,8 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
   // todo #cleanup #mem: sort out what we need and what we don't need to persist
   // todo #cleanup #speed: returning the value is just a waste of time most of the time. Just call evaluate whenever you need the value.
   // todo #cleanup don't return a value
-  // todo return the type?
+  // todo return the type, since we typecheck it anyway.
+  // todo print out the goal whenever we fail
   // beware: Usually we mutate in-place, but we may also allocate anew.
   i32 serial = global_debug_serial++;
   BuildTerm out0 = {};
@@ -2673,12 +2700,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       {
         parseError(in0, "expression required");
         attach("goal", goal);
-        MemoryArena buffer_ = subArena(temp_arena, 1024);
-        MemoryArena *buffer = &buffer_;
-        attach("proof_context", (char *)buffer->base);
-        assert(buffer->used == 0);
-        print(buffer, "stack: ");
-        print(buffer, env->scope);
+        attach("stack", print(temp_arena, env->scope));
       }
     } break;
 
@@ -2706,7 +2728,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         Term *value = 0;
         if (GlobalBinding *globals = lookupGlobalName(name))
         {
-          for (s32 value_id = 0; value_id < globals->count; value_id++)
+          for (i32 value_id = 0; value_id < globals->count; value_id++)
           {
             Term *slot_value = globals->items[value_id];
             if (matchType(getTypeNoEnv(temp_arena, slot_value), goal))
@@ -2839,14 +2861,8 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         }
         else if (!lookupLocalName(env, &in->op->token))
         {
+          is_global = true;
           op_list = getFunctionOverloads(env, op_ident, goal);
-          if (op_list.count == 0)
-          {
-            // todo distinguish with the case where identifier is not found
-            parseError(in->op, "found no suitable overload");
-          }
-          else
-            is_global = true;
         }
       }
 
@@ -2870,13 +2886,13 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           {
             if (signature->param_count != in->arg_count)
             {
-              s32 explicit_param_count = getExplicitParamCount(signature);
+              i32 explicit_param_count = getExplicitParamCount(signature);
               if (in->arg_count == explicit_param_count)
               {
                 Ast **supplied_args = in->args;
                 in->arg_count = signature->param_count;
                 in->args      = pushArray(arena, signature->param_count, Ast*);
-                for (s32 param_id = 0, arg_id = 0;
+                for (i32 param_id = 0, arg_id = 0;
                      param_id < signature->param_count && noError();
                      param_id++)
                 {
@@ -2945,7 +2961,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 
               if (noError())
               {
-                for (s32 arg_id = 0;
+                for (i32 arg_id = 0;
                      arg_id < in->arg_count && noError();
                      arg_id++)
                 {
@@ -2982,6 +2998,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
               if (attempt == op_list.count-1)
               {
                 parseError(in->op, "found no suitable overload");
+                attachTerms("available_overloads", op_list.count, op_list.items);
               }
             }
             else
@@ -3003,7 +3020,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         allocateArray(arena, param_count, out->param_types);
         env->scope = extendScope(env->scope, out);
         extendBindings(temp_arena, env);
-        for (s32 index=0; index < param_count && noError(); index++)
+        for (i32 index=0; index < param_count && noError(); index++)
         {
           BuildTerm param_type = buildTerm(arena, env, in->param_types[index], holev);
           if (param_type)
@@ -3038,9 +3055,9 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         {
           out->record = build_record.term;
           Arrow *op_type = castTerm(ctor->type, Arrow);
-          s32 param_count = op_type->param_count;
+          i32 param_count = op_type->param_count;
           b32 valid_param_name = false;
-          for (s32 param_id=0; param_id < param_count; param_id++)
+          for (i32 param_id=0; param_id < param_count; param_id++)
           {// figure out the param id
             if (equal(in->field_name.string, op_type->param_names[param_id].string))
             {
@@ -3156,7 +3173,6 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
             out->path = compare.diff_path;
             Term *from = subExpressionAtPath(goal, compare.diff_path);
             Term *to   = subExpressionAtPath(new_goal, compare.diff_path);
-            // Term *eq_proof = 0;
             Term *eq = 0;
 
             TermArray op_list = {};
@@ -3172,15 +3188,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                 }
               }
               else
-              {
                 op_list = getFunctionOverloads(env, op_ident, holev);
-                if (op_list.count == 0)
-                {
-                  // todo distinguish with the case where identifier is not found
-                  parseError(in->eq_proof_hint, "found no global overload");
-                  attach("goal", goal);
-                }
-              }
 
               for (int attempt=0; attempt < op_list.count; attempt++)
               {
@@ -3233,11 +3241,12 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                     wipeError();
                     if (attempt == op_list.count-1)
                     {
-                      if (global_debug_mode) debugbreak;
                       parseError(&op_ident->a, "found no suitable overload");
+                      attachTerms("available_overloads", op_list.count, op_list.items);
                     }
                   }
-                  else break;
+                  else
+                    break;
                 }
               }
             }
@@ -3344,21 +3353,32 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           Lambda *lambda = newAst(temp_arena, Lambda, token);
           lambda->body = in->body;
           ArrowAst *signature = newAst(temp_arena, ArrowAst, token);
-          allocateArray(temp_arena, 1, signature->param_names);
-          allocateArray(temp_arena, 1, signature->param_types);
-          signature->param_count    = 1;
+          i32 param_count = 1;
+          allocateArray(temp_arena, param_count, signature->param_names);
+          allocateArray(temp_arena, param_count, signature->param_types);
+          signature->param_count    = param_count;
           signature->param_names[0] = in->lhs;
-          signature->param_types[0] = synthesizeAst(temp_arena, rebase(arena, rhs_type, 1), token);
+
+          // signature->param_names[1] = in->lhs;
+          // String value_name = print(arena, in->lhs.string);
+          // concat(&value_name, print(arena, "_value"));
+          // signature->param_names[1].string = value_name;
+
+          Term *rhs_type_rebased = rebase(arena, rhs_type, 1);
+          signature->param_types[0] = synthesizeAst(temp_arena, rhs_type_rebased, token);
+          // Term *value_eq = newEquality(arena, rhs_type_rebased, newVariable(arena, &in->lhs, 0, 0), rebase(arena, rhs, 1));
+          // signature->param_types[1] = synthesizeAst(temp_arena, value_eq, token);
           signature->output_type    = synthesizeAst(temp_arena, rebase(arena, goal, 1), token);
           lambda->signature = &signature->a;
 
           Ast *rhs_ast = synthesizeAst(arena, rhs, token);
 
           CompositeAst *com = newAst(arena, CompositeAst, token);
-          allocateArray(temp_arena, 1, com->args);
+          allocateArray(temp_arena, param_count, com->args);
           com->op        = &lambda->a;
-          com->arg_count = 1;
+          com->arg_count = param_count;
           com->args[0]   = rhs_ast;
+          // com->args[1]   = synthesizeAst(arena, newComputation(arena, , ));
 
           recursed = true;
           out0 = buildTerm(arena, env, &com->a, goal);
@@ -3371,6 +3391,12 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       ForkAst *fork = castAst(in0, ForkAst);
       out0.term = buildFork(arena, env, fork, goal);
       recursed = true;
+    } break;
+
+    case AC_UnionAst:
+    {
+      UnionAst *uni = castAst(in0, UnionAst);
+      out0.term = &buildUnion(arena, env, uni)->t;
     } break;
 
     invalidDefaultCase;
@@ -3412,7 +3438,7 @@ buildFork(MemoryArena *arena, Typer *env, ForkAst *in, Term *goal)
   if (BuildTerm subject = buildTerm(arena, env, in->subject, holev))
   {
     out->subject = subject.term;
-    s32 case_count = in->case_count;
+    i32 case_count = in->case_count;
 
     Term *subject_type = getType(arena, env, subject.term);
     if (Union *uni = castTerm(subject_type, Union))
@@ -3422,7 +3448,7 @@ buildFork(MemoryArena *arena, Typer *env, ForkAst *in, Term *goal)
         Term **ordered_bodies = pushArray(arena, case_count, Term *, true);
         Typer *outer_env = env;
 
-        for (s32 input_case_id = 0;
+        for (i32 input_case_id = 0;
              input_case_id < case_count && noError();
              input_case_id++)
         {
@@ -3433,7 +3459,7 @@ buildFork(MemoryArena *arena, Typer *env, ForkAst *in, Term *goal)
           Constructor *ctor = 0;
           for (i32 id = 0; id < uni->ctor_count; id++)
           {
-            if (equal(uni->ctors[id].name.string, ctor_name->string))
+            if (equal(uni->ctor_names[id], ctor_name->string))
             {
               ctor = uni->ctors+id;
               break;
@@ -3462,7 +3488,19 @@ buildFork(MemoryArena *arena, Typer *env, ForkAst *in, Term *goal)
               parseError(in->subject, "cannot fork this term");
           }
           else
+          {
             parseError(ctor_name, "not a valid constructor");  // todo print them out
+            attach("type", &uni->t);
+
+            char *ctor_names = (char *)getNext(temp_arena);
+            for (i32 id=0; id < uni->ctor_count; id++)
+            {
+              print(temp_arena, uni->ctor_names[id]);
+              if (id != uni->ctor_count-1)
+                print(temp_arena, ", ");
+            }
+            attach("valid constructors", ctor_names);
+          }
         }
 
         if (noError())
@@ -3603,7 +3641,7 @@ parseFunction(MemoryArena *arena, Token *name, b32 is_theorem)
         if (requireChar('('))
         {
           Tokenizer tk_copy = *global_tokenizer;
-          s32 norm_count = getCommaSeparatedListLength(&tk_copy);
+          i32 norm_count = getCommaSeparatedListLength(&tk_copy);
           if (noError(&tk_copy))
           {
             norm_list.items = pushArray(temp_arena, norm_count, Identifier*);
@@ -3654,13 +3692,13 @@ parseFork(MemoryArena *arena)
   if (requireChar('{', "to open the typedef body"))
   {
     Tokenizer tk_copy = *global_tokenizer;
-    s32 case_count = getCommaSeparatedListLength(&tk_copy);
+    i32 case_count = getCommaSeparatedListLength(&tk_copy);
     if (noError(&tk_copy))
     {
       Token *ctors = pushArray(temp_arena, case_count, Token);
       Ast **bodies = pushArray(temp_arena, case_count, Ast*);
 
-      s32 actual_case_count = 0;
+      i32 actual_case_count = 0;
       for (b32 stop = false;
            !stop && hasMore();)
       {
@@ -3711,12 +3749,12 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
 {
   ArrowAst *out = 0;
 
-  s32     param_count;
+  i32     param_count;
   Token  *param_names;
   Ast   **param_types;
   Token marking_token = peekToken();
-  char begin_arg_char = is_struct ? '{' : '(';
-  char end_arg_char   = is_struct ? '}' : ')';
+  char begin_arg_char = '(';
+  char end_arg_char   = ')';
   if (requireChar(begin_arg_char))
   {
     Tokenizer tk_copy = *global_tokenizer;
@@ -3726,8 +3764,8 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
       param_names   = pushArray(arena, param_count, Token);
       param_types   = pushArray(arena, param_count, Ast*);
 
-      s32 parsed_param_count = 0;
-      s32 typeless_run = 0;
+      i32 parsed_param_count = 0;
+      i32 typeless_run = 0;
       Token typeless_token;
       for (b32 stop = false;
            !stop && hasMore();
@@ -3739,7 +3777,7 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
 
         else if (isIdentifier(&param_name_token))
         {
-          s32 param_id = parsed_param_count++;
+          i32 param_id = parsed_param_count++;
           param_names[param_id] = param_name_token;
 
           if (optionalChar(':'))
@@ -3749,7 +3787,7 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
               param_types[param_id] = param_type;
               if (typeless_run)
               {
-                for (s32 offset = 1;
+                for (i32 offset = 1;
                      offset <= typeless_run;
                      offset++)
                 {
@@ -3807,11 +3845,11 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
   return out;
 }
 
-inline s32
+inline i32
 parseInt32()
 {
   Token token = nextToken();
-  s32 out = 0;
+  i32 out = 0;
   char first_char = token.string.chars[0];
   if ('0' <= first_char && first_char <= '9')
   {
@@ -3837,6 +3875,186 @@ areSequential(Token *first, Token *next)
   return next->string.chars == first->string.chars + first->string.length;
 }
 
+internal void
+parseConstructor(MemoryArena *arena, UnionAst *uni, Union *uni_term)
+{
+  i32 ctor_id = uni->ctor_count++;
+
+  Constructor *ctor = uni_term->ctors + ctor_id;
+  initTerm(&ctor->t, Term_Constructor, 0);
+  ctor->uni  = uni_term;
+  ctor->id   = ctor_id;
+  Token ctor_name = nextToken();
+  uni->ctor_names[ctor_id] = ctor_name;
+
+  Arrow *signature = 0;
+  if (isIdentifier(&ctor_name))
+  {
+    if (optionalChar(':'))
+    {// subtype
+      pushContext("constructor: (FIELD: TYPE ...)");
+      {
+        if (ArrowAst *arrow_ast = parseArrowType(arena, true))
+        {
+          uni->ctor_signatures[ctor_id] = arrow_ast;
+          Typer env_ = {}; Typer *env = &env_;
+          if (BuildTerm arrow = buildTerm(arena, env, &arrow_ast->a, holev))
+          {
+            signature = castTerm(arrow.term, Arrow);
+          }
+        }
+      }
+      popContext();
+
+      if (noError())
+      {
+        signature->output_type = &uni_term->t;
+        ctor->type = &signature->t;
+        addGlobalBinding(&ctor_name, &ctor->t);
+      }
+    }
+    else
+    {// atomic constructor
+      if (uni_term->type == &builtins.Set->t)
+      {
+        signature = newTerm(arena, Arrow, 0);
+        signature->output_type = &uni_term->t;
+        ctor->type = &signature->t;
+        Composite *record = newTerm(arena, Composite, 0);
+        record->op = &ctor->t;
+        addGlobalBinding(&ctor_name, &record->t);
+      }
+      else
+        parseError(&ctor_name, "constructors must construct a set member");
+    }
+  }
+  else
+    tokenError("expected an identifier as constructor name");
+
+  if (noError())
+  {
+    // todo #cleanup This is a "deconstructor" builtin, which deconstructs an equality for us.
+    i32 ctor_arg_count      = signature->param_count;
+    i32 compare_param_count = ctor_arg_count*2 + 1;
+    if (compare_param_count > 0)
+    {
+      Token* param_names = pushArray(arena, compare_param_count, Token);
+      Term** param_types = pushArray(arena, compare_param_count, Term*);
+      for (i32 group=0; group <= 1; group++)
+      {
+        for (i32 arg_id=0; arg_id < ctor_arg_count; arg_id++)
+        {
+          String name = print(arena, "_");
+          concat(&name, print(arena, signature->param_names[arg_id].string));
+          concat(&name, print(arena, "%d", group));
+          i32 offset   = (group == 0) ? 0 : ctor_arg_count;
+          i32 param_id = offset + arg_id;
+          param_names[param_id] = newToken(name);
+          param_types[param_id] = signature->param_types[arg_id];
+        }
+      }
+      Term **lhs_args = pushArray(arena, ctor_arg_count, Term*);
+      Term **rhs_args = pushArray(arena, ctor_arg_count, Term*);
+      for (i32 arg_id=0; arg_id < ctor_arg_count; arg_id++)
+      {
+        i32 lhs_param_id = arg_id;
+        i32 rhs_param_id = ctor_arg_count+arg_id;
+        lhs_args[arg_id] = newVariable(arena, param_names+lhs_param_id, 0, lhs_param_id);
+        rhs_args[arg_id] = newVariable(arena, param_names+rhs_param_id, 0, rhs_param_id);
+      }
+      Term *lhs = newComposite(arena, &ctor->t, ctor_arg_count, lhs_args);
+      Term *rhs = newComposite(arena, &ctor->t, ctor_arg_count, rhs_args);
+      param_names[compare_param_count-1] = newToken(toString("P"));
+      param_types[compare_param_count-1] = newEquality(arena, &uni_term->t, lhs, rhs);
+
+      BuiltinCompareList *compare_list = pushStruct(global_state.arena, BuiltinCompareList);
+      compare_list->next = global_state.builtin_compare_list;
+      global_state.builtin_compare_list = compare_list;
+      compare_list->ctor = ctor;
+      allocateArray(arena, ctor_arg_count, compare_list->compares);
+      for (i32 arg_id=0; arg_id < ctor_arg_count; arg_id++)
+      {
+        Arrow *compare_signature = newTerm(arena, Arrow, 0);
+        compare_signature->param_count = compare_param_count;
+        compare_signature->param_names = param_names;
+        compare_signature->param_types = param_types;
+        compare_signature->output_type = newEquality(arena, signature->param_types[arg_id], lhs_args[arg_id], rhs_args[arg_id]);
+        String compare_name = print(arena, "__compare_");
+        concat(&compare_name, print(arena, ctor_name.string));
+        concat(&compare_name, print(arena, "_%d", arg_id));
+        // Token compare_name_token = newToken(compare_name);
+        // addGlobalBinding(&compare_name_token, &compare->t);
+        Builtin *compare = newTerm(arena, Builtin, &compare_signature->t);
+        compare_list->compares[arg_id] = &compare->t;
+      }
+    }
+  }
+}
+
+internal Constructor *
+buildConstructor(MemoryArena *arena, Typer *env)
+{
+  return 0;
+}
+
+internal UnionAst *
+parseUnion(MemoryArena *arena, Token *global_name)
+{
+  UnionAst *uni = 0;
+  Term *type = &builtins.Set->t;
+  Token *token = &global_tokenizer->last_token;
+
+  if (requireChar('{'))
+  {
+    Union *uni_term = newTerm(arena, Union, type);
+    // note: bind the type first to support recursive data structure.
+    if (global_name)
+      addGlobalBinding(global_name, &uni_term->t);
+    uni = newAst(arena, UnionAst, token);
+    uni->tunnel = uni_term;
+
+    Tokenizer tk_copy = *global_tokenizer;
+    i32 ctor_count = getCommaSeparatedListLength(&tk_copy);
+    // NOTE: init here for recursive definition
+    if (noError(&tk_copy))
+    {
+      allocateArray(arena, ctor_count, uni_term->ctors);
+      allocateArray(arena, ctor_count, uni->ctor_signatures);
+      allocateArray(arena, ctor_count, uni->ctor_names);
+      while (noError())
+      {
+        if (optionalChar('}'))
+          break;
+        else
+        {
+          parseConstructor(arena, uni, uni_term);
+          if (!optionalChar(','))
+          {
+            requireChar('}');
+            break;
+          }
+        }
+      }
+
+      if (noError())
+        assert(uni->ctor_count == ctor_count);
+    }
+  }
+  
+  return uni;
+}
+
+forward_declare internal Union *
+buildUnion(MemoryArena *arena, Typer *env, UnionAst *in)
+{
+  Union *out = in->tunnel;
+  out->ctor_count = in->ctor_count;
+  allocateArray(arena, in->ctor_count, out->ctor_names);
+  for (i32 id=0; id < in->ctor_count; id++)
+    out->ctor_names[id] = in->ctor_names[id].string;
+  return out;
+}
+
 internal Ast *
 parseOperand(MemoryArena *arena)
 {
@@ -3845,7 +4063,13 @@ parseOperand(MemoryArena *arena)
   if (equal(&token, '_'))
     operand = &newAst(arena, Hole, &token)->a;
   else if (token.cat == TC_Keyword_seq)
+  {
     operand = parseSequence(arena);
+  }
+  else if (token.cat == TC_Keyword_union)
+  {
+    operand = &parseUnion(arena, 0)->a;
+  }
   else if (isIdentifier(&token))
   {// token combination. TODO combine more than 2, allow combination in local
    // scope.
@@ -3880,7 +4104,7 @@ parseOperand(MemoryArena *arena)
       Ast *op = operand;
 
       Tokenizer tk_copy = *global_tokenizer;
-      s32 expected_arg_count = getCommaSeparatedListLength(&tk_copy);
+      i32 expected_arg_count = getCommaSeparatedListLength(&tk_copy);
       if (noError(&tk_copy))
       {
         Ast **args = pushArray(arena, expected_arg_count, Ast*);
@@ -3889,8 +4113,8 @@ parseOperand(MemoryArena *arena)
         branch->arg_count = expected_arg_count;
         branch->args      = args;
         operand = &branch->a;
-        s32 parsed_arg_count = 0;
-        for (s32 stop = false;
+        i32 parsed_arg_count = 0;
+        for (i32 stop = false;
              hasMore () && !stop;
              )
         {
@@ -3898,7 +4122,7 @@ parseOperand(MemoryArena *arena)
             stop = true;
           else
           {
-            s32 arg_id = parsed_arg_count++;
+            i32 arg_id = parsed_arg_count++;
             Ast *arg = parseExpressionToAst(arena);
             if (hasMore())
             {
@@ -3991,7 +4215,7 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
           // (a+b) * c
           //        ^
           Identifier *op = newAst(arena, Identifier, &op_token);
-          s32 precedence = precedenceOf(op_token.string);
+          i32 precedence = precedenceOf(op_token.string);
           if (precedence >= opt.min_precedence)
           {
             // recurse
@@ -4002,7 +4226,7 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
             opt1.min_precedence = precedence;
             if (Ast *recurse = parseExpressionToAstMain(arena, opt1))
             {
-              s32 arg_count = 2;
+              i32 arg_count = 2;
               Ast **args    = pushArray(arena, arg_count, Ast*);
               args[0] = operand;
               args[1] = recurse;
@@ -4040,178 +4264,6 @@ forward_declare inline Ast *
 parseExpressionToAst(MemoryArena *arena)
 {
   return parseExpressionToAstMain(arena, ParseExpressionOptions{});
-}
-
-internal void
-parseConstructor(MemoryArena *arena, Union *uni)
-{
-  s32 ctor_id = uni->ctor_count++;
-
-  Constructor *ctor = uni->ctors + ctor_id;
-  initTerm(&ctor->t, Term_Constructor, 0);
-  ctor->uni  = uni;
-  ctor->name = nextToken();
-  ctor->id   = ctor_id;
-
-  Arrow *signature = 0;
-  if (isIdentifier(&ctor->name))
-  {
-    if (optionalChar(':'))
-    {// subtype
-      pushContext("struct {FIELD: TYPE ...}");
-      if (requireCategory(TC_Keyword_struct))
-      {
-        ArrowAst *ast = parseArrowType(arena, true);
-        Typer env_ = {}; Typer *env = &env_;
-        // todo there are hacks we have to do to accept arrow type without
-        // output type, which is dumb since the output type exists.
-        if (BuildTerm build = buildTerm(arena, env, &ast->a, holev))
-          signature = castTerm(build.term, Arrow);
-      }
-      popContext();
-
-      if (noError())
-      {
-        signature->output_type = &uni->t;
-        ctor->type = &signature->t;
-        addGlobalBinding(&ctor->name, &ctor->t);
-      }
-    }
-    else
-    {// atomic constructor
-      if (uni->type == &builtins.Set->t)
-      {
-        signature = newTerm(arena, Arrow, 0);
-        signature->output_type = &uni->t;
-        ctor->type = &signature->t;
-        Composite *record = newTerm(arena, Composite, 0);
-        record->op = &ctor->t;
-        addGlobalBinding(&ctor->name, &record->t);
-      }
-      else
-        parseError(&ctor->name, "constructors must construct a set member");
-    }
-  }
-  else
-    tokenError("expected an identifier as constructor name");
-
-  // todo #cleanup This is a "deconstructor" builtin, which deconstructs an equality for us.
-  i32 ctor_arg_count      = signature->param_count;
-  i32 compare_param_count = ctor_arg_count*2 + 1;
-  if (noError() && compare_param_count > 0)
-  {
-    Token* param_names = pushArray(arena, compare_param_count, Token);
-    Term** param_types = pushArray(arena, compare_param_count, Term*);
-    for (i32 group=0; group <= 1; group++)
-    {
-      for (i32 arg_id=0; arg_id < ctor_arg_count; arg_id++)
-      {
-        String name = print(arena, "_");
-        concat(&name, print(arena, signature->param_names[arg_id].string));
-        concat(&name, print(arena, "%d", group));
-        i32 offset   = (group == 0) ? 0 : ctor_arg_count;
-        i32 param_id = offset + arg_id;
-        param_names[param_id] = newToken(name);
-        param_types[param_id] = signature->param_types[arg_id];
-      }
-    }
-    Term **lhs_args = pushArray(arena, ctor_arg_count, Term*);
-    Term **rhs_args = pushArray(arena, ctor_arg_count, Term*);
-    for (i32 arg_id=0; arg_id < ctor_arg_count; arg_id++)
-    {
-      i32 lhs_param_id = arg_id;
-      i32 rhs_param_id = ctor_arg_count+arg_id;
-      lhs_args[arg_id] = newVariable(arena, param_names+lhs_param_id, 0, lhs_param_id);
-      rhs_args[arg_id] = newVariable(arena, param_names+rhs_param_id, 0, rhs_param_id);
-    }
-    Term *lhs = newComposite(arena, &ctor->t, ctor_arg_count, lhs_args);
-    Term *rhs = newComposite(arena, &ctor->t, ctor_arg_count, rhs_args);
-    param_names[compare_param_count-1] = newToken(toString("P"));
-    param_types[compare_param_count-1] = newEquality(arena, &uni->t, lhs, rhs);
-
-    BuiltinCompareList *compare_list = pushStruct(global_state.arena, BuiltinCompareList);
-    compare_list->next = global_state.builtin_compare_list;
-    global_state.builtin_compare_list = compare_list;
-    compare_list->ctor = ctor;
-    allocateArray(arena, ctor_arg_count, compare_list->compares);
-    for (i32 arg_id=0; arg_id < ctor_arg_count; arg_id++)
-    {
-      Arrow *compare_signature = newTerm(arena, Arrow, 0);
-      compare_signature->param_count = compare_param_count;
-      compare_signature->param_names = param_names;
-      compare_signature->param_types = param_types;
-      compare_signature->output_type = newEquality(arena, signature->param_types[arg_id], lhs_args[arg_id], rhs_args[arg_id]);
-      String compare_name = print(arena, "__compare_");
-      concat(&compare_name, print(arena, ctor->name.string));
-      concat(&compare_name, print(arena, "_%d", arg_id));
-      // Token compare_name_token = newToken(compare_name);
-      // addGlobalBinding(&compare_name_token, &compare->t);
-      Builtin *compare = newTerm(arena, Builtin, &compare_signature->t);
-      compare_list->compares[arg_id] = &compare->t;
-    }
-  }
-}
-
-internal void
-parseUnion(MemoryArena *arena, Token *name)
-{
-  // NOTE: the type is in scope of its own constructor.
-  Term *type = &builtins.Set->t;
-  if (optionalChar(':'))
-  {// type override
-    Token type_token = global_tokenizer->last_token;
-    b32 valid_type = false;
-    if (BuildTerm type = parseExpressionFull(arena))
-    {
-      if (Arrow *arrow = castTerm(type.term, Arrow))
-      {
-        if (arrow->output_type == &builtins.Set->t)
-          valid_type = true;
-      }
-      else if (type.term == &builtins.Set->t)
-        valid_type = true;
-
-      if (!valid_type)
-      {
-        parseError(&type_token, "form has invalid type");
-        attach("type", type.term);
-      }
-    }
-  }
-
-  if (noError())
-  {
-    Union *uni = newTerm(arena, Union, type);
-    addGlobalBinding(name, &uni->t);
-
-    if (requireChar('{', "open typedef body"))
-    {
-      Tokenizer tk_copy = *global_tokenizer;
-      s32 expected_ctor_count = getCommaSeparatedListLength(&tk_copy);
-      // NOTE: init here for recursive definition
-      if (noError(&tk_copy))
-      {
-        uni->ctors = pushArray(arena, expected_ctor_count, Constructor);
-        while (noError())
-        {
-          if (optionalChar('}'))
-            break;
-          else
-          {
-            parseConstructor(arena, uni);
-            if (!optionalChar(','))
-            {
-              requireChar('}', "to end the typedef; or you might want a comma ',' to delimit constructors");
-              break;
-            }
-          }
-        }
-
-        if (noError())
-          assert(uni->ctor_count == expected_ctor_count);
-      }
-    }
-  }
 }
 
 internal Function *
@@ -4426,15 +4478,16 @@ parseTopLevel(EngineState *state)
             case TC_DoubleColon:
             {
               Token after_dcolon = peekToken();
-              if (equal(after_dcolon.string, "union"))
+              if (after_dcolon.cat == TC_Keyword_union)
               {
                 nextToken();
-                parseUnion(arena, &token);
+                if (UnionAst *ast = parseUnion(arena, &token))
+                  buildUnion(arena, empty_env, ast);
               }
               else
               {
                 b32 is_theorem;
-                if (equal(after_dcolon.string, "fn"))
+                if (after_dcolon.cat == TC_Keyword_fn)
                 {
                   is_theorem = false;
                   nextToken();
@@ -4466,7 +4519,6 @@ parseTopLevel(EngineState *state)
         else tokenError("unexpected token to begin top-level form");
       } break;
     }
-    
 
 #if CLEAN_TEMPORARY_MEMORY
     endTemporaryMemory(top_level_temp);

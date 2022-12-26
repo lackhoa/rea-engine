@@ -2,7 +2,7 @@
 
 Nat :: union
 {0,
- ++: struct {p: Nat}}
+ ++: (p: Nat)}
 
 + :: fn (n, m: Nat) -> Nat
 {fork n

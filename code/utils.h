@@ -98,8 +98,7 @@ newArena(size_t cap, void *base)
 inline u8 *
 getNext(MemoryArena *arena)
 {
-    u8 *out = arena->base + arena->used;
-    return out;
+    return arena->base + arena->used;
 }
 
 inline size_t
