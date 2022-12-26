@@ -85,9 +85,14 @@ printCharToBufferRepeat(char *buffer, char c, i32 repeat)
 
 global_variable Tokenizer *global_tokenizer;
 
-inline void setErrorCode(ErrorCode code, Tokenizer *tk=global_tokenizer)
+inline void setErrorFlag(u32 flag, Tokenizer *tk=global_tokenizer)
 {
-  tk->error->code = code;
+  setFlag(&tk->error->flags, flag);
+}
+
+inline b32 checkErrorFlag(u32 flag, Tokenizer *tk=global_tokenizer)
+{
+  return checkFlag(tk->error->flags, flag);
 }
 
 inline void attach(char *key, char *value, Tokenizer *tk=global_tokenizer)

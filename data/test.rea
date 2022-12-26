@@ -316,12 +316,13 @@ successorIsLarger :: (a: Natp) -> ++(a) > a = true
   }
  }
 
-gtAntiSymmetric :: (a: Natp) -> a > a = false
+gtAntiReflexive :: (a: Natp, p: a>a = true) -> False
+#norm(p)
 {
  fork a
  {
-  1:  ,
-  ++: gtAntiSymmetric(a.p),
+  1:  p,
+  ++: gtAntiReflexive(a.p, p),
   }
  }
 
@@ -341,13 +342,14 @@ gtAntiSymmetric :: (a: Natp) -> a > a = false
   }
  }
 
-gtAntiSymmetric :: (a: Z) -> a > a = false
+gtAntiReflexive :: (a: Z, p: a>a = true) -> False
+#norm(p)
 {
  fork a
  {
-  0 ,
-  + gtAntiSymmetric(a.v),
-  - gtAntiSymmetric(a.v)
+  0 p,
+  + gtAntiReflexive(a.v, p),
+  - gtAntiReflexive(a.v, p)
   }
  }
 
@@ -405,10 +407,7 @@ addDifferent :: (a,b: Natp, p: a+b = a) -> False
 {
  lem1: a + b > a = true := addIncreases(a,b);
  lem2: a > a = true     := seq {=> a + b > a = true {<- p}; lem1};
- lem3 := gtAntiSymmetric(a);
- => true = false;
- rewrite <- lem2;
- rewrite <- lem3;
+ gtAntiReflexive(a, lem2);
  }
 
 addNegativeDecreases :: (a: Z, b: Natp) -> a > (a + -(b)) = true
@@ -568,16 +567,14 @@ add0Infer :: (a,b: Z, p: (a+b =? a) = true) -> b=0
   +
   lem1 := addPositiveIncreases(a, b.v);
   p := eqCorrect(a + +(b.v), a, p);
-  lem2 : a > a = true :=
-  seq {=> a + +(b.v) > a = true {<- p}; lem1};
-  trueNotFalse(a > a, lem2, gtAntiSymmetric(a)),
+  lem2 : a > a = true := seq {=> a + +(b.v) > a = true {<- p}; lem1};
+  gtAntiReflexive(a, lem2),
 
   -
   lem1 := addNegativeDecreases(a, b.v);
   p := eqCorrect(a + -(b.v), a, p);
-  lem2 : a > a = true :=
-  seq {=> a > a + -(b.v) = true {<- p}; lem1};
-  trueNotFalse(a > a, lem2, gtAntiSymmetric(a)),
+  lem2 : a > a = true := seq {=> a > a + -(b.v) = true {<- p}; lem1};
+  gtAntiReflexive(a, lem2),
   }
  }
 
@@ -686,7 +683,6 @@ addPreservesGt :: (a,b,c: Z, p: a>b=true) -> a+c > b+c = true
                                     -
                                     addPreservesGt(b.v.p, a.v.p, c.v, p)}}}}}}
 
-#debug off
 totalOrder :: (a,b: Natp) -> union {
                                     eq: (p: a = b),
                                     gt: (p: a > b = true),
@@ -701,12 +697,11 @@ totalOrder :: (a,b: Natp) -> union {
    1 ctor[1](_),
    ++ ind := totalOrder(a.p, b.p);
    fork ind {eq lem := ind.p; ctor[0](seq{rewrite lem}),
-             gt,
-             lt} 
+             gt ctor[1](ind.p),
+             lt ctor[2](ind.p)} 
    }
   }
  }
-#debug off
 
 totalOrder :: (a,b: Z) -> union {
                                  eq: (p: a = b),
@@ -719,131 +714,60 @@ totalOrder :: (a,b: Z) -> union {
   0 fork b {0 ctor[0](_),
             + ctor[2](_),
             - ctor[1](_)},
-  + fork b
-  {0 ctor[1](_),
-   + ctor[],
-   - },
+  + fork b {
+            0 ctor[1](_),
+            +
+            value_order := totalOrder(a.v, b.v);
+            fork value_order
+            {
+             eq ctor[0](seq{rewrite value_order.p}),
+             gt ctor[1](value_order.p),
+             lt ctor[2](value_order.p),
+             },
+            - ctor[1](_)},
   -
+  fork b {
+          0 ctor[2](_),
+          + ctor[2](_),
+          -
+          value_order := totalOrder(a.v, b.v);
+          fork value_order
+          {
+           eq ctor[0](seq{rewrite value_order.p}),
+           gt ctor[2](value_order.p),
+           lt ctor[1](value_order.p),
+           }
+          }
   }
  }
 
-;; ;; todo #automate
-;; boolDestruct :: (P: Set, Q: (b: Bool) -> P, T: Q(true), F: Q(false)) -> (b: Bool) -> Q(b)
-;; {
-;;  _ => {fork b {true: => _; T, false: => _; F}}
-;;  }
+sumCancellationRight :: (a,b,c: Z, p: a+c = b+c) -> (a = b)
+{
+ order := totalOrder(a,b);
+ fork order
+ {
+  eq: rewrite order.p,
 
-sumCancellation :: (a,b,c: Z, p: a + b =? a + c = true) -> (b =? c = true)
+  gt:
+  lemma: a+c > b+c = true := addPreservesGt(a,b,c, order.p);
+  inconsistency: a+c > a+c = true := seq{rewrite p; lemma};
+  falsehood := gtAntiReflexive(a+c, inconsistency);
+  fork falsehood {}
+  ,
+
+  lt:
+  lemma: b+c > a+c = true := addPreservesGt(b,a,c, order.p);
+  inconsistency: b+c > b+c = true := seq{rewrite <- p; lemma};
+  falsehood := gtAntiReflexive(b+c, inconsistency);
+  fork falsehood {}
+  }
+ }
+
+sumCancellationLeft :: (a,b,c: Z, p: c+a = c+b) -> (a=b)
 #norm(p)
 {
- fork a
- {
-  0 p,
-  + fork a.v
-  {
-   1 fork b {
-             0
-             lem1: +(1) + c =? +(1) = true := seq {eqSymmetric(+(1), +(1) + c, p)};
-             lem2 := add0Infer(+(1), c, lem1);
-             rewrite lem2;
-             ,
-
-             + fork c {0 p, + p, - fork c.v {1 p, ++ p}},
-
-             -
-             fork b.v {1 fork c {0 p, + p, - fork c.v {1, ++ p}},
-                       ++ fork c {0 p, + p, - fork c.v {1 p, ++ p}}}},
-   ++
-   fork b
-   {
-    0 lem1 := add0Infer(+(++(a.v.p)), c, eqSymmetric(+(++(a.v.p)), +(++(a.v.p)) + c, p));
-    rewrite lem1
-    ,
-    + fork c {
-              0 trueNotFalse(a.v.p + b.v =? a.v.p, p, addIsDifferent(a.v.p, b.v)),
-              +
-              sumCancellation(a.v.p, b.v, c.v, p)
-              ,
-              -
-              fork c.v
-              {
-               1
-               lem1: ++(a.v.p + b.v) =? a.v.p = false :=
-               seq {
-                    lem2: > 
-                    }
-               ,
-               ++
-               }},
-    -
-    }
-   }
-  ,
-  -
-  }
- }
-
-sumCancellation :: (a,b,c: Z, P: a + b = a + c) -> (b = c)
-#norm(P)
-{
- fork a
- {0: P,
-  +: fork a.v
-  {1: 
-   fork b
-   {0: fork c {0:, +: P, -: fork c.v {1: P, ++: P,}},
-    +: fork c {0: P,
-               +: rewrite destruct[0](destruct[0](P)),
-               -: fork c.v {1: P, ++: P}},
-    -: fork b.v {1: fork c {0: P,
-                            +: P,
-                            -: fork c.v {1: ,++: P}},
-                 ++: fork c {0: P,
-                             +: P,
-                             -: fork c.v {1: P, ++: rewrite destruct[0](P)}}}},
-   ++: fork b {0: fork c {
-                          0: ,
-                          +: fork c.v
-                          {
-                           1: P := destruct[0](destruct[0](P)); differentFromPlus(a.v.p, 1, P),
-                           ++: P := destruct[0](P); P := destruct[0](P); differentFromPlus(a.v.p, ++(c.v.p), P)},
-                          -:
-                          ;; todo #feature rewrite a lemma
-                          lem1 : +(++(a.v.p)) > +(++(a.v.p)) + -(c.v) = true
-                          := addNegativeDecreases(+(++(a.v.p)), c.v);
-
-                          lem2 : (+(++(a.v.p)) > +(++(a.v.p)) = true)
-                          := seq {rewrite P; lem1};
-
-                          => true = false;
-                          rewrite <- gtAntiSymmetric(+(++(a.v.p)));
-                          rewrite <- lem2;
-                          },
-               +:
-               fork c {
-                       0 p := destruct[0](destruct[0](P)); addDifferent(a.v.p, b.v, p),
-
-                       + p := destruct[0](destruct[0]P);
-                       lemma : b.v = c.v := sumCancellation(a.v.p,b.v,c.v, p); rewrite lemma,
-
-                       -
-                       lem1 : +(++(a.v.p + b.v)) > +(++(a.v.p)) = true :=
-                       seq {=> a.v.p + b.v > a.v.p = true; addIncreases(a.v.p, b.v)};
-
-                       lem2 : +(++(a.v.p)) > +(++(a.v.p)) + -(c.v) = true := addNegativeDecreases(+(++(a.v.p)), c.v);
-
-                       lem3: +(++(a.v.p + b.v)) > +(++(a.v.p)) + -(c.v) = true := gtTransitive(+(++(a.v.p + b.v)), +(++(a.v.p)), +(++(a.v.p)) + -(c.v), lem1, lem2);
-
-                       lem4: +(++(a.v.p + b.v)) > +(++(a.v.p)) = true := seq {=> _; addIncreases(a.v.p, b.v)};
-
-                       => true = false;
-                       rewrite <- lem3;
-                       rewrite P;
-                       gtAntiSymmetric(+(++(a.v.p)) + -(c.v));
-                       }
-               ,
-               -: ,}},
-  -: }
+ reduce : a+c = b+c := seq{rewrite addCommutative(a,c); rewrite addCommutative(b,c); p};
+ sumCancellationRight(a,b,c, reduce);
  }
 
 addAssociative :: (a,b,c: Z) -> (a+b)+c = a+b+c

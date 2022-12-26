@@ -7,6 +7,7 @@
   - make "computation" be a builtin
   - debug serial situation
   - clean up the data tree containing constructors
+  - we're printing the stack every time we encounter an error, but the error might be recoverable so it's just wasted work. Either pass the intention down, or abandon the recoveriy route.
  */
 
 #include "utils.h"
@@ -154,7 +155,8 @@ isSequenced(Term *term)
 
 inline Arrow * getType(Constructor *ctor) {return ctor->uni->ctor_signatures[ctor->id];}
 
-// todo this seems like a massive waste of time
+// todo this seems like a massive waste of time, maybe we can try using the data
+// tree directly.
 inline Composite *
 makeFakeRecord(MemoryArena *arena, Term *parent, DataTree *tree)
 {  
@@ -180,6 +182,54 @@ makeFakeRecord(MemoryArena *arena, Term *parent, DataTree *tree)
       record->args[field_id] = &accessor->t;
   }
   return record;
+}
+
+inline String
+getVarNameInScope(Typer *env, DataMap *map)
+{
+  String out = {};
+  for (Scope *scope = env->scope; scope; scope=scope->outer)
+  {
+    if (scope->depth == map->depth)
+    {
+      out = scope->first->param_names[map->index].string;
+      break;
+    }
+  }
+  return out;
+}
+
+internal void
+print(MemoryArena *buffer, DataTree *tree)
+{
+  if (tree)
+  {
+    print(buffer, &tree->ctor->t, {});
+    print(buffer, "(");
+    for (i32 id=0; id < tree->member_count; id++)
+    {
+      print(buffer, tree->members[id]);
+      if (id != tree->member_count-1)
+        print(buffer, ", ");
+    }
+    print(buffer, ")");
+  }
+  else
+    print(buffer, "?");
+}
+
+internal void
+printDataMap(MemoryArena *buffer, Typer *env)
+{
+  for (DataMap *map = env->map; map; map=map->next)
+  {
+    String var = getVarNameInScope(env, map);
+    print(buffer, var);
+    print(buffer, ": ");
+    print(buffer, &map->tree);
+    if (map->next)
+      print(buffer, ", ");
+  }
 }
 
 inline Constructor *
@@ -1023,7 +1073,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
   if (in0)
   {
     PrintOptions new_opt = opt;
-    if (!flagIsSet(opt.flags, PrintFlag_LockDetailed))
+    if (!checkFlag(opt.flags, PrintFlag_LockDetailed))
       unsetFlag(&new_opt.flags, PrintFlag_Detailed);
     unsetFlag(&new_opt.flags, PrintFlag_PrintType);
     new_opt.indentation = opt.indentation + 1;
@@ -1052,7 +1102,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
         {
           print(buffer, in0->global_name->string);
         }
-        if (!in->global_name || flagIsSet(opt.flags, PrintFlag_Detailed))
+        if (!in->global_name || checkFlag(opt.flags, PrintFlag_Detailed))
         {
           if (in->ctor_count)
           {
@@ -1081,7 +1131,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
         else
           is_anonymous = true;
 
-        if (flagIsSet(opt.flags, PrintFlag_Detailed) || is_anonymous)
+        if (checkFlag(opt.flags, PrintFlag_Detailed) || is_anonymous)
         {
           skip_print_type = true;
           if (in->type) print(buffer, in->type, new_opt);
@@ -1201,7 +1251,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
       } break;
     }
 
-    if (flagIsSet(opt.flags, PrintFlag_PrintType) && !skip_print_type)
+    if (checkFlag(opt.flags, PrintFlag_PrintType) && !skip_print_type)
     {
       print(buffer, ": ");
       print(buffer, getTypeNoEnv(temp_arena, in0), new_opt);
@@ -1799,7 +1849,7 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
       {
         Constructor *lhs = castTerm(lhs0, Constructor);
         Constructor *rhs = castTerm(rhs0, Constructor);
-        out.result = toTrinary(equal(&lhs->uni->t, &lhs->uni->t) &&
+        out.result = toTrinary(equal(&lhs->uni->t, &rhs->uni->t) &&
                                (lhs->id == rhs->id));
       } break;
 
@@ -2501,13 +2551,14 @@ unify(Typer *env, Arrow *lhs_signature, Term *lhs, Term *rhs)
 inline void
 attachTerms(char *key, i32 count, Term **terms)
 {
-  attach(key, (char *)getNext(temp_arena));
+  MemoryArena buffer = subArena(temp_arena, 1024);
+  attach(key, (char *)buffer.base);
   for (i32 id=0; id < count; id++)
   {
-    print(temp_arena, "\n");
-    print(temp_arena, terms[id]->type);
+    print(&buffer, "\n");
+    print(&buffer, terms[id]->type);
   }
-  print(temp_arena, "\0");
+  print(&buffer, "\0");
 }
 
 inline TermArray
@@ -2872,11 +2923,6 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       else
       {
         parseError(in0, "expression required");
-        attach("goal", goal);
-        MemoryArena buffer = subArena(temp_arena, 1024);
-        print(&buffer, "\n");
-        print(&buffer, env->scope);
-        attach("scope", (char *)buffer.base);
       }
     } break;
 
@@ -2912,7 +2958,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
               if (value)
               {// ambiguous
                 parseError(name, "not enough type information to disambiguate global name");
-                setErrorCode(ErrorAmbiguousName);
+                setErrorFlag(ErrorAmbiguousName);
                 break;
               }
               else
@@ -3006,7 +3052,9 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
               }
             }
             else
+            {
               parseError(&in0->token, "argument count does not match the number of explicit parameters (expected: %d, got: %d)", explicit_param_count, in->arg_count);
+            }
           }
 
           if (noError())
@@ -3090,13 +3138,14 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 
         if (op_list.count > 1)
         {
-          if (hasError())
+          if (hasError() && !checkErrorFlag(ErrorUnrecoverable))
           {
             wipeError();
             if (attempt == op_list.count-1)
             {
               parseError(in->op, "found no suitable overload");
               attachTerms("available_overloads", op_list.count, op_list.items);
+              attach("serial", serial);
             }
           }
           else
@@ -3172,10 +3221,14 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           {
             tokenError(&in->field_name, "accessor has invalid member");
             attach("expected a member of constructor", ctor.uni->ctor_names[ctor.id].chars);
+            setErrorFlag(ErrorUnrecoverable);
           }
         }
         else
+        {
           parseError(in->record, "cannot access a non-record");
+          setErrorFlag(ErrorUnrecoverable);
+        }
       }
     } break;
 
@@ -3334,7 +3387,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 
                 if (op_list.count > 1)
                 {
-                  if (hasError())
+                  if (hasError() && !checkErrorFlag(ErrorUnrecoverable))
                   {
                     wipeError();
                     if (attempt == op_list.count-1)
@@ -3400,14 +3453,12 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
             {
               parseError(in0, "substitution has no effect");
               attach("substitution", eq);
-              attach("goal", goal);
             }
           }
           else
           {
             parseError(in->eq_proof_hint, "please provide a proof of equality that can be used for substitution");
             attach("got", eq);
-            attach("goal", goal);
           }
         }
       }
@@ -3587,15 +3638,29 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
     {
       parseError(in0, "actual type differs from expected type");
       attach("got", getType(temp_arena, env, out0.term));
-      attach("expected", goal);
-      attach("serial", serial);
     }
   }
 
   if (ParseError *error = getError())
   {
-    error->code = ErrorWrongType;
+    setErrorFlag(ErrorTypecheck);
     out0 = {};
+    if (!checkErrorFlag(ErrorGoalAttached))
+    {
+      attach("goal", goal);
+      MemoryArena buffer = subArena(temp_arena, 1024);
+
+      print(&buffer, "\n");
+      print(&buffer, env->scope);
+      attach("scope", (char *)buffer.base);
+      buffer.used++;
+
+      attach("data_map", (char *)getNext(&buffer));
+      printDataMap(&buffer, env);
+      buffer.used++;
+
+      setErrorFlag(ErrorGoalAttached);
+    }
   }
   else
   {
@@ -4528,7 +4593,7 @@ parseTopLevel(EngineState *state)
         {
           should_fail_active = true;
           tokenError(&token, "#should_fail activated");
-          getError()->code = ErrorWrongType;
+          setErrorFlag(ErrorTypecheck);
         }
       } break;
 
@@ -4606,7 +4671,6 @@ parseTopLevel(EngineState *state)
               if (!equal(lhs, rhs))
               {
                 parseError(&token, "equality cannot be proven by computation");
-                setErrorCode(ErrorWrongType);
                 global_debug_mode = true;
                 Term *lhs = normalize(temp_arena, empty_env, eq->args[1]);
                 attach("lhs", lhs);
@@ -4701,8 +4765,8 @@ parseTopLevel(EngineState *state)
     {
       if (noError())
         tokenError(&token, "#should_fail active but didn't fail");
-      else if (getError()->code == ErrorWrongType)
-        wipeError(global_tokenizer);
+      else if (checkErrorFlag(ErrorTypecheck))
+        wipeError();
     }
 
     token = nextToken();

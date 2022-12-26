@@ -389,9 +389,9 @@ struct EngineState {
   DestructList   *builtin_destructs;
 };
 
-u32 PrintFlag_Detailed     = 1 << 1;
-u32 PrintFlag_LockDetailed = 1 << 2;
-u32 PrintFlag_PrintType    = 1 << 3;
+u32 PrintFlag_Detailed     = 1 << 0;
+u32 PrintFlag_LockDetailed = 1 << 1;
+u32 PrintFlag_PrintType    = 1 << 2;
 
 struct PrintOptions{
   u32 flags;

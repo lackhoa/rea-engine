@@ -78,24 +78,13 @@ newToken(const char *text)
   return newToken(toString(text));
 }
 
-#if 0
-enum AttachmentType
-{
-  AttachmentType_Ast,
-  AttachmentType_Value,
-  AttachmentType_Token,
-  AttachmentType_TypeMatcher,
-};
-#endif
-
 struct ErrorAttachment { char *key; char *value; };
 
-enum ErrorCode
-{
-  ErrorGeneral,
-  ErrorWrongType,
-  ErrorAmbiguousName,
-};
+// 1 << 0 is unused
+u32 ErrorTypecheck     = 1 << 1;
+u32 ErrorUnrecoverable = 1 << 2;
+u32 ErrorAmbiguousName = 1 << 3;
+u32 ErrorGoalAttached  = 1 << 4;
 
 struct ParseError
 {
@@ -103,10 +92,10 @@ struct ParseError
   i32        line;
   i32        column;
   char      *context;
-  ErrorCode  code; 
+  u32        flags; 
 
   i32             attachment_count;
-  ErrorAttachment attachments[8];
+  ErrorAttachment attachments[16];
 };
 
 struct ParseContext { char *first; ParseContext *next; };
