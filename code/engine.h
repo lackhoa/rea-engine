@@ -31,7 +31,8 @@ enum AstCategory {
   AC_AccessorAst,
   AC_ComputationAst,
   AC_Lambda,
-  AC_Destruct,
+  AC_DestructAst,
+  AC_CtorAst,
 
   // sequence
   AC_ForkAst,
@@ -212,7 +213,7 @@ _newTerm(MemoryArena *arena, TermCategory cat, Term *type, size_t size)
   ((cat *) _newTerm(arena, Term_##cat, type, sizeof(cat)))
 
 struct Constructor {
-  embed_Term(t);
+  union { Term t; struct { TermCategory cat; Term * type; Token * global_name; i32 serial;  }; };
   Union  *uni;
   i32     id;
 };
@@ -220,8 +221,8 @@ struct Constructor {
 struct Union {
   embed_Term(t);
   i32          ctor_count;
-  Constructor *ctors;
   String      *ctor_names;
+  Arrow      **ctor_signatures;
 };
 
 struct FunctionDecl {
@@ -374,17 +375,18 @@ struct FileList {
   FileList *next;
 };
 
-struct BuiltinCompareList {
-  Constructor         *ctor;
-  Term               **compares;
-  BuiltinCompareList  *next;
+struct DestructList {
+  Union         *uni;
+  i32            ctor_id;
+  Term         **items;
+  DestructList  *next;
 };
 
 struct EngineState {
-  MemoryArena        *arena;
-  FileList           *file_list;
-  GlobalBindings     *bindings;
-  BuiltinCompareList *builtin_compare_list;
+  MemoryArena    *arena;
+  FileList       *file_list;
+  GlobalBindings *bindings;
+  DestructList   *builtin_destructs;
 };
 
 u32 PrintFlag_Detailed     = 1 << 1;
@@ -506,10 +508,16 @@ struct UnionAst {
   ArrowAst **ctor_signatures;
 };
 
-struct Destruct {
+struct DestructAst {
   embed_Ast(a);
   i32  arg_id;
   Ast *eqp;
+};
+
+struct CtorAst {
+  embed_Ast(a);
+  i32  ctor_id;
+  Ast *uni;  // todo implement
 };
 
 #include "generated/engine_forward.h"
