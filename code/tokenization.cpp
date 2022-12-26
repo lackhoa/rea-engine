@@ -246,7 +246,6 @@ parseErrorVA(i32 line, i32 column, char *format, va_list arg_list, Tokenizer *tk
   tk->error->line    = line;
   tk->error->column  = column;
   tk->error->context = tk->context ? tk->context->first : 0;
-  attach("serial", global_debug_serial, tk);
 }
 
 internal void

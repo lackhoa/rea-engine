@@ -686,6 +686,28 @@ addPreservesGt :: (a,b,c: Z, p: a>b=true) -> a+c > b+c = true
                                     -
                                     addPreservesGt(b.v.p, a.v.p, c.v, p)}}}}}}
 
+#debug off
+totalOrder :: (a,b: Natp) -> union {
+                                    eq: (p: a = b),
+                                    gt: (p: a > b = true),
+                                    lt: (p: b > a = true),
+                                    }
+{
+ fork a
+ {
+  1 fork b {1 ctor[0](_), ++ ctor[2](_)},
+  ++ fork b
+  {
+   1 ctor[1](_),
+   ++ ind := totalOrder(a.p, b.p);
+   fork ind {eq lem := ind.p; ctor[0](seq{rewrite lem}),
+             gt,
+             lt} 
+   }
+  }
+ }
+#debug off
+
 totalOrder :: (a,b: Z) -> union {
                                  eq: (p: a = b),
                                  gt: (p: a > b = true),
@@ -694,8 +716,13 @@ totalOrder :: (a,b: Z) -> union {
 {
  fork a
  {
-  0 ctor[0](_),
-  +,
+  0 fork b {0 ctor[0](_),
+            + ctor[2](_),
+            - ctor[1](_)},
+  + fork b
+  {0 ctor[1](_),
+   + ctor[],
+   - },
   -
   }
  }

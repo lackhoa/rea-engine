@@ -457,9 +457,14 @@ getType(MemoryArena *arena, Typer *env, Term *in0)
       case Term_Composite:
       {
         Composite *in = castTerm(in0, Composite);
-        Term *op_type0 = getType(arena, env, in->op);
-        Arrow *op_type = castTerm(op_type0, Arrow);
-        out0 = evaluate(arena, in->args, op_type->output_type);
+        if (Constructor *ctor = castTerm(in->op, Constructor))
+          out0 = &ctor->uni->t;
+        else
+        {
+          Term *op_type0 = getType(arena, env, in->op);
+          Arrow *op_type = castTerm(op_type0, Arrow);
+          out0 = evaluate(arena, in->args, op_type->output_type);
+        }
       } break;
 
       case Term_Arrow:
@@ -738,9 +743,10 @@ precedenceOf(String op)
   return out;
 }
 
-inline void
+inline char *
 printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
 {
+  char *out = buffer ? (char *)getNext(buffer) : 0;
   int    precedence = 0;        // todo: no idea what the default should be
   void  *op         = 0;
   i32    arg_count  = 0;
@@ -827,6 +833,7 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
       print(buffer, ")");
     }
   }
+  return out;
 }
 
 inline void
@@ -1054,15 +1061,12 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
             for (i32 ctor_id = 0; ctor_id < in->ctor_count; ctor_id++)
             {
               print(buffer, in->ctor_names[ctor_id]);
-#if 0  // todo: #print-need-type
-              Constructor *ctor = in->ctors + ctor_id;
               print(buffer, ": ");
-              print(buffer, getTypeNoEnv(temp_arena, &ctor->t), new_opt);
-#endif
+              print(buffer, &in->ctor_signatures[ctor_id]->t, new_opt);
               if (ctor_id != in->ctor_count-1)
                 print(buffer, ", ");
             }
-            print(buffer, " }");
+            print(buffer, "}");
           }
         }
       } break;
@@ -1103,8 +1107,12 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
           if (param_id < in->param_count-1)
             print(buffer, ", ");
         }
-        print(buffer, ") -> ");
-        print(buffer, in->output_type, new_opt);
+        print(buffer, ")");
+        if (in->output_type)
+        {
+          print(buffer, " -> ");
+          print(buffer, in->output_type, new_opt);
+        }
       } break;
 
       case Term_Builtin:
@@ -1191,7 +1199,6 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
         }
         print(buffer, "}");
       } break;
-
     }
 
     if (flagIsSet(opt.flags, PrintFlag_PrintType) && !skip_print_type)
@@ -1229,7 +1236,7 @@ print(MemoryArena *buffer, Scope *scopes)
 
     scopes = scopes->outer;
     if (scopes)
-      print(buffer, ", ");
+      print(buffer, ",\n ");
   }
   print(buffer, "]");
   return out;
@@ -1301,6 +1308,9 @@ isGround(Term *in0)
       return true;
     } break;
 
+    case Term_Builtin:
+    {return true;} break;
+
     case Term_Hole:
     case Term_Variable:
     case Term_Arrow:
@@ -1309,12 +1319,9 @@ isGround(Term *in0)
     case Term_Accessor:
     case Term_Rewrite:
     case Term_Computation:
-    {return false;} break;
-
-    case Term_Builtin:
     case Term_Union:
     case Term_Constructor:
-    {return true;} break;
+    {return false;} break;
   }
 }
 
@@ -1323,7 +1330,7 @@ forward_declare internal Term *
 rebaseMain(MemoryArena *arena, Term *in0, i32 delta, i32 offset)
 {
   assert(delta >= 0);
-  Term *out0 = in0;
+  Term *out0 = 0;
   if (!isGround(in0) && (delta > 0))
   {
     switch (in0->cat)
@@ -1337,6 +1344,8 @@ rebaseMain(MemoryArena *arena, Term *in0, i32 delta, i32 offset)
           out->delta += delta;
           out0 = &out->t;
         }
+        else
+          out0 = in0;
       } break;
 
       case Term_Composite:
@@ -1354,10 +1363,13 @@ rebaseMain(MemoryArena *arena, Term *in0, i32 delta, i32 offset)
       {
         Arrow *in  = castTerm(in0, Arrow);
         Arrow *out = copyStruct(arena, in);
-        allocateArray(arena, out->param_count, out->param_types);
-        for (i32 id=0; id < out->param_count; id++)
+        allocateArray(arena, in->param_count, out->param_types);
+        for (i32 id=0; id < in->param_count; id++)
           out->param_types[id] = rebaseMain(arena, in->param_types[id], delta, offset+1);
-        out->output_type = rebaseMain(arena, out->output_type, delta, offset+1);
+        if (in->output_type)
+        {
+          out->output_type = rebaseMain(arena, in->output_type, delta, offset+1);
+        }
         out0 = &out->t;
       } break;
 
@@ -1395,10 +1407,43 @@ rebaseMain(MemoryArena *arena, Term *in0, i32 delta, i32 offset)
         out0 = &out->t;
       } break;
 
+      case Term_Union:
+      {
+        Union *in  = castTerm(in0, Union);
+        Union *out = copyStruct(arena, in);
+        allocateArray(arena, in->ctor_count, out->ctor_signatures);
+        for (i32 id=0; id < in->ctor_count; id++)
+        {
+          Term *rebased = rebaseMain(arena, &in->ctor_signatures[id]->t, delta, offset);
+          out->ctor_signatures[id] = castTerm(rebased, Arrow);
+        }
+        out0 = &out->t;
+      } break;
+
+      case Term_Constructor:
+      {
+        Constructor *in  = castTerm(in0, Constructor);
+        // todo kinda nasty that we have to rebase the whole union. But what can
+        // we really do? Since direct mutation is out of question atm.
+        Union *uni = castTerm(rebaseMain(arena, &in->uni->t, delta, offset), Union);
+        if (uni == in->uni)
+          out0 = in0;
+        else
+        {
+          debugbreak;
+          Constructor *out = copyStruct(arena, in);
+          out->uni = uni;
+          out0 = &out->t;
+        }
+      } break;
+
       default:
         todoIncomplete;
     }
   }
+  else
+    out0 = in0;
+  assert(out0);
   return out0;
 }
 
@@ -1444,6 +1489,8 @@ forward_declare internal Term *
 evaluateMain(EvaluationContext *ctx, Term *in0)
 {
   Term *out0 = 0;
+  MemoryArena *arena = ctx->arena;
+
   i32 serial = global_debug_serial++;
   b32 debug = false;
   if (debug && global_debug_mode)
@@ -1462,11 +1509,11 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
         if (in->delta == ctx->offset)
         {
           out0 = ctx->args[in->index];
-          out0 = rebase(ctx->arena, out0, ctx->offset);
+          out0 = rebase(arena, out0, ctx->offset);
         }
         else if (in->delta > ctx->offset)
         {
-          Variable *out = copyStruct(ctx->arena, in);
+          Variable *out = copyStruct(arena, in);
           out->delta--;  // TODO this is rocket science in here...
           out0 = &out->t;
         }
@@ -1477,17 +1524,17 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
       case Term_Composite:
       {
         Composite *in = castTerm(in0, Composite);
-        Term **args = pushArray(ctx->arena, in->arg_count, Term *);
+        Term **args = pushArray(arena, in->arg_count, Term *);
         Term *op = evaluateMain(ctx, in->op);
         for (i32 id=0; id < in->arg_count; id++)
           args[id] = evaluateMain(ctx, in->args[id]);
 
         if (ctx->normalize)
-          out0 = apply(ctx->arena, op, args);
+          out0 = apply(arena, op, args);
 
         if (!out0)
         {
-          Composite *out = copyStruct(ctx->arena, in);
+          Composite *out = copyStruct(arena, in);
           out->op   = op;
           out->args = args;
           out0 = &out->t;
@@ -1497,15 +1544,16 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
       case Term_Arrow:
       {
         Arrow *in  = castTerm(in0, Arrow);
-        Arrow *out = copyStruct(ctx->arena, in);
+        Arrow *out = copyStruct(arena, in);
 
-        allocateArray(ctx->arena, out->param_count, out->param_types);
+        allocateArray(arena, out->param_count, out->param_types);
         ctx->offset++;
         for (i32 id=0; id < out->param_count; id++)
         {
           out->param_types[id] = evaluateMain(ctx, in->param_types[id]);
         }
-        out->output_type = evaluateMain(ctx, out->output_type);
+        if (in->output_type)
+          out->output_type = evaluateMain(ctx, in->output_type);
         ctx->offset--;
 
         out0 = &out->t;
@@ -1514,7 +1562,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
       case Term_Function:
       {
         Function *in  = castTerm(in0, Function);
-        Function *out = copyStruct(ctx->arena, in);
+        Function *out = copyStruct(arena, in);
         out->type = evaluateMain(ctx, in->type);
 
         b32 old_normalize = ctx->normalize;
@@ -1536,7 +1584,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
           out0 = record->args[in->field_id];
         else
         {
-          Accessor *out = copyStruct(ctx->arena, in);
+          Accessor *out = copyStruct(arena, in);
           out->record = record0;
           out0 = &out->t;
         }
@@ -1545,7 +1593,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
       case Term_Computation:
       {
         Computation *in  = castTerm(in0, Computation);
-        Computation *out = copyStruct(ctx->arena, in);
+        Computation *out = copyStruct(arena, in);
         // NOTE: semi-hack so it doesn't normalize our propositions.
         b32 old_normalize = ctx->normalize;
         ctx->normalize = false;
@@ -1562,7 +1610,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
         {
           if (Term *body = evaluateMain(ctx, in->body))
           {
-            Rewrite *out = copyStruct(ctx->arena, in);
+            Rewrite *out = copyStruct(arena, in);
             out->eq_proof = eq_proof;
             out->body     = body;
             out0 = &out->t;
@@ -1584,9 +1632,9 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
         }
         else
         {
-          Fork *out = copyStruct(ctx->arena, in);
+          Fork *out = copyStruct(arena, in);
           out->subject = evaluateMain(ctx, in->subject);
-          allocateArray(ctx->arena, in->case_count, out->bodies);
+          allocateArray(arena, in->case_count, out->bodies);
           for (i32 id=0; id < in->case_count; id++)
             out->bodies[id] = evaluateMain(ctx, in->bodies[id]);
           out0 = &out->t;
@@ -1595,7 +1643,15 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
 
       case Term_Union:
       {
-        todoIncomplete;
+        Union *in  = castTerm(in0, Union);
+        Union *out = copyStruct(arena, in);
+        allocateArray(arena, in->ctor_count, out->ctor_signatures);
+        for (i32 id=0; id < in->ctor_count; id++)
+        {
+          Arrow *signature = in->ctor_signatures[id];
+          out->ctor_signatures[id] = castTerm(evaluateMain(ctx, &signature->t), Arrow);
+        }
+        out0 = &out->t;
       } break;
 
       case Term_Builtin:
@@ -1624,15 +1680,15 @@ evaluateAndNormalize(MemoryArena *arena, Term **args, Term *in0)
   return evaluateMain(&ctx, in0);
 }
 
-// todo important we can't guarantee that compare would be of the same type,
-// because the search needs it.
+// NOTE: we can't guarantee that compare would be of the same type, because the
+// tree search needs it.
 forward_declare internal CompareTerms
 compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
 {
   CompareTerms out = {};
   out.result = Trinary_Unknown;
 
-  b32 debug = false;
+  b32 debug = true;
   i32 serial = global_debug_serial++;
   if (debug && global_debug_mode)
   {
@@ -1661,7 +1717,6 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
         if (rhs->param_count == param_count)
         {
           b32 type_mismatch = false;
-          // env->scope = extendScope(env->scope, lhs);  // I guess this is right but who knows
           for (i32 id = 0; id < param_count; id++)
           {
             if (!equal(lhs->param_types[id], rhs->param_types[id]))
@@ -1671,8 +1726,14 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
             }
           }
           if (!type_mismatch)
-            out.result = equalTrinary(lhs->output_type, rhs->output_type);
-          // unwindScope(env);
+          {
+            if (lhs->output_type && rhs->output_type)
+              out.result = equalTrinary(lhs->output_type, rhs->output_type);
+            else if (!rhs->output_type && !rhs->output_type)
+              out.result = Trinary_True;
+            else
+              out.result = Trinary_False;
+          }
         }
         else
           out.result = Trinary_False;
@@ -1754,9 +1815,32 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
         out.result = toTrinary(lhs0 == rhs0);
       } break;
 
+      case Term_Union:
+      {
+        if (!lhs0->global_name && !rhs0->global_name)  // only support anonymous union compare rn, to avoid dealing with recursive structs
+        {
+          Union *lhs = castTerm(lhs0, Union);
+          Union *rhs = castTerm(rhs0, Union);
+          i32 ctor_count = lhs->ctor_count;
+          if (rhs->ctor_count == ctor_count)
+          {
+            b32 found_mismatch = false;
+            for (i32 id=0; id < ctor_count; id++)
+            {
+              if (!equal(&lhs->ctor_signatures[id]->t,
+                         &rhs->ctor_signatures[id]->t))
+              {
+                found_mismatch = true;
+              }
+            }
+            if (!found_mismatch)
+              out.result = Trinary_True;
+          }
+        }
+      } break;
+
       case Term_Function:
       case Term_Hole:
-      case Term_Union:
       case Term_Rewrite:
       case Term_Computation:
       case Term_Fork:
@@ -1868,6 +1952,7 @@ internal Term *
 normalizeMain(NormalizeContext *ctx, Term *in0) 
 {
   Term *out0 = in0;
+  MemoryArena *arena = ctx->arena;
 
   i32 serial = global_debug_serial++;
   b32 debug = false;
@@ -1883,7 +1968,7 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
         Composite *in = castTerm(in0, Composite);
         b32 progressed = false;
 
-        Term **norm_args = pushArray(ctx->arena, in->arg_count, Term*);
+        Term **norm_args = pushArray(arena, in->arg_count, Term*);
         for (auto arg_id = 0;
              arg_id < in->arg_count;
              arg_id++)
@@ -1895,11 +1980,11 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
         Term *norm_op = normalizeMain(ctx, in->op);
         progressed = progressed || (norm_op != in->op);
 
-        if (Term *app = apply(ctx->arena, norm_op, norm_args))
+        if (Term *app = apply(arena, norm_op, norm_args))
           out0 = app;
         else if (progressed)
         {
-          Composite *out = newTerm(ctx->arena, Composite, 0);
+          Composite *out = newTerm(arena, Composite, 0);
           out->arg_count = in->arg_count;
           out->op        = norm_op;
           out->args      = norm_args;
@@ -1910,15 +1995,14 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
       case Term_Arrow:
       {
         Arrow *in  = castTerm(in0, Arrow);
-        Arrow *out = copyStruct(ctx->arena, in);
+        Arrow *out = copyStruct(arena, in);
 
-        allocateArray(ctx->arena, out->param_count, out->param_types);
+        allocateArray(arena, out->param_count, out->param_types);
         ctx->depth++;
         for (i32 id=0; id < out->param_count; id++)
-        {
           out->param_types[id] = normalizeMain(ctx, in->param_types[id]);
-        }
-        out->output_type = normalizeMain(ctx, out->output_type);
+        if (in->output_type)
+          out->output_type = normalizeMain(ctx, in->output_type);
         ctx->depth--;
 
         out0 = &out->t;
@@ -1931,7 +2015,7 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
         Term *eq_proof = normalizeMain(ctx, in->eq_proof);
         if ((body != in->body) || (eq_proof != in->eq_proof))
         {
-          Rewrite *out = copyStruct(ctx->arena, in);
+          Rewrite *out = copyStruct(arena, in);
           out->eq_proof = eq_proof;
           out->body     = body;
           out0 = &out->t;
@@ -1946,7 +2030,7 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
           out0 = record->args[in->field_id];
         else if (record0 != in->record)
         {
-          Accessor *out = copyStruct(ctx->arena, in);
+          Accessor *out = copyStruct(arena, in);
           out->record = record0;
           out0 = &out->t;
         }
@@ -1966,12 +2050,21 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
           }
         }
         if (tree)
-          out0 = &makeFakeRecord(ctx->arena, in0, tree)->t;
+          out0 = &makeFakeRecord(arena, in0, tree)->t;
       } break;
 
       case Term_Union:
       {
-        todoIncomplete;
+        Union *in  = castTerm(in0, Union);
+        Union *out = copyStruct(arena, in);
+        allocateArray(arena, in->ctor_count, out->ctor_signatures);
+        for (i32 id=0; id < in->ctor_count; id++)
+        {
+          Term *signature = &in->ctor_signatures[id]->t;
+          signature = normalizeMain(ctx, signature);
+          out->ctor_signatures[id] = castTerm(signature, Arrow);
+        }
+        out0 = &out->t;
       } break;
 
       case Term_Fork:
@@ -2271,13 +2364,17 @@ getExplicitParamCount(Arrow *in)
 }
 
 inline b32
-matchType(Term *actual, Term *expected)
+matchType(Typer *env, Term *term, Term *expected)
 {
   b32 out = false;
   if (expected->cat == Term_Hole)
     out = true;
-  else if (equal(actual, expected))
-    out = true;
+  else
+  {
+    Term *actual = getType(temp_arena, env, term);
+    if (equal(actual, expected))
+      out = true;
+  }
   return out;
 }
 
@@ -2429,10 +2526,17 @@ getFunctionOverloads(Typer *env, Identifier *ident, Term *output_type_goal)
       allocateArray(temp_arena, slot->count, out.items);
       for (int slot_id=0; slot_id < slot->count; slot_id++)
       {
-        if (Arrow *signature = castTerm(getTypeNoEnv(temp_arena, slot->items[slot_id]), Arrow))
+        Term *item = slot->items[slot_id];
+        if (Arrow *signature = castTerm(getTypeNoEnv(temp_arena, item), Arrow))
         {
           b32 output_type_mismatch = false;
-          if (!unify(env, signature, signature->output_type, output_type_goal))
+          Term *output_type = signature->output_type;
+          if (!output_type)
+          {
+            Constructor *ctor = castTerm(item, Constructor);
+            output_type = &ctor->uni->t;
+          }
+          if (!unify(env, signature, output_type, output_type_goal))
             output_type_mismatch = true;
 
           if (!output_type_mismatch)
@@ -2769,7 +2873,10 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       {
         parseError(in0, "expression required");
         attach("goal", goal);
-        attach("stack", print(temp_arena, env->scope));
+        MemoryArena buffer = subArena(temp_arena, 1024);
+        print(&buffer, "\n");
+        print(&buffer, env->scope);
+        attach("scope", (char *)buffer.base);
       }
     } break;
 
@@ -2800,7 +2907,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           for (i32 value_id = 0; value_id < globals->count; value_id++)
           {
             Term *slot_value = globals->items[value_id];
-            if (matchType(getTypeNoEnv(temp_arena, slot_value), goal))
+            if (matchType(env, slot_value, goal))
             {
               if (value)
               {// ambiguous
@@ -3065,7 +3172,6 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           {
             tokenError(&in->field_name, "accessor has invalid member");
             attach("expected a member of constructor", ctor.uni->ctor_names[ctor.id].chars);
-            attach("in type", op_type->output_type);
           }
         }
         else
@@ -3393,8 +3499,6 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 
     case AC_DestructAst:
     {
-      if (serial == 50066)
-        breakhere;
       DestructAst *in = castAst(in0, DestructAst);
       if (BuildTerm build_eqp = buildTerm(arena, env, in->eqp, holev))
       {
@@ -3418,14 +3522,18 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                     parseError(in0, "lhs constructor is not equal to rhs constructor");
                 }
                 else
-                  parseError(in0, "rhs is not a record");
+                  parseError(in0, "rhs must be a record");
               }
             }
             else
-              parseError(in0, "lhs is not a record");
+              parseError(in0, "lhs must be a record");
           }
+          else
+            parseError(in0, "lhs must be a record");
 
-          if (noError())
+          if (hasError())
+            attach("type", eq);
+          else
           {
             i32 param_count = getType(ctor)->param_count;
             if (in->arg_id < param_count)
@@ -3465,16 +3573,20 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       }
     } break;
 
+    case AC_CtorAst:
+    {
+      parseError(in0, "please use this constructor syntax as an operator");
+    } break;
+
     invalidDefaultCase;
   }
 
   if (noError() && (goal != holev) && should_check_type && !recursed)
   {// typecheck if needed
-    Term *actual = getType(temp_arena, env, out0.term);
-    if (!matchType(actual, goal))
+    if (!matchType(env, out0.term, goal))
     {
       parseError(in0, "actual type differs from expected type");
-      attach("got", actual);
+      attach("got", getType(temp_arena, env, out0.term));
       attach("expected", goal);
       attach("serial", serial);
     }
@@ -4005,7 +4117,6 @@ buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
     if (BuildTerm build_type = buildTerm(arena, env, &in->ctor_signatures[ctor_id]->a, holev))
     {
       Arrow *signature = castTerm(build_type.term, Arrow);
-      signature->output_type = &uni->t;
       uni->ctor_signatures[ctor_id] = signature;
       if (global_name)
       {
