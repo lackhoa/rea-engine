@@ -122,8 +122,8 @@ multiplyPosv2 :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
   }}
 
 ;; todo: ridiculous that we can't normalize without a function
-oneIsNotZero :: () -> 1 != 0 {norm; _ => {E}}
-test_eval multiplyPos(1,1,oneIsNotZero(),oneIsNotZero());
+oneIsNotZero : 1 != 0 := seq {norm; _ => {E}};
+test_eval multiplyPos(1,1,oneIsNotZero,oneIsNotZero);
 ;; print multiplyPos;
 
 somethingWicked :: fn (a,b,c: Nat) -> Type {(p: a=b) -> (q: b=c) -> a=c}
@@ -132,23 +132,24 @@ somethingWickedUsage :: () -> (x,y,z: Nat) -> (somethingWicked(x,y,z))
  _ => {_ => {_ => {rewrite p; rewrite q}}}}
 
 StructWithFunction :: union {makeStructWithFunction: (a: Nat, b: (E: a=0) -> False)}
-oneEqualZeroImpliesFalse :: fn () -> ((E: 1=0) -> False) {norm; _ => {E}}
+oneEqualZeroImpliesFalse : ((E: 1=0) -> False) := seq{norm; _ => {E}};
 testFunctionInComposite :: fn (x: StructWithFunction, E: x.a = 0) -> False {norm; x.b(E)}
 testFunctionInCompositeUsage :: (Wrong: 1=0) -> False
 {
- obj := testFunctionInComposite(makeStructWithFunction(1, oneEqualZeroImpliesFalse()), Wrong);
+ obj := testFunctionInComposite(makeStructWithFunction(1, oneEqualZeroImpliesFalse), Wrong);
  obj
  }
 ;; print testFunctionInCompositeUsage;
 
-;; foo :: (a: Bool) -> union {t: (p: a=true), f: (p: a=false)}
-;; {
-;;  fork a
-;;  {
-;;   false  option(f) _,
-;;   true   option(f) _,
-;;   }
-;;  }
+foo :: (a: Bool) -> union {f: (p: a=false), t: (p: a=true)}
+{
+ fork a
+ {
+  false ctor[0](_),
+  true  ctor[1](_),
+  }
+ }
 
-;; todo important test arrow type unification by using this "arrowTypeUnification" to do things
-;; arrowTypeUnification :: (x: True) -> (a: True) -> a=x {_ => {fork a {truth: fork x {truth: }}}}
+arrowTypeUnification :: (x: True) -> (a: True) -> a=x {_ => {fork a {truth: fork x {truth: }}}}
+test_eval arrowTypeUnification(truth);
+arrowTypeUnificationTest :: (y: True) -> (b: True) -> b=y {arrowTypeUnification(y)}
