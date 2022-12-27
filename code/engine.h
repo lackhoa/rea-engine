@@ -284,7 +284,6 @@ struct LocalBindings
 struct Variable {
   embed_Term(t);
   Token name;
-  VarId id;                     // nocheckin: if you don't remove this, you're not a man
   i32   delta;
   i32   index;
 };

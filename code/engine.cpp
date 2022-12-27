@@ -488,19 +488,16 @@ getType(MemoryArena *arena, Typer *env, Term *in0)
     {
       case Term_Variable:
       {
+        i32 env_depth = env->scope->depth;
         Variable *in = castTerm(in0, Variable);
-        for (Scope *scopes = env->scope; scopes; scopes=scopes->outer)
-        {
-          Arrow *scope = scopes->first;
-          if (in->id >= scope->first_id &&
-              in->id < scope->first_id + scope->param_count)
-          {
-            auto index = in->id - scope->first_id;
-            out0 = scopes->first->param_types[index];
-            out0 = rebase(arena, out0, in->delta);
-            break;
-          }
-        }
+        Scope *scope = env->scope;
+        for (i32 id=0; id < in->delta; id++)
+          scope=scope->outer;
+        
+        assert(scope->depth == env_depth - in->delta);
+        out0 = scope->first->param_types[in->index];
+        out0 = rebase(arena, out0, in->delta);
+
         assert(out0);
       } break;
 
@@ -1086,7 +1083,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
         Variable *in = castTerm(in0, Variable);
         print(buffer, in->name.string);
         if (global_debug_mode)
-          print(buffer, "[%d:%d, %llu]", in->delta, in->index, in->id);
+          print(buffer, "[%d:%d]", in->delta, in->index);
       } break;
 
       case Term_Hole:
@@ -1755,7 +1752,7 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
       {
         Variable *lhs = castTerm(lhs0, Variable);
         Variable *rhs = castTerm(rhs0, Variable);
-        if (lhs->id == rhs->id)
+        if ((lhs->delta == rhs->delta) && (lhs->index == rhs->index))
           out.result = Trinary_True;
       } break;
 
@@ -2940,7 +2937,6 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       {
         Variable *var = newTerm(arena, Variable, 0);
         var->name        = in0->token;
-        var->id          = local.var_id;
         var->index       = local.var_index;
         var->delta = local.stack_delta;
         out0.term  = &var->t;
