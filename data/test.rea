@@ -12,7 +12,6 @@ RatTest :: union
 BigStruct :: union
 {makeBigStruct : (r: RatTest)}
 
-;; todo re-enable type coercion
 testBigStruct :: (big : BigStruct) -> (big.r.d != 0)
 {big.r._dnot0}
 
@@ -50,17 +49,6 @@ Z :: union
  ;; todo: These maybe not work work as unary operators?
  +: (v: Natp),
  -: (v: Natp)}
-
-;; - :: (a: Natp, b: Natp) -> Natp
-;; {;; assuming that a > b
-;;  fork a
-;;  {1 : 1,
-;;   ++: fork b {1: 1, ++: -(a.p, b.p)}}}
-
-;; compare :: (a: Natp, b: Natp) -> Natp
-;; {fork a
-;;  {1  : fork b {1: 0, ++: -},
-;;   ++ : fork b {1: +, ++: compare(a.p, b.p)}}}
 
 + :: fn (a, b: Z) -> Z
 {fork a

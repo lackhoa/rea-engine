@@ -15,6 +15,7 @@
 #include "intrinsics.h"
 #include "engine.h"
 #include "tokenization.cpp"
+#include "debug.h"
 
 global_variable Builtins builtins;
 global_variable Term dummy_function_being_built;
@@ -1504,10 +1505,12 @@ internal Term *
 apply(MemoryArena *arena, Term *op, Term **args)
 {
   Term *out0 = 0;
+
+#if DEBUG_LOG_apply
   i32 serial = global_debug_serial++;
-  b32 debug = false;
-  if (debug && global_debug_mode)
+  if (global_debug_mode)
   {debugIndent(); DUMP("apply(", serial, "): ", op, "(...)\n");}
+#endif
 
   if (Function *fun = castTerm(op, Function))
   {// Function application
@@ -1528,7 +1531,9 @@ apply(MemoryArena *arena, Term *op, Term **args)
     }
   }
 
-  if (debug && global_debug_mode) {debugDedent(); DUMP("=> ", out0, "\n");}
+#if DEBUG_LOG_apply
+  if (global_debug_mode) {debugDedent(); DUMP("=> ", out0, "\n");}
+#endif
   return out0;
 }
 
@@ -1538,11 +1543,12 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
   Term *out0 = 0;
   MemoryArena *arena = ctx->arena;
 
+#if DEBUG_LOG_evaluate
   i32 serial = global_debug_serial++;
-  b32 debug = false;
-  if (debug && global_debug_mode)
+  if (global_debug_mode)
   {debugIndent(); DUMP("evaluate(", serial, "): ", in0, "\n");}
   assert(ctx->offset >= 0);
+#endif
 
   if (in0->global_name)
     out0 = in0;
@@ -1708,8 +1714,11 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
     }
   }
 
+#if DEBUG_LOG_evaluate
+  if (global_debug_mode) {debugDedent(); DUMP("=> ", out0, "\n");}
+#endif
+
   assert(isSequenced(in0) || out0);
-  if (debug && global_debug_mode) {debugDedent(); DUMP("=> ", out0, "\n");}
   return out0;
 }
 
@@ -1735,12 +1744,13 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
   CompareTerms out = {};
   out.result = Trinary_Unknown;
 
-  b32 debug = true;
+#if DEBUG_LOG_compare
   i32 serial = global_debug_serial++;
-  if (debug && global_debug_mode)
+  if (global_debug_mode)
   {
     debugIndent(); DUMP("comparing(", serial, "): ", lhs0, " and ", rhs0, "\n");
   }
+#endif
 
   if (lhs0 == rhs0)
     out.result = {Trinary_True};
@@ -1895,8 +1905,11 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
     }
   }
 
-  if (debug && global_debug_mode)
+#if DEBUG_LOG_compare
+  if (global_debug_mode)
   {debugDedent(); dump("=> "); dump(out.result); dump();}
+#endif
+
   return out;
 }
 
@@ -2001,10 +2014,11 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
   Term *out0 = in0;
   MemoryArena *arena = ctx->arena;
 
+#if DEBUG_LOG_normalize
   i32 serial = global_debug_serial++;
-  b32 debug = false;
-  if (debug && global_debug_mode)
+  if (global_debug_mode)
   {debugIndent(); DUMP("normalize(", serial, "): ", in0, "\n");}
+#endif
 
   if (!in0->global_name)
   {
@@ -2126,8 +2140,10 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
     }
   }
 
-  if (debug && global_debug_mode)
+#if DEBUG_LOG_normalize
+  if (global_debug_mode)
   {debugDedent(); dump("=> "); dump(out0); dump();}
+#endif
 
   assert(isSequenced(in0) || out0);
   return out0;
@@ -2439,12 +2455,13 @@ internal b32
 unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *rhs0)
 {
   b32 success = false;
-  b32 debug = false;
+
+#if DEBUG_LOG_unify
   i32 serial = global_debug_serial++;
-  if (global_debug_mode && debug)
-  {
-    debugIndent(); DUMP("unify(", serial, ") ", lhs0, " with ", rhs0, "\n");
-  }
+  if (global_debug_mode)
+  {debugIndent(); DUMP("unify(", serial, ") ", lhs0, " with ", rhs0, "\n");}
+#endif
+
   switch (lhs0->cat)
   {
     case Term_Variable:
@@ -2526,11 +2543,12 @@ unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *rhs0)
       todoIncomplete;
     } break;
   }
-  if (global_debug_mode && debug)
-  {
-    debugDedent(); DUMP("=>(", serial, ") ");
-    if (success) dump("true\n"); else dump("false\n");
-  }
+
+#if DEBUG_LOG_unify
+  if (global_debug_mode)
+  {debugDedent(); DUMP("=>(", serial, ") ", ((char *)(success ? "true\n" : "false\n")));}
+#endif
+
   return success;
 }
 
