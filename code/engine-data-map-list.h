@@ -129,13 +129,16 @@ b32 operator!=(Trinary a, Trinary b)
   return a.v != b.v;
 }
 
+#if 0
 struct DataTree {
   Union*     uni;
   i32        ctor_id;
   i32        member_count;
   DataTree **members;
 };
+#endif
 
+#if 0
 struct DataMapAddHistory {
   // option A: root 
   DataMap      *map;
@@ -145,11 +148,21 @@ struct DataMapAddHistory {
 
   DataMapAddHistory *next;
 };
+#endif
+
+struct TreePath {
+  i32       first;  // -1 for op
+  TreePath *next;
+};
 
 struct DataMap {
-  i32       depth;
-  i32       index;
-  DataTree  tree;
+  String    var_name;
+  i32       var_depth;
+  i32       var_id;
+  i32       path_length;
+  TreePath *path;
+  u8        ctor_id;
+  String    ctor_name;
   DataMap  *next;
 };
 
@@ -165,12 +178,14 @@ struct Scope {
   i32    depth;
 };
 
-struct Typer
-{
+embed_struct struct Environment {
+  Scope   *scope;
+  DataMap *map;
+};
+
+struct Typer {
+  embed_Environment(env);
   LocalBindings *bindings;
-  Scope         *scope;
-  DataMap       *map;
-  DataMapAddHistory *add_history;
 };
 
 struct AstList
@@ -248,30 +263,18 @@ struct Let {
   Ast   *body;
 };
 
-typedef u64 VarId;
-global_variable VarId next_variable_id = 1;
-inline VarId reserveVariableIds(i32 count)
-{
-  VarId out = next_variable_id;
-  next_variable_id += count;
-  return out;
-}
-inline void resetVariableIds() {next_variable_id = 1;}
-
 struct LocalBinding
 {
   i32           hash;
   String        key;
-  VarId         var_id;
-  i32           var_index;
+  i32           var_id;
   LocalBinding *next;
 };
 
 struct LookupLocalName {
   b32   found;
   i32   stack_delta;
-  VarId var_id;
-  i32   var_index;
+  i32   var_id;
   operator bool() {return found;}
 };
 
@@ -286,19 +289,15 @@ struct Variable {
   embed_Term(t);
   Token name;
   i32   delta;
-  i32   index;
-};
-
-struct TreePath {
-  i32       first;  // -1 for op
-  TreePath *next;
+  i32   id;
+  TreePath *path;
 };
 
 struct Accessor {
   embed_Term(t);
   Term   *record;
   i32     field_id;
-  String  field_name;           // #todo #debug_only
+  String  field_name;           // todo #debug_only
 };
 
 struct CompositeAst {
@@ -325,7 +324,6 @@ struct ArrowAst {
 
 struct Arrow {
   embed_Term(t);
-  VarId   first_id;  // todo #removeme
   i32     param_count;
   Token  *param_names;
   Term  **param_types;
@@ -494,11 +492,22 @@ struct SyntheticAst {
   Term *term;
 };
 
-struct EvaluationContext {
+embed_struct struct TermContext {
+  DataMap *map;
+  i32      depth;
+  i32      offset;
+};
+
+struct Normalizer {
+  embed_TermContext(term_context);
+  MemoryArena *arena;
+};
+
+struct Evaluator {
+  embed_TermContext(term_context);
   MemoryArena  *arena;
   Term        **args;
-  b32           normalize;
-  i32           offset;
+  b32           should_normalize;
 };
 
 struct UnionAst {
@@ -518,6 +527,19 @@ struct CtorAst {
   embed_Ast(a);
   i32  ctor_id;
   Ast *uni;  // todo implement
+};
+
+struct UniAndCtorId
+{
+  Union *uni;
+  i32    ctor_id;
+  operator bool() {return uni;}
+};
+
+struct DataPath {
+  Variable *root;
+  TreePath *path;
+  operator bool() {return root;}
 };
 
 #include "generated/engine_forward.h"

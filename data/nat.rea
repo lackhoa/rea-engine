@@ -2,7 +2,7 @@
 
 Nat :: union
 {0,
- ++: (p: Nat)}
+ ++(p: Nat)}
 
 + :: fn (n, m: Nat) -> Nat
 {fork n
@@ -98,7 +98,7 @@ testFillingHole :: (xdebug: Nat, x_positive: xdebug!=0, P: xdebug=0) -> False
   ++: norm P; P}
  }
 
-multiplyPos :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
+mulPos :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
 {norm b_positive; norm a_positive;
  norm;
  _ => {fork a {0: a_positive(_),

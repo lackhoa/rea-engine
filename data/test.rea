@@ -1,824 +1,190 @@
 #load "boolean.rea"
 #load "nat.rea"
 
+check True: Set;
+;; print_raw (x: False) -> (x = x);
+;; print_raw false & true | true & false | true;
+
+;; print_raw &(true, |(false,true,),);
+;; print_raw false & true | true & false | true;
+
+;; print_raw =(_, true, false);
+
+typecheck :: fn (id: (A: Set, a: A) -> a=a, b: Bool) -> b=b
+{id(Bool, b)}
+
+#should_fail
+typecheck1 :: fn (id: (A: Set, a: A) -> a=a, b: Bool) -> b=b
+{b}
+typecheck2 :: fn (id: (A: Set, a: A) -> a=a, a,b: Bool) -> b=b
+{id(Bool, a)}
+#should_fail off
+
+check_truth false & true = false;
+check_truth false & true | true = true;
+
+testAbstraction :: fn (a, b: Bool) -> Bool
+{fork a
+ {true : b,
+  false: fork b {false: a, true: false}}}
+
+check andAssociative(true, false, true) : ((true & false) & true = true & false & true);
+
+#should_fail
+dependentTypeFailTest :: fn (T: Type, A: T, a: A) -> a=a
+{_}
+#should_fail off
+
+dependentTypeTest :: fn (A: Set, a: A) -> a=a
+{_}
+check dependentTypeTest(Bool, true): true=true;
+
+testComplexFork :: fn (a, b: Nat) -> Nat
+{apb := a+b;
+ fork apb
+ {0 : 0,
+  ++: apb.p}}
+check_truth testComplexFork(0, 0) = 0;
+check_truth testComplexFork(1, 1) = 1;
+
+testLocalVariable :: fn (x: Nat) -> Nat
+{a := 3;
+ b := 2;
+ a + x + b}
+check_truth testLocalVariable(1) = 6;
+
+#should_fail
+reproLet :: fn (a: Nat) -> Nat {b : Bool := true; b}
+#should_fail off
+
+#should_fail 
+testCurryingWeird :: fn (a: Nat) -> (b, c: Nat) -> (a+b)+c = a+(b+c)
+{fork a
+ {++:
+  ;; NOTE: the "a.p" is the weird part, which depends on rewrite rule to work,
+  ;; and we need to support it.
+  out : (b',c': Nat) -> (a.p+b')+c' = a.p+b'+c' := _ => { addAssociative(a.p, b', c') }
+  out,
+
+  0:
+  out : (b, c: Nat) -> (a+b)+c = a+b+c := _ => { addAssociative(a, b, c) }
+  out}}
+#should_fail off
+
+testCurrying2 :: fn (a, b, c: Nat) -> (a+b)+c = a+(b+c)
+{fun : (b',c': Nat) -> (a+b')+c' = a+(b'+c') := _ => { addAssociative(a, b', c') }
+ fun(b,c)}
+
+#should_fail
+testCurrying2Fail :: fn (a, b, c: Nat) -> (a+b)+c = a+(b+c)
+{fun : (c',b': Nat) -> (a+b')+c' = a+(b'+c') := _ => { addAssociative(a, b', c') }
+ fun(b,c)}
+#should_fail off
+
+testLocalFunction :: fn (a: Nat) -> Nat
+{b := 3;
+ f : (n: Nat) -> Nat := _ => { n*b }
+ fork a {0: 4, ++: f(a)}}
+check_truth testLocalFunction(2) = 6;
+
+#should_fail
+check_truth ((a,b: Nat) -> a+b = b+a) = ((A,B: Nat) -> A+B = B+A);
+check_truth ((a,b: Nat) -> a+b = b+a) = ((A,B: Nat) -> A+B = B+B);
+#should_fail off
+
+testArrowEvaluation :: fn (A: Type) -> (a: A) -> A {_ => {a}}
+
+testComputationAsExpression :: fn (b: Bool) -> false = false & b {_}
+
+testFunctionPointer :: fn (a,b: Bool) -> Bool
+{foo : (x: Bool) -> Bool := _ => {x & b}
+ d := false;
+ foo(a);}
+check_truth testFunctionPointer(true,true) = true;
+
+testFunctionPointerHelper :: fn () -> (a,b,c: Bool) -> Bool {_ => {c}}
+testFunctionPointerMore :: fn (a: Bool) -> Bool
+{foo := testFunctionPointerHelper();
+ foo(true,false,a);}
+check_truth testFunctionPointerMore(false) = false;
+
+testConstantInFunctionHelper :: fn () -> Nat {a := 4; a}
+testConstantInFunction :: fn () -> Nat {b := testConstantInFunctionHelper(); b}
+check_truth testConstantInFunction() = 4;
+
+;; showing off now that we have arrow type normalization
+mulPosv2 :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
+{norm a_positive; norm b_positive;
+ fork a
+ {0 : _ => {a_positive(_)},
+  ++: ;; goal: (E: b + a.p * b = 0) -> False
+  _ => {fork b {0: b_positive(_), ++: norm E; E}}
+  }}
+
+;; todo: ridiculous that we can't normalize without a function
+oneIsNotZero : 1 != 0 := seq {norm; _ => {E}};
+test_eval mulPos(1,1,oneIsNotZero,oneIsNotZero);
+;; print mulPos;
+
+somethingWicked :: fn (a,b,c: Nat) -> Type {(p: a=b) -> (q: b=c) -> a=c}
+somethingWickedUsage :: () -> (x,y,z: Nat) -> (somethingWicked(x,y,z))
+{norm;
+ _ => {_ => {_ => {rewrite p; rewrite q}}}}
+
+StructWithFunction :: union {makeStructWithFunction(a: Nat, b: (E: a=0) -> False)}
+oneEqualZeroImpliesFalse : ((E: 1=0) -> False) := seq{norm; _ => {E}};
+testFunctionInComposite :: fn (x: StructWithFunction, E: x.a = 0) -> False {norm; x.b(E)}
+testFunctionInCompositeUsage :: (Wrong: 1=0) -> False
+{
+ obj := testFunctionInComposite(makeStructWithFunction(1, oneEqualZeroImpliesFalse), Wrong);
+ obj
+ }
+;; print testFunctionInCompositeUsage;
+
+foo :: (a: Bool) -> union {f(p: a=false), t(p: a=true)}
+{
+ fork a
+ {
+  false ctor[0](_),
+  true  ctor[1](_),
+  }
+ }
+
+arrowTypeUnification :: (x: True) -> (a: True) -> a=x {_ => {fork a {truth: fork x {truth: }}}}
+test_eval arrowTypeUnification(truth);
+arrowTypeUnificationTest :: (y: True) -> (b: True) -> b=y {arrowTypeUnification(y)}
+
 #should_fail
 check truth: true = false;
 #should_fail off
 
 ;; todo this can be just be a struct
-RatTest :: union
-{/ : (n,d: Nat, _dnot0: d != 0)}
-
-BigStruct :: union
-{makeBigStruct : (r: RatTest)}
-
-testBigStruct :: (big : BigStruct) -> (big.r.d != 0)
-{big.r._dnot0}
-
-testRatArrow :: fn (r: RatTest) -> r.d != 0 { r._dnot0 }
-
+RatTest :: union {/(n,d: Nat, _dnot0: d != 0)}
 + :: fn (a, b: RatTest) -> RatTest
 {/(a.n * b.d + b.n * a.d,
    a.d * b.d,
-   multiplyPos(a.d, b.d, a._dnot0, b._dnot0))}
-
-Natp :: union
-{1,
- ++: (p: Natp)}
-
-+ :: fn (a, b: Natp) -> Natp
-{fork a
- {1 : ++(b),
-  ++: ++(a.p + b)}}
-
-2 : Natp := ++(1);
-3 : Natp := ++(2);
-check 1+2: Nat;
-check 1+2: Natp;
-#should_fail
-check 1+2: RatTest;
-#should_fail off
-
-* :: fn (n, m: Natp) -> Natp
-{fork n
- {1  : m,
-  ++ : m + n.p * m}}
-
-Z :: union
-{0,
- ;; todo: These maybe not work work as unary operators?
- +: (v: Natp),
- -: (v: Natp)}
-
-+ :: fn (a, b: Z) -> Z
-{fork a
- {0: b,
-
-  +:
-  fork b
-  {0: a,
-   +: +(a.v + b.v),
-   -:  ;; a positive, b negative
-   fork (a.v)
-   {1 : fork (b.v) {1: 0, ++: -(b.v.p)},
-    ++: fork (b.v) {1: +(a.v.p), ++: +(a.v.p) + -(b.v.p)}}},
-
-  -:
-  fork b
-  {0: a,
-   +: ;; a negative, b positve: symmetric case
-   b + a,
-   -: ;; both negative
-   -(a.v + b.v)}}}
-
-;; NOTE: this is negation, not to be confused with the actual constructor "-" for Z
-- :: fn (a: Z) -> Z
-{fork a {0: 0, +: -(a.v), -: +(a.v)}}
-
-* :: fn (a,b : Z) -> Z
-{fork a
- {0: 0,
-  +: fork b {0: 0, +: +(a.v * b.v), -: -(a.v * b.v)},
-  -: -(+(a.v) * b)}}
-
-;; Rat+ :: union { /: (n,d: Natp) -> Rat+ }
-;; Rat :: union { 0, +: (v: Rat+) -> Rat, -: (v: Rat+) -> Rat }
-Rat :: union { /: (n: Z, d: Natp) }
-
-+ :: fn (a,b: Rat) -> Rat
-{;; todo: type coercion
- n : Z := a.n * +(b.d) + b.n * +(a.d);
- d : Natp := a.d * b.d;
- n / d
- }
-
-add1 :: (a: Natp) -> a+1 = ++(a)
-{fork a
- {1 : ,
-  ++: rewrite add1(a.p)}}
-
-addS :: (a,b: Natp) -> a + ++(b) = ++(a+b)
-{fork a
- {1 :,
-  ++: rewrite addS(a.p, b)}}
-
-addCommutative :: (a, b: Natp) -> (a + b = b + a)
-{fork a
- {1 : rewrite add1(b),
-  ++:
-  rewrite addS(b, a.p);
-  rewrite addCommutative(a.p, b)}}
-
-;; todo #copypasta collapse these abstract algebra down maybe
-addAssociative :: (a,b,c: Natp) -> (a+b)+c = a+b+c
-{fork a
- {1 : ,
-  ++: rewrite addAssociative(a.p, b, c)}}
-
-mulDistributive :: (a,b,c: Natp) -> a*c+b*c = (a+b)*c
-{fork a
- {1: ,
-  ++:
-  rewrite addAssociative(c, (a.p * c), (b * c));
-  rewrite mulDistributive(a.p, b, c)}}
-
-mulAssociative :: (a,b,c: Natp) -> (a*b)*c = a*b*c
-{fork a
- {1 : ,
-  ++:
-  rewrite <- mulDistributive(b, (a.p * b), c);
-  rewrite mulAssociative(a.p, b, c)}}
-
-mul1 :: (a: Natp) -> a*1 = a
-{fork a
- {1 : ,
-  ++: rewrite mul1(a.p)}}
-;; print mul1;
-
-mulSRight :: (a,b: Natp) -> a * ++(b) = a + a*b
-{fork a
- {1:,
-  ++:
-  => ++(b + a.p * ++(b))   = ++(a.p + b + a.p*b)
-  => ++(b + a.p + a.p*b)   = ++(a.p + b + a.p*b) { mulSRight(a.p, b) }
-  => ++((a.p + a.p*b) + b) = ++(a.p + b + a.p*b) { addCommutative(b, a.p + a.p*b) }
-  => ++(a.p + a.p*b + b)   = ++(a.p + b + a.p*b) { addAssociative(a.p, a.p*b, b) }
-  => ++(a.p + a.p*b + b)   = ++(a.p + a.p*b + b) { addCommutative(b, a.p*b) }}}
-;; print(mulSRight);
-
-mulCommutative :: (a,b: Natp) -> a*b = b*a
-{fork a
- {1 : rewrite mul1(b),
-  ++: 
-  => b + a.p*b = b * ++(a.p)
-  => b + a.p*b = b + b*a.p { mulSRight(b, a.p) }
-  => b + a.p*b = b + a.p*b { <- mulCommutative(a.p, b) }}}
-
-add0 :: (a: Z) -> a+0 = a
-{fork a {0: , +: , -: }}
-
-mul0 :: (a: Z) -> a*0 = 0
-{fork a {0:, +:, -: }}
-
-mul1Left :: (a: Z) -> +(1) * a = a
-{fork a {0:,+:,-:}}
-
-cancellation :: (a: Natp) -> +(a) + -(a) = 0
-{fork a {1:,
-         ++: => +(a.p) + -(a.p) = 0;
-         rewrite cancellation(a.p)}}
-
-;; todo: bug with the heap value name: in the fork of a.v
-;; expected type: +(..p) + -(..p) = 0
-cancellation :: (a: Z) -> a + -(a) = 0
-{fork a {0: ,
-         +: rewrite cancellation(a.v),
-         -: rewrite cancellation(a.v)}}
-
-mulSLeft :: (a: Natp, b: Z) -> (+(++(a)) * b) = b + +(a)*b
-{=> +(++(a)) * b = b + +(a) * b;
- fork b
- {0:, +:, -:}}
-
-addCommutativeOpposite :: (a,b: Natp) -> +(a) + -(b) = -(b) + +(a)
-{fork a {1:, ++: }}
-
-negationOfSumOpposite :: (a,b: Natp) -> -(+(a) + -(b)) = +(b) + -(a) 
-{fork a
- {1 : fork b {1:, ++:},
-  ++: fork b {1:, ++: rewrite negationOfSumOpposite(a.p, b.p)}}}
-
-negationOfSum :: (a, b: Z) -> -(a + b) = -(a) + -(b)
-{fork a
- {0: ,
-  +: fork (b) {0: , +:,
-            -: => -(+(a.v) + -(b.v)) = +(b.v) + -(a.v);
-            => +(b.v) + -(a.v) = +(b.v) + -(a.v) {negationOfSumOpposite}},
-  -: fork(b) {0:,
-              +: => -(+(b.v) + -(a.v)) = +(a.v) + -(b.v)
-              => +(a.v) + -(b.v) = +(a.v) + -(b.v) {negationOfSumOpposite},
-              -:}}}
-
-addCommutativePositive :: (a: Natp, b: Z) -> +(a) + b = b + +(a)
-{fork a
- {1: fork b {0:, +: rewrite add1(b.v), -:},
-  ++: fork b {0:,
-              +: rewrite addCommutative(b.v, ++(a.p));
-              => _,
-              -:}}}
-
-addCommutativeNegative :: (a: Natp, b: Z) -> -(a) + b = b + -(a)
-{fork a
- {1: fork b {0:, +: , -: rewrite add1(b.v)},
-  ++: fork b {0:,
-              +: ,
-              -: rewrite addCommutative(b.v, ++(a.p)); => _}}}
-
-addCommutative :: (a,b: Z) -> a+b = b+a
-{fork(a)
- {0: rewrite add0(b),
-  +: addCommutativePositive(a.v, b),
-  -: addCommutativeNegative(a.v, b)}}
-
-SToAdd1 :: (a: Natp) -> +(++(a)) = +(1) + +(a)
-{fork a {1 :, ++: }}
-
-<= :: fn (a,b: Natp) -> Bool
-{fork a
- {1: true, ++: fork b {1: false, ++: a.p <= b.p}}}
-
-add1Associative :: (b,c: Z) -> (+(1)+b)+c = +(1)+b+c
-{fork b {0:,
-         +: => +(++(b.v)) + c = +(1) + +(b.v) + c;
-         fork c {0:,+:,
-                 -: => +(++(b.v)) + -(c.v) = +(1) + +(b.v) + -(c.v);
-                 fork b.v
-                 {1: => +(++(1)) + -(c.v) = +(1) + +(1) + -(c.v);
-                  fork c.v {1:, ++:},
-                  ++: => +(++(++(b.v.p))) + -(c.v) = +(1) + +(++(b.v.p)) + -(c.v);
-                  fork c.v {1:,
-                            ++: => +(++(b.v.p)) + -(c.v.p) = +(1) + +(b.v.p) + -(c.v.p);
-                            rewrite SToAdd1(b.v.p);
-                            => (+(1) + +(b.v.p)) + -(c.v.p) = +(1) + +(b.v.p) + -(c.v.p);
-                            rewrite add1Associative(+(b.v.p), -(c.v.p))}}},
-         -: => (+(1) + -(b.v)) + c = +(1) + -(b.v) + c;
-         fork c {0: => (+(1) + -(b.v)) + 0 = +(1) + -(b.v);
-                 rewrite add0(+(1) + -(b.v)),
-                 +: => (+(1) + -(b.v)) + +(c.v) = +(1) + +(c.v) + -(b.v);
-                 fork b.v {1 : => +(c.v) = +(1) + +(c.v) + -(1); fork c.v {1:, ++:},
-                           ++: => +(c.v) + -(b.v.p) = +(1) + +(c.v) + -(++(b.v.p));
-                           fork c.v
-                           {1: ,
-                            ++: => +(++(c.v.p)) + -(b.v.p) = +(1) + +(c.v.p) + -(b.v.p);
-                            rewrite SToAdd1(c.v.p);
-                            => (+(1) + +(c.v.p)) + -(b.v.p) = +(1) + +(c.v.p) + -(b.v.p);
-                            add1Associative(+(c.v.p), -(b.v.p))}},
-                 -: fork b.v {1 :, ++:}}}}
-
-differentFromPlus :: (a: Natp, b: Natp, P: a = a+b) -> False
-{
- fork a
- {
-  1: norm P; P,
-  ++: norm P; Q := destruct[0]P; differentFromPlus(a.p, b, Q),
-  }
- }
-
-;; todo this really should be built-in
-successorIsDifferent :: (a: Natp, P: ++(a) = a) -> False
-#norm(P)
-{
- fork a
- {
-  1:  P,
-  ++: Q := destruct[0]P; successorIsDifferent(a.p, Q),
-  }
- }
-
-;; todo this really should be built-in
-differentFromTwoSuccessor :: (a: Natp, P: ++(++(a)) = a) -> False
-#norm(P)
-{
- fork a
- {
-  1:  P,
-  ++: Q := destruct[0](P); differentFromTwoSuccessor(a.p, Q),
-  }
- }
-
-> :: fn(a, b: Natp) -> Bool
-{
- fork a
- {
-  1 : false,
-  ++: fork b {1: true, ++: a.p > b.p},
-  }
- }
-
-successorIsLarger :: (a: Natp) -> ++(a) > a = true
-{
- fork a
- {
-  1 : ,
-  ++: successorIsLarger(a.p),
-  }
- }
-
-gtAntiReflexive :: (a: Natp, p: a>a = true) -> False
-#norm(p)
-{
- fork a
- {
-  1:  p,
-  ++: gtAntiReflexive(a.p, p),
-  }
- }
-
-> :: fn(a, b: Z) -> Bool
-{
- fork a
- {
-  0: fork b {0: false,
-             +: false,
-             -: true},
-  +: fork b {0: true,
-             +: a.v > b.v,
-             -: true},
-  -: fork b {0: false,
-             +: false,
-             -: b.v > a.v}
-  }
- }
-
-gtAntiReflexive :: (a: Z, p: a>a = true) -> False
-#norm(p)
-{
- fork a
- {
-  0 p,
-  + gtAntiReflexive(a.v, p),
-  - gtAntiReflexive(a.v, p)
-  }
- }
-
-successorIsLarger :: (a: Natp) -> +(++(a)) > +(a) = true
-{
- fork a
- {
-  1:,
-  ++: successorIsLarger(a.p),
-  }
- }
-
-gtTransitive :: (a,b,c: Natp, P: a>b = true, Q: b>c = true) -> a>c = true
-#norm(P,Q)
-{
- fork a {
-         1  P,
-         ++ fork b {1 fork Q {},
-                    ++ fork c {1, ++ gtTransitive(a.p,b.p,c.p, P, Q)}},
-         }
- }
-
-gtTransitive :: (a, b, c: Z, P: a>b = true, Q: b>c = true) -> a > c = true
-#norm(P,Q)
-{
- fork a
- {
-  0: fork b {0: fork P {},
-             +: fork P {},
-             -: fork c {0 Q, + Q, -}},
-  -: fork b {0 fork P {},
-             + fork P {},
-             - fork c {0 Q, + Q, - gtTransitive(c.v,b.v,a.v, Q,P)}},
-  +: fork b {0 fork c {0, + fork Q {}, - },
-             + fork c {0, + gtTransitive(a.v,b.v,c.v, P,Q), - },
-             - fork c {0, + fork Q {}, - }}
-  }
- }
-
-posSuccessorIsLarger :: (a: Natp) -> +(++(a)) > +(a) = true
-{fork a {1, ++ successorIsLarger(a.p)}}
-
-negSuccessorIsSmaller :: (a: Natp) -> -(a) > -(++(a)) = true
-{
- fork a {1, ++ successorIsLarger(a.p)}
- }
-
-addIncreases :: (a,b: Natp) -> a+b > a = true
-{
- fork a {1, ++ addIncreases(a.p, b)}
- }
-
-addDifferent :: (a,b: Natp, p: a+b = a) -> False
-#norm(p)
-{
- lem1: a + b > a = true := addIncreases(a,b);
- lem2: a > a = true     := seq {=> a + b > a = true {<- p}; lem1};
- gtAntiReflexive(a, lem2);
- }
-
-addNegativeDecreases :: (a: Z, b: Natp) -> a > (a + -(b)) = true
-{
- fork a
- {
-  0: fork b {1: , ++:},
-  +: fork b {1 : fork a.v {1:, ++: successorIsLarger(a.v.p)},
-             ++: fork a.v
-             {1:,
-              ++:
-              lemma1: +(a.v.p) > (+(a.v.p) + -(b.p)) = true := addNegativeDecreases(+(a.v.p), b.p);
-              lemma2: +(++(a.v.p)) > +(a.v.p) = true        := posSuccessorIsLarger(a.v.p);
-
-              gtTransitive(+(++(a.v.p)), +(a.v.p), +(a.v.p) + -(b.p), lemma2, lemma1)
-              }},
-  -: fork b {1  rewrite add1(a.v); successorIsLarger(a.v),
-             ++ addIncreases(a.v, ++(b.p))}
-  }
- }
-
-addPositiveIncreases :: (a: Z, b: Natp) -> a + +(b) > a = true
-{
- fork a
- {
-  0,
-  + addIncreases(a.v, b),
-  - fork b {1 fork a.v {1, ++ successorIsLarger(a.v.p)},
-            ++ fork a.v
-            {1,
-             ++ rewrite addCommutative(+(b.p), -(a.v.p));
-             lem1: -(a.v.p) + +(b.p) > -(a.v.p) = true := addPositiveIncreases(-(a.v.p), b.p);
-             lem2: -(a.v.p) > -(++(a.v.p)) = true := seq {negSuccessorIsSmaller(a.v.p)};
-             gtTransitive(-(a.v.p) + +(b.p), -(a.v.p), -(++(a.v.p)), lem1, lem2);
-             }}
-  }
- }
-
-sumCancellation :: (a,b,c: Natp, p: a + b = a + c) -> (b = c)
-#norm(p)
-{
- fork a {
-         1 destruct[0](p),
-         ++ p := destruct[0](p); sumCancellation(a.p,b,c, p)}
- }
-
-=? :: fn(a,b: Natp) -> Bool
-{
- fork a
- {
-  1 fork b {1 true, ++ false},
-  ++ fork b {1 false, ++ a.p =? b.p}
-  }
- }
-
-add1DifferentFromAddS :: (a,b: Natp) -> a + 1 =? a + ++(b) = false
-{
- fork a
- {
-  1,
-  ++ add1DifferentFromAddS(a.p, b);
-  }
- }
-
-;; todo #automate
-trueNotFalse :: (a: Bool, p: a=true, q: a=false) -> False
-{
- => true = false;
- rewrite <- p;
- rewrite <- q;
- }
-
-eqSymmetric :: (a,b: Natp, p: a=?b = true) -> (b=?a = true)
-#norm(p)
-{
- fork a
- {
-  1 fork b {1, ++ p},
-  ++ fork b {1 p, ++ eqSymmetric(a.p, b.p, p)}
-  }
- }
-
-sumCancellation :: (a,b,c: Natp, p: a+b =? a+c = true) -> (b =? c = true)
-#norm(p)
-{
- fork a {
-         1 p,
-         ++ fork b {1 fork c {1, ++ trueNotFalse(a.p + 1 =? a.p + ++(c.p),
-                                                 p,
-                                                 add1DifferentFromAddS(a.p, c.p))},
-                    ++ fork c
-                    {1 lem1 := eqSymmetric(a.p + ++(b.p), a.p + 1, p);
-                     lem2 := add1DifferentFromAddS(a.p, b.p);
-                     trueNotFalse(a.p + 1 =? a.p + ++(b.p), lem1, lem2)
-                     ,
-                     ++
-                     lem1 : ++(b.p) + a.p =? ++(c.p) + a.p = true :=
-                     seq {=> a.p + ++(b.p) =? ++(c.p) + a.p = true {addCommutative}
-                          => a.p + ++(b.p) =? a.p + ++(c.p) = true {addCommutative}
-                          p
-                          };
-                     norm lem1;
-                     lem2: a.p + b.p =? a.p + c.p = true :=
-                     seq {
-                          => b.p + a.p =? a.p + c.p = true {addCommutative}
-                          => b.p + a.p =? c.p + a.p = true {addCommutative}
-                          lem1;
-                          };
-                     sumCancellation(a.p,b.p,c.p, lem2)
-                     }}}
- }
-
-
-=? :: fn(a,b: Z) -> Bool
-{
- fork a
- {
-  0 fork b {0 true, + false, - false},
-  + fork b {0 false, + a.v =? b.v, - false},
-  - fork b {0 false, + false, - a.v =? b.v}
-  }
- }
-
-eqCorrect :: (a,b: Natp, p: a =? b = true) -> a = b
-#norm(p)
-{
- fork a
- {
-  1  fork b {1  , ++ p},
-  ++ fork b {1 p, ++ rewrite eqCorrect(a.p, b.p, p)}
-  }
- }
-
-eqCorrect :: (a,b: Z, p: a =? b = true) -> a = b
-#norm(p)
-{
- fork a
- {
-  0 fork b {0, + p, - p},
-  + fork b {0 p, + rewrite eqCorrect(a.v, b.v, p), - p},
-  - fork b {0 p, + p, - rewrite eqCorrect(a.v, b.v, p)}
-  }
- }
-
-addIsDifferent :: (a,b: Natp) -> a+b =? a = false
-{fork a {1, ++ addIsDifferent(a.p,b)}}
-
-addIsDifferent :: (a,b: Natp) -> a =? a+b = false
-{fork a {1, ++ addIsDifferent(a.p,b)}}
-
-add0Infer :: (a,b: Z, p: (a+b =? a) = true) -> b=0
-#norm(p)
-{
- fork b
- {
-  0,
-  +
-  lem1 := addPositiveIncreases(a, b.v);
-  p := eqCorrect(a + +(b.v), a, p);
-  lem2 : a > a = true := seq {=> a + +(b.v) > a = true {<- p}; lem1};
-  gtAntiReflexive(a, lem2),
-
-  -
-  lem1 := addNegativeDecreases(a, b.v);
-  p := eqCorrect(a + -(b.v), a, p);
-  lem2 : a > a = true := seq {=> a > a + -(b.v) = true {<- p}; lem1};
-  gtAntiReflexive(a, lem2),
-  }
- }
-
-eqReflexive :: (a: Natp) -> a =? a = true
-{
- fork a
- {
-  1,
-  ++ eqReflexive(a.p),
-  }
- }
-
-eqReflexive :: (a: Z) -> a =? a = true
-{
- fork a
- {
-  0,
-  + eqReflexive(a.v),
-  - eqReflexive(a.v)
-  }
- }
-
-eqSymmetric :: (a,b: Z, p: a =? b = true) -> b =? a = true
-{
- rewrite eqCorrect(a,b,p);
- eqReflexive(b);
- }
-
-addPreservesGt :: (a,b,c: Natp, p: a>b=true) -> a+c > b+c = true
-#norm(p)
-{
- fork a
- {
-  1 fork p {},
-  ++ fork b {1 rewrite addCommutative(a.p, c); addIncreases(c, a.p),
-             ++ addPreservesGt(a.p,b.p,c, p)},
-  }
- }
-
-addPreservesGt :: (a,b,c: Z, p: a>b=true) -> a+c > b+c = true
-#norm(p)
-{
- fork a
- {
-  0 fork b {0 fork p {},
-            + fork p {},
-            - rewrite addCommutative(-(b.v), c);
-            addNegativeDecreases(c, b.v)
-            },
-  + fork b {0 rewrite addCommutative(+(a.v), c); addPositiveIncreases(c, a.v),
-            + fork a.v {1 fork p {},
-                        ++ fork b.v
-                        {1 fork c {0,
-                                   + rewrite addCommutative(a.v.p, c.v); addIncreases(c.v, a.v.p),
-                                   - fork c.v
-                                   {1,
-                                    ++ rewrite addCommutative(+(a.v.p), -(c.v.p));
-                                    addPositiveIncreases(-(c.v.p), a.v.p)}},
-                         ++ fork c {0 p,
-                                    + addPreservesGt(a.v.p,b.v.p,c.v, p),
-                                    -
-                                    lem1: +(++(a.v.p)) > +(++(b.v.p)) = true :=
-                                    seq {=> a.v.p > b.v.p = true; p};
-
-                                    fork c.v
-                                    {
-                                     1 p,
-                                     ++
-                                     lem1: +(a.v.p) > +(b.v.p) = true := seq {=> _; p};
-                                     addPreservesGt(+(a.v.p), +(b.v.p), -(c.v.p), lem1);
-                                     }
-
-                                    ;; fork c.v {1 p, ++ addPreservesGt(+(a.v.p),+(b.v.p),-(c.v.p),destruct[0](p))}
-                                    }}},
-            -
-            rewrite addCommutative(+(a.v), c);
-            rewrite addCommutative(-(b.v), c);
-            lem1 := addPositiveIncreases(c, a.v);
-            lem2 := addNegativeDecreases(c, b.v);
-            gtTransitive(c + +(a.v), c, c + -(b.v), lem1, lem2);
-            },
-  - fork b {0 fork p {},
-            + fork p {},
-            - fork a.v {1 fork b.v
-                        {1 fork p{},
-                         ++ 
-                         fork c {
-                                 0,
-                                 + fork c.v {1, ++ addNegativeDecreases(+(c.v.p), b.v.p)},
-                                 - fork c.v {1 rewrite addCommutative(b.v.p, 1); addIncreases(1, b.v.p),
-                                             ++ rewrite addCommutative(b.v.p, ++(c.v.p));
-                                             addIncreases(++(c.v.p), b.v.p)}}},
-                        ++ fork b.v
-                        {
-                         1 fork p{},
-                         ++ fork c {
-                                    0 p,
-                                    + fork c.v
-                                    {1 p,
-                                     ++
-                                     rewrite addCommutative(+(c.v.p), -(a.v.p));
-                                     rewrite addCommutative(+(c.v.p), -(b.v.p));
-                                     lem1: -(a.v.p) > -(b.v.p) = true := seq {=> _; p};
-                                     addPreservesGt(-(a.v.p), -(b.v.p), +(c.v.p), lem1);
-                                     },
-                                    -
-                                    addPreservesGt(b.v.p, a.v.p, c.v, p)}}}}}}
-
-totalOrder :: (a,b: Natp) -> union {
-                                    eq: (p: a = b),
-                                    gt: (p: a > b = true),
-                                    lt: (p: b > a = true),
-                                    }
-{
- fork a
- {
-  1 fork b {1 ctor[0](_), ++ ctor[2](_)},
-  ++ fork b
-  {
-   1 ctor[1](_),
-   ++ ind := totalOrder(a.p, b.p);
-   fork ind {eq lem := ind.p; ctor[0](seq{rewrite lem}),
-             gt ctor[1](ind.p),
-             lt ctor[2](ind.p)} 
-   }
-  }
- }
-
-totalOrder :: (a,b: Z) -> union {
-                                 eq: (p: a = b),
-                                 gt: (p: a > b = true),
-                                 lt: (p: b > a = true),
-                                 }
-{
- fork a
- {
-  0 fork b {0 ctor[0](_),
-            + ctor[2](_),
-            - ctor[1](_)},
-  + fork b {
-            0 ctor[1](_),
-            +
-            value_order := totalOrder(a.v, b.v);
-            fork value_order
-            {
-             eq ctor[0](seq{rewrite value_order.p}),
-             gt ctor[1](value_order.p),
-             lt ctor[2](value_order.p),
-             },
-            - ctor[1](_)},
-  -
-  fork b {
-          0 ctor[2](_),
-          + ctor[2](_),
-          -
-          value_order := totalOrder(a.v, b.v);
-          fork value_order
-          {
-           eq ctor[0](seq{rewrite value_order.p}),
-           gt ctor[2](value_order.p),
-           lt ctor[1](value_order.p),
-           }
-          }
-  }
- }
-
-sumCancellationRight :: (a,b,c: Z, p: a+c = b+c) -> (a = b)
-{
- order := totalOrder(a,b);
- fork order
- {
-  eq: rewrite order.p,
-
-  gt:
-  lemma: a+c > b+c = true := addPreservesGt(a,b,c, order.p);
-  inconsistency: a+c > a+c = true := seq{rewrite p; lemma};
-  falsehood := gtAntiReflexive(a+c, inconsistency);
-  fork falsehood {}
-  ,
-
-  lt:
-  lemma: b+c > a+c = true := addPreservesGt(b,a,c, order.p);
-  inconsistency: b+c > b+c = true := seq{rewrite <- p; lemma};
-  falsehood := gtAntiReflexive(b+c, inconsistency);
-  fork falsehood {}
-  }
- }
-
-sumCancellationLeft :: (a,b,c: Z, p: c+a = c+b) -> (a=b)
-#norm(p)
-{
- reduce : a+c = b+c := seq{rewrite addCommutative(a,c); rewrite addCommutative(b,c); p};
- sumCancellationRight(a,b,c, reduce);
- }
-
-addAssociative :: (a,b,c: Z) -> (a+b)+c = a+b+c
-{fork a
- {0:,
-  +: => (+(a.v) + b) + c = +(a.v) + b + c;
-  fork a.v
-  {1: fork b {0:,
-              +: => +(++(b.v)) + c = +(1) + +(b.v) + c;
-              fork c
-              {0:,
-               +:,
-               -: => +(++(b.v)) + -(c.v) = +(1) + +(b.v) + -(c.v)
-               => (+(1) + +(b.v)) + -(c.v) = +(1) + +(b.v) + -(c.v) {SToAdd1}
-               => +(1) + +(b.v) + -(c.v) = +(1) + +(b.v) + -(c.v) {add1Associative}},
-
-              -: => (+(1) + -(b.v)) + c = +(1) + -(b.v) + c
-              => +(1) + -(b.v) + c = +(1) + -(b.v) + c {add1Associative}},
-   ++: => (+(++(a.v.p)) + b) + c = +(++(a.v.p)) + b + c
-   => ((+(1) + +(a.v.p)) + b) + c = +(++(a.v.p)) + b + c {SToAdd1}
-   => ((+(1) + +(a.v.p)) + b) + c = (+(1) + +(a.v.p)) + b + c {SToAdd1}
-   => (+(1) + +(a.v.p) + b) + c = (+(1) + +(a.v.p)) + b + c {add1Associative}
-   => +(1) + (+(a.v.p) + b) + c = (+(1) + +(a.v.p)) + b + c {add1Associative}
-   => +(1) + (+(a.v.p) + b) + c = +(1) + (+(a.v.p) + b + c) {add1Associative}
-   rewrite addAssociative(+(a.v.p), b, c)}
-  ,
-  -: => (-(a.v) + b) + c = -(a.v) + b + c;
-  fork a.v
-  {1:  ,
-   ++: }
-  }
- }
-
-mulDistributive :: (a,b,c: Z) -> a*c+b*c = (a+b)*c
-{fork a
- {0: ,
-  +: fork b
-  {0: add0((+(a.v) * c)),
-   +:
-   => +(a.v) * c + +(b.v) * c = +(a.v + b.v) * c;
-   fork c
-   {0: ,
-    +: => +(a.v * c.v + b.v * c.v) = +((a.v + b.v) * c.v)
-    => +((a.v + b.v) * c.v) = +((a.v + b.v) * c.v) {mulDistributive}
-    ,
-    -: => -(a.v * c.v + b.v * c.v) = -((a.v + b.v) * c.v)
-    => -((a.v + b.v) * c.v) = -((a.v + b.v) * c.v) {mulDistributive},},
-
-   -: => +(a.v) * c + -(+(b.v) * c) = (+(a.v) + -(b.v)) * c;
-   fork a.v
-   {1 : => +(1) * c + -(+(b.v) * c) = (+(1) + -(b.v)) * c
-    => c + -(+(b.v) * c) = (+(1) + -(b.v)) * c {mul1Left}
-    fork b.v {1 : rewrite mul1Left(c); rewrite cancellation(c),
-              ++:
-              => c + -(+(++(b.v.p)) * c) = -(+(b.v.p) * c)
-              => c + -(c + +(b.v.p) * c) = -(+(b.v.p) * c) {mulSLeft}
-              => c + -(c) + -(+(b.v.p) * c) = -(+(b.v.p) * c) {negationOfSum}
-              => (c + -(c)) + -(+(b.v.p) * c) = -(+(b.v.p) * c) {<- addAssociative}
-              }
-    ,
-    ++: }
-   },
-  -: }}
-
-addAssociative :: (a,b,c: Rat) -> (a+b)+c = a+b+c
-{rewrite(mulAssociative(a.d, b.d, c.d))}
+   mulPos(a.d, b.d, a._dnot0, b._dnot0))}
+
+BigStruct :: union {bigStruct(r: RatTest)}
+testBigStruct :: (big : BigStruct) -> (big.r.d != 0) {big.r._dnot0}
+testRatArrow :: fn (r: RatTest) -> r.d != 0 { r._dnot0 }
+
+;; todo nocheckin
+;; SandwichEnd :: union {sandwichEndBool(b: Bool),
+;;                       sandwichEndNat(n: Nat)}
+;; SandwichMiddle :: union {makeSandwichMiddle(e: SandwichEnd)}  ;; a struct
+;; Sandwich :: union
+;; {
+;;  sandwichBool(b: Bool),
+;;  sandwichMiddle(m1: SandwichMiddle, m2: SandwichMiddle)
+;;  }
+;; useSandwich :: fn (sandwich: Sandwich) -> Nat
+;; {
+;;  fork sandwich
+;;  {
+;;   sandwichBool:   0,
+;;   sandwichMiddle: fork sandwich.m2.e {sandwichEndBool: 0,
+;;                                       sandwichEndNat:  sandwich.m2.e.n}
+;;   }
+;;  }
+;; check_truth useSandwich(sandwichMiddle(makeSandwichMiddle(sandwichEndBool(true), sandwichEndNat(2)))) = 2;
