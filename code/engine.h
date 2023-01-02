@@ -138,12 +138,12 @@ struct DataTree {
 
 struct DataMapAddHistory {
   // option A: root 
-  DataMap      *map;
+  DataMap      *previous_map;
   // option B: branch
   DataTree     *parent;
   i32           field_index;
 
-  DataMapAddHistory *next;
+  DataMapAddHistory *previous;
 };
 
 struct DataMap {
@@ -505,6 +505,11 @@ struct CtorAst {
   embed_Ast(a);
   i32  ctor_id;
   Ast *uni;  // todo implement
+};
+
+struct AddDataTree {
+  DataTree *tree;
+  b32       added;
 };
 
 #include "generated/engine_forward.h"

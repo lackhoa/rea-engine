@@ -170,22 +170,29 @@ BigStruct :: union {bigStruct(r: RatTest)}
 testBigStruct :: (big : BigStruct) -> (big.r.d != 0) {big.r._dnot0}
 testRatArrow :: fn (r: RatTest) -> r.d != 0 { r._dnot0 }
 
+Natp :: union {natp(n: Nat, _not0: (E: n = 0) -> False)}
++ :: fn (a, b: Natp) -> Natp
+{
+ not0 : ((E: a.n + b.n = 0) -> False) := seq {fork a.n {0 norm; b._not0, ++ norm; _ => {E}}};
+ natp(a.n + b.n, not0)
+ }
+
 ;; todo nocheckin
-;; SandwichEnd :: union {sandwichEndBool(b: Bool),
-;;                       sandwichEndNat(n: Nat)}
-;; SandwichMiddle :: union {makeSandwichMiddle(e: SandwichEnd)}  ;; a struct
-;; Sandwich :: union
-;; {
-;;  sandwichBool(b: Bool),
-;;  sandwichMiddle(m1: SandwichMiddle, m2: SandwichMiddle)
-;;  }
-;; useSandwich :: fn (sandwich: Sandwich) -> Nat
-;; {
-;;  fork sandwich
-;;  {
-;;   sandwichBool:   0,
-;;   sandwichMiddle: fork sandwich.m2.e {sandwichEndBool: 0,
-;;                                       sandwichEndNat:  sandwich.m2.e.n}
-;;   }
-;;  }
-;; check_truth useSandwich(sandwichMiddle(makeSandwichMiddle(sandwichEndBool(true), sandwichEndNat(2)))) = 2;
+SandwichEnd :: union {sandwichEndBool(b: Bool),
+                      sandwichEndNat(n: Nat)}
+SandwichMiddle :: union {makeSandwichMiddle(e: SandwichEnd)}  ;; a struct
+Sandwich :: union
+{
+ sandwichBool(b: Bool),
+ sandwichMiddle(m1: SandwichMiddle, m2: SandwichMiddle)
+ }
+useSandwich :: fn (sandwich: Sandwich) -> Nat
+{
+ fork sandwich
+ {
+  sandwichBool:   0,
+  sandwichMiddle: fork sandwich.m2.e {sandwichEndBool: 0,
+                                      sandwichEndNat:  sandwich.m2.e.n}
+  }
+ }
+check_truth useSandwich(sandwichMiddle(makeSandwichMiddle(sandwichEndBool(true), sandwichEndNat(2)))) = 2;

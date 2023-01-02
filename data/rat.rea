@@ -2,7 +2,7 @@
 #load "nat.rea"
 
 ;; todo nocheckin
-;; Natp :: union {natp(n: Nat, not0: n != 0)}
+;; Natp :: union {natp(n: Nat, _not0: n != 0)}
 Natp :: union {1, ++(p: Natp)}
 
 ;; nocheckin

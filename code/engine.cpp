@@ -208,14 +208,17 @@ print(MemoryArena *buffer, DataTree *tree)
   if (tree)
   {
     print(buffer, tree->uni->ctor_names[tree->ctor_id]);
-    print(buffer, "(");
-    for (i32 id=0; id < tree->member_count; id++)
+    if (tree->member_count)
     {
-      print(buffer, tree->members[id]);
-      if (id != tree->member_count-1)
-        print(buffer, ", ");
+      print(buffer, "(");
+      for (i32 id=0; id < tree->member_count; id++)
+      {
+        print(buffer, tree->members[id]);
+        if (id != tree->member_count-1)
+          print(buffer, ", ");
+      }
+      print(buffer, ")");
     }
-    print(buffer, ")");
   }
   else
     print(buffer, "?");
@@ -330,132 +333,148 @@ initDataTree(MemoryArena *arena, DataTree *tree, Union *uni, i32 ctor_id)
 
 inline i32 getScopeDepth(Typer *env) {return (env && env->scope) ? env->scope->depth : 0;}
 
-internal DataTree *
-getOrAddDataTree(MemoryArena *arena, Typer *env, Term *in0, Union *uni, i32 ctor_id)
+internal AddDataTree
+getOrAddDataTree(MemoryArena *arena, Typer *env, Term *in0, i32 ctor_id)
 {
-  DataTree *out = 0;
+  DataTree *tree = 0;
+  b32 added = false;
   i32 scope_depth = getScopeDepth(env);
-  switch (in0->cat)
-  {
-    case Term_Variable:
-    {
-      Variable *in = castTerm(in0, Variable);
-      i32 in_root_depth = scope_depth - in->delta;
-      DataTree *found = 0;
-      for (DataMap *map = env->map; map; map=map->next)
-      {
-        if (map->depth == in_root_depth && map->index == in->id)
-        {
-          found = &map->tree;
-          break;
-        }
-      }
 
-      if (found)
-        out = found;
-      else if (uni)
+  Variable *in_root = 0;
+  i32    path_length = 0;
+  Union *reverse_unions[32];
+  u8     reverse_path[32];
+  Term *iter0 = in0;
+  b32 stop = false;
+  Union *root_union = 0;
+  for (;!stop;)
+  {
+    Union *uni = castTerm(getType(temp_arena, env, iter0), Union);
+    switch (iter0->cat)
+    {
+      case Term_Variable:
+      {
+        in_root = castTerm(iter0, Variable);
+        root_union = uni;
+        stop = true;
+      } break;
+
+      case Term_Accessor:
+      {
+        Accessor *iter = castTerm(iter0, Accessor);
+        i32 path_id = path_length++;
+        assert(path_length < arrayCount(reverse_path));
+        reverse_unions[path_id] = uni;
+        reverse_path[path_id]   = iter->field_id;
+        iter0 = iter->record;
+      } break;
+
+      default:
+      {
+        stop = true;
+      } break;
+    }
+  }
+
+  i32 in_root_depth = scope_depth - in_root->delta;
+  for (DataMap *map = env->map; map; map=map->next)
+  {
+    if (map->depth == in_root_depth && map->index == in_root->id)
+    {
+      tree = &map->tree;
+      break;
+    }
+  }
+  if (!tree)
+  {
+    if (path_length == 0)
+    {
+      if (ctor_id != -1)
       {
         DataMap *map = pushStruct(arena, DataMap, true);
         map->depth   = in_root_depth;
-        map->index   = in->id;
-        initDataTree(arena, &map->tree, uni, ctor_id);
-        out = &map->tree;
+        map->index   = in_root->id;
+        initDataTree(arena, &map->tree, root_union, ctor_id);
+        tree = &map->tree;
         map->next    = env->map;
         env->map     = map;
 
         DataMapAddHistory *history = pushStruct(temp_arena, DataMapAddHistory, true);
-        history->map  = map;
-        history->next = env->add_history;
+        history->previous_map = map->next;
+        history->previous     = env->add_history;
         env->add_history = history;
+        added = true;
       }
-    } break;
-
-    case Term_Accessor:
+    }
+    else 
     {
-      Accessor *in = castTerm(in0, Accessor);
-      Variable *in_root = 0;
-      i32 path_length = 0;
-      u8  reverse_path[32];
-      for (Accessor *iter = in; iter; iter = castTerm(iter->record, Accessor))
+      assert(root_union->ctor_count == 1);
+      DataMap *map = pushStruct(arena, DataMap, true);
+      map->depth   = in_root_depth;
+      map->index   = in_root->id;
+      initDataTree(arena, &map->tree, root_union, 0);
+      tree = &map->tree;
+      map->next = env->map;
+      env->map = map;
+    }
+  }
+
+  for (i32 path_index=0; path_index < path_length; path_index++)
+  {
+    i32 reverse_index = path_length-1-path_index;
+    i32    field_index = reverse_path[reverse_index];
+    Union *uni         = reverse_unions[reverse_index];
+    DataTree *parent = tree;
+    tree = tree->members[field_index];
+    if (!tree)
+    {
+      if (path_index == path_length-1)
       {
-        reverse_path[path_length++] = iter->field_id;
-        assert(path_length < arrayCount(reverse_path));
-        if (iter->record->cat == Term_Variable)
+        if (ctor_id != -1)
         {
-          in_root = castTerm(iter->record, Variable);
-          break;
+          DataTree *new_tree = pushStruct(arena, DataTree, true);
+          initDataTree(arena, new_tree, uni, ctor_id);
+          parent->members[field_index] = new_tree;
+          tree = new_tree;
+
+          DataMapAddHistory *history = pushStruct(temp_arena, DataMapAddHistory, true);
+          history->parent      = parent;
+          history->field_index = field_index;
+          history->previous = env->add_history;
+          env->add_history = history;
+          added = true;
         }
       }
-
-      if (in_root)
+      else
       {
-        i32 in_root_depth = scope_depth - in_root->delta;
-        DataTree *tree = 0;
-        for (DataMap *map = env->map; map; map=map->next)
-        {
-          if (map->depth == in_root_depth && map->index == in_root->id)
-          {
-            tree = &map->tree;
-            break;
-          }
-        }
-        if (tree)
-        {
-          for (i32 path_index=0; path_index < path_length; path_index++)
-          {
-            i32 field_index = reverse_path[path_length-1-path_index];
-            DataTree *parent = tree;
-            tree = tree->members[field_index];
-            if (path_index == path_length-1)
-            {
-              if (tree)
-                out = tree;
-              else if (uni)
-              {
-                DataTree *new_tree = pushStruct(arena, DataTree, true);
-                initDataTree(arena, new_tree, uni, ctor_id);
-                parent->members[field_index] = new_tree;
-                out = new_tree;
-
-                DataMapAddHistory *history = pushStruct(temp_arena, DataMapAddHistory, true);
-                history->parent      = parent;
-                history->field_index = field_index;
-                history->next = env->add_history;
-                env->add_history = history;
-              }
-            }
-            else if (!tree)
-              break;
-          }
-        }
+        assert(uni->ctor_count == 1);
+        DataTree *new_tree = pushStruct(arena, DataTree, true);
+        initDataTree(arena, new_tree, uni, 0);
+        parent->members[field_index] = new_tree;
+        tree = new_tree;
       }
-    } break;
-
-    default: {}
+    }
   }
   
-  return out;
+  return AddDataTree{.tree=tree, .added=added};
 }
 
 internal DataTree *
-getDataTree(MemoryArena *arena, Typer *env, Term *in0)
+getDataTree(Typer *env, Term *in0)
 {
-  return getOrAddDataTree(arena, env, in0, 0, 0);
+  return getOrAddDataTree(0, env, in0, -1).tree;
 }
 
 inline void
-removeLatestDataTree(Typer *env)
+undoDataMap(Typer *env)
 {
   DataMapAddHistory *history = env->add_history;
-  if (history->map)
-  {
-    assert(history->map == env->map);
-    env->map = env->map->next;
-  }
-  else
+  if (history->parent)
     history->parent->members[history->field_index] = 0;
+  else
+    env->map = history->previous_map;
 
-  env->add_history = history->next;
+  env->add_history = history->previous;
 }
 
 internal Constructor
@@ -480,7 +499,7 @@ getConstructor(Typer *env, Term *in0)
         out = *makeConstructor(temp_arena, uni, 0);
       else
       {
-        if (DataTree *tree = getDataTree(0, env, in0))
+        if (DataTree *tree = getDataTree(env, in0))
           out = *makeConstructor(temp_arena, tree->uni, tree->ctor_id);
       }
     }
@@ -583,7 +602,10 @@ getType(MemoryArena *arena, Typer *env, Term *in0)
       } break;
 
       default:
-        todoIncomplete
+      {
+        DUMP("The term is: ", in0);
+        todoIncomplete;
+      }
     }
   }
   assert(out0);
@@ -2922,10 +2944,8 @@ buildCtor(MemoryArena *arena, CtorAst *in, Term *output_type)
 forward_declare internal BuildTerm
 buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 {
-  // todo #cleanup limit the usage of toAbstractTerm
   // todo #cleanup #mem: sort out what we need and what we don't need to persist
   // todo #cleanup #speed: returning the value is just a waste of time most of the time. Just call evaluate whenever you need the value.
-  // todo #cleanup don't return a value
   // todo return the type, since we typecheck it anyway.
   // todo print out the goal whenever we fail
   // beware: Usually we mutate in-place, but we may also allocate anew.
@@ -3507,7 +3527,10 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         if (BuildTerm build_rhs = buildTerm(arena, env, in->rhs, type_hint))
         {
           Term *rhs = build_rhs.term;
-          Term *rhs_type = getType(arena, env, build_rhs.term);
+          Term *rhs_type = type_hint;
+          if (type_hint->cat == Term_Hole)
+            rhs_type = getType(arena, env, build_rhs.term);
+            
           if (in->type == LET_TYPE_NORMALIZE)
           {// type coercion
             Term *norm_rhs_type = normalize(arena, env, rhs_type);
@@ -3694,12 +3717,10 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 forward_declare internal Term *
 buildFork(MemoryArena *arena, Typer *env, ForkAst *in, Term *goal)
 {
-  Fork *out = newTerm(arena, Fork, 0);
+  assert(goal && goal->cat != Term_Hole);
+  Fork *out = newTerm(arena, Fork, goal);
   out->case_count = in->case_count;
   i32 unused_variable serial = global_debug_serial++;
-  // TODO don't allow users to fork something they obviously can't (like a
-  // function).
-  assert(goal);
   if (BuildTerm subject = buildTerm(arena, env, in->subject, holev))
   {
     out->subject = subject.term;
@@ -3711,14 +3732,11 @@ buildFork(MemoryArena *arena, Typer *env, ForkAst *in, Term *goal)
       if (uni->ctor_count == case_count)
       {
         Term **ordered_bodies = pushArray(arena, case_count, Term *, true);
-        Typer *outer_env = env;
 
         for (i32 input_case_id = 0;
              input_case_id < case_count && noError();
              input_case_id++)
         {
-          Typer env_ = *outer_env;
-          Typer *env = &env_;
           Token *ctor_name = in->ctors + input_case_id;
 
           i32 ctor_id = -1;
@@ -3733,7 +3751,7 @@ buildFork(MemoryArena *arena, Typer *env, ForkAst *in, Term *goal)
 
           if (ctor_id != -1)
           {
-            if (getOrAddDataTree(temp_arena, env, subject.term, uni, ctor_id))
+            if (getOrAddDataTree(temp_arena, env, subject.term, ctor_id).added)
             {
               if (ordered_bodies[ctor_id])
               {
@@ -3747,7 +3765,7 @@ buildFork(MemoryArena *arena, Typer *env, ForkAst *in, Term *goal)
                   ordered_bodies[ctor_id] = body.term;
                 }
               }
-              removeLatestDataTree(env);
+              undoDataMap(env);
             }
             else
             {
