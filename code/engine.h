@@ -130,7 +130,7 @@ b32 operator!=(Trinary a, Trinary b)
 }
 
 struct DataTree {
-  Union*     uni;
+  Union     *uni;
   i32        ctor_id;
   i32        member_count;
   DataTree **members;
@@ -248,30 +248,18 @@ struct Let {
   Ast   *body;
 };
 
-typedef u64 VarId;
-global_variable VarId next_variable_id = 1;
-inline VarId reserveVariableIds(i32 count)
-{
-  VarId out = next_variable_id;
-  next_variable_id += count;
-  return out;
-}
-inline void resetVariableIds() {next_variable_id = 1;}
-
 struct LocalBinding
 {
   i32           hash;
   String        key;
-  VarId         var_id;
-  i32           var_index;
+  i32           var_id;
   LocalBinding *next;
 };
 
 struct LookupLocalName {
   b32   found;
   i32   stack_delta;
-  VarId var_id;
-  i32   var_index;
+  i32   var_id;
   operator bool() {return found;}
 };
 
@@ -286,7 +274,7 @@ struct Variable {
   embed_Term(t);
   Token name;
   i32   delta;
-  i32   index;
+  i32   id;
 };
 
 struct TreePath {
@@ -325,7 +313,6 @@ struct ArrowAst {
 
 struct Arrow {
   embed_Term(t);
-  VarId   first_id;  // todo #removeme
   i32     param_count;
   Token  *param_names;
   Term  **param_types;

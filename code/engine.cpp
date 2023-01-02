@@ -58,7 +58,7 @@ newVariable(MemoryArena *arena, Token *name, i32 delta, i32 index)
   Variable *out = newTerm(arena, Variable, 0);
   out->name  = *name;
   out->delta = delta;
-  out->index = index;
+  out->id = index;
   return &out->t;
 }
 
@@ -156,14 +156,14 @@ isSequenced(Term *term)
 
 inline Arrow * getType(Constructor *ctor) {return ctor->uni->ctor_signatures[ctor->id];}
 
-// todo this seems like a massive waste of time, maybe we can try using the data
-// tree directly.
+// todo this is a massive waste of time, maybe we can try using the data tree
+// directly.
 inline Composite *
 makeFakeRecord(MemoryArena *arena, Term *parent, DataTree *tree)
 {  
   Composite *record = 0;
   Constructor *ctor = newTerm(arena, Constructor, 0);
-  ctor->uni = tree->uni;
+  ctor->uni = tree->uni;  // todo need to rebase the union, no way this is correct
   ctor->id  = tree->ctor_id;
   Arrow *ctor_sig = getType(ctor);
   i32 param_count = ctor_sig->param_count;
@@ -252,7 +252,7 @@ makeShallowRecord(MemoryArena *arena, Term *parent, Union *uni, i32 ctor_id)
   Composite *record = newTerm(arena, Composite, 0);
   Arrow *ctor_sig = uni->ctor_signatures[ctor_id];
   i32 param_count = ctor_sig->param_count;
-  record->op        = &makeConstructor(arena, uni, ctor_id)->t;
+  record->op        = &makeConstructor(arena, uni, ctor_id)->t;  // todo you can't use "uni"
   record->arg_count = param_count;
   record->args      = pushArray(arena, param_count, Term *);
   for (i32 field_id=0; field_id < param_count; field_id++)
@@ -344,7 +344,7 @@ getOrAddDataTree(MemoryArena *arena, Typer *env, Term *in0, Union *uni, i32 ctor
       DataTree *found = 0;
       for (DataMap *map = env->map; map; map=map->next)
       {
-        if (map->depth == in_root_depth && map->index == in->index)
+        if (map->depth == in_root_depth && map->index == in->id)
         {
           found = &map->tree;
           break;
@@ -357,7 +357,7 @@ getOrAddDataTree(MemoryArena *arena, Typer *env, Term *in0, Union *uni, i32 ctor
       {
         DataMap *map = pushStruct(arena, DataMap, true);
         map->depth   = in_root_depth;
-        map->index   = in->index;
+        map->index   = in->id;
         initDataTree(arena, &map->tree, uni, ctor_id);
         out = &map->tree;
         map->next    = env->map;
@@ -393,7 +393,7 @@ getOrAddDataTree(MemoryArena *arena, Typer *env, Term *in0, Union *uni, i32 ctor
         DataTree *tree = 0;
         for (DataMap *map = env->map; map; map=map->next)
         {
-          if (map->depth == in_root_depth && map->index == in_root->index)
+          if (map->depth == in_root_depth && map->index == in_root->id)
           {
             tree = &map->tree;
             break;
@@ -501,14 +501,13 @@ getType(MemoryArena *arena, Typer *env, Term *in0)
     {
       case Term_Variable:
       {
-        i32 env_depth = env->scope->depth;
         Variable *in = castTerm(in0, Variable);
         Scope *scope = env->scope;
         for (i32 id=0; id < in->delta; id++)
           scope=scope->outer;
         
-        assert(scope->depth == env_depth - in->delta);
-        out0 = scope->first->param_types[in->index];
+        assert(scope->depth == (env->scope->depth - in->delta));
+        out0 = scope->first->param_types[in->id];
         out0 = rebase(arena, out0, in->delta);
 
         assert(out0);
@@ -1096,7 +1095,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
         Variable *in = castTerm(in0, Variable);
         print(buffer, in->name.string);
         if (global_debug_mode)
-          print(buffer, "[%d:%d]", in->delta, in->index);
+          print(buffer, "[%d:%d]", in->delta, in->id);
       } break;
 
       case Term_Hole:
@@ -1573,7 +1572,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
         Variable *in = castTerm(in0, Variable);
         if (in->delta == ctx->offset)
         {
-          out0 = ctx->args[in->index];
+          out0 = ctx->args[in->id];
           out0 = rebase(arena, out0, ctx->offset);
         }
         else if (in->delta > ctx->offset)
@@ -1774,7 +1773,7 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
       {
         Variable *lhs = castTerm(lhs0, Variable);
         Variable *rhs = castTerm(rhs0, Variable);
-        if ((lhs->delta == rhs->delta) && (lhs->index == rhs->index))
+        if ((lhs->delta == rhs->delta) && (lhs->id == rhs->id))
           out.result = Trinary_True;
       } break;
 
@@ -2005,8 +2004,7 @@ lookupCurrentFrame(LocalBindings *bindings, String key, b32 add_if_missing)
   }
   else if (add_if_missing)
   {
-    slot->key       = key;
-    slot->var_id = {};
+    slot->key = key;
   }
 
   LookupCurrentFrame out = { slot, found };
@@ -2116,7 +2114,7 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
         DataTree *tree = 0;
         for (DataMap *map = ctx->map; map; map=map->next)
         {
-          if (map->depth == var_depth && map->index == in->index)
+          if (map->depth == var_depth && map->index == in->id)
           {
             tree = &map->tree;
             break;
@@ -2176,11 +2174,10 @@ normalize(MemoryArena *arena, Typer *env, Term *in0)
 }
 
 inline void
-addLocalBinding(Typer *env, Token *key, VarId var_id, i32 var_index)
+addLocalBinding(Typer *env, Token *key, i32 var_id)
 {
   auto lookup = lookupCurrentFrame(env->bindings, key->string, true);
-  lookup.slot->var_id    = var_id;
-  lookup.slot->var_index = var_index;
+  lookup.slot->var_id = var_id;
 }
 
 forward_declare inline void
@@ -2194,7 +2191,7 @@ introduceSignature(Typer *env, Arrow *signature, b32 add_bindings)
     for (i32 index=0; index < param_count; index++)
     {
       Token *name = signature->param_names + index;
-      addLocalBinding(env, name, signature->first_id + index, index);
+      addLocalBinding(env, name, index);
     }
   }
   assert(noError());
@@ -2255,8 +2252,7 @@ lookupLocalName(Typer *env, Token *token)
     if (lookup.found)
     {
       out.found       = true;
-      out.var_id      = lookup.slot->var_id;
-      out.var_index   = lookup.slot->var_index;
+      out.var_id   = lookup.slot->var_id;
       out.stack_delta = stack_delta;
       break;
     }
@@ -2483,14 +2479,14 @@ unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *rhs0)
       {
         stack = stack->outer;
       }
-      if (Term *replaced = stack->items[lhs->index])
+      if (Term *replaced = stack->items[lhs->id])
       {
         if (equal(replaced, rhs0))
           success = true;
       }
-      else if (unify(env, stack, lhs_scope, lhs_scope->first->param_types[lhs->index], getType(temp_arena, env, rhs0)))
+      else if (unify(env, stack, lhs_scope, lhs_scope->first->param_types[lhs->id], getType(temp_arena, env, rhs0)))
       {
-        stack->items[lhs->index] = rhs0;
+        stack->items[lhs->id] = rhs0;
         success = true;
       }
     } break;
@@ -2902,7 +2898,6 @@ internal Arrow *
 copyArrow(MemoryArena *arena, Arrow *in)
 {
   Arrow *out = copyStruct(arena, in);
-  out->first_id = reserveVariableIds(in->param_count);
   return out;
 }
 
@@ -2967,7 +2962,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       {
         Variable *var = newTerm(arena, Variable, 0);
         var->name        = in0->token;
-        var->index       = local.var_index;
+        var->id       = local.var_id;
         var->delta = local.stack_delta;
         out0.term  = &var->t;
       }
@@ -3114,12 +3109,12 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                   {
                     Variable *param_type = castTerm(param_type0, Variable);
                     assert(param_type->delta == 0);
-                    Term *placeholder_arg = args[param_type->index];
+                    Term *placeholder_arg = args[param_type->id];
                     assert(placeholder_arg->cat == Term_Hole);
                     Term *arg_type = getType(arena, env, arg.term);
                     Term *arg_type_type = getType(arena, env, arg_type);
                     if (equal(placeholder_arg->type, arg_type_type))
-                      args[param_type->index] = arg_type;
+                      args[param_type->id] = arg_type;
                     else
                     {
                       parseError(in->args[arg_id], "type of argument has wrong type");
@@ -3185,7 +3180,6 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       ArrowAst *in = castAst(in0, ArrowAst);
       Arrow *out = newTerm(arena, Arrow, &builtins.Type->t);
       i32 param_count = in->param_count;
-      out->first_id    = reserveVariableIds(param_count);
       out->param_count = param_count;
       out->param_names = in->param_names;
       {
@@ -3199,7 +3193,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           {
             out->param_types[index] = param_type.term;
             Token *name = in->param_names+index;
-            addLocalBinding(env, name, out->first_id+index, index);
+            addLocalBinding(env, name, index);
           }
         }
 
@@ -4806,8 +4800,6 @@ parseTopLevel(EngineState *state)
     {// todo: should we do "eat all semicolons after the first one?"
       token = nextToken();
     }
-
-    resetVariableIds();  // just for fuzzing.
   }
 }
 

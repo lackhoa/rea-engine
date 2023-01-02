@@ -11,8 +11,14 @@ Bool :: union {false, true}
   false: b}}
 
 andAssociative :: (a, b, c: Bool) -> (a & b) & c = a & b & c
-{fork a
- {false: ,
-  true : }}
+{fork a {false, true}}
 
-andFalse :: (a: Bool) -> a & false = false {fork a {false:, true:}}
+andFalse :: (a: Bool) -> a & false = false
+{fork a {false, true}}
+
+andTrue :: (a: Bool) -> a & true = a
+{fork a {false, true}}
+
+andCommutative :: (a,b: Bool) -> a & b = b & a
+{fork a {false rewrite andFalse(b),
+         true  rewrite andTrue(b)}}
