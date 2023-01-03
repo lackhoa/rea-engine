@@ -1511,7 +1511,6 @@ rebaseMain(MemoryArena *arena, Term *in0, i32 delta, i32 offset)
           out0 = in0;
         else
         {
-          debugbreak;
           Constructor *out = copyStruct(arena, in);
           out->uni = uni;
           out0 = &out->t;
@@ -3681,8 +3680,6 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       parseError(in0, "actual type differs from expected type");
       attach("got", getType(temp_arena, env, out0.term));
       attach("serial", serial);
-      if (serial == 8166)
-        breakhere;
     }
   }
 
@@ -4374,8 +4371,6 @@ parseOperand(MemoryArena *arena)
   }
   else
   {
-    if (global_debug_serial == 18814)
-      breakhere;
     tokenError("expected start of expression");
   }
 
@@ -4579,19 +4574,17 @@ parseTopLevel(EngineState *state)
 {
   MemoryArena *arena = state->arena;
   b32 should_fail_active = false;
-  Typer  empty_env_ = {};
-  Typer *empty_env  = &empty_env_;
 
   Token token = nextToken(); 
   while (hasMore())
   {
-    if (global_tokenizer->context == (ParseContext*)0x37)
-      breakhere;
-
 #define CLEAN_TEMPORARY_MEMORY 1
 #if CLEAN_TEMPORARY_MEMORY
     TemporaryMemory top_level_temp = beginTemporaryMemory(temp_arena);
 #endif
+
+    Typer  empty_env_ = {};
+    Typer *empty_env  = &empty_env_;
 
     switch (token.cat)
     {

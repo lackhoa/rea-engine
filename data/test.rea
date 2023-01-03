@@ -177,7 +177,6 @@ Natp :: union {natp(n: Nat, _not0: (E: n = 0) -> False)}
  natp(a.n + b.n, not0)
  }
 
-;; todo nocheckin
 SandwichEnd :: union {sandwichEndBool(b: Bool),
                       sandwichEndNat(n: Nat)}
 SandwichMiddle :: union {makeSandwichMiddle(e: SandwichEnd)}  ;; a struct
@@ -195,4 +194,5 @@ useSandwich :: fn (sandwich: Sandwich) -> Nat
                                       sandwichEndNat:  sandwich.m2.e.n}
   }
  }
-check_truth useSandwich(sandwichMiddle(makeSandwichMiddle(sandwichEndBool(true), sandwichEndNat(2)))) = 2;
+check_truth useSandwich(sandwichMiddle(makeSandwichMiddle(sandwichEndBool(true)),
+                                       makeSandwichMiddle(sandwichEndNat(2)))) = 2;
