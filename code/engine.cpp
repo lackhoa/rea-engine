@@ -56,7 +56,7 @@ inline Term *
 newVariable(MemoryArena *arena, Token *name, i32 delta, i32 index)
 {
   Variable *out = newTerm(arena, Variable, 0);
-  out->name  = *name;
+  out->name  = name->string;
   out->delta = delta;
   out->id = index;
   return &out->t;
@@ -1052,7 +1052,7 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
       case AC_Let:
       {
         Let *in = castAst(in0, Let);
-        print(buffer, in->lhs.string);
+        print(buffer, in->lhs);
         if (in->type)
         {
           print(buffer, " : ");
@@ -1086,7 +1086,12 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
 
       case AC_CtorAst:
       {
-        print(buffer, "<some option>");
+        print(buffer, "<some ctor>");
+      } break;
+
+      case AC_SeekAst:
+      {
+        print(buffer, "<some seek>");
       } break;
     }
   }
@@ -1119,7 +1124,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
       case Term_Variable:
       {
         Variable *in = castTerm(in0, Variable);
-        print(buffer, in->name.string);
+        print(buffer, in->name);
         if (global_debug_mode)
           print(buffer, "[%d:%d]", in->delta, in->id);
       } break;
@@ -2738,6 +2743,7 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
       case TC_Keyword_norm:
       {
         pushContext("norm [LOCAL_VARIABLE]");
+        // todo this is confusing if we're at the end of the sequence
         if (optionalChar(';'))
         {// normalize goal
           RewriteAst *rewrite = newAst(arena, RewriteAst, &token);
@@ -2749,7 +2755,7 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
           if (isIdentifier(&name))
           {
             Let *let = newAst(arena, Let, &token);
-            let->lhs  = name;
+            let->lhs  = name.string;
             let->rhs  = &newAst(arena, Identifier, &name)->a;
             let->type = LET_TYPE_NORMALIZE;
             ast = &let->a;
@@ -2817,7 +2823,7 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
               {
                 Let *let = newAst(arena, Let, name);
                 ast = &let->a;
-                let->lhs = *name;
+                let->lhs = name->string;
                 let->rhs = rhs;
               }
               popContext();
@@ -2833,10 +2839,10 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
                   if (Ast *rhs = parseExpressionToAst(arena))
                   {
                     Let *let = newAst(arena, Let, name);
-                    ast = &let->a;
-                    let->lhs  = *name;
+                    let->lhs  = name->string;
                     let->rhs  = rhs;
                     let->type = type;
+                    ast = &let->a;
                   }
                 }
               }
@@ -2852,6 +2858,23 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
           ast  = &newAst(arena, Hole, &token)->a; // todo do we print this out correctly?
           stop = true;
         }
+      } break;
+
+      case TC_Keyword_prove:
+      {
+        pushContext("prove PROPOSITION {SEQUENCE}");
+        if (Ast *proposition = parseExpressionToAst(arena))
+        {
+          if (Ast *proof = parseSequence(arena, true))
+          {
+            Let *let = newAst(arena, Let, &token);
+            let->lhs  = toString("anon");
+            let->rhs  = proof;
+            let->type = proposition;
+            ast = &let->a;
+          }
+        }
+        popContext();
       } break;
     }
 
@@ -2984,8 +3007,8 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       if (LookupLocalName local = lookupLocalName(env, name))
       {
         Variable *var = newTerm(arena, Variable, 0);
-        var->name        = in0->token;
-        var->id       = local.var_id;
+        var->name  = in0->token.string;
+        var->id    = local.var_id;
         var->delta = local.stack_delta;
         out0.term  = &var->t;
       }
@@ -3341,7 +3364,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
               if (!equal(new_goal_norm, goal_norm))
               {
                 parseError(in0, "new goal does not match original");
-                equal(new_goal_norm, goal_norm);
+                // equal(new_goal_norm, goal_norm);
                 attach("new goal normalized", new_goal_norm);
                 attach("current goal normalized", goal_norm);
               }
@@ -3552,7 +3575,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           allocateArray(temp_arena, param_count, signature->param_names);
           allocateArray(temp_arena, param_count, signature->param_types);
           signature->param_count    = param_count;
-          signature->param_names[0] = in->lhs;
+          signature->param_names[0] = newToken(in->lhs);  // probably fine since we don't include this token anywhere, we only need the name
 
           Term *rhs_type_rebased = rebase(arena, rhs_type, 1);
           signature->param_types[0] = synthesizeAst(temp_arena, rhs_type_rebased, token);
@@ -3665,6 +3688,38 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
     case AC_CtorAst:
     {
       parseError(in0, "please use this constructor syntax as an operator");
+    } break;
+
+    case AC_SeekAst:
+    {
+      SeekAst *in = castAst(in0, SeekAst);
+      if (BuildTerm proposition = buildTerm(temp_arena, env, in->proposition, holev))
+      {
+        i32 delta = 0;
+        for (Scope *scope = env->scope; scope; scope=scope->outer)
+        {
+          Arrow *arrow = scope->first;
+          for (i32 param_id=0; param_id < arrow->param_count; param_id++)
+          {
+            // todo #speed we're having to rebase everything, which sucks but
+            // unless we store position-independent types, that's what we gotta do.
+            Term *type = rebase(temp_arena, arrow->param_types[param_id], delta);
+            if (equal(type, proposition.term))
+            {
+              Variable *var = newTerm(arena, Variable, 0);
+              var->name  = arrow->param_names[param_id].string;
+              var->delta = delta;
+              var->id    = param_id;
+              out0.term = &var->t;
+            }
+          }
+          delta++;
+        }
+        if (!out0.term)
+        {
+          parseError(in0, "cannot find a matching proof on the stack");
+        }
+      }
     } break;
 
     invalidDefaultCase;
@@ -3865,7 +3920,6 @@ struct NormList {
   Identifier **items;
 };
 
-// todo what's the story of unbound identifier
 inline void
 insertAutoNormalizations(MemoryArena *arena, NormList norm_list, Ast *in0)
 {
@@ -3880,9 +3934,10 @@ insertAutoNormalizations(MemoryArena *arena, NormList norm_list, Ast *in0)
         insertAutoNormalizations(arena, norm_list, body);
         for (i32 norm_id=0; norm_id < norm_list.count; norm_id++)
         {
-          Let *new_body = newAst(arena, Let, &body->token);
-          new_body->lhs  = norm_list.items[norm_id]->token;
-          new_body->rhs  = &norm_list.items[norm_id]->a;
+          Identifier *item = norm_list.items[norm_id];
+          Let *new_body = newAst(arena, Let, &item->token);
+          new_body->lhs  = item->token.string;
+          new_body->rhs  = &item->a;
           new_body->type = LET_TYPE_NORMALIZE;
           new_body->body = body;
           body = &new_body->a;
@@ -3931,6 +3986,8 @@ parseFunction(MemoryArena *arena, Token *name, b32 is_theorem)
                 break;
               else if (requireIdentifier("expect auto-normalized parameter"))
               {
+                // todo handle unbound identifier: all names in the norm list
+                // should be in the function signature.
                 Token *name = &global_tokenizer->last_token;
                 i32 norm_id = norm_list.count++;
                 assert(norm_id < norm_count);
@@ -4324,13 +4381,27 @@ parseCtor(MemoryArena *arena)
   return out;
 }
 
+inline SeekAst *
+parseSeek(MemoryArena *arena)
+{
+  SeekAst *seek = 0;
+  if (Ast *proposition = parseExpressionToAst(arena))
+  {
+    seek = newAst(arena, SeekAst, &global_tokenizer->last_token);
+    seek->proposition = proposition;
+  }
+  return seek;
+}
+
 internal Ast *
 parseOperand(MemoryArena *arena)
 {
   Ast *operand = 0;
   Token token = nextToken();
   if (equal(&token, '_'))
+  {
     operand = &newAst(arena, Hole, &token)->a;
+  }
   else if (token.cat == TC_Keyword_seq)
   {
     operand = parseSequence(arena);
@@ -4347,25 +4418,12 @@ parseOperand(MemoryArena *arena)
   {
     operand = &parseCtor(arena)->a;
   }
+  else if (token.cat == TC_Keyword_seek)
+  {
+    operand = &parseSeek(arena)->a;
+  }
   else if (isIdentifier(&token))
   {
-#if 0
-    // token combination. TODO combine more than 2, allow in local scope.
-    Token next = peekToken();
-    Token *tokenp = &token;
-    Token combined_token = token;
-    if (isIdentifier(&next) &&
-        areSequential(&token, &next))
-    {
-      combined_token.string.length += next.string.length;
-      if (lookupGlobalNameSlot(combined_token.string, false))
-      {
-        nextToken();
-        tokenp = &combined_token;
-      }
-    }
-#endif
-
     operand = &newAst(arena, Identifier, &token)->a;
   }
   else if (equal(&token, '('))

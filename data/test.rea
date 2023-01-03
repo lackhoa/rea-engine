@@ -189,3 +189,7 @@ useSandwich :: fn (sandwich: Sandwich) -> Nat
  }
 check_truth useSandwich(sandwichMiddle(makeSandwichMiddle(sandwichEndBool(true)),
                                        makeSandwichMiddle(sandwichEndNat(2)))) = 2;
+
+#should_fail
+check 1+2: RatTest;
+#should_fail off

@@ -33,6 +33,7 @@ enum AstCategory {
   AC_Lambda,
   AC_DestructAst,
   AC_CtorAst,
+  AC_SeekAst,
 
   // sequence
   AC_ForkAst,
@@ -242,10 +243,10 @@ Ast LET_TYPE_NORMALIZE_;
 Ast *LET_TYPE_NORMALIZE = &LET_TYPE_NORMALIZE_;
 struct Let {
   embed_Ast(a);
-  Token  lhs;
-  Ast   *rhs;
-  Ast   *type;
-  Ast   *body;
+  String  lhs;
+  Ast    *rhs;
+  Ast    *type;
+  Ast    *body;
 };
 
 struct LocalBinding
@@ -272,9 +273,9 @@ struct LocalBindings
 
 struct Variable {
   embed_Term(t);
-  Token name;
-  i32   delta;
-  i32   id;
+  String name;
+  i32    delta;
+  i32    id;
 };
 
 struct TreePath {
@@ -514,6 +515,11 @@ struct CtorAst {
 struct AddDataTree {
   DataTree *tree;
   b32       added;
+};
+
+struct SeekAst {
+  embed_Ast(a);
+  Ast *proposition;
 };
 
 #include "generated/engine_forward.h"

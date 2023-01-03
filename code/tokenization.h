@@ -27,8 +27,9 @@ enum TokenCategory
   TC_Keyword_rewrite,
   TC_Keyword_norm,
   TC_Keyword_destruct,
+  TC_Keyword_prove,
+  TC_Keyword_seek,
 
-  // todo these should be "commands"
   TC_Keyword_test_eval,
   TC_Keyword_print,
   TC_Keyword_print_raw,
@@ -48,7 +49,7 @@ enum TokenCategory
 
 const char *keywords[] = {
   "", "fn", "fork", "union", "ctor", "seq",
-  "rewrite", "norm", "destruct",
+  "rewrite", "norm", "destruct", "prove", "seek",
   "test_eval", "print", "print_raw", "print_ast", "check", "check_truth"
 };
 
