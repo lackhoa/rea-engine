@@ -1,33 +1,5 @@
 #load "boolean.rea"
-#load "nat.rea"
-
-Natp :: union {1, ++(p: Natp)}
-
-+ :: fn(a,b: Natp) -> Natp
-{
- fork a
- {
-  1:  ++(b),
-  ++: ++(a.p + b)
-  }
- }
-
-2 : Natp := ++(1);
-3 : Natp := ++(2);
-check 1+2: Nat;
-check 1+2: Natp;
-#should_fail
-check 1+2: RatTest;
-#should_fail off
-
-* :: fn (a, b: Natp) -> Natp
-{
- fork a
- {
-  1:  b,
-  ++: b + a.p * b
-  }
- }
+#load "natp.rea"
 
 Z :: union
 {0,
@@ -76,68 +48,6 @@ Rat :: union { /(n: Z, d: Natp) }
  d : Natp := a.d * b.d;
  n / d
  }
-
-add1 :: (a: Natp) -> a+1 = ++(a)
-{fork a
- {1 : ,
-  ++: rewrite add1(a.p)}}
-
-addS :: (a,b: Natp) -> a + ++(b) = ++(a+b)
-{fork a
- {1 :,
-  ++: rewrite addS(a.p, b)}}
-
-addCommutative :: (a, b: Natp) -> (a + b = b + a)
-{fork a
- {1 : rewrite add1(b),
-  ++:
-  rewrite addS(b, a.p);
-  rewrite addCommutative(a.p, b)}}
-
-;; todo #copypasta collapse these abstract algebra down maybe
-addAssociative :: (a,b,c: Natp) -> (a+b)+c = a+b+c
-{fork a
- {1 : ,
-  ++: rewrite addAssociative(a.p, b, c)}}
-
-mulDistributive :: (a,b,c: Natp) -> a*c+b*c = (a+b)*c
-{fork a
- {1: ,
-  ++:
-  rewrite addAssociative(c, (a.p * c), (b * c));
-  rewrite mulDistributive(a.p, b, c)}}
-
-mulAssociative :: (a,b,c: Natp) -> (a*b)*c = a*b*c
-{fork a
- {1 : ,
-  ++:
-  rewrite <- mulDistributive(b, (a.p * b), c);
-  rewrite mulAssociative(a.p, b, c)}}
-
-mul1 :: (a: Natp) -> a*1 = a
-{fork a
- {1 : ,
-  ++: rewrite mul1(a.p)}}
-;; print mul1;
-
-mulSRight :: (a,b: Natp) -> a * ++(b) = a + a*b
-{fork a
- {1:,
-  ++:
-  => ++(b + a.p * ++(b))   = ++(a.p + b + a.p*b)
-  => ++(b + a.p + a.p*b)   = ++(a.p + b + a.p*b) { mulSRight(a.p, b) }
-  => ++((a.p + a.p*b) + b) = ++(a.p + b + a.p*b) { addCommutative(b, a.p + a.p*b) }
-  => ++(a.p + a.p*b + b)   = ++(a.p + b + a.p*b) { addAssociative(a.p, a.p*b, b) }
-  => ++(a.p + a.p*b + b)   = ++(a.p + a.p*b + b) { addCommutative(b, a.p*b) }}}
-;; print(mulSRight);
-
-mulCommutative :: (a,b: Natp) -> a*b = b*a
-{fork a
- {1 : rewrite mul1(b),
-  ++: 
-  => b + a.p*b = b * ++(a.p)
-  => b + a.p*b = b + b*a.p { mulSRight(b, a.p) }
-  => b + a.p*b = b + a.p*b { <- mulCommutative(a.p, b) }}}
 
 add0 :: (a: Z) -> a+0 = a
 {fork a {0: , +: , -: }}
@@ -249,56 +159,6 @@ differentFromPlus :: (a: Natp, b: Natp, P: a = a+b) -> False
   }
  }
 
-;; todo this really should be built-in
-successorIsDifferent :: (a: Natp, P: ++(a) = a) -> False
-#norm(P)
-{
- fork a
- {
-  1:  P,
-  ++: Q := destruct[0]P; successorIsDifferent(a.p, Q),
-  }
- }
-
-;; todo this really should be built-in
-differentFromTwoSuccessor :: (a: Natp, P: ++(++(a)) = a) -> False
-#norm(P)
-{
- fork a
- {
-  1:  P,
-  ++: Q := destruct[0](P); differentFromTwoSuccessor(a.p, Q),
-  }
- }
-
-> :: fn(a, b: Natp) -> Bool
-{
- fork a
- {
-  1 : false,
-  ++: fork b {1: true, ++: a.p > b.p},
-  }
- }
-
-successorIsLarger :: (a: Natp) -> ++(a) > a = true
-{
- fork a
- {
-  1 : ,
-  ++: successorIsLarger(a.p),
-  }
- }
-
-gtAntiReflexive :: (a: Natp, p: a>a = true) -> False
-#norm(p)
-{
- fork a
- {
-  1:  p,
-  ++: gtAntiReflexive(a.p, p),
-  }
- }
-
 > :: fn(a, b: Z) -> Bool
 {
  fork a
@@ -335,16 +195,6 @@ successorIsLarger :: (a: Natp) -> +(++(a)) > +(a) = true
   }
  }
 
-gtTransitive :: (a,b,c: Natp, P: a>b = true, Q: b>c = true) -> a>c = true
-#norm(P,Q)
-{
- fork a {
-         1  P,
-         ++ fork b {1 fork Q {},
-                    ++ fork c {1, ++ gtTransitive(a.p,b.p,c.p, P, Q)}},
-         }
- }
-
 gtTransitive :: (a, b, c: Z, P: a>b = true, Q: b>c = true) -> a > c = true
 #norm(P,Q)
 {
@@ -368,19 +218,6 @@ posSuccessorIsLarger :: (a: Natp) -> +(++(a)) > +(a) = true
 negSuccessorIsSmaller :: (a: Natp) -> -(a) > -(++(a)) = true
 {
  fork a {1, ++ successorIsLarger(a.p)}
- }
-
-addIncreases :: (a,b: Natp) -> a+b > a = true
-{
- fork a {1, ++ addIncreases(a.p, b)}
- }
-
-addDifferent :: (a,b: Natp, p: a+b = a) -> False
-#norm(p)
-{
- lem1: a + b > a = true := addIncreases(a,b);
- lem2: a > a = true     := seq {=> a + b > a = true {<- p}; lem1};
- gtAntiReflexive(a, lem2);
  }
 
 addNegativeDecreases :: (a: Z, b: Natp) -> a > (a + -(b)) = true
@@ -419,81 +256,6 @@ addPositiveIncreases :: (a: Z, b: Natp) -> a + +(b) > a = true
   }
  }
 
-sumCancellation :: (a,b,c: Natp, p: a + b = a + c) -> (b = c)
-#norm(p)
-{
- fork a {
-         1 destruct[0](p),
-         ++ p := destruct[0](p); sumCancellation(a.p,b,c, p)}
- }
-
-=? :: fn(a,b: Natp) -> Bool
-{
- fork a
- {
-  1 fork b {1 true, ++ false},
-  ++ fork b {1 false, ++ a.p =? b.p}
-  }
- }
-
-add1DifferentFromAddS :: (a,b: Natp) -> a + 1 =? a + ++(b) = false
-{
- fork a
- {
-  1,
-  ++ add1DifferentFromAddS(a.p, b);
-  }
- }
-
-;; todo #automate
-trueNotFalse :: (a: Bool, p: a=true, q: a=false) -> False
-{
- => true = false;
- rewrite <- p;
- rewrite <- q;
- }
-
-eqSymmetric :: (a,b: Natp, p: a=?b = true) -> (b=?a = true)
-#norm(p)
-{
- fork a
- {
-  1 fork b {1, ++ p},
-  ++ fork b {1 p, ++ eqSymmetric(a.p, b.p, p)}
-  }
- }
-
-sumCancellation :: (a,b,c: Natp, p: a+b =? a+c = true) -> (b =? c = true)
-#norm(p)
-{
- fork a {
-         1 p,
-         ++ fork b {1 fork c {1, ++ trueNotFalse(a.p + 1 =? a.p + ++(c.p),
-                                                 p,
-                                                 add1DifferentFromAddS(a.p, c.p))},
-                    ++ fork c
-                    {1 lem1 := eqSymmetric(a.p + ++(b.p), a.p + 1, p);
-                     lem2 := add1DifferentFromAddS(a.p, b.p);
-                     trueNotFalse(a.p + 1 =? a.p + ++(b.p), lem1, lem2)
-                     ,
-                     ++
-                     lem1 : ++(b.p) + a.p =? ++(c.p) + a.p = true :=
-                     seq {=> a.p + ++(b.p) =? ++(c.p) + a.p = true {addCommutative}
-                          => a.p + ++(b.p) =? a.p + ++(c.p) = true {addCommutative}
-                          p
-                          };
-                     norm lem1;
-                     lem2: a.p + b.p =? a.p + c.p = true :=
-                     seq {
-                          => b.p + a.p =? a.p + c.p = true {addCommutative}
-                          => b.p + a.p =? c.p + a.p = true {addCommutative}
-                          lem1;
-                          };
-                     sumCancellation(a.p,b.p,c.p, lem2)
-                     }}}
- }
-
-
 =? :: fn(a,b: Z) -> Bool
 {
  fork a
@@ -501,16 +263,6 @@ sumCancellation :: (a,b,c: Natp, p: a+b =? a+c = true) -> (b =? c = true)
   0 fork b {0 true, + false, - false},
   + fork b {0 false, + a.v =? b.v, - false},
   - fork b {0 false, + false, - a.v =? b.v}
-  }
- }
-
-eqCorrect :: (a,b: Natp, p: a =? b = true) -> a = b
-#norm(p)
-{
- fork a
- {
-  1  fork b {1  , ++ p},
-  ++ fork b {1 p, ++ rewrite eqCorrect(a.p, b.p, p)}
   }
  }
 
@@ -524,12 +276,6 @@ eqCorrect :: (a,b: Z, p: a =? b = true) -> a = b
   - fork b {0 p, + p, - rewrite eqCorrect(a.v, b.v, p)}
   }
  }
-
-addIsDifferent :: (a,b: Natp) -> a+b =? a = false
-{fork a {1, ++ addIsDifferent(a.p,b)}}
-
-addIsDifferent :: (a,b: Natp) -> a =? a+b = false
-{fork a {1, ++ addIsDifferent(a.p,b)}}
 
 add0Infer :: (a,b: Z, p: (a+b =? a) = true) -> b=0
 #norm(p)
@@ -551,15 +297,6 @@ add0Infer :: (a,b: Z, p: (a+b =? a) = true) -> b=0
   }
  }
 
-eqReflexive :: (a: Natp) -> a =? a = true
-{
- fork a
- {
-  1,
-  ++ eqReflexive(a.p),
-  }
- }
-
 eqReflexive :: (a: Z) -> a =? a = true
 {
  fork a
@@ -574,17 +311,6 @@ eqSymmetric :: (a,b: Z, p: a =? b = true) -> b =? a = true
 {
  rewrite eqCorrect(a,b,p);
  eqReflexive(b);
- }
-
-addPreservesGt :: (a,b,c: Natp, p: a>b=true) -> a+c > b+c = true
-#norm(p)
-{
- fork a
- {
-  1 fork p {},
-  ++ fork b {1 rewrite addCommutative(a.p, c); addIncreases(c, a.p),
-             ++ addPreservesGt(a.p,b.p,c, p)},
-  }
  }
 
 addPreservesGt :: (a,b,c: Z, p: a>b=true) -> a+c > b+c = true
@@ -655,26 +381,6 @@ addPreservesGt :: (a,b,c: Z, p: a>b=true) -> a+c > b+c = true
                                      },
                                     -
                                     addPreservesGt(b.v.p, a.v.p, c.v, p)}}}}}}
-
-totalOrder :: (a,b: Natp) -> union {
-                                    eq(p: a = b),
-                                    gt(p: a > b = true),
-                                    lt(p: b > a = true),
-                                    }
-{
- fork a
- {
-  1 fork b {1 ctor[0](_), ++ ctor[2](_)},
-  ++ fork b
-  {
-   1 ctor[1](_),
-   ++ ind := totalOrder(a.p, b.p);
-   fork ind {eq lem := ind.p; ctor[0](seq{rewrite lem}),
-             gt ctor[1](ind.p),
-             lt ctor[2](ind.p)} 
-   }
-  }
- }
 
 totalOrder :: (a,b: Z) -> union {
                                  eq(p: a = b),
