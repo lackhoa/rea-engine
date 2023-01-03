@@ -193,3 +193,14 @@ check_truth useSandwich(sandwichMiddle(makeSandwichMiddle(sandwichEndBool(true))
 #should_fail
 check 1+2: RatTest;
 #should_fail off
+
+testFillingHole :: (xdebug: Nat, x_positive: xdebug!=0, P: xdebug=0) -> False
+{norm x_positive;
+ fork (xdebug)
+ {0 : norm x_positive; x_positive(_),
+  ++: norm P; P}
+ }
+
+#debug
+check id(False) : ((f: False) -> False)
+#debug off

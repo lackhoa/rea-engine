@@ -1,4 +1,5 @@
 #load "boolean.rea"
+#load "utils.rea"
 
 Nat :: union
 {0,
@@ -87,16 +88,6 @@ mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*b*c
   => (b + a.p*b)*c  = (b + a.p*b)*c {mulDistributive(b, a.p*b, c)}}}
 test_eval mulAssociative(1,0,0);
 ;; print mulAssociative(1,0,0);
-
-!= :: fn (#hidden A: Set, a,b: A) -> Type
-{ (E: a=b) -> False }
-
-testFillingHole :: (xdebug: Nat, x_positive: xdebug!=0, P: xdebug=0) -> False
-{norm x_positive;
- fork (xdebug)
- {0 : norm x_positive; x_positive(_),
-  ++: norm P; P}
- }
 
 addPos :: (a,b: Nat, apos: a!=0) -> a+b != 0
 {norm;

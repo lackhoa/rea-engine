@@ -30,4 +30,3 @@ trueNotFalse :: (a: Bool, p: a=true, q: a=false) -> False
  rewrite <- p;
  rewrite <- q;
  }
-

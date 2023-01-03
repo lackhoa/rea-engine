@@ -1351,7 +1351,7 @@ print(MemoryArena *buffer, void *in0, b32 is_absolute, PrintOptions opt)
 }
 
 forward_declare inline Scope *
-extendScope(Scope *outer, Arrow *signature)
+newScope(Scope *outer, Arrow *signature)
 {
   Scope *scope = pushStruct(temp_arena, Scope, true);
   scope->outer = outer;
@@ -2214,7 +2214,7 @@ forward_declare inline void
 introduceSignature(Typer *env, Arrow *signature, b32 add_bindings)
 {
   i32 param_count = signature->param_count;
-  env->scope = extendScope(env->scope, signature);
+  env->scope = newScope(env->scope, signature);
   if (add_bindings)
   {
     extendBindings(temp_arena, env);
@@ -2480,7 +2480,7 @@ matchType(Typer *env, Term *term, Term *expected)
 }
 
 inline Stack *
-extendStack(Stack *outer, i32 count)
+newStack(Stack *outer, i32 count)
 {
   Stack *stack = pushStruct(temp_arena, Stack);
   stack->outer = outer;
@@ -2494,8 +2494,8 @@ unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *rhs0)
 {
   b32 success = false;
 
+  i32 UNUSED_VAR serial = global_debug_serial++;
 #if DEBUG_LOG_unify
-  i32 serial = global_debug_serial++;
   if (global_debug_mode)
   {debugIndent(); DUMP("unify(", serial, ") ", lhs0, " with ", rhs0, "\n");}
 #endif
@@ -2505,19 +2505,33 @@ unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *rhs0)
     case Term_Variable:
     {
       Variable *lhs = castTerm(lhs0, Variable);
+      Stack *lookup_stack = stack;
       for (i32 delta=0; delta < lhs->delta; delta++)
       {
-        stack = stack->outer;
+        lookup_stack = lookup_stack->outer;
       }
-      if (Term *replaced = stack->items[lhs->id])
+      if (Term *replaced = lookup_stack->items[lhs->id])
       {
         if (equal(replaced, rhs0))
           success = true;
       }
-      else if (unify(env, stack, lhs_scope, lhs_scope->first->param_types[lhs->id], getType(temp_arena, env, rhs0)))
+      else
       {
-        stack->items[lhs->id] = rhs0;
-        success = true;
+        // todo cleanup
+        for (i32 delta=0; delta < lhs->delta; delta++)
+        {
+          lhs_scope = lhs_scope->outer;
+        }
+        // todo lhs_type and rhs_type should be the same thing!!!
+        Term *lhs_type = lhs_scope->first->param_types[lhs->id];
+        lhs_type = rebase(temp_arena, lhs_type, lhs->delta);
+        Term *rhs_type = getType(temp_arena, env, rhs0);
+        if (unify(env, stack, lhs_scope, lhs_type, rhs_type))
+        {
+          // todo potential infinitely loop with "Type"
+          stack->items[lhs->id] = rhs0;
+          success = true;
+        }
       }
     } break;
 
@@ -2548,13 +2562,14 @@ unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *rhs0)
       {
         if (lhs->param_count == rhs->param_count)
         {
-          extendStack(stack, lhs->param_count);
-          Scope *new_lhs_scope = extendScope(lhs_scope, lhs);
-          introduceSignature(env, rhs, false);
+          Scope *new_lhs_scope = newScope(lhs_scope, lhs);
+          // introduceSignature(env, rhs, false);
+          env->scope = newScope(env->scope, rhs);
           b32 failed = false;
+          Stack *new_stack = newStack(stack, lhs->param_count);
           for (i32 id=0; id < lhs->param_count; id++)
           {
-            if (!unify(env, stack, new_lhs_scope, lhs->param_types[id], rhs->param_types[id]))
+            if (!unify(env, new_stack, new_lhs_scope, lhs->param_types[id], rhs->param_types[id]))
             {
               failed = true;
               break;
@@ -2562,7 +2577,6 @@ unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *rhs0)
           }
           if (!failed)
             success = true;
-          stack = stack->outer;
           unwindScope(env);
         }
       }
@@ -2594,8 +2608,8 @@ inline Term **
 unify(Typer *env, Arrow *lhs_signature, Term *lhs, Term *rhs)
 {
   Term **out = 0;
-  Stack *stack = extendStack(0, lhs_signature->param_count);
-  Scope *lhs_scopes = extendScope(0, lhs_signature);
+  Stack *stack = newStack(0, lhs_signature->param_count);
+  Scope *lhs_scopes = newScope(0, lhs_signature);
   if (unify(env, stack, lhs_scopes, lhs, rhs))
     out = stack->items;
   return out;
@@ -3230,7 +3244,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       out->param_names   = in->param_names;
       out->param_flags   = in->param_flags;
       {
-        env->scope = extendScope(env->scope, out);
+        env->scope = newScope(env->scope, out);
         extendBindings(temp_arena, env);
         allocateArray(arena, param_count, out->param_types);
         for (i32 index=0; index < param_count && noError(); index++)
@@ -4741,7 +4755,8 @@ parseTopLevel(EngineState *state)
 
       case TC_Keyword_check:
       {
-        Term *expected_type = 0;
+        pushContext("check TERM: TYPE");
+        Term *expected_type = holev;
         if (Ast *ast = parseExpressionToAst(temp_arena))
         {
           if (optionalChar(':'))
@@ -4752,6 +4767,7 @@ parseTopLevel(EngineState *state)
           if (noError())
             buildTerm(temp_arena, empty_env, ast, expected_type);
         }
+        popContext();
       } break;
 
       case TC_Keyword_check_truth:
@@ -5054,12 +5070,6 @@ int engineMain()
 
 #if 1
   if (!beginInterpreterSession(permanent_arena, "../data/test.rea"))
-    success = false;
-  resetArena(permanent_arena, true);
-#endif
-
-#if 1
-  if (!beginInterpreterSession(permanent_arena, "../data/natp.rea"))
     success = false;
   resetArena(permanent_arena, true);
 #endif

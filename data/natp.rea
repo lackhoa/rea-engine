@@ -1,19 +1,18 @@
 #load "nat.rea"
 
-Natp :: union {+++(p: Nat)}
+Natp :: union {1, ++(p: Natp)}
 
 ;; literal translation
 nat :: fn(a: Natp) -> Nat
-{++(a.p)}
-
-MaybeNatp :: union {nullNatp, someNatp(n: Natp)}
+{fork a {1: 1, ++: ++(nat(a.p))}}
 
 natp :: fn(a: Nat, not0: a != 0) -> Natp
 {fork a {0  norm not0; f := not0(_); fork f {},
-         ++ +++(a.p)}}
+         ++ fork a.p {0  1,
+                      ++ ++(natp(a.p, seq{norm; id(False)}))}}}
 
 natpNot0 :: fn(a: Natp) -> nat(a) != 0
-{norm; _ => {E}}
+{norm; }
 
 + :: fn(a,b: Natp) -> Natp
 {prove(nat(a) + nat(b) != 0) {addPos(nat(a), nat(b), natpNot0(a))};
@@ -26,23 +25,6 @@ plusDebug :: fn(a,b: Natp) -> Natp
 * :: fn(a,b: Natp) -> Natp
 {prove(nat(a) * nat(b) != 0) {mulPos(nat(a), nat(b), natpNot0(a), natpNot0(b))};
  natp(nat(a) * nat(b), seek(nat(a) * nat(b) != 0))}
-
-;; add1 :: (a: Natp) -> a+1 = ++(a)
-;; {fork a
-;;  {1 : ,
-;;   ++: rewrite add1(a.p)}}
-
-;; addS :: (a,b: Natp) -> a + ++(b) = ++(a+b)
-;; {fork a
-;;  {1 :,
-;;   ++: rewrite addS(a.p, b)}}
-
-;; addCommutative :: (a,b: Natp) -> (a+b = b+a)
-;; {fork a
-;;  {1 : rewrite add1(b),
-;;   ++:
-;;   rewrite addS(b, a.p);
-;;   rewrite addCommutative(a.p, b)}}
 
 addCommutative :: (a,b: Natp) -> (b+a = a+b)
 {
@@ -60,11 +42,10 @@ addAssociative :: (a,b,c: Natp) -> (a+b)+c = a+b+c
  }
 
 mulDistributive :: (a,b,c: Natp) -> a*c+b*c = (a+b)*c
-{fork a
- {1: ,
-  ++:
-  rewrite addAssociative(c, (a.p * c), (b * c));
-  rewrite mulDistributive(a.p, b, c)}}
+{
+ => +++((c.p + a.p * ++(c.p)) + ++(c.p + b.p * ++(c.p))) = +++(c.p + (a.p + ++(b.p)) * ++(c.p))
+ => +++((c.p + a.p * ++(c.p)) + ++(c.p + b.p * ++(c.p))) = +++(c.p + (a.p + ++(b.p)) * ++(c.p))
+ }
 
 mulAssociative :: (a,b,c: Natp) -> (a*b)*c = a*b*c
 {fork a
