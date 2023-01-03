@@ -477,19 +477,19 @@ concat(String *a, String b)
 #define DUMP(...) DUMP_N(PP_NARG(__VA_ARGS__), __VA_ARGS__)(__VA_ARGS__)
 
 inline b32
-checkFlag(u32 flag_group, u32 flag)
+checkFlag(u32 flags, u32 flag)
 {
-  return flag_group & flag;
+  return flags & flag;
 }
 
 inline void
-setFlag(u32 *flag_group, u32 flag)
+setFlag(u32 *flags, u32 flag)
 {
-  *flag_group |= flag;
+  *flags |= flag;
 }
 
 inline void
-unsetFlag(u32 *flag_group, u32 flag)
+unsetFlag(u32 *flags, u32 flag)
 {
-  *flag_group &= ~flag;
+  *flags &= ~flag;
 }

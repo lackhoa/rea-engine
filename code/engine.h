@@ -303,12 +303,14 @@ struct Composite {
   Term **args;
 };
 
+u32 ParameterFlag_Hidden = 1 << 0;
+
 struct ArrowAst {
   embed_Ast(a);
   i32     param_count;
   Token  *param_names;
   Ast   **param_types;
-  b32    *param_hidden;
+  u32    *param_flags;
   Ast    *output_type;
 };
 
@@ -317,7 +319,7 @@ struct Arrow {
   i32     param_count;
   Token  *param_names;
   Term  **param_types;
-  b32    *param_hidden;
+  u32    *param_flags;
   Term   *output_type;
 };
 

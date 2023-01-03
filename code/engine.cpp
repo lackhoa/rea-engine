@@ -790,16 +790,16 @@ forward_declare inline void debugDedent()
 inline b32
 isHiddenParameter(ArrowAst *arrow, i32 param_id)
 {
-  if (arrow->param_hidden)
-    return arrow->param_hidden[param_id];
+  if (arrow->param_flags)
+    return checkFlag(arrow->param_flags[param_id], ParameterFlag_Hidden);
   return false;
 }
 
 inline b32
 isHiddenParameter(Arrow *arrow, i32 param_id)
 {
-  if (arrow->param_hidden)
-    return arrow->param_hidden[param_id];
+  if (arrow->param_flags)
+    return checkFlag(arrow->param_flags[param_id], ParameterFlag_Hidden);
   return false;
 }
 
@@ -3205,7 +3205,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       i32 param_count = in->param_count;
       out->param_count   = param_count;
       out->param_names   = in->param_names;
-      out->param_hidden = in->param_hidden;
+      out->param_flags   = in->param_flags;
       {
         env->scope = extendScope(env->scope, out);
         extendBindings(temp_arena, env);
@@ -4032,7 +4032,7 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
   i32     param_count;
   Token  *param_names;
   Ast   **param_types;
-  b32    *param_hidden;
+  u32    *param_flags;
   Token marking_token = peekToken();
   char begin_arg_char = '(';
   char end_arg_char   = ')';
@@ -4044,7 +4044,7 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
     {
       allocateArray(arena, param_count, param_names);
       allocateArray(arena, param_count, param_types);
-      allocateArray(arena, param_count, param_hidden, true);
+      allocateArray(arena, param_count, param_flags, true);
 
       i32 parsed_param_count = 0;
       i32 typeless_run = 0;
@@ -4060,7 +4060,7 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
           i32 param_id = parsed_param_count++;
           if (optionalCategory(TC_Directive_hidden))
           {
-            param_hidden[param_id] = true;
+            setFlag(&param_flags[param_id], ParameterFlag_Hidden);
           }
           if (requireIdentifier("expected parameter name"))
           {
@@ -4114,10 +4114,10 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
   if (noError())
   {
     out = newAst(arena, ArrowAst, &marking_token);
-    out->param_count   = param_count;
-    out->param_names   = param_names;
-    out->param_types   = param_types;
-    out->param_hidden = param_hidden;
+    out->param_count = param_count;
+    out->param_names = param_names;
+    out->param_types = param_types;
+    out->param_flags = param_flags;
     if (!is_struct)  // structs don't need return type
     {
       if (requireCategory(TC_Arrow, "syntax: (param: type, ...) -> ReturnType"))
