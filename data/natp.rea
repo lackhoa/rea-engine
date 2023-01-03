@@ -1,0 +1,19 @@
+#load "nat.rea"
+
+Natp :: union {natp(n: Nat, #hidden not0: n != 0)}
+
++ :: fn(a,b: Natp) -> Natp
+{
+ natp(a.n + b.n, addPos(a.n, b.n, a.not0))
+ }
+
+* :: fn(a,b: Natp) -> Natp
+{
+ natp(a.n * b.n, mulPos(a.n, b.n, a.not0, b.not0))
+ }
+
+addCommutative :: (a,b: Natp) -> b+a = a+b
+{
+ norm;
+ rewrite addCommutative(a.n, b.n);
+ }

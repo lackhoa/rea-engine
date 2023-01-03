@@ -1,15 +1,7 @@
 #load "boolean.rea"
 #load "nat.rea"
 
-;; todo nocheckin
-;; Natp :: union {natp(n: Nat, _not0: n != 0)}
 Natp :: union {1, ++(p: Natp)}
-
-;; nocheckin
-;; + :: fn (a, b: Natp) -> Natp
-;; {n    := a.n + b.n;
-;;  not0 : (n != 0) := seq {fork a.n {0, ++ }};
-;;  natp(n, not0)}
 
 + :: fn(a,b: Natp) -> Natp
 {

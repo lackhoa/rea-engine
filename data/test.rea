@@ -170,13 +170,6 @@ BigStruct :: union {bigStruct(r: RatTest)}
 testBigStruct :: (big : BigStruct) -> (big.r.d != 0) {big.r._dnot0}
 testRatArrow :: fn (r: RatTest) -> r.d != 0 { r._dnot0 }
 
-Natp :: union {natp(n: Nat, _not0: (E: n = 0) -> False)}
-+ :: fn (a, b: Natp) -> Natp
-{
- not0 : ((E: a.n + b.n = 0) -> False) := seq {fork a.n {0 norm; b._not0, ++ norm; _ => {E}}};
- natp(a.n + b.n, not0)
- }
-
 SandwichEnd :: union {sandwichEndBool(b: Bool),
                       sandwichEndNat(n: Nat)}
 SandwichMiddle :: union {makeSandwichMiddle(e: SandwichEnd)}  ;; a struct

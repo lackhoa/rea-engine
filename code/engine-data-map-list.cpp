@@ -711,13 +711,13 @@ forward_declare inline void debugDedent()
 #define NULL_WHEN_ERROR(name) if (noError()) {assert(name);} else {name = {};}
 
 inline b32
-isHiddenParameter(ArrowAst *arrow, i32 param_id)
+isImpliedParameter(ArrowAst *arrow, i32 param_id)
 {
   return arrow->param_names[param_id].string.chars[0] == '_';
 }
 
 inline b32
-isHiddenParameter(Arrow *arrow, i32 param_id)
+isImplicitParameter(Arrow *arrow, i32 param_id)
 {
   return arrow->param_names[param_id].string.chars[0] == '_';
 }
@@ -795,7 +795,7 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
     printed_args = pushArray(temp_arena, op_signature->param_count, void*);
     for (i32 param_id = 0; param_id < op_signature->param_count; param_id++)
     {
-      if (global_debug_mode || !isHiddenParameter(op_signature, param_id))
+      if (global_debug_mode || !isImplicitParameter(op_signature, param_id))
         printed_args[arg_count++] = raw_args[param_id];
     }
   }
@@ -2352,7 +2352,7 @@ getExplicitParamCount(ArrowAst *in)
   i32 out = 0;
   for (i32 param_id = 0; param_id < in->param_count; param_id++)
   {
-    if (!isHiddenParameter(in, param_id))
+    if (!isImpliedParameter(in, param_id))
       out++;
   }
   return out;
@@ -2364,7 +2364,7 @@ getExplicitParamCount(Arrow *in)
   i32 out = 0;
   for (i32 param_id = 0; param_id < in->param_count; param_id++)
   {
-    if (!isHiddenParameter(in, param_id))
+    if (!isImplicitParameter(in, param_id))
       out++;
   }
   return out;
@@ -2999,7 +2999,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
                    param_id < signature->param_count && noError();
                    param_id++)
               {
-                if (isHiddenParameter(signature, param_id))
+                if (isImplicitParameter(signature, param_id))
                 {
                   in->args[param_id] = &newAst(arena, Hole, &in->op->token)->a;
                 }

@@ -58,14 +58,14 @@ addSRight :: (n, m: Nat) -> n + ++(m) = ++(n+m)
  {0 : ,
   ++: => ++(++(n.p + m)) = ++(++(n.p + m)) {addSRight}}}
 
-addCommutative :: (n, m: Nat) -> (n+m = m+n)
+addCommutative :: (m,n: Nat) -> (n+m = m+n)
 {fork n
  {0 : => m = m {add0},
   ++:
   => ++(m + n.p) = m + ++(n.p) {addCommutative}
   => ++(m + n.p) = ++(m + n.p) {addSRight}}}
 
-addAssociative :: (a, b, c: Nat) -> (a+b)+c = a+b+c
+addAssociative :: (a,b,c: Nat) -> (a+b)+c = a+b+c
 {fork a
  {0 : ,
   ++:
@@ -88,7 +88,7 @@ mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*b*c
 test_eval mulAssociative(1,0,0);
 ;; print mulAssociative(1,0,0);
 
-!= :: fn (_A: Set, a,b: _A) -> Type
+!= :: fn (#hidden A: Set, a,b: A) -> Type
 { (E: a=b) -> False }
 
 testFillingHole :: (xdebug: Nat, x_positive: xdebug!=0, P: xdebug=0) -> False
@@ -98,11 +98,15 @@ testFillingHole :: (xdebug: Nat, x_positive: xdebug!=0, P: xdebug=0) -> False
   ++: norm P; P}
  }
 
-mulPos :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
-{norm b_positive; norm a_positive;
- norm;
- _ => {fork a {0: a_positive(_),
-               ++: fork b {0: b_positive(_), ++: norm E; E}}}}
+addPos :: (a,b: Nat, apos: a!=0) -> a+b != 0
+{norm;
+ _ => {fork a {0 norm apos; apos(_),
+               ++ norm E; E}}}
+
+mulPos :: (a,b: Nat, apos: a!=0, bpos: b!=0) -> a*b != 0
+{norm apos; norm bpos; norm;
+ _ => {fork a {0: apos(_),
+               ++: fork b {0: bpos(_), ++: norm E; E}}}}
 
 mul0 :: (a: Nat) -> a * 0 = 0
 {

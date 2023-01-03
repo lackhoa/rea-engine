@@ -308,6 +308,7 @@ struct ArrowAst {
   i32     param_count;
   Token  *param_names;
   Ast   **param_types;
+  b32    *param_hidden;
   Ast    *output_type;
 };
 
@@ -316,6 +317,7 @@ struct Arrow {
   i32     param_count;
   Token  *param_names;
   Term  **param_types;
+  b32    *param_hidden;
   Term   *output_type;
 };
 

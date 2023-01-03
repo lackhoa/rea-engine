@@ -790,13 +790,17 @@ forward_declare inline void debugDedent()
 inline b32
 isHiddenParameter(ArrowAst *arrow, i32 param_id)
 {
-  return arrow->param_names[param_id].string.chars[0] == '_';
+  if (arrow->param_hidden)
+    return arrow->param_hidden[param_id];
+  return false;
 }
 
 inline b32
 isHiddenParameter(Arrow *arrow, i32 param_id)
 {
-  return arrow->param_names[param_id].string.chars[0] == '_';
+  if (arrow->param_hidden)
+    return arrow->param_hidden[param_id];
+  return false;
 }
 
 inline i32
@@ -867,7 +871,7 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
 
   void **printed_args;
   if (op_signature)
-  {// print out unignored args only
+  {// print out explicit args only
     arg_count = 0;
     printed_args = pushArray(temp_arena, op_signature->param_count, void*);
     for (i32 param_id = 0; param_id < op_signature->param_count; param_id++)
@@ -3199,12 +3203,13 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       ArrowAst *in = castAst(in0, ArrowAst);
       Arrow *out = newTerm(arena, Arrow, &builtins.Type->t);
       i32 param_count = in->param_count;
-      out->param_count = param_count;
-      out->param_names = in->param_names;
+      out->param_count   = param_count;
+      out->param_names   = in->param_names;
+      out->param_hidden = in->param_hidden;
       {
-        allocateArray(arena, param_count, out->param_types);
         env->scope = extendScope(env->scope, out);
         extendBindings(temp_arena, env);
+        allocateArray(arena, param_count, out->param_types);
         for (i32 index=0; index < param_count && noError(); index++)
         {
           BuildTerm param_type = buildTerm(arena, env, in->param_types[index], holev);
@@ -3549,15 +3554,8 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           signature->param_count    = param_count;
           signature->param_names[0] = in->lhs;
 
-          // signature->param_names[1] = in->lhs;
-          // String value_name = print(arena, in->lhs.string);
-          // concat(&value_name, print(arena, "_value"));
-          // signature->param_names[1].string = value_name;
-
           Term *rhs_type_rebased = rebase(arena, rhs_type, 1);
           signature->param_types[0] = synthesizeAst(temp_arena, rhs_type_rebased, token);
-          // Term *value_eq = newEquality(arena, rhs_type_rebased, newVariable(arena, &in->lhs, 0, 0), rebase(arena, rhs, 1));
-          // signature->param_types[1] = synthesizeAst(temp_arena, value_eq, token);
           signature->output_type    = synthesizeAst(temp_arena, rebase(arena, goal, 1), token);
           lambda->signature = &signature->a;
 
@@ -3568,7 +3566,6 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           com->op        = &lambda->a;
           com->arg_count = param_count;
           com->args[0]   = rhs_ast;
-          // com->args[1]   = synthesizeAst(arena, newComputation(arena, , ));
 
           recursed = true;
           out0 = buildTerm(arena, env, &com->a, goal);
@@ -4035,6 +4032,7 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
   i32     param_count;
   Token  *param_names;
   Ast   **param_types;
+  b32    *param_hidden;
   Token marking_token = peekToken();
   char begin_arg_char = '(';
   char end_arg_char   = ')';
@@ -4044,8 +4042,9 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
     param_count = getCommaSeparatedListLength(&tk_copy);
     if (noError(&tk_copy))
     {
-      param_names   = pushArray(arena, param_count, Token);
-      param_types   = pushArray(arena, param_count, Ast*);
+      allocateArray(arena, param_count, param_names);
+      allocateArray(arena, param_count, param_types);
+      allocateArray(arena, param_count, param_hidden, true);
 
       i32 parsed_param_count = 0;
       i32 typeless_run = 0;
@@ -4054,48 +4053,52 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
            !stop && hasMore();
            )
       {
-        Token param_name_token = nextToken();
-        if (equal(&param_name_token, end_arg_char))
+        if (optionalChar(end_arg_char))
           stop = true;
-
-        else if (isIdentifier(&param_name_token))
+        else
         {
           i32 param_id = parsed_param_count++;
-          param_names[param_id] = param_name_token;
-
-          if (optionalChar(':'))
+          if (optionalCategory(TC_Directive_hidden))
           {
-            if (Ast *param_type = parseExpressionToAst(arena))
+            param_hidden[param_id] = true;
+          }
+          if (requireIdentifier("expected parameter name"))
+          {
+            Token param_name_token = global_tokenizer->last_token;
+            param_names[param_id] = param_name_token;
+
+            if (optionalChar(':'))
             {
-              param_types[param_id] = param_type;
-              if (typeless_run)
+              if (Ast *param_type = parseExpressionToAst(arena))
               {
-                for (i32 offset = 1;
-                     offset <= typeless_run;
-                     offset++)
+                param_types[param_id] = param_type;
+                if (typeless_run)
                 {
-                  param_types[param_id - offset]  = param_type;
+                  for (i32 offset = 1;
+                       offset <= typeless_run;
+                       offset++)
+                  {
+                    param_types[param_id - offset]  = param_type;
+                  }
+                  typeless_run = 0;
                 }
-                typeless_run = 0;
-              }
 
-              Token delimiter = nextToken();
-              if (equal(&delimiter, end_arg_char))
-                stop = true;
-              else if (!equal(&delimiter, ','))
-                tokenError("unexpected token after parameter type");
+                Token delimiter = nextToken();
+                if (equal(&delimiter, end_arg_char))
+                  stop = true;
+                else if (!equal(&delimiter, ','))
+                  tokenError("unexpected token after parameter type");
+              }
             }
+            else if (requireChar(',', "delimit after typeless parameter name"))
+            {
+              typeless_run++;
+              typeless_token = param_name_token;
+            }
+            else
+              stop = true;
           }
-          else if (requireChar(',', "delimit after typeless parameter name"))
-          {
-            typeless_run++;
-            typeless_token = param_name_token;
-          }
-          else
-            stop = true;
         }
-        else
-          tokenError("expected parameter name");
       }
       if (noError())
       {
@@ -4111,9 +4114,10 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
   if (noError())
   {
     out = newAst(arena, ArrowAst, &marking_token);
-    out->param_count = param_count;
-    out->param_names = param_names;
-    out->param_types = param_types;
+    out->param_count   = param_count;
+    out->param_names   = param_names;
+    out->param_types   = param_types;
+    out->param_hidden = param_hidden;
     if (!is_struct)  // structs don't need return type
     {
       if (requireCategory(TC_Arrow, "syntax: (param: type, ...) -> ReturnType"))
@@ -4933,8 +4937,9 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
     {// more builtins
       Tokenizer builtin_tk = newTokenizer(print(temp_arena, "<builtin>"), 0);
       global_tokenizer = &builtin_tk;
-      builtin_tk.at = "(_A: Set, a, b: _A) -> Set";
+      builtin_tk.at = "(#hidden A: Set, a,b: A) -> Set";
       BuildTerm equal_type = parseExpressionFull(arena); 
+      assert(noError());
       builtins.equal = newTerm(arena, Builtin, equal_type.term);
       addBuiltinGlobalBinding("=", &builtins.equal->t);
 
@@ -4991,6 +4996,12 @@ int engineMain()
 
 #if 1
   if (!beginInterpreterSession(permanent_arena, "../data/test.rea"))
+    success = false;
+  resetArena(permanent_arena, true);
+#endif
+
+#if 1
+  if (!beginInterpreterSession(permanent_arena, "../data/natp.rea"))
     success = false;
   resetArena(permanent_arena, true);
 #endif
