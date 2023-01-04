@@ -154,13 +154,30 @@ isSequenced(Term *term)
   return out;
 }
 
+// todo removeme don't need this anymore now that we put the type in the constructor
 inline Arrow *
-getType(MemoryArena *arena, Constructor *ctor)
+deriveType(MemoryArena *arena, Constructor *ctor)
 {
-  Arrow *signature = copyStruct(arena, ctor->uni->ctor_signatures[ctor->id]);
-  assert(signature->output_type == 0);
-  signature->output_type = &ctor->uni->t;
-  return signature;
+  if (ctor->type)
+    return castTerm(ctor->type, Arrow);
+  else
+  {
+    Arrow *signature = copyStruct(arena, ctor->uni->ctor_signatures[ctor->id]);
+    assert(signature->output_type == 0);
+    signature->output_type = &ctor->uni->t;
+    ctor->type = &signature->t;
+    return signature;
+  }
+}
+
+inline Constructor *
+newConstructor(MemoryArena *arena, Union *uni, i32 id)
+{
+  Constructor *ctor = newTerm(arena, Constructor, 0);
+  ctor->uni = uni;
+  ctor->id  = id;
+  deriveType(arena, ctor);
+  return ctor;
 }
 
 // todo this is a massive waste of time, maybe we can try using the data tree
@@ -169,10 +186,8 @@ inline Composite *
 makeFakeRecord(MemoryArena *arena, Term *parent, DataTree *tree)
 {  
   Composite *record = 0;
-  Constructor *ctor = newTerm(arena, Constructor, 0);
-  ctor->uni = tree->uni;  // todo need to rebase the union, no way this is correct
-  ctor->id  = tree->ctor_id;
-  Arrow *ctor_sig = getType(temp_arena, ctor);
+  Constructor *ctor = newConstructor(arena, tree->uni, tree->ctor_id);  // todo need to rebase the union, no way this is correct
+  Arrow *ctor_sig = getType(ctor);
   i32 param_count = ctor_sig->param_count;
   record = newTerm(arena, Composite, 0);
   record->op        = &ctor->t;
@@ -245,15 +260,6 @@ printDataMap(MemoryArena *buffer, Typer *env)
   }
 }
 
-inline Constructor *
-makeConstructor(MemoryArena *arena, Union *uni, i32 id)
-{
-  Constructor *ctor = newTerm(arena, Constructor, 0);
-  ctor->uni = uni;
-  ctor->id  = id;
-  return ctor;
-}
-
 // todo This is an even bigger waste of time, the worst thing is I don't know
 // how to get the type of a struct, does anybody know? Pretty please?
 inline Composite *
@@ -262,7 +268,7 @@ makeShallowRecord(MemoryArena *arena, Term *parent, Union *uni, i32 ctor_id)
   Composite *record = newTerm(arena, Composite, 0);
   Arrow *ctor_sig = uni->ctor_signatures[ctor_id];
   i32 param_count = ctor_sig->param_count;
-  record->op        = &makeConstructor(arena, uni, ctor_id)->t;  // todo you can't use "uni"
+  record->op        = &newConstructor(arena, uni, ctor_id)->t;  // todo you can't use "uni"
   record->arg_count = param_count;
   record->args      = pushArray(arena, param_count, Term *);
   for (i32 field_id=0; field_id < param_count; field_id++)
@@ -503,11 +509,11 @@ getConstructor(Typer *env, Term *in0)
     if (Union *uni = castTerm(getType(temp_arena, env, in0), Union))
     {
       if (uni->ctor_count == 1)
-        out = *makeConstructor(temp_arena, uni, 0);
+        out = *newConstructor(temp_arena, uni, 0);
       else
       {
         if (DataTree *tree = getDataTree(env, in0))
-          out = *makeConstructor(temp_arena, tree->uni, tree->ctor_id);
+          out = *newConstructor(temp_arena, tree->uni, tree->ctor_id);
       }
     }
   }
@@ -515,7 +521,7 @@ getConstructor(Typer *env, Term *in0)
 }
 
 inline Term *
-getType(MemoryArena *arena, Typer *env, Term *in0, b32 write_back)
+deriveType(MemoryArena *arena, Typer *env, Term *in0)
 {
   i32 UNUSED_VAR serial = global_debug_serial++;
   Term *out0 = 0;
@@ -546,7 +552,7 @@ getType(MemoryArena *arena, Typer *env, Term *in0, b32 write_back)
           out0 = &ctor->uni->t;
         else
         {
-          Term *op_type0 = getType(arena, env, in->op);
+          Term *op_type0 = deriveType(arena, env, in->op);
           Arrow *op_type = castTerm(op_type0, Arrow);
           out0 = evaluate(arena, in->args, op_type->output_type);
         }
@@ -577,7 +583,7 @@ getType(MemoryArena *arena, Typer *env, Term *in0, b32 write_back)
         if ((record = castTerm(in->record, Composite)))
         {
           if (Constructor *ctor = castTerm(record->op, Constructor))
-            signature = getType(temp_arena, ctor);
+            signature = getType(ctor);
           else
             record = 0;  // back out since it's not an actual record.
         }
@@ -598,14 +604,14 @@ getType(MemoryArena *arena, Typer *env, Term *in0, b32 write_back)
       case Term_Rewrite:
       {
         Rewrite *in = castTerm(in0, Rewrite);
-        auto [lhs, rhs] = getEqualitySides(getType(arena, env, in->eq_proof));
+        auto [lhs, rhs] = getEqualitySides(deriveType(arena, env, in->eq_proof));
         Term *rewrite_to  = in->right_to_left ? rhs : lhs;
         out0 = rewriteTerm(arena, rewrite_to, in->path, getType(arena, env, in->body));
       } break;
 
       case Term_Constructor:
       {
-        out0 = &getType(arena, castTerm(in0, Constructor))->t;
+        out0 = &deriveType(arena, castTerm(in0, Constructor))->t;
       } break;
 
       default:
@@ -615,10 +621,7 @@ getType(MemoryArena *arena, Typer *env, Term *in0, b32 write_back)
       }
     }
 
-    if (write_back)
-    {
-      in0->type = out0;
-    }
+    in0->type = out0;
   }
   assert(out0);
   return out0;
@@ -627,14 +630,25 @@ getType(MemoryArena *arena, Typer *env, Term *in0, b32 write_back)
 forward_declare inline Term *
 getType(MemoryArena *arena, Typer *env, Term *in0)
 {
-  return getType(arena, env, in0, false);
+  return deriveType(arena, env, in0);
+}
+
+forward_declare inline Arrow *
+getType(Constructor *ctor)
+{
+  return castTerm(ctor->type, Arrow);
 }
 
 forward_declare inline Term *
-getTypeNoEnv(MemoryArena *arena, Term *in0)
+getType(Term *in0)
 {
-  Typer env = {};
-  return getType(arena, &env, in0);
+  return in0->type;
+}
+
+forward_declare inline Term *
+getTypeGlobal(Term *in0)
+{
+  return in0->type;
 }
 
 inline void setType(Term *term, Term *type) {term->type = type;}
@@ -869,7 +883,7 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
 
     if (in->op && in->op->cat != Term_Variable)
     {
-      op_signature = castTerm((getTypeNoEnv(temp_arena, in->op)), Arrow);
+      op_signature = castTerm((getTypeGlobal(in->op)), Arrow);
       assert(op_signature);
       if (Token *global_name = in->op->global_name)
         precedence = precedenceOf(global_name->string);
@@ -1312,7 +1326,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
     if (checkFlag(opt.flags, PrintFlag_PrintType) && !skip_print_type)
     {
       print(buffer, ": ");
-      print(buffer, getTypeNoEnv(temp_arena, in0), new_opt);
+      print(buffer, getTypeGlobal(in0), new_opt);
     }
   }
   else
@@ -2483,14 +2497,14 @@ getExplicitParamCount(Arrow *in)
 }
 
 inline b32
-matchType(Term *actual, Term *expected)
+matchType(Term *actual, Term *goal)
 {
   b32 out = false;
-  if (expected->cat == Term_Hole)
+  if (goal->cat == Term_Hole)
     out = true;
   else
   {
-    if (equal(actual, expected))
+    if (equal(actual, goal))
       out = true;
   }
   return out;
@@ -2662,7 +2676,7 @@ getFunctionOverloads(Typer *env, Identifier *ident, Term *output_type_goal)
       for (int slot_id=0; slot_id < slot->count; slot_id++)
       {
         Term *item = slot->items[slot_id];
-        if (Arrow *signature = castTerm(getTypeNoEnv(temp_arena, item), Arrow))
+        if (Arrow *signature = castTerm(getTypeGlobal(item), Arrow))
         {
           b32 output_type_mismatch = false;
           if (!unify(env, signature, output_type_goal))
@@ -2981,7 +2995,7 @@ buildCtor(MemoryArena *arena, CtorAst *in, Term *output_type)
   if (Union *uni = castTerm(output_type, Union))
   {
     if (in->ctor_id < uni->ctor_count)
-      out = makeConstructor(arena, uni, in->ctor_id);
+      out = newConstructor(arena, uni, in->ctor_id);
     else
       parseError(&in->a, "union only has %d constructors", uni->ctor_count);
   }
@@ -3003,7 +3017,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
   i32 serial = global_debug_serial++;
   BuildTerm out0 = {};
   assert(goal);
-  b32 should_check_type = (goal != holev);
+  b32 should_check_type = true;
   b32 recursed = false;
 
   switch (in0->cat)
@@ -3063,7 +3077,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
             attach("name", name);
             attach("expected_type", goal);
             if (globals->count == 1)
-              attach("actual_type", getTypeNoEnv(temp_arena, globals->items[0]));
+              attach("actual_type", getTypeGlobal(globals->items[0]));
           }
         }
 
@@ -3293,7 +3307,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         if (ctor.uni)
         {
           out->record = build_record.term;
-          Arrow *op_type = getType(temp_arena, &ctor);
+          Arrow *op_type = getType(&ctor);
           i32 param_count = op_type->param_count;
           b32 valid_param_name = false;
           for (i32 param_id=0; param_id < param_count; param_id++)
@@ -3326,7 +3340,6 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
     case AC_Lambda:
     {
       Lambda   *in  = castAst(in0, Lambda);
-      should_check_type = false;
       Term *type = goal;
       if (in->signature)
       {
@@ -3688,7 +3701,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
             attach("type", eq);
           else
           {
-            i32 param_count = getType(temp_arena, ctor)->param_count;
+            i32 param_count = castTerm(ctor->type, Arrow)->param_count;
             if (in->arg_id < param_count)
             {
               for (DestructList *destructs = global_state.builtin_destructs;
@@ -3768,13 +3781,13 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 
   if (noError())
   {// typecheck if needed
+    Term *actual = deriveType(arena, env, out0.term);
     if (should_check_type && !recursed)
     {
-      Term *type = getType(arena, env, out0.term, true);
-      if (!matchType(type, goal))
+      if (!matchType(actual, goal))
       {
         parseError(in0, "actual type differs from expected type");
-        attach("got", type);
+        attach("got", actual);
         attach("serial", serial);
       }
     }
@@ -4330,6 +4343,8 @@ buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
     {
       Arrow *signature = castTerm(build_type.term, Arrow);
       uni->ctor_signatures[ctor_id] = signature;
+      deriveType(arena, ctor);
+
       if (global_name)
       {
         if (signature->param_count > 0)
