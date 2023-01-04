@@ -15,7 +15,7 @@ char * print(MemoryArena * buffer, Ast * in0);
 char * print(MemoryArena * buffer, Term * in0, PrintOptions opt);
 char * print(MemoryArena * buffer, Term * in0);
 char * print(MemoryArena * buffer, void * in0, b32 is_absolute, PrintOptions opt);
-Scope * extendScope(Scope * outer, Arrow * signature);
+Scope * newScope(Scope * outer, Arrow * signature);
 b32 equal(Term * lhs, Term * rhs);
 Term * rebaseMain(MemoryArena * arena, Term * in0, i32 delta, i32 offset);
 Term * rebase(MemoryArena * arena, Term * in0, i32 delta);

@@ -507,8 +507,8 @@ getConstructor(Typer *env, Term *in0)
   return out;
 }
 
-forward_declare inline Term *
-getType(MemoryArena *arena, Typer *env, Term *in0)
+inline Term *
+getType(MemoryArena *arena, Typer *env, Term *in0, b32 write_back)
 {
   i32 UNUSED_VAR serial = global_debug_serial++;
   Term *out0 = 0;
@@ -607,9 +607,20 @@ getType(MemoryArena *arena, Typer *env, Term *in0)
         todoIncomplete;
       }
     }
+
+    if (write_back)
+    {
+      in0->type = out0;
+    }
   }
   assert(out0);
   return out0;
+}
+
+forward_declare inline Term *
+getType(MemoryArena *arena, Typer *env, Term *in0)
+{
+  return getType(arena, env, in0, false);
 }
 
 forward_declare inline Term *
@@ -2465,14 +2476,13 @@ getExplicitParamCount(Arrow *in)
 }
 
 inline b32
-matchType(Typer *env, Term *term, Term *expected)
+matchType(Term *actual, Term *expected)
 {
   b32 out = false;
   if (expected->cat == Term_Hole)
     out = true;
   else
   {
-    Term *actual = getType(temp_arena, env, term);
     if (equal(actual, expected))
       out = true;
   }
@@ -3034,7 +3044,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           for (i32 value_id = 0; value_id < globals->count; value_id++)
           {
             Term *slot_value = globals->items[value_id];
-            if (matchType(env, slot_value, goal))
+            if (matchType(getType(arena, env, slot_value), goal))
             {
               if (value)
               {// ambiguous
@@ -3739,13 +3749,17 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
     invalidDefaultCase;
   }
 
-  if (noError() && should_check_type && !recursed)
+  if (noError())
   {// typecheck if needed
-    if (!matchType(env, out0.term, goal))
+    if (should_check_type && !recursed)
     {
-      parseError(in0, "actual type differs from expected type");
-      attach("got", getType(temp_arena, env, out0.term));
-      attach("serial", serial);
+      Term *type = getType(arena, env, out0.term, true);
+      if (!matchType(type, goal))
+      {
+        parseError(in0, "actual type differs from expected type");
+        attach("got", type);
+        attach("serial", serial);
+      }
     }
   }
 
@@ -5070,6 +5084,12 @@ int engineMain()
 
 #if 1
   if (!beginInterpreterSession(permanent_arena, "../data/test.rea"))
+    success = false;
+  resetArena(permanent_arena, true);
+#endif
+
+#if 1
+  if (!beginInterpreterSession(permanent_arena, "../data/natp-experimental.rea"))
     success = false;
   resetArena(permanent_arena, true);
 #endif

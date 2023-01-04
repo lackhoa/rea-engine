@@ -201,6 +201,4 @@ testFillingHole :: (xdebug: Nat, x_positive: xdebug!=0, P: xdebug=0) -> False
   ++: norm P; P}
  }
 
-#debug
 check id(False) : ((f: False) -> False)
-#debug off
