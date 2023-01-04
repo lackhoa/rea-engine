@@ -55,22 +55,33 @@ fillHole(MemoryArena *arena, Typer *env, Term *goal)
 }
 
 inline Term *
-newVariable(MemoryArena *arena, Token *name, i32 delta, i32 index)
+newVariable(MemoryArena *arena, String name, i32 delta, i32 id)
 {
   Variable *out = newTerm(arena, Variable, 0);
-  out->name  = name->string;
+  out->name  = name;
   out->delta = delta;
-  out->id = index;
+  out->id    = id;
   return &out->t;
 }
 
 inline Term *
-newComposite(MemoryArena *arena, Term *op, i32 arg_count, Term **args)
+newComposite(MemoryArena *arena, Typer *env, Term *op, i32 arg_count, Term **args)
 {
+  // todo typecheck the arguments too maybe?
+  Term *type = 0;
+  if (Constructor *ctor = castTerm(op, Constructor))
+    type = &ctor->uni->t;
+  else
+  {
+    Term  *op_type0 = computeType(arena, env, op);
+    Arrow *op_type  = castTerm(op_type0, Arrow);
+    type = evaluate(arena, args, op_type->output_type);
+  }
   Composite *out = newTerm(arena, Composite, 0);
   out->op        = op;
   out->arg_count = arg_count;
   out->args      = args;
+  out->type      = type;
   return &out->t;
 }
 
@@ -197,7 +208,7 @@ makeFakeRecord(MemoryArena *arena, Term *parent, DataTree *tree)
   record->args      = pushArray(arena, param_count, Term*);
   for (i32 field_id=0; field_id < param_count; field_id++)
   {
-    String field_name = ctor_sig->param_names[field_id].string;
+    String field_name = ctor_sig->param_names[field_id];
     Accessor *accessor = newTerm(arena, Accessor, 0);
     accessor->record     = parent;
     accessor->field_id   = field_id;
@@ -219,7 +230,7 @@ getVarNameInScope(Typer *env, DataMap *map)
   {
     if (scope->depth == map->depth)
     {
-      out = scope->first->param_names[map->index].string;
+      out = scope->first->param_names[map->index];
       break;
     }
   }
@@ -275,7 +286,7 @@ makeShallowRecord(MemoryArena *arena, Term *parent, Union *uni, i32 ctor_id)
   record->args      = pushArray(arena, param_count, Term *);
   for (i32 field_id=0; field_id < param_count; field_id++)
   {
-    String field_name = ctor_sig->param_names[field_id].string;
+    String field_name = ctor_sig->param_names[field_id];
     Accessor *accessor = newTerm(arena, Accessor, 0);
     accessor->record     = parent;
     accessor->field_id   = field_id;
@@ -346,7 +357,8 @@ initDataTree(MemoryArena *arena, DataTree *tree, Union *uni, i32 ctor_id)
   tree->members      = pushArray(arena, ctor_arg_count, DataTree*, true);
 }
 
-inline i32 getScopeDepth(Typer *env) {return (env && env->scope) ? env->scope->depth : 0;}
+inline i32 getScopeDepth(Scope *scope) {return scope ? scope->depth : 0;}
+inline i32 getScopeDepth(Typer *env)   {return (env && env->scope) ? env->scope->depth : 0;}
 
 internal AddDataTree
 getOrAddDataTree(MemoryArena *arena, Typer *env, Term *in0, i32 ctor_id)
@@ -522,8 +534,8 @@ getConstructor(Typer *env, Term *in0)
   return out;
 }
 
-inline Term *
-deriveType(MemoryArena *arena, Typer *env, Term *in0)
+forward_declare inline Term *
+computeType(MemoryArena *arena, Typer *env, Term *in0)
 {
   i32 UNUSED_VAR serial = global_debug_serial++;
   Term *out0 = 0;
@@ -540,7 +552,7 @@ deriveType(MemoryArena *arena, Typer *env, Term *in0)
         for (i32 id=0; id < in->delta; id++)
           scope=scope->outer;
         
-        assert(scope->depth == (env->scope->depth - in->delta));
+        assert(scope->depth == env->scope->depth - in->delta);
         out0 = scope->first->param_types[in->id];
         out0 = rebase(arena, out0, in->delta);
 
@@ -554,7 +566,7 @@ deriveType(MemoryArena *arena, Typer *env, Term *in0)
           out0 = &ctor->uni->t;
         else
         {
-          Term *op_type0 = deriveType(arena, env, in->op);
+          Term *op_type0 = computeType(arena, env, in->op);
           Arrow *op_type = castTerm(op_type0, Arrow);
           out0 = evaluate(arena, in->args, op_type->output_type);
         }
@@ -606,7 +618,7 @@ deriveType(MemoryArena *arena, Typer *env, Term *in0)
       case Term_Rewrite:
       {
         Rewrite *in = castTerm(in0, Rewrite);
-        auto [lhs, rhs] = getEqualitySides(deriveType(arena, env, in->eq_proof));
+        auto [lhs, rhs] = getEqualitySides(computeType(arena, env, in->eq_proof));
         Term *rewrite_to = in->right_to_left ? rhs : lhs;
         out0 = rewriteTerm(arena, rewrite_to, in->path, getType(arena, env, in->body));
       } break;
@@ -635,7 +647,7 @@ deriveType(MemoryArena *arena, Typer *env, Term *in0)
 forward_declare inline Term *
 getType(MemoryArena *arena, Typer *env, Term *in0)
 {
-  return deriveType(arena, env, in0);
+  return computeType(arena, env, in0);
 }
 
 forward_declare inline Arrow *
@@ -1065,7 +1077,7 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
              param_id < in->param_count;
              param_id++)
         {
-          print(buffer, in->param_names[param_id].string);
+          print(buffer, in->param_names[param_id]);
           print(buffer, ": ");
           print(buffer, in->param_types[param_id], new_opt);
           if (param_id < in->param_count-1)
@@ -1230,7 +1242,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
              param_id < in->param_count;
              param_id++)
         {
-          print(buffer, in->param_names[param_id].string);
+          print(buffer, in->param_names[param_id]);
           print(buffer, ": ");
           print(buffer, in->param_types[param_id], new_opt);
           if (param_id < in->param_count-1)
@@ -1355,7 +1367,7 @@ print(MemoryArena *buffer, Scope *scopes)
          param_id < scope->param_count;
          param_id++)
     {
-      print(buffer, scope->param_names[param_id].string);
+      print(buffer, scope->param_names[param_id]);
       print(buffer, ": ");
       print(buffer, scope->param_types[param_id], {});
       if (param_id < scope->param_count-1)
@@ -2242,9 +2254,9 @@ normalize(MemoryArena *arena, Typer *env, Term *in0)
 }
 
 inline void
-addLocalBinding(Typer *env, Token *key, i32 var_id)
+addLocalBinding(Typer *env, String key, i32 var_id)
 {
-  auto lookup = lookupCurrentFrame(env->bindings, key->string, true);
+  auto lookup = lookupCurrentFrame(env->bindings, key, true);
   lookup.slot->var_id = var_id;
 }
 
@@ -2258,7 +2270,7 @@ introduceSignature(Typer *env, Arrow *signature, b32 add_bindings)
     extendBindings(temp_arena, env);
     for (i32 index=0; index < param_count; index++)
     {
-      Token *name = signature->param_names + index;
+      String name = signature->param_names[index];
       addLocalBinding(env, name, index);
     }
   }
@@ -3288,7 +3300,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           if (param_type)
           {
             out->param_types[index] = param_type.term;
-            Token *name = in->param_names+index;
+            String name = in->param_names[index];
             addLocalBinding(env, name, index);
           }
         }
@@ -3322,7 +3334,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           b32 valid_param_name = false;
           for (i32 param_id=0; param_id < param_count; param_id++)
           {// figure out the param id
-            if (equal(in->field_name.string, op_type->param_names[param_id].string))
+            if (equal(in->field_name.string, op_type->param_names[param_id]))
             {
               out->field_id  = param_id;
               valid_param_name = true;
@@ -3638,7 +3650,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           allocateArray(temp_arena, param_count, signature->param_names);
           allocateArray(temp_arena, param_count, signature->param_types);
           signature->param_count    = param_count;
-          signature->param_names[0] = newToken(in->lhs);  // probably fine since we don't include this token anywhere, we only need the name
+          signature->param_names[0] = in->lhs;
 
           Term *rhs_type_rebased = rebase(arena, rhs_type, 1);
           signature->param_types[0] = synthesizeAst(temp_arena, rhs_type_rebased, token);
@@ -3770,7 +3782,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
             if (equal(type, proposition.term))
             {
               Variable *var = newTerm(arena, Variable, 0);
-              var->name  = arrow->param_names[param_id].string;
+              var->name  = arrow->param_names[param_id];
               var->delta = delta;
               var->id    = param_id;
               out0.term = &var->t;
@@ -3790,7 +3802,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 
   if (noError())
   {// typecheck if needed
-    Term *actual = deriveType(arena, env, out0.term);
+    Term *actual = computeType(arena, env, out0.term);
     if (should_check_type && !recursed)
     {
       if (!matchType(actual, goal))
@@ -3929,27 +3941,6 @@ buildFork(MemoryArena *arena, Typer *env, ForkAst *in, Term *goal)
   NULL_WHEN_ERROR(out);
   return &out->t;
 }
-
-#if 0
-forward_declare inline void
-doubleCheckType(Term *in0)
-{
-  switch (in0->cat)
-  {
-    case Term_Rewrite:
-    {
-      Rewrite *in = castTerm(in0, Rewrite);
-      auto [lhs, rhs] = getEqualitySides(in->eq_proof->type);
-      Term *rewrite_to = in->right_to_left ? rhs : lhs;
-      Term *expected_type = rewriteTerm(temp_arena, rewrite_to, in->path, in->body->type);
-      assert(equal(expected_type, in0->type));
-    } break;
-
-    default:
-    {todoIncomplete;} break;
-  }
-}
-#endif
 
 forward_declare inline Term *
 newRewrite(MemoryArena *arena, Term *eq_proof, Term *body, TreePath *path, b32 right_to_left)
@@ -4153,10 +4144,10 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
 {
   ArrowAst *out = 0;
 
-  i32     param_count;
-  Token  *param_names;
-  Ast   **param_types;
-  u32    *param_flags;
+  i32      param_count;
+  String  *param_names;
+  Ast    **param_types;
+  u32     *param_flags;
   Token marking_token = peekToken();
   char begin_arg_char = '(';
   char end_arg_char   = ')';
@@ -4189,7 +4180,7 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
           if (requireIdentifier("expected parameter name"))
           {
             Token param_name_token = global_tokenizer->last_token;
-            param_names[param_id] = param_name_token;
+            param_names[param_id] = param_name_token.string;
 
             if (optionalChar(':'))
             {
@@ -4362,21 +4353,21 @@ buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
         {
           addGlobalBinding(ctor_name, &ctor->t);
 
-          // todo #cleanup This is a "destruct" builtin, which deconstructs an equality for us.
+          // todo #cleanup This powers the "destruct" syntax.
           i32 ctor_arg_count      = signature->param_count;
           i32 compare_param_count = ctor_arg_count*2 + 1;
-          Token* param_names = pushArray(arena, compare_param_count, Token);
-          Term** param_types = pushArray(arena, compare_param_count, Term*);
+          String  *param_names = pushArray(arena, compare_param_count, String);
+          Term   **param_types = pushArray(arena, compare_param_count, Term*);
           for (i32 group=0; group <= 1; group++)
           {
             for (i32 arg_id=0; arg_id < ctor_arg_count; arg_id++)
             {
               String name = print(arena, "_");
-              concat(&name, print(arena, signature->param_names[arg_id].string));
+              concat(&name, print(arena, signature->param_names[arg_id]));
               concat(&name, print(arena, "%d", group));
               i32 offset   = (group == 0) ? 0 : ctor_arg_count;
               i32 param_id = offset + arg_id;
-              param_names[param_id] = newToken(name);
+              param_names[param_id] = name;
               param_types[param_id] = signature->param_types[arg_id];
             }
           }
@@ -4386,12 +4377,12 @@ buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
           {
             i32 lhs_param_id = arg_id;
             i32 rhs_param_id = ctor_arg_count+arg_id;
-            lhs_args[arg_id] = newVariable(arena, param_names+lhs_param_id, 0, lhs_param_id);
-            rhs_args[arg_id] = newVariable(arena, param_names+rhs_param_id, 0, rhs_param_id);
+            lhs_args[arg_id] = newVariable(arena, param_names[lhs_param_id], 0, lhs_param_id);
+            rhs_args[arg_id] = newVariable(arena, param_names[rhs_param_id], 0, rhs_param_id);
           }
-          Term *lhs = newComposite(arena, &ctor->t, ctor_arg_count, lhs_args);
-          Term *rhs = newComposite(arena, &ctor->t, ctor_arg_count, rhs_args);
-          param_names[compare_param_count-1] = newToken(toString("P"));
+          Term *lhs = newComposite(arena, env, &ctor->t, ctor_arg_count, lhs_args);
+          Term *rhs = newComposite(arena, env, &ctor->t, ctor_arg_count, rhs_args);
+          param_names[compare_param_count-1] = toString("P");
           param_types[compare_param_count-1] = newEquality(arena, &uni->t, lhs, rhs);
 
           DestructList *destruct_list = pushStruct(global_state.arena, DestructList);

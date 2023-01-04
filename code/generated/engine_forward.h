@@ -1,6 +1,7 @@
 Token nextToken(Tokenizer * tk);
 Token peekToken(Tokenizer * tk);
 Term * newComputation(MemoryArena * arena, Term * lhs, Term * rhs);
+Term * computeType(MemoryArena * arena, Typer * env, Term * in0);
 Term * getType(MemoryArena * arena, Typer * env, Term * in0);
 Arrow * getType(Constructor * ctor);
 Term * getType(Term * in0);
