@@ -45,6 +45,8 @@ fillHole(MemoryArena *arena, Typer *env, Term *goal)
       Term *rhs_norm = normalize(temp_arena, env, eq->args[2]);
       if (equal(lhs_norm, rhs_norm))
       {
+        getType(arena, env, eq->args[1]);
+        getType(arena, env, eq->args[2]);
         out = newComputation(arena, eq->args[1], eq->args[2]);
       }
     }
@@ -88,7 +90,9 @@ newEquality(MemoryArena *arena, Term *type, Term *lhs, Term *rhs)
 inline Term *
 newEquality(MemoryArena *arena, Typer *env, Term *lhs, Term *rhs)
 {
-  return newEquality(arena, getType(arena, env, lhs), lhs, rhs);
+  Term *lhs_type = getType(lhs);
+  assert(lhs_type);
+  return newEquality(arena, lhs_type, lhs, rhs);
 }
 
 // todo #typesafe error out when the sides don't match
@@ -164,7 +168,7 @@ deriveType(MemoryArena *arena, Constructor *ctor)
   {
     Arrow *signature = copyStruct(arena, ctor->uni->ctor_signatures[ctor->id]);
     assert(signature->output_type == 0);
-    signature->output_type = &ctor->uni->t;
+    signature->output_type = rebase(arena, &ctor->uni->t, 1);  // tricky part
     ctor->type = &signature->t;
     return signature;
   }
@@ -362,7 +366,7 @@ getOrAddDataTree(MemoryArena *arena, Typer *env, Term *in0, i32 ctor_id)
   Union *root_union = 0;
   for (;!stop;)
   {
-    Union *uni = castTerm(getType(temp_arena, env, iter0), Union);
+    Union *uni = castTerm(getType(iter0), Union);
     switch (iter0->cat)
     {
       case Term_Variable:
@@ -548,9 +552,9 @@ deriveType(MemoryArena *arena, Typer *env, Term *in0)
       case Term_Composite:
       {
         Composite *in = castTerm(in0, Composite);
-        if (Constructor *ctor = castTerm(in->op, Constructor))
-          out0 = &ctor->uni->t;
-        else
+        // if (Constructor *ctor = castTerm(in->op, Constructor))
+        //   out0 = &ctor->uni->t;
+        // else
         {
           Term *op_type0 = deriveType(arena, env, in->op);
           Arrow *op_type = castTerm(op_type0, Arrow);
@@ -605,7 +609,7 @@ deriveType(MemoryArena *arena, Typer *env, Term *in0)
       {
         Rewrite *in = castTerm(in0, Rewrite);
         auto [lhs, rhs] = getEqualitySides(deriveType(arena, env, in->eq_proof));
-        Term *rewrite_to  = in->right_to_left ? rhs : lhs;
+        Term *rewrite_to = in->right_to_left ? rhs : lhs;
         out0 = rewriteTerm(arena, rewrite_to, in->path, getType(arena, env, in->body));
       } break;
 
@@ -627,6 +631,8 @@ deriveType(MemoryArena *arena, Typer *env, Term *in0)
   return out0;
 }
 
+// todo this function is just a stub for direct type retrieval, until we can
+// transition fully to all-terms-have-types kinda deal thing.
 forward_declare inline Term *
 getType(MemoryArena *arena, Typer *env, Term *in0)
 {
@@ -908,7 +914,8 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
     printed_args = pushArray(temp_arena, op_signature->param_count, void*);
     for (i32 param_id = 0; param_id < op_signature->param_count; param_id++)
     {
-      if (global_debug_mode || !isHiddenParameter(op_signature, param_id))
+      b32 print_all_arguments = global_debug_mode && DEBUG_print_all_arguments;
+      if (print_all_arguments || !isHiddenParameter(op_signature, param_id))
         printed_args[arg_count++] = raw_args[param_id];
     }
   }
@@ -1178,7 +1185,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
         {
           if (in->ctor_count)
           {
-            print(buffer, " {");
+            print(buffer, "union {");
             unsetFlag(&new_opt.flags, PrintFlag_Detailed);
             for (i32 ctor_id = 0; ctor_id < in->ctor_count; ctor_id++)
             {
@@ -1448,7 +1455,7 @@ isGround(Term *in0)
 }
 
 // todo make this an inline mutation
-forward_declare internal Term *
+internal Term *
 rebaseMain(MemoryArena *arena, Term *in0, i32 delta, i32 offset)
 {
   assert(delta >= 0);
@@ -1610,7 +1617,7 @@ apply(MemoryArena *arena, Term *op, Term **args)
   return out0;
 }
 
-forward_declare internal Term *
+internal Term *
 evaluateMain(EvaluationContext *ctx, Term *in0)
 {
   Term *out0 = 0;
@@ -2117,10 +2124,9 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
           out0 = app;
         else if (progressed)
         {
-          Composite *out = newTerm(arena, Composite, 0);
-          out->arg_count = in->arg_count;
-          out->op        = norm_op;
-          out->args      = norm_args;
+          Composite *out = copyStruct(arena, in);
+          out->op   = norm_op;
+          out->args = norm_args;
           out0 = &out->t;
         }
       } break;
@@ -2989,7 +2995,7 @@ copyArrow(MemoryArena *arena, Arrow *in)
 }
 
 inline Constructor *
-buildCtor(MemoryArena *arena, CtorAst *in, Term *output_type)
+buildCtorAst(MemoryArena *arena, CtorAst *in, Term *output_type)
 {
   Constructor *out = 0;
   if (Union *uni = castTerm(output_type, Union))
@@ -3109,7 +3115,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 
       if (CtorAst *op_ctor = castAst(in->op, CtorAst))
       {
-        if (Constructor *ctor = buildCtor(arena, op_ctor, goal))
+        if (Constructor *ctor = buildCtorAst(arena, op_ctor, goal))
         {
           should_build_op = false;
           allocateArray(temp_arena, 1, op_list.items);
@@ -4331,11 +4337,13 @@ buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
   // note: bind the type first to support recursive data structure.
   if (global_name)
     addGlobalBinding(global_name, &uni->t);
+  Constructor **constructors = pushArray(temp_arena, in->ctor_count, Constructor *);
   for (i32 ctor_id=0; noError() && (ctor_id < in->ctor_count); ctor_id++)
   {
     Constructor *ctor = newTerm(arena, Constructor, 0);
     ctor->uni = uni;
     ctor->id  = ctor_id;
+    constructors[ctor_id] = ctor;
 
     Token *ctor_name = in->ctor_names + ctor_id;
     uni->ctor_names[ctor_id] = ctor_name->string;
@@ -4343,7 +4351,6 @@ buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
     {
       Arrow *signature = castTerm(build_type.term, Arrow);
       uni->ctor_signatures[ctor_id] = signature;
-      deriveType(arena, ctor);
 
       if (global_name)
       {
@@ -4410,6 +4417,13 @@ buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
       }
     }
   }
+
+  for (i32 ctor_id=0; (ctor_id < in->ctor_count); ctor_id++)
+  {
+    // derive type of constructors later since we need the union to be fully-formed.
+    deriveType(arena, constructors[ctor_id]);
+  }
+
   NULL_WHEN_ERROR(uni);
   return uni;
 }

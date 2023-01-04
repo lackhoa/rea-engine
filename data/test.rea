@@ -201,4 +201,10 @@ testFillingHole :: (xdebug: Nat, x_positive: xdebug!=0, P: xdebug=0) -> False
   ++: norm P; P}
  }
 
-check id(False) : ((f: False) -> False)
+check id(False) : ((f: False) -> False);
+
+unionRebasing :: (a: Nat) -> union {eq(p: a = a)}
+{
+ prove(a=a) {}
+ ctor[0](seek(a=a))
+ }
