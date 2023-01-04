@@ -88,7 +88,7 @@ newEquality(MemoryArena *arena, Term *type, Term *lhs, Term *rhs)
 }
 
 inline Term *
-newEquality(MemoryArena *arena, Typer *env, Term *lhs, Term *rhs)
+newEquality(MemoryArena *arena, Term *lhs, Term *rhs)
 {
   Term *lhs_type = getType(lhs);
   assert(lhs_type);
@@ -160,15 +160,13 @@ isSequenced(Term *term)
 
 // todo removeme don't need this anymore now that we put the type in the constructor
 inline Arrow *
-deriveType(MemoryArena *arena, Constructor *ctor)
+deriveType(Constructor *ctor)
 {
   if (ctor->type)
     return castTerm(ctor->type, Arrow);
   else
   {
-    Arrow *signature = copyStruct(arena, ctor->uni->ctor_signatures[ctor->id]);
-    assert(signature->output_type == 0);
-    signature->output_type = rebase(arena, &ctor->uni->t, 1);  // tricky part
+    Arrow *signature = ctor->uni->ctor_signatures[ctor->id];
     ctor->type = &signature->t;
     return signature;
   }
@@ -180,7 +178,7 @@ newConstructor(MemoryArena *arena, Union *uni, i32 id)
   Constructor *ctor = newTerm(arena, Constructor, 0);
   ctor->uni = uni;
   ctor->id  = id;
-  deriveType(arena, ctor);
+  deriveType(ctor);
   return ctor;
 }
 
@@ -552,9 +550,9 @@ deriveType(MemoryArena *arena, Typer *env, Term *in0)
       case Term_Composite:
       {
         Composite *in = castTerm(in0, Composite);
-        // if (Constructor *ctor = castTerm(in->op, Constructor))
-        //   out0 = &ctor->uni->t;
-        // else
+        if (Constructor *ctor = castTerm(in->op, Constructor))
+          out0 = &ctor->uni->t;
+        else
         {
           Term *op_type0 = deriveType(arena, env, in->op);
           Arrow *op_type = castTerm(op_type0, Arrow);
@@ -575,7 +573,7 @@ deriveType(MemoryArena *arena, Typer *env, Term *in0)
       case Term_Computation:
       {
         Computation *in = castTerm(in0, Computation);
-        out0 = newEquality(arena, env, in->lhs, in->rhs);
+        out0 = newEquality(arena, in->lhs, in->rhs);
       } break;
 
       case Term_Accessor:
@@ -615,7 +613,8 @@ deriveType(MemoryArena *arena, Typer *env, Term *in0)
 
       case Term_Constructor:
       {
-        out0 = &deriveType(arena, castTerm(in0, Constructor))->t;
+        Constructor *ctor = castTerm(in0, Constructor);
+        out0 = &deriveType(ctor)->t;
       } break;
 
       default:
@@ -645,6 +644,7 @@ getType(Constructor *ctor)
   return castTerm(ctor->type, Arrow);
 }
 
+// NOTE: this is how I want to aim at for the type architecture: just one pointer deref.
 forward_declare inline Term *
 getType(Term *in0)
 {
@@ -2517,24 +2517,24 @@ matchType(Term *actual, Term *goal)
 }
 
 inline Stack *
-newStack(Stack *outer, i32 count)
+newStack(MemoryArena *arena, Stack *outer, i32 count)
 {
-  Stack *stack = pushStruct(temp_arena, Stack);
+  Stack *stack = pushStruct(arena, Stack);
   stack->outer = outer;
-  allocateArray(temp_arena, count, stack->items, true);
+  allocateArray(arena, count, stack->items, true);
   return stack;
 }
 
 // todo We don't need "env", we only need the scope.
 internal b32
-unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *rhs0)
+unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *goal0)
 {
   b32 success = false;
 
   i32 UNUSED_VAR serial = global_debug_serial++;
 #if DEBUG_LOG_unify
   if (global_debug_mode)
-  {debugIndent(); DUMP("unify(", serial, ") ", lhs0, " with ", rhs0, "\n");}
+  {debugIndent(); DUMP("unify(", serial, ") ", lhs0, " with ", goal0, "\n");}
 #endif
 
   switch (lhs0->cat)
@@ -2549,7 +2549,7 @@ unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *rhs0)
       }
       if (Term *replaced = lookup_stack->items[lhs->id])
       {
-        if (equal(replaced, rhs0))
+        if (equal(replaced, goal0))
           success = true;
       }
       else
@@ -2559,14 +2559,14 @@ unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *rhs0)
         {
           lhs_scope = lhs_scope->outer;
         }
-        // todo the act of fetching lhs_type and rhs_type should be the same!!!
+        // todo the act of fetching lhs_type and goal_type should be the same!!!
         Term *lhs_type = lhs_scope->first->param_types[lhs->id];
         lhs_type = rebase(temp_arena, lhs_type, lhs->delta);
-        Term *rhs_type = getType(temp_arena, env, rhs0);
-        if (unify(env, stack, lhs_scope, lhs_type, rhs_type))
+        Term *goal_type = getType(temp_arena, env, goal0);
+        if (unify(env, stack, lhs_scope, lhs_type, goal_type))
         {
           // todo potential infinite loop with "Type"
-          stack->items[lhs->id] = rhs0;
+          stack->items[lhs->id] = goal0;
           success = true;
         }
       }
@@ -2575,14 +2575,14 @@ unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *rhs0)
     case Term_Composite:
     {
       Composite *lhs = castTerm(lhs0, Composite);
-      if (Composite *rhs = castTerm(rhs0, Composite))
+      if (Composite *goal = castTerm(goal0, Composite))
       {
-        if (unify(env, stack, lhs_scope, lhs->op, rhs->op))
+        if (unify(env, stack, lhs_scope, lhs->op, goal->op))
         {
           success = true;
           for (int id=0; id < lhs->arg_count; id++)
           {
-            if (!unify(env, stack, lhs_scope, lhs->args[id], rhs->args[id]))
+            if (!unify(env, stack, lhs_scope, lhs->args[id], goal->args[id]))
             {
               success = false;
               break;
@@ -2595,18 +2595,17 @@ unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *rhs0)
     case Term_Arrow:
     {
       Arrow *lhs = castTerm(lhs0, Arrow);
-      if (Arrow *rhs = castTerm(rhs0, Arrow))
+      if (Arrow *goal = castTerm(goal0, Arrow))
       {
-        if (lhs->param_count == rhs->param_count)
+        if (lhs->param_count == goal->param_count)
         {
           Scope *new_lhs_scope = newScope(lhs_scope, lhs);
-          // introduceSignature(env, rhs, false);
-          env->scope = newScope(env->scope, rhs);
+          env->scope = newScope(env->scope, goal);
           b32 failed = false;
-          Stack *new_stack = newStack(stack, lhs->param_count);
+          Stack *new_stack = newStack(temp_arena, stack, lhs->param_count);
           for (i32 id=0; id < lhs->param_count; id++)
           {
-            if (!unify(env, new_stack, new_lhs_scope, lhs->param_types[id], rhs->param_types[id]))
+            if (!unify(env, new_stack, new_lhs_scope, lhs->param_types[id], goal->param_types[id]))
             {
               failed = true;
               break;
@@ -2624,7 +2623,7 @@ unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *rhs0)
     case Term_Constructor:
     case Term_Builtin:
     {
-      success = equal(lhs0, rhs0);
+      success = equal(lhs0, goal0);
     } break;
 
     default:
@@ -2641,15 +2640,27 @@ unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *rhs0)
   return success;
 }
 
-inline Term **
-unify(Typer *env, Arrow *lhs_signature, Term *rhs)
+inline InferArgs
+inferArgs(MemoryArena *arena, Typer *env, Term *op, Term *goal)
 {
-  Term **out = 0;
-  Stack *stack = newStack(0, lhs_signature->param_count);
-  Scope *lhs_scopes = newScope(0, lhs_signature);
-  if (unify(env, stack, lhs_scopes, lhs_signature->output_type, rhs))
-    out = stack->items;
-  return out;
+  Term **args = 0;
+  b32 matches = false;
+  if (Constructor *ctor = castTerm(op, Constructor))
+  {
+    if (equal(&ctor->uni->t, goal))
+      matches = true;  // I guess we wouldn't know what the memberse are in the constructor case.
+  }
+  else if (Arrow *signature = castTerm(getType(op), Arrow))
+  {
+    Stack *stack = newStack(arena, 0, signature->param_count);
+    Scope *lhs_scopes = newScope(0, signature);
+    if (unify(env, stack, lhs_scopes, signature->output_type, goal))
+    {
+      matches = true;
+      args = stack->items;
+    }
+  }
+  return InferArgs{matches, args};
 }
 
 inline void
@@ -2682,15 +2693,8 @@ getFunctionOverloads(Typer *env, Identifier *ident, Term *output_type_goal)
       for (int slot_id=0; slot_id < slot->count; slot_id++)
       {
         Term *item = slot->items[slot_id];
-        if (Arrow *signature = castTerm(getTypeGlobal(item), Arrow))
-        {
-          b32 output_type_mismatch = false;
-          if (!unify(env, signature, output_type_goal))
-            output_type_mismatch = true;
-
-          if (!output_type_mismatch)
-            out.items[out.count++] = slot->items[slot_id];
-        }
+        if (inferArgs(temp_arena, env, item, output_type_goal).matches)
+          out.items[out.count++] = slot->items[slot_id];
       }
       if (out.count == 0)
       {
@@ -3459,11 +3463,10 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                 if (Arrow *signature = castTerm(hint_type, Arrow))
                 {
                   hint_is_valid = true;
-                  eq = newEquality(temp_arena, env, from, to);
+                  eq = newEquality(temp_arena, from, to);
                   pushArray(temp_arena, signature->param_count, Term *, true);
-                  if (Term **temp_args = unify(env, signature, eq))
+                  if (Term **temp_args = inferArgs(temp_arena, env, hint, eq).args)
                   {
-                    // todo #cleanup copyArray
                     Term **args = pushArray(arena, signature->param_count, Term *);
                     for (int id=0; id < signature->param_count; id++)
                     {
@@ -4351,6 +4354,7 @@ buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
     {
       Arrow *signature = castTerm(build_type.term, Arrow);
       uni->ctor_signatures[ctor_id] = signature;
+      ctor->type                    = &signature->t;
 
       if (global_name)
       {
@@ -4416,12 +4420,6 @@ buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
         }
       }
     }
-  }
-
-  for (i32 ctor_id=0; (ctor_id < in->ctor_count); ctor_id++)
-  {
-    // derive type of constructors later since we need the union to be fully-formed.
-    deriveType(arena, constructors[ctor_id]);
   }
 
   NULL_WHEN_ERROR(uni);

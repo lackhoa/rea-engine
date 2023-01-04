@@ -522,4 +522,6 @@ struct SeekAst {
   Ast *proposition;
 };
 
+struct InferArgs {b32 matches; Term **args;};
+
 #include "generated/engine_forward.h"
