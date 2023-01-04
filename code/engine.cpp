@@ -154,7 +154,14 @@ isSequenced(Term *term)
   return out;
 }
 
-inline Arrow * getType(Constructor *ctor) {return ctor->uni->ctor_signatures[ctor->id];}
+inline Arrow *
+getType(MemoryArena *arena, Constructor *ctor)
+{
+  Arrow *signature = copyStruct(arena, ctor->uni->ctor_signatures[ctor->id]);
+  assert(signature->output_type == 0);
+  signature->output_type = &ctor->uni->t;
+  return signature;
+}
 
 // todo this is a massive waste of time, maybe we can try using the data tree
 // directly.
@@ -165,7 +172,7 @@ makeFakeRecord(MemoryArena *arena, Term *parent, DataTree *tree)
   Constructor *ctor = newTerm(arena, Constructor, 0);
   ctor->uni = tree->uni;  // todo need to rebase the union, no way this is correct
   ctor->id  = tree->ctor_id;
-  Arrow *ctor_sig = getType(ctor);
+  Arrow *ctor_sig = getType(temp_arena, ctor);
   i32 param_count = ctor_sig->param_count;
   record = newTerm(arena, Composite, 0);
   record->op        = &ctor->t;
@@ -570,7 +577,7 @@ getType(MemoryArena *arena, Typer *env, Term *in0, b32 write_back)
         if ((record = castTerm(in->record, Composite)))
         {
           if (Constructor *ctor = castTerm(record->op, Constructor))
-            signature = getType(ctor);
+            signature = getType(temp_arena, ctor);
           else
             record = 0;  // back out since it's not an actual record.
         }
@@ -598,7 +605,7 @@ getType(MemoryArena *arena, Typer *env, Term *in0, b32 write_back)
 
       case Term_Constructor:
       {
-        out0 = &getType(castTerm(in0, Constructor))->t;
+        out0 = &getType(arena, castTerm(in0, Constructor))->t;
       } break;
 
       default:
@@ -2498,7 +2505,7 @@ newStack(Stack *outer, i32 count)
   return stack;
 }
 
-// todo We don't need "env", we only need the scope for the rhs.
+// todo We don't need "env", we only need the scope.
 internal b32
 unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *rhs0)
 {
@@ -2532,13 +2539,13 @@ unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *rhs0)
         {
           lhs_scope = lhs_scope->outer;
         }
-        // todo lhs_type and rhs_type should be the same thing!!!
+        // todo the act of fetching lhs_type and rhs_type should be the same!!!
         Term *lhs_type = lhs_scope->first->param_types[lhs->id];
         lhs_type = rebase(temp_arena, lhs_type, lhs->delta);
         Term *rhs_type = getType(temp_arena, env, rhs0);
         if (unify(env, stack, lhs_scope, lhs_type, rhs_type))
         {
-          // todo potential infinitely loop with "Type"
+          // todo potential infinite loop with "Type"
           stack->items[lhs->id] = rhs0;
           success = true;
         }
@@ -2615,12 +2622,12 @@ unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *rhs0)
 }
 
 inline Term **
-unify(Typer *env, Arrow *lhs_signature, Term *lhs, Term *rhs)
+unify(Typer *env, Arrow *lhs_signature, Term *rhs)
 {
   Term **out = 0;
   Stack *stack = newStack(0, lhs_signature->param_count);
   Scope *lhs_scopes = newScope(0, lhs_signature);
-  if (unify(env, stack, lhs_scopes, lhs, rhs))
+  if (unify(env, stack, lhs_scopes, lhs_signature->output_type, rhs))
     out = stack->items;
   return out;
 }
@@ -2658,13 +2665,7 @@ getFunctionOverloads(Typer *env, Identifier *ident, Term *output_type_goal)
         if (Arrow *signature = castTerm(getTypeNoEnv(temp_arena, item), Arrow))
         {
           b32 output_type_mismatch = false;
-          Term *output_type = signature->output_type;
-          if (!output_type)
-          {
-            Constructor *ctor = castTerm(item, Constructor);
-            output_type = &ctor->uni->t;
-          }
-          if (!unify(env, signature, output_type, output_type_goal))
+          if (!unify(env, signature, output_type_goal))
             output_type_mismatch = true;
 
           if (!output_type_mismatch)
@@ -3292,7 +3293,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         if (ctor.uni)
         {
           out->record = build_record.term;
-          Arrow *op_type = getType(&ctor);
+          Arrow *op_type = getType(temp_arena, &ctor);
           i32 param_count = op_type->param_count;
           b32 valid_param_name = false;
           for (i32 param_id=0; param_id < param_count; param_id++)
@@ -3441,17 +3442,33 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                   hint_is_valid = true;
                   eq = newEquality(temp_arena, env, from, to);
                   pushArray(temp_arena, signature->param_count, Term *, true);
-                  if (Term **temp_args = unify(env, signature, signature->output_type, eq))
+                  if (Term **temp_args = unify(env, signature, eq))
                   {
                     // todo #cleanup copyArray
                     Term **args = pushArray(arena, signature->param_count, Term *);
                     for (int id=0; id < signature->param_count; id++)
-                      args[id] = temp_args[id];
-                    Composite *eq_proof_composite = newTerm(arena, Composite, 0);
-                    eq_proof_composite->op        = hint;
-                    eq_proof_composite->arg_count = signature->param_count;
-                    eq_proof_composite->args      = args;
-                    out->eq_proof = &eq_proof_composite->t;
+                    {
+                      if (temp_args[id])
+                      {
+                        args[id] = temp_args[id];
+                      }
+                      else
+                      {
+                        parseError(in0, "Internal compiler (or user) error: we were not able to infer all parameters");
+                        break;
+                      }
+                    }
+                    if (noError())
+                    {
+                      Composite *eq_proof_composite = newTerm(arena, Composite, 0);
+                      eq_proof_composite->op        = hint;
+                      eq_proof_composite->arg_count = signature->param_count;
+                      eq_proof_composite->args      = args;
+                      out->eq_proof = &eq_proof_composite->t;
+                      // since the proof was synthesized from unification, double-check the type
+                      Term *eq_check = getType(arena, env, out->eq_proof);
+                      assert(equal(eq_check, eq));
+                    }
                   }
                   else
                   {
@@ -3671,7 +3688,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
             attach("type", eq);
           else
           {
-            i32 param_count = getType(ctor)->param_count;
+            i32 param_count = getType(temp_arena, ctor)->param_count;
             if (in->arg_id < param_count)
             {
               for (DestructList *destructs = global_state.builtin_destructs;
