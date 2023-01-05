@@ -117,12 +117,11 @@ mulPosv2 :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
 {norm a_positive; norm b_positive;
  fork a
  {0 : _ => {a_positive(_)},
-  ++: ;; goal: (E: b + a.p * b = 0) -> False
-  _ => {fork b {0: b_positive(_), ++: norm E; E}}
+  ++: ;; goal: (b + a.p * b = 0) -> False
+  _ => {fork b {0: b_positive(_), ++: norm (seek(b + a.p * b = 0)); seek}}
   }}
 
-;; todo: ridiculous that we can't normalize without a function
-oneIsNotZero : 1 != 0 := seq {norm; _ => {E}};
+oneIsNotZero : 1 != 0 := seq {norm; _ => {seek}};
 test_eval mulPos(1,1,oneIsNotZero,oneIsNotZero);
 ;; print mulPos;
 
@@ -203,7 +202,7 @@ testFillingHole :: (xdebug: Nat, x_positive: xdebug!=0, P: xdebug=0) -> False
 
 check id(False) : ((f: False) -> False);
 
-unionRebasing :: (a: Nat) -> union {eq(p: a = a)}
+unionRebasing :: (a: Nat) -> union {eq(a = a)}
 {
  prove(a=a) {}
  ctor[0](seek(a=a))
@@ -211,4 +210,4 @@ unionRebasing :: (a: Nat) -> union {eq(p: a = a)}
 
 testAnonymousParameter :: fn (A: Set, A) -> A
 { seek(A) }
-print testAnonymousParameter;
+;; print testAnonymousParameter;

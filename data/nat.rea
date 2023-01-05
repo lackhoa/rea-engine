@@ -92,12 +92,16 @@ test_eval mulAssociative(1,0,0);
 addPos :: (a,b: Nat, apos: a!=0) -> a+b != 0
 {norm;
  _ => {fork a {0 norm apos; apos(_),
-               ++ norm E; E}}}
+               ++
+               norm(seek(a+b = 0));
+               seek(False)
+               }}}
 
 mulPos :: (a,b: Nat, apos: a!=0, bpos: b!=0) -> a*b != 0
 {norm apos; norm bpos; norm;
  _ => {fork a {0: apos(_),
-               ++: fork b {0: bpos(_), ++: norm E; E}}}}
+               ++: fork b {0: bpos(_),
+                           ++: norm seek(a * b = 0); seek(False)}}}}
 
 mul0 :: (a: Nat) -> a * 0 = 0
 {

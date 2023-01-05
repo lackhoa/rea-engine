@@ -2460,6 +2460,13 @@ isExpressionEndMarker(Token *token)
   return false;
 }
 
+inline b32
+seesExpressionEndMarker()
+{
+  Token token = peekToken();
+  return isExpressionEndMarker(&token);
+}
+
 // todo remove recursion.
 internal Term *
 subExpressionAtPath(Term *in, TreePath *path)
@@ -2811,26 +2818,23 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
     {
       case TC_Keyword_norm:
       {
-        pushContext("norm [LOCAL_VARIABLE]");
-        // todo this is confusing if we're at the end of the sequence
-        if (optionalChar(';'))
+        pushContext("norm [EXPRESSION]");
+        if (seesExpressionEndMarker())
         {// normalize goal
           RewriteAst *rewrite = newAst(arena, RewriteAst, &token);
           ast = &rewrite->a;
         }
-        else
+        else if (Ast *expression = parseExpressionToAst(arena))
         {
-          Token name = nextToken();
-          if (isIdentifier(&name))
+          Let *let = newAst(arena, Let, &token);
+          let->rhs  = expression;
+          let->type = LET_TYPE_NORMALIZE;
+          ast = &let->a;
+          if (expression->cat == AC_Identifier)
           {
-            Let *let = newAst(arena, Let, &token);
-            let->lhs  = name.string;
-            let->rhs  = &newAst(arena, Identifier, &name)->a;
-            let->type = LET_TYPE_NORMALIZE;
-            ast = &let->a;
+            // borrow the name if the expression is an identifier 
+            let->lhs  = expression->token.string;
           }
-          else
-            parseError(&token, "syntax error");
         }
         popContext();
       } break;
@@ -3776,7 +3780,11 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
     case AC_SeekAst:
     {
       SeekAst *in = castAst(in0, SeekAst);
-      if (BuildTerm proposition = buildTerm(temp_arena, env, in->proposition, holev))
+      Term *proposition = goal;
+      if (in->proposition)
+        proposition = buildTerm(temp_arena, env, in->proposition, holev).term;
+
+      if (noError())
       {
         i32 delta = 0;
         for (Scope *scope = env->scope; scope; scope=scope->outer)
@@ -3787,7 +3795,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
             // todo #speed we're having to rebase everything, which sucks but
             // unless we store position-independent types, that's what we gotta do.
             Term *type = rebase(temp_arena, arrow->param_types[param_id], delta);
-            if (equal(type, proposition.term))
+            if (equal(type, proposition))
             {
               Variable *var = newTerm(arena, Variable, 0);
               var->name  = arrow->param_names[param_id];
@@ -4497,11 +4505,10 @@ parseCtor(MemoryArena *arena)
 inline SeekAst *
 parseSeek(MemoryArena *arena)
 {
-  SeekAst *seek = 0;
-  if (Ast *proposition = parseExpressionToAst(arena))
+  SeekAst *seek = newAst(arena, SeekAst, &global_tokenizer->last_token);
+  if (!seesExpressionEndMarker())
   {
-    seek = newAst(arena, SeekAst, &global_tokenizer->last_token);
-    seek->proposition = proposition;
+    seek->proposition = parseExpressionToAst(arena);
   }
   return seek;
 }

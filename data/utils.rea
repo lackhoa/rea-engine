@@ -1,5 +1,5 @@
 != :: fn (#hidden A: Set, a,b: A) -> Type
-{ (E: a=b) -> False }
+{ (a=b) -> False }
 
-id :: fn(A: Set) -> (a: A) -> A
-{_ => {a}}
+id :: fn(A: Set) -> (A) -> A
+{_ => {seek(A)}}
