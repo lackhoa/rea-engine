@@ -283,3 +283,12 @@ totalOrder :: (a,b: Natp) -> union {
   }
  }
 
+differentFromPlus :: (a: Natp, b: Natp, P: a = a+b) -> False
+{
+ fork a
+ {
+  1: norm P; P,
+  ++: norm P; Q := destruct[0]P; differentFromPlus(a.p, b, Q),
+  }
+ }
+

@@ -98,14 +98,6 @@ newEquality(MemoryArena *arena, Term *type, Term *lhs, Term *rhs)
   return &eq->t;
 }
 
-inline Term *
-newEquality(MemoryArena *arena, Term *lhs, Term *rhs)
-{
-  Term *lhs_type = getType(lhs);
-  assert(lhs_type);
-  return newEquality(arena, lhs_type, lhs, rhs);
-}
-
 // todo #typesafe error out when the sides don't match
 forward_declare inline Term *
 newComputation(MemoryArena *arena, Term *lhs, Term *rhs)
@@ -585,7 +577,7 @@ computeType(MemoryArena *arena, Typer *env, Term *in0)
       case Term_Computation:
       {
         Computation *in = castTerm(in0, Computation);
-        out0 = newEquality(arena, in->lhs, in->rhs);
+        out0 = newEquality(arena, computeType(arena, env, in->lhs), in->lhs, in->rhs);
       } break;
 
       case Term_Accessor:
@@ -3487,7 +3479,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                 if (Arrow *signature = castTerm(hint_type, Arrow))
                 {
                   hint_is_valid = true;
-                  eq = newEquality(temp_arena, from, to);
+                  eq = newEquality(temp_arena, getType(temp_arena, env, from), from, to);
                   pushArray(temp_arena, signature->param_count, Term *, true);
                   if (Term **temp_args = inferArgs(temp_arena, env, hint, eq).args)
                   {
@@ -4023,6 +4015,13 @@ insertAutoNormalizations(MemoryArena *arena, NormList norm_list, Ast *in0)
       }
     } break;
 
+    case AC_RewriteAst:
+    {
+      RewriteAst *in = castAst(in0, RewriteAst);
+      assert(in->body);
+      insertAutoNormalizations(arena, norm_list, in->body);
+    } break;
+
     case AC_Let:
     {
       Let *in = castAst(in0, Let);
@@ -4194,23 +4193,6 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
           {
             setFlag(&param_flags[param_id], ParameterFlag_Hidden);
           }
-
-          // {// look ahead to figure out what type of parameter it is
-          //   Tokenizer tk_save = *global_tokenizer;
-          //   Token maybe_parameter_name = nextToken();
-          //   if (isIdentifier(&maybe_parameter_name))
-          //   {
-          //     if (equal(&after_name, ':'))
-          //       parameter_form = is_typed_parameter;
-          //     else if (equal(&after_name, ','))
-          //       parameter_form = is_typeless_parameter;
-          //     else
-          //       parameter_form = is_anonymous_parameter;
-          //   }
-          //   else
-          //     parameter_form = is_anonymous_parameter;
-          //   *global_tokenizer = tk_save;
-          // }
 
           Tokenizer tk_save = *global_tokenizer;
           String param_name = {};
@@ -5023,7 +5005,7 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
 
     if (is_root_file)
     {
-      printf("Interpreting file %s...\n", input_path.file);
+      printf("> Interpreting file: %s\n", input_path.file);
     }
     parseTopLevel(state);
     if (ParseError *error = tk->error)
@@ -5060,7 +5042,8 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
       auto compile_time = platformGetSecondsElapsed(begin_time, platformGetWallClock(arena));
       printf("Compile time for file %s: %fs\n", input_path.file, compile_time);
 #endif
-      printf("----------------\n");
+      for (i32 i=0; i < 80; i++) printf("-");
+      printf("\n");
     }
 
     global_tokenizer = old_tokenizer;
@@ -5172,23 +5155,12 @@ int engineMain()
   MemoryArena temp_arena_ = newArena(temp_memory_size, temp_memory_base);
   temp_arena              = &temp_arena_;
 
-#if 1
-  if (!beginInterpreterSession(permanent_arena, "../data/test.rea"))
-    success = false;
-  resetArena(permanent_arena, true);
-#endif
-
-#if 1
-  if (!beginInterpreterSession(permanent_arena, "../data/natp-experimental.rea"))
-    success = false;
-  resetArena(permanent_arena, true);
-#endif
-
-#if 1
-  if (!beginInterpreterSession(permanent_arena, "../data/rat.rea"))
-    success = false;
-  resetArena(permanent_arena, true);
-#endif
-
+  char *files[] = {"../data/test.rea", "../data/rat.rea"};
+  for (i32 file_id=0; file_id < arrayCount(files); file_id++)
+  {
+    if (!beginInterpreterSession(permanent_arena, files[file_id]))
+      success = false;
+    resetArena(permanent_arena, true);
+  }
   return success;
 }
