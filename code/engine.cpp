@@ -1175,8 +1175,12 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
       case Term_Variable:
       {
         Variable *in = castTerm(in0, Variable);
-        print(buffer, in->name);
-        if (global_debug_mode)
+        if (in->name.chars)
+          print(buffer, in->name);
+        else
+          print(buffer, "anon");
+
+        if (!in->name.chars || global_debug_mode)
           print(buffer, "[%d:%d]", in->delta, in->id);
       } break;
 
@@ -1242,8 +1246,12 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
              param_id < in->param_count;
              param_id++)
         {
-          print(buffer, in->param_names[param_id]);
-          print(buffer, ": ");
+          String param_name = in->param_names[param_id];
+          if (param_name.chars)
+          {
+            print(buffer, in->param_names[param_id]);
+            print(buffer, ": ");
+          }
           print(buffer, in->param_types[param_id], new_opt);
           if (param_id < in->param_count-1)
             print(buffer, ", ");
@@ -4177,44 +4185,86 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
           {
             setFlag(&param_flags[param_id], ParameterFlag_Hidden);
           }
-          if (requireIdentifier("expected parameter name"))
-          {
-            Token param_name_token = global_tokenizer->last_token;
-            param_names[param_id] = param_name_token.string;
 
+          i32 parameter_form = 0;
+          const i32 is_typed_parameter     = 0;
+          const i32 is_typeless_parameter  = 1;
+          const i32 is_anonymous_parameter = 2;
+          {// look ahead to figure out what type of parameter it is
+            Tokenizer tk_save = *global_tokenizer;
+            Token maybe_parameter_name = nextToken();
+            if (isIdentifier(&maybe_parameter_name))
+            {
+              Token after_name = peekToken();
+              if (equal(&after_name, ':'))
+                parameter_form = is_typed_parameter;
+              else if (equal(&after_name, ','))
+                parameter_form = is_typeless_parameter;
+              else
+                parameter_form = is_anonymous_parameter;
+            }
+            else
+              parameter_form = is_anonymous_parameter;
+            *global_tokenizer = tk_save;
+          }
+
+          if (parameter_form == is_typed_parameter)
+            pushContext("typed parameter");
+          else if (parameter_form == is_typeless_parameter)
+            pushContext("typeless parameter");
+          else
+            pushContext("anonymous parameter");
+
+          if (parameter_form == is_typed_parameter ||
+              parameter_form == is_typeless_parameter)
+          {
+            Token param_name_token = nextToken();
+            param_names[param_id] = param_name_token.string;
             if (optionalChar(':'))
             {
+              assert(parameter_form == is_typed_parameter);
               if (Ast *param_type = parseExpressionToAst(arena))
               {
                 param_types[param_id] = param_type;
                 if (typeless_run)
                 {
-                  for (i32 offset = 1;
-                       offset <= typeless_run;
-                       offset++)
-                  {
-                    param_types[param_id - offset]  = param_type;
-                  }
+                  for (i32 offset = 1; offset <= typeless_run; offset++)
+                    param_types[param_id - offset] = param_type;
                   typeless_run = 0;
                 }
-
-                Token delimiter = nextToken();
-                if (equal(&delimiter, end_arg_char))
-                  stop = true;
-                else if (!equal(&delimiter, ','))
-                  tokenError("unexpected token after parameter type");
               }
             }
-            else if (requireChar(',', "delimit after typeless parameter name"))
+            else
             {
+              assert(parameter_form == is_typeless_parameter);
               typeless_run++;
               typeless_token = param_name_token;
             }
-            else
-              stop = true;
           }
+          else
+          {
+            Token begin_param_type_token = global_tokenizer->last_token;
+            if (Ast *param_type = parseExpressionToAst(arena))
+            {
+              param_types[param_id] = param_type;
+              if (typeless_run)
+                parseError(&begin_param_type_token, "cannot follow typeless parameters with anonymous parameter");
+            }
+          }
+
+          if (hasMore())
+          {
+            Token delimiter = nextToken();
+            if (equal(&delimiter, end_arg_char))
+              stop = true;
+            else if (!equal(&delimiter, ','))
+              tokenError("unexpected token after parameter type");
+          }
+
+          popContext();
         }
       }
+
       if (noError())
       {
         assert(parsed_param_count == param_count);

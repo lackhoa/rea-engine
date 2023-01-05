@@ -208,3 +208,7 @@ unionRebasing :: (a: Nat) -> union {eq(p: a = a)}
  prove(a=a) {}
  ctor[0](seek(a=a))
  }
+
+testAnonymousParameter :: fn (A: Set, A) -> A
+{ seek(A) }
+print testAnonymousParameter;

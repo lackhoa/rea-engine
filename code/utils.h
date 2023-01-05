@@ -261,6 +261,12 @@ equal(String a, String b)
     return out;
 }
 
+inline b32
+equal(String a, char c)
+{
+  return a.length == 1 && a.chars[0] == c;
+}
+
 inline String
 toString(const char *c)
 {

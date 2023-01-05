@@ -300,8 +300,8 @@ nextToken(Tokenizer *tk = global_tokenizer)
 {
   Token out = {};
   out.string.chars = tk->at;
-  out.line       = tk->line;
-  out.column     = tk->column;
+  out.line         = tk->line;
+  out.column       = tk->column;
 
   switch (char first_char = nextChar(tk))
   {
