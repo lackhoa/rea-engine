@@ -15,7 +15,7 @@
 #include "intrinsics.h"
 #include "engine.h"
 #include "tokenization.cpp"
-#include "debug.h"
+#include "debug_config.h"
 
 global_variable Builtins builtins;
 global_variable Term dummy_function_being_built;
@@ -171,7 +171,7 @@ isSequenced(Term *term)
 
 // todo removeme don't need this anymore now that we put the type in the constructor
 inline Arrow *
-deriveType(Constructor *ctor)
+computeType(Constructor *ctor)
 {
   if (ctor->type)
     return castTerm(ctor->type, Arrow);
@@ -189,7 +189,7 @@ newConstructor(MemoryArena *arena, Union *uni, i32 id)
   Constructor *ctor = newTerm(arena, Constructor, 0);
   ctor->uni = uni;
   ctor->id  = id;
-  deriveType(ctor);
+  computeType(ctor);
   return ctor;
 }
 
@@ -626,7 +626,7 @@ computeType(MemoryArena *arena, Typer *env, Term *in0)
       case Term_Constructor:
       {
         Constructor *ctor = castTerm(in0, Constructor);
-        out0 = &deriveType(ctor)->t;
+        out0 = &computeType(ctor)->t;
       } break;
 
       default:
@@ -1249,7 +1249,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
           String param_name = in->param_names[param_id];
           if (param_name.chars)
           {
-            print(buffer, in->param_names[param_id]);
+            print(buffer, param_name);
             print(buffer, ": ");
           }
           print(buffer, in->param_types[param_id], new_opt);
@@ -3300,8 +3300,8 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       Arrow *out = newTerm(arena, Arrow, &builtins.Type->t);
       i32 param_count = in->param_count;
       out->param_count   = param_count;
-      out->param_names   = in->param_names;
-      out->param_flags   = in->param_flags;
+      out->param_names   = copyArray(arena, param_count, in->param_names);  // todo copy festival
+      out->param_flags   = copyArray(arena, param_count, in->param_flags);
       {
         env->scope = newScope(env->scope, out);
         extendBindings(temp_arena, env);
@@ -3661,6 +3661,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           i32 param_count = 1;
           allocateArray(temp_arena, param_count, signature->param_names);
           allocateArray(temp_arena, param_count, signature->param_types);
+          allocateArray(temp_arena, param_count, signature->param_flags, true);
           signature->param_count    = param_count;
           signature->param_names[0] = in->lhs;
 
@@ -4173,8 +4174,8 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
     param_count = getCommaSeparatedListLength(&tk_copy);
     if (noError(&tk_copy))
     {
-      allocateArray(arena, param_count, param_names);
-      allocateArray(arena, param_count, param_types);
+      allocateArray(arena, param_count, param_names, true);
+      allocateArray(arena, param_count, param_types, true);
       allocateArray(arena, param_count, param_flags, true);
 
       i32 parsed_param_count = 0;
@@ -4194,43 +4195,34 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
             setFlag(&param_flags[param_id], ParameterFlag_Hidden);
           }
 
-          i32 parameter_form = 0;
-          const i32 is_typed_parameter     = 0;
-          const i32 is_typeless_parameter  = 1;
-          const i32 is_anonymous_parameter = 2;
-          {// look ahead to figure out what type of parameter it is
-            Tokenizer tk_save = *global_tokenizer;
-            Token maybe_parameter_name = nextToken();
-            if (isIdentifier(&maybe_parameter_name))
-            {
-              Token after_name = peekToken();
-              if (equal(&after_name, ':'))
-                parameter_form = is_typed_parameter;
-              else if (equal(&after_name, ','))
-                parameter_form = is_typeless_parameter;
-              else
-                parameter_form = is_anonymous_parameter;
-            }
-            else
-              parameter_form = is_anonymous_parameter;
-            *global_tokenizer = tk_save;
-          }
+          // {// look ahead to figure out what type of parameter it is
+          //   Tokenizer tk_save = *global_tokenizer;
+          //   Token maybe_parameter_name = nextToken();
+          //   if (isIdentifier(&maybe_parameter_name))
+          //   {
+          //     if (equal(&after_name, ':'))
+          //       parameter_form = is_typed_parameter;
+          //     else if (equal(&after_name, ','))
+          //       parameter_form = is_typeless_parameter;
+          //     else
+          //       parameter_form = is_anonymous_parameter;
+          //   }
+          //   else
+          //     parameter_form = is_anonymous_parameter;
+          //   *global_tokenizer = tk_save;
+          // }
 
-          if (parameter_form == is_typed_parameter)
-            pushContext("typed parameter");
-          else if (parameter_form == is_typeless_parameter)
-            pushContext("typeless parameter");
-          else
-            pushContext("anonymous parameter");
-
-          if (parameter_form == is_typed_parameter ||
-              parameter_form == is_typeless_parameter)
+          Tokenizer tk_save = *global_tokenizer;
+          String param_name = {};
+          Token maybe_param_name_token = nextToken();
+          if (isIdentifier(&maybe_param_name_token))
           {
-            Token param_name_token = nextToken();
-            param_names[param_id] = param_name_token.string;
-            if (optionalChar(':'))
+            Token after_name = peekToken();
+            if (equal(&after_name, ':'))
             {
-              assert(parameter_form == is_typed_parameter);
+              eatToken();
+              param_name = maybe_param_name_token.string;
+              pushContext("parameter type");
               if (Ast *param_type = parseExpressionToAst(arena))
               {
                 param_types[param_id] = param_type;
@@ -4241,23 +4233,30 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
                   typeless_run = 0;
                 }
               }
+              popContext();
             }
-            else
+            else if (equal(&after_name, ','))
             {
-              assert(parameter_form == is_typeless_parameter);
+              param_name = maybe_param_name_token.string;
               typeless_run++;
-              typeless_token = param_name_token;
+              typeless_token = maybe_param_name_token;
             }
           }
+
+          if (param_name.chars)
+            param_names[param_id] = param_name;
           else
           {
-            Token begin_param_type_token = global_tokenizer->last_token;
+            *global_tokenizer = tk_save;
+            pushContext("anonymous parameter");
+            Token anonymous_parameter_token = global_tokenizer->last_token;
             if (Ast *param_type = parseExpressionToAst(arena))
             {
               param_types[param_id] = param_type;
               if (typeless_run)
-                parseError(&begin_param_type_token, "cannot follow typeless parameters with anonymous parameter");
+                parseError(&anonymous_parameter_token, "cannot follow a typeless parameter with an anonymous parameter");
             }
+            popContext();
           }
 
           if (hasMore())
@@ -4266,10 +4265,8 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
             if (equal(&delimiter, end_arg_char))
               stop = true;
             else if (!equal(&delimiter, ','))
-              tokenError("unexpected token after parameter type");
+              tokenError("unexpected token");
           }
-
-          popContext();
         }
       }
 
@@ -4455,6 +4452,7 @@ buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
             destruct_signature->param_count = compare_param_count;
             destruct_signature->param_names = param_names;
             destruct_signature->param_types = param_types;
+            allocateArray(arena, compare_param_count, destruct_signature->param_flags, true);
             destruct_signature->output_type = newEquality(arena, signature->param_types[arg_id], lhs_args[arg_id], rhs_args[arg_id]);
 
             Builtin *destruct = newTerm(arena, Builtin, &destruct_signature->t);

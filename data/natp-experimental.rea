@@ -6,19 +6,15 @@ Natp :: union {1, ++(p: Natp)}
 nat :: fn(a: Natp) -> Nat
 {fork a {1: 1, ++: ++(nat(a.p))}}
 
-natp :: fn(a: Nat, not0: a != 0) -> Natp
+natp :: fn(a: Nat, #hidden not0: a != 0) -> Natp
 {fork a {0  norm not0; f := not0(_); fork f {},
          ++ fork a.p {0  1,
                       ++ ++(natp(a.p, seq{norm; id(False)}))}}}
 
-natpNot0 :: fn(a: Natp) -> nat(a) != 0
-{norm; }
+natpNot0 :: (a: Natp) -> nat(a) != 0
+{fork a {1 id(False), ++ id(False)}}
 
 + :: fn(a,b: Natp) -> Natp
-{prove(nat(a) + nat(b) != 0) {addPos(nat(a), nat(b), natpNot0(a))};
- natp(nat(a) + nat(b), seek(nat(a) + nat(b) != 0))}
-
-plusDebug :: fn(a,b: Natp) -> Natp
 {prove(nat(a) + nat(b) != 0) {addPos(nat(a), nat(b), natpNot0(a))};
  natp(nat(a) + nat(b), seek(nat(a) + nat(b) != 0))}
 
@@ -28,11 +24,14 @@ plusDebug :: fn(a,b: Natp) -> Natp
 
 addCommutative :: (a,b: Natp) -> (b+a = a+b)
 {
- => +++(b.p + ++(a.p)) = +++(a.p + ++(b.p));
- => +++(++(a.p) + b.p) = +++(a.p + ++(b.p)) {addCommutative};
- => +++(++(a.p) + b.p) = +++(++(b.p) + a.p) {addCommutative};
- => +++(++(a.p + b.p)) = +++(++(b.p + a.p));
- => +++(++(a.p + b.p)) = +++(++(a.p + b.p)) {addCommutative};
+ norm;
+ => natp(nat(b) + nat(a)) = natp(nat(a) + nat(b));
+ ;; => natp(nat(a) + nat(b)) = natp(nat(a) + nat(b)) {addCommutative}
+ ;; => +++(b.p + ++(a.p)) = +++(a.p + ++(b.p));
+ ;; => +++(++(a.p) + b.p) = +++(a.p + ++(b.p)) {addCommutative};
+ ;; => +++(++(a.p) + b.p) = +++(++(b.p) + a.p) {addCommutative};
+ ;; => +++(++(a.p + b.p)) = +++(++(b.p + a.p));
+ ;; => +++(++(a.p + b.p)) = +++(++(a.p + b.p)) {addCommutative};
  }
 
 addAssociative :: (a,b,c: Natp) -> (a+b)+c = a+b+c

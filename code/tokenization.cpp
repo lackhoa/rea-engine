@@ -295,8 +295,8 @@ parseError(Token *token, char *format, ...)
   __crt_va_end(arg_list);
 }
 
-forward_declare inline Token
-nextToken(Tokenizer *tk = global_tokenizer)
+forward_declare inline void
+eatToken(Tokenizer *tk = global_tokenizer)
 {
   Token out = {};
   out.string.chars = tk->at;
@@ -467,7 +467,13 @@ nextToken(Tokenizer *tk = global_tokenizer)
   // note: we eat spaces afterward, so that we can always check *tk->at to see
   // if there's anything left to parse.
   eatAllSpaces(tk);
-  return out;
+}
+
+forward_declare inline Token
+nextToken(Tokenizer *tk=global_tokenizer)
+{
+  eatToken(tk);
+  return tk->last_token;
 }
 
 forward_declare inline Token
