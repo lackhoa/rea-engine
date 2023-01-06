@@ -997,10 +997,9 @@ inline void newlineAndIndent(MemoryArena *buffer, i32 indentation)
   indent(buffer, indentation);
 }
 
-forward_declare internal char *
+forward_declare internal void
 print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
 {// printAst
-  char *out = buffer ? (char*)getNext(buffer) : 0;
   if (in0)
   {
     PrintOptions new_opt = opt;
@@ -1140,19 +1139,17 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
   }
   else
     print(buffer, "<NULL>");
-  return out;
 }
 
-forward_declare internal char *
+forward_declare internal void
 print(MemoryArena *buffer, Ast *in0)
 {
   return print(buffer, in0, {});
 }
 
-forward_declare internal char *
+forward_declare internal void
 print(MemoryArena *buffer, Term *in0, PrintOptions opt)
 {// mark: printTerm
-  char *out = buffer ? (char*)getNext(buffer) : 0;
   if (in0)
   {
     PrintOptions new_opt = opt;
@@ -1350,14 +1347,11 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
   }
   else
     print(buffer, "<NULL>");
-
-  return out;
 }
 
-inline char *
+inline void
 print(MemoryArena *buffer, Scope *scopes)
 {
-  char *out = buffer ? (char*)getNext(buffer) : 0;
   print(buffer, "[");
   while (scopes)
   {
@@ -1380,19 +1374,18 @@ print(MemoryArena *buffer, Scope *scopes)
       print(buffer, ",\n ");
   }
   print(buffer, "]");
-  return out;
 }
 
 inline void dump(Scope *stack) {print(0, stack);}
 inline void dump(Typer *env) {dump("stack: "); dump(env->scope);}
 
-forward_declare internal char *
+forward_declare internal void
 print(MemoryArena *buffer, Term *in0)
 {
   return print(buffer, in0, {});
 }
 
-forward_declare internal char *
+forward_declare internal void
 print(MemoryArena *buffer, void *in0, b32 is_absolute, PrintOptions opt)
 {
   if (is_absolute)
@@ -2685,14 +2678,13 @@ inferArgs(MemoryArena *arena, Typer *env, Term *op, Term *goal)
 inline void
 attachTerms(char *key, i32 count, Term **terms)
 {
-  MemoryArena buffer = subArena(temp_arena, 1024);
-  attach(key, (char *)buffer.base);
+  StartString start = startString(error_buffer);
   for (i32 id=0; id < count; id++)
   {
-    print(&buffer, "\n");
-    print(&buffer, terms[id]->type);
+    print(error_buffer, "\n");
+    print(error_buffer, terms[id]->type);
   }
-  print(&buffer, "\0");
+  attach(key, endString(start));
 }
 
 inline TermArray
@@ -2718,6 +2710,7 @@ getFunctionOverloads(Typer *env, Identifier *ident, Term *output_type_goal)
       if (out.count == 0)
       {
         parseError(&ident->a, "found no matching overload");
+        attach("function_name", ident->token.string);
         attach("output_type", output_type_goal);
         attachTerms("available_overloads", slot->count, slot->items);
       }
@@ -3355,7 +3348,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           else
           {
             tokenError(&in->field_name, "accessor has invalid member");
-            attach("expected a member of constructor", ctor.uni->ctor_names[ctor.id].chars);
+            attach("expected a member of constructor", ctor.uni->ctor_names[ctor.id]);
             setErrorFlag(ErrorUnrecoverable);
           }
         }
@@ -3835,15 +3828,14 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
     {
       attach("goal", goal);
 
-      MemoryArena buffer = subArena(temp_arena, 1024);
-      print(&buffer, "\n");
-      print(&buffer, env->scope);
-      attach("scope", (char *)buffer.base);
-      buffer.used++;
+      StartString start = startString(error_buffer);
+      print(error_buffer, "\n");
+      print(error_buffer, env->scope);
+      attach("scope", endString(start));
 
-      attach("data_map", (char *)getNext(&buffer));
-      printDataMap(&buffer, env);
-      buffer.used++;
+      start = startString(error_buffer);
+      printDataMap(error_buffer, env);
+      attach("data_map", endString(start));
 
       setErrorFlag(ErrorGoalAttached);
     }
@@ -3897,7 +3889,7 @@ buildFork(MemoryArena *arena, Typer *env, ForkAst *in, Term *goal)
               if (ordered_bodies[ctor_id])
               {
                 parseError(in->bodies[input_case_id], "fork case handled twice");
-                attach("constructor", uni->ctor_names[ctor_id].chars);  // todo cleanup attach string
+                attach("constructor", uni->ctor_names[ctor_id]);  // todo cleanup attach string
               }
               else
               {
@@ -3919,14 +3911,14 @@ buildFork(MemoryArena *arena, Typer *env, ForkAst *in, Term *goal)
             parseError(ctor_name, "not a valid constructor");  // todo print them out
             attach("type", &uni->t);
 
-            char *ctor_names = (char *)getNext(temp_arena);
+            StartString ctor_names = startString(error_buffer);
             for (i32 id=0; id < uni->ctor_count; id++)
             {
-              print(temp_arena, uni->ctor_names[id]);
+              print(error_buffer, uni->ctor_names[id]);
               if (id != uni->ctor_count-1)
-                print(temp_arena, ", ");
+                print(error_buffer, ", ");
             }
-            attach("valid constructors", ctor_names);
+            attach("valid constructors", endString(ctor_names));
           }
         }
 
@@ -4751,6 +4743,7 @@ parseTopLevel(EngineState *state)
 #define CLEAN_TEMPORARY_MEMORY 1
 #if CLEAN_TEMPORARY_MEMORY
     TemporaryMemory top_level_temp = beginTemporaryMemory(temp_arena);
+    error_buffer_ = subArena(temp_arena, 1024);
 #endif
 
     Typer  empty_env_ = {};
@@ -4978,10 +4971,13 @@ parseTopLevel(EngineState *state)
         wipeError();
     }
 
-    token = nextToken();
-    while (equal(token.string, ";"))
-    {// todo: should we do "eat all semicolons after the first one?"
+    if (hasMore())
+    {
       token = nextToken();
+      while (equal(token.string, ";"))
+      {// todo: should we do "eat all semicolons after the first one?"
+        token = nextToken();
+      }
     }
   }
 }
@@ -5043,7 +5039,8 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
              attached_id++)
         {
           auto attachment = error->attachments[attached_id];
-          printf("%s: %s", attachment.key, attachment.value);
+          print(0, "%s: ", attachment.key);
+          print(0, attachment.value);
           if (attached_id != error->attachment_count-1) 
             printf("\n");
         }
@@ -5077,18 +5074,6 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
   return success;
 }
 
-forward_declare inline BuildTerm
-parseExpressionFromString(MemoryArena *arena, char *string)
-{
-  Tokenizer tk = newTokenizer(String{}, 0);
-  Tokenizer *tk_save = global_tokenizer;
-  global_tokenizer = &tk;
-  tk.at = string;
-  BuildTerm out = parseExpressionFull(arena);
-  global_tokenizer = tk_save;
-  return out;
-}
-
 internal b32
 beginInterpreterSession(MemoryArena *arena, char *initial_file)
 {
@@ -5111,7 +5096,7 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
     }
 
     {// more builtins
-      Tokenizer builtin_tk = newTokenizer(print(temp_arena, "<builtin>"), 0);
+      Tokenizer builtin_tk = newTokenizer(toString("<builtin>"), 0);
       global_tokenizer = &builtin_tk;
       builtin_tk.at = "(#hidden A: Set, a,b: A) -> Set";
       BuildTerm equal_type = parseExpressionFull(arena); 
@@ -5167,8 +5152,7 @@ int engineMain()
   void   *temp_memory_base = (void*)teraBytes(3);
   size_t  temp_memory_size = megaBytes(2);
   temp_memory_base = platformVirtualAlloc(temp_memory_base, permanent_memory_size);
-  MemoryArena temp_arena_ = newArena(temp_memory_size, temp_memory_base);
-  temp_arena              = &temp_arena_;
+  temp_arena_ = newArena(temp_memory_size, temp_memory_base);
 
   char *files[] = {"../data/test.rea", "../data/natp-experiment.rea", "../data/z.rea"};
   for (i32 file_id=0; file_id < arrayCount(files); file_id++)

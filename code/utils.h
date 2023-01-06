@@ -84,6 +84,8 @@ struct MemoryArena
     i32 temp_count;
 };
 
+typedef MemoryArena StringBuffer;
+
 inline MemoryArena
 newArena(size_t cap, void *base)
 {
@@ -94,7 +96,7 @@ newArena(size_t cap, void *base)
 }
 
 inline u8 *
-getNext(MemoryArena *arena)
+getNextU8(MemoryArena *arena)
 {
     return arena->base + arena->used;
 }
@@ -193,12 +195,6 @@ inRange(i32 min, i32 val, i32 max)
     return (min <= val) && (val <= max);
 }
 
-struct String
-{
-  char *chars;
-  i32   length;                 // note: does not include the nil terminator
-};
-
 inline i32
 stringLength(char *string)
 {
@@ -210,6 +206,45 @@ stringLength(char *string)
         c++;
     }
     return out;
+}
+
+struct String
+{
+  char *chars;
+  i32   length;                 // note: does not include the nil terminator
+};
+
+inline char *
+getNext(MemoryArena *buffer)
+{
+  if (buffer)
+    return (char *)(buffer->base + buffer->used);
+  else
+    return 0;
+}
+
+struct StartString {
+  StringBuffer *buffer;
+  char         *chars;
+};
+
+inline StartString
+startString(StringBuffer *buffer)
+{
+  char *start = (char *)(buffer->base + buffer->used);
+  return {.buffer=buffer, .chars=start};
+};
+
+inline String
+endString(StartString start)
+{
+  String out = {};
+  if (start.buffer)
+  {
+    out.chars = start.chars;
+    out.length = (i32)(getNext(start.buffer) - start.chars);
+  }
+  return out;
 }
 
 inline b32
@@ -362,29 +397,6 @@ print(MemoryArena *buffer, String s)
 
   return out;
 }
-
-#if 0
-inline char *
-print(MemoryArena *buffer, char *s)
-{
-  char *out = 0;
-  if (buffer)
-  {
-    out = (char *)getNext(buffer);
-    char *at = out;
-    const char *c = s;
-    for (i32 index = 0; *c; index++)
-      *at++ = *c++;
-    *at = 0;
-    buffer->used = at - (char *)buffer->base;
-    assert(buffer->used <= buffer->cap);
-  }
-  else
-    printf("%s", s);
-
-  return out;
-}
-#endif
 
 inline b32
 belongsToArena(MemoryArena *arena, u8 *memory)

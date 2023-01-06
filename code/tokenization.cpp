@@ -95,7 +95,7 @@ inline b32 checkErrorFlag(u32 flag, Tokenizer *tk=global_tokenizer)
   return checkFlag(tk->error->flags, flag);
 }
 
-inline void attach(char *key, char *value, Tokenizer *tk=global_tokenizer)
+inline void attach(char *key, String value, Tokenizer *tk=global_tokenizer)
 {
   ParseError *error = tk->error;
   assert(error->attachment_count < arrayCount(error->attachments));
@@ -104,33 +104,28 @@ inline void attach(char *key, char *value, Tokenizer *tk=global_tokenizer)
 
 inline void attach(char *key, Token *token, Tokenizer *tk=global_tokenizer)
 {
-  // todo #cleanup use strings don't have to do this weird buffer reservation
-  // (we did it to avoid someone forgetting a null pointer).
-  MemoryArena buffer = subArena(temp_arena, 1024);
-  String value = print(&buffer, token->string);
-  attach(key, value.chars, tk);
+  attach(key, token->string, tk);
 }
 
 inline void attach(char *key, Ast *ast, Tokenizer *tk=global_tokenizer)
 {
-  MemoryArena buffer = subArena(temp_arena, 1024);
-  char *value = print(&buffer, ast);
-  attach(key, value, tk);
+  StartString start = startString(error_buffer);
+  print(error_buffer, ast);
+  attach(key, endString(start), tk);
 }
 
 inline void attach(char *key, Term *value, Tokenizer *tk=global_tokenizer)
 {
-  MemoryArena buffer = subArena(temp_arena, 1024);
-  char *val = print(&buffer, value);
-  attach(key, val, tk);
+  StartString start = startString(error_buffer);
+  print(error_buffer, value);
+  attach(key, endString(start), tk);
 }
 
 inline void attach(char *key, i32 n, Tokenizer *tk=global_tokenizer)
 {
-  MemoryArena buffer = subArena(temp_arena, 16);
-  String string = print(&buffer, "%d", n);
-  buffer.used++;
-  attach(key, string.chars, tk);
+  StartString start = startString(error_buffer);
+  print(error_buffer, "%d", n);
+  attach(key, endString(start), tk);
 }
 
 inline void
@@ -168,7 +163,7 @@ hasMore(Tokenizer *tk = global_tokenizer)
 inline void
 wipeError(Tokenizer *tk = global_tokenizer)
 {
-  tk->error_arena.used = 0;
+  resetArena(error_buffer);
   tk->error = 0;
 }
 

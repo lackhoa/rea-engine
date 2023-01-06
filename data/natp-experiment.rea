@@ -44,13 +44,18 @@ natInjective :: (a: Natp) -> natp(nat(a)) = a
          => ++(a.p) = ++(a.p) { natInjective }
          }}
 
-natpInjective :: (a: Nat, not0: a!=0) -> nat(natp(a)) = a
+natpInjective :: (a: Nat) -> nat(natp(++(a))) = ++(a)
 {fork a {0  ,
-         ++ }}
+         ++ => ++(++(a.p)) = ++(++(a.p)) {natpInjective(a.p)}}}
+
+natPreservesAddition :: (a,b: Natp) -> nat(a) + nat(b) = nat(a+b)
+{fork a {1  rewrite natpInjective(nat(b)),
+         ++
+         rewrite natInjective(nat(a.p) + nat(b));
+         }}
 
 addAssociative :: (a,b,c: Natp) -> (a+b)+c = a+b+c
 {
- => natp(nat(natp(nat(a) + nat(b))) + nat(c)) = natp(nat(a) + nat(natp(nat(b) + nat(c))));
  => natp(nat(natp(nat(a) + nat(b))) + nat(c)) = natp(nat(a) + nat(natp(nat(b) + nat(c))));
  }
 

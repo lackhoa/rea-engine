@@ -80,7 +80,7 @@ newToken(const char *text)
   return newToken(toString(text));
 }
 
-struct ErrorAttachment { char *key; char *value; };
+struct ErrorAttachment { char *key; String value; };
 
 // 1 << 0 is unused
 u32 ErrorTypecheck     = 1 << 1;
@@ -107,7 +107,6 @@ struct ParseError
 struct Tokenizer
 {
   ParseError   *error;
-  MemoryArena   error_arena;
   ParseContext *context;
 
   char  *at;
@@ -124,10 +123,10 @@ inline Tokenizer
 newTokenizer(String directory, char *input)
 {
   Tokenizer out = {};
-  out.line        = 1;
-  out.column      = 1;
-  out.directory   = directory;
-  out.at          = input;
+  out.line         = 1;
+  out.column       = 1;
+  out.directory    = directory;
+  out.at           = input;
   if (input)
     eatAllSpaces(&out);
   return out;

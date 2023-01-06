@@ -7,9 +7,13 @@
 #include "tokenization.h"
 
 // NOTE: This should work like the function stack, we'll clean it after every top-level form.
-global_variable MemoryArena *temp_arena;
-global_variable b32          global_debug_mode;
-global_variable i32          global_debug_serial;
+global_variable MemoryArena  temp_arena_;
+global_variable MemoryArena *temp_arena = &temp_arena_;
+global_variable StringBuffer  error_buffer_;
+global_variable StringBuffer *error_buffer = &error_buffer_;
+
+global_variable b32 global_debug_mode;
+global_variable i32 global_debug_serial;
 
 struct Union;
 struct Arrow;
