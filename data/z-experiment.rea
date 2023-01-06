@@ -1,0 +1,28 @@
+#load "nat.rea"
+
+Z :: union
+{znil,
+ +(v: Nat),
+ -(v: Nat)}
+
++ :: fn(a,b: Z) -> Z
+{fork a
+ {znil
+  znil,
+
+  +:
+  fork b
+  {+: +(a.v + b.v),
+   -:  ;; a positive, b negative
+   fork (a.v)
+   {0 : b,
+    ++: fork b.v {0: znil, ++: fork b.v.p {0: +(a.v.p),
+                                           ++: +(a.v.p) + -(b.v.p)}}}},
+
+  -:
+  fork b
+  {znil: znil,
+   +: ;; a negative, b positve: symmetric case
+   b + a,
+   -: ;; both negative
+   -(a.v + b.v)}}}

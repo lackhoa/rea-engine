@@ -2,7 +2,6 @@
 
 Z :: union
 {0,
- ;; todo: These maybe not work work as unary operators?
  +(v: Natp),
  -(v: Natp)}
 
@@ -85,7 +84,7 @@ addCommutativePositive :: (a: Natp, b: Z) -> +(a) + b = b + +(a)
  {1: fork b {0:, +: rewrite add1(b.v), -:},
   ++: fork b {0:,
               +: rewrite addCommutative(++(a.p), b.v);
-              => _,
+              => norm,
               -:}}}
 
 addCommutativeNegative :: (a: Natp, b: Z) -> -(a) + b = b + -(a)
@@ -93,7 +92,7 @@ addCommutativeNegative :: (a: Natp, b: Z) -> -(a) + b = b + -(a)
  {1: fork b {0:, +: , -: rewrite add1(b.v)},
   ++: fork b {0:,
               +: ,
-              -: rewrite addCommutative(++(a.p), b.v); => _}}}
+              -: rewrite addCommutative(++(a.p), b.v); => norm}}}
 
 addCommutative :: (a,b: Z) -> a+b = b+a
 {fork(a)
@@ -341,7 +340,7 @@ addPreservesGt :: (a,b,c: Z, p: a>b=true) -> a+c > b+c = true
                                     {
                                      1 p,
                                      ++
-                                     lem1: +(a.v.p) > +(b.v.p) = true := seq {=> _; p};
+                                     lem1: +(a.v.p) > +(b.v.p) = true := seq {norm; p};
                                      addPreservesGt(+(a.v.p), +(b.v.p), -(c.v.p), lem1);
                                      }
 
@@ -375,7 +374,7 @@ addPreservesGt :: (a,b,c: Z, p: a>b=true) -> a+c > b+c = true
                                      ++
                                      rewrite addCommutative(+(c.v.p), -(a.v.p));
                                      rewrite addCommutative(+(c.v.p), -(b.v.p));
-                                     lem1: -(a.v.p) > -(b.v.p) = true := seq {=> _; p};
+                                     lem1: -(a.v.p) > -(b.v.p) = true := seq {=> norm; p};
                                      addPreservesGt(-(a.v.p), -(b.v.p), +(c.v.p), lem1);
                                      },
                                     -

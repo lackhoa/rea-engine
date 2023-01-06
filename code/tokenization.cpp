@@ -133,14 +133,19 @@ inline void attach(char *key, i32 n, Tokenizer *tk=global_tokenizer)
   attach(key, string.chars, tk);
 }
 
-// #define pushContext { ParseContext context = {(char*)__func__}; pushContext_(&context); }
 inline void
-pushContext(char *string, Tokenizer *tk=global_tokenizer)
+pushContext(String string, Tokenizer *tk=global_tokenizer)
 {
   ParseContext *context = pushStruct(temp_arena, ParseContext);
   context->first = string;
   context->next  = tk->context;
   tk->context    = context;
+}
+
+inline void
+pushContext(char *string, Tokenizer *tk=global_tokenizer)
+{
+  pushContext(toString(string), tk);
 }
 
 internal void
@@ -246,11 +251,21 @@ parseErrorVA(i32 line, i32 column, char *format, va_list arg_list, Tokenizer *tk
 {
   assert(!tk->error);  // note: prevent parser from doing useless work after failure.
 
+  ParseContext *context = 0;
+  for (ParseContext *it = tk->context; it; it=it->next)
+  {
+    // note: we reverse the context list here, which is convenient for printing.
+    ParseContext *new_context = pushStruct(temp_arena, ParseContext);
+    new_context->first = it->first;
+    new_context->next  = context;
+    context = new_context;
+  }
+
   tk->error = pushStruct(temp_arena, ParseError, true);
   tk->error->message = printVA(temp_arena, format, arg_list);
   tk->error->line    = line;
   tk->error->column  = column;
-  tk->error->context = tk->context ? tk->context->first : 0;
+  tk->error->context = context;
 }
 
 internal void

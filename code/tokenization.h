@@ -88,19 +88,19 @@ u32 ErrorUnrecoverable = 1 << 2;
 u32 ErrorAmbiguousName = 1 << 3;
 u32 ErrorGoalAttached  = 1 << 4;
 
+struct ParseContext { String first; ParseContext *next; };
+
 struct ParseError
 {
-  String     message;
-  i32        line;
-  i32        column;
-  char      *context;
-  u32        flags; 
+  String        message;
+  i32           line;
+  i32           column;
+  ParseContext *context;
+  u32           flags; 
 
   i32             attachment_count;
   ErrorAttachment attachments[16];
 };
-
-struct ParseContext { char *first; ParseContext *next; };
 
 // note: the tokenizer also doubles as our error tracker, which may sound weird
 // but so far it doesn't pose any problem.

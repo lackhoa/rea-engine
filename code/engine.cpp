@@ -2849,25 +2849,29 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
 
       case TC_StrongArrow:
       {
-        pushContext("Full-rewrite: => TO_EXPRESSION [{ EQ_PROOF }]");
+        pushContext("Full-rewrite: => [NEW_GOAL] [{ EQ_PROOF_HINT }]");
         RewriteAst *rewrite = newAst(arena, RewriteAst, &token);
         ast = &rewrite->a;
+        if (!optionalCategory(TC_Keyword_norm))
         {
-          if (equal(peekToken().string, "_"))
-          {// normlization
-            nextToken();
-          }
-          else if ((rewrite->new_goal = parseExpressionToAst(arena)))
+          b32 require_hint = false;
+          if (optionalChar('_'))
+            require_hint = true;
+          else
+            rewrite->new_goal = parseExpressionToAst(arena);
+
+          if (optionalChar('{'))
           {
-            if (optionalChar('{'))
+            if (optionalString("<-"))  // todo: don't know whether to make a token type for this.
             {
-              if (optionalString("<-"))  // todo: don't know whether to make a token type for this.
-              {
-                rewrite->right_to_left = true;
-              }
-              rewrite->eq_proof_hint = parseExpressionToAst(arena);
-              requireChar('}');
+              rewrite->right_to_left = true;
             }
+            rewrite->eq_proof_hint = parseExpressionToAst(arena);
+            requireChar('}');
+          }
+          else if (require_hint)
+          {
+            parseError(&global_tokenizer->last_token, "you didn't provide new goal, so we require a proof hint (otherwise we'd have no idea what you want)");
           }
         }
         popContext();
@@ -4706,10 +4710,14 @@ parseExpressionToAst(MemoryArena *arena)
 }
 
 internal Function *
-buildGlobalFunction(MemoryArena *arena, Typer *env, FunctionDecl *decl)
+buildGlobalFunction(MemoryArena *arena, FunctionDecl *decl)
 {
   Function *funv = 0;
-  if (BuildTerm build_signature = buildTerm(arena, env, &decl->signature->a, holev))
+  Typer typer_ = {};
+  auto  typer  = &typer_;
+
+  pushContext(decl->token.string);
+  if (BuildTerm build_signature = buildTerm(arena, typer, &decl->signature->a, holev))
   {
     Arrow *signature = castTerm(build_signature.term, Arrow);
     funv = newTerm(arena, Function, build_signature.term);
@@ -4720,13 +4728,13 @@ buildGlobalFunction(MemoryArena *arena, Typer *env, FunctionDecl *decl)
 
     if (noError())
     {
-      introduceSignature(env, signature, true);
-      // Term *expected_body_type = evaluateArrow(temp_arena, env, signature, env->stack->items, signature->output_type);
-      if (BuildTerm body = buildTerm(arena, env, decl->body, signature->output_type))
+      introduceSignature(typer, signature, true);
+      if (BuildTerm body = buildTerm(arena, typer, decl->body, signature->output_type))
         funv->body = body.term;
-      unwindBindingsAndScope(env);
+      unwindBindingsAndScope(typer);
     }
   }
+  popContext();
   return funv;
 }
 
@@ -4932,7 +4940,7 @@ parseTopLevel(EngineState *state)
                 }
                 else is_theorem = true;
                 if (FunctionDecl *fun = parseFunction(arena, &token, is_theorem))
-                  buildGlobalFunction(arena, empty_env, fun);
+                  buildGlobalFunction(arena, fun);
               }
             } break;
 
@@ -5011,13 +5019,20 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
     if (ParseError *error = tk->error)
     {
       success = false;
-      printf("%s:%d:%d: [%s] ",
-             input_path.path,
-
-             error->line,
-             error->column,
-
-             error->context ? error->context : "");
+      printf("%s:%d:%d: ", input_path.path, error->line, error->column);
+      if (error->context)
+      {
+        print(0, "[");
+        for (ParseContext *context = error->context; context; context=context->next)
+        {
+          print(0, context->first);
+          if (context->next)
+          {
+            print(0, " -> ");
+          }
+        }
+        print(0, "] ");
+      }
       print(0, error->message);
 
       if (error->attachment_count > 0)
@@ -5155,7 +5170,7 @@ int engineMain()
   MemoryArena temp_arena_ = newArena(temp_memory_size, temp_memory_base);
   temp_arena              = &temp_arena_;
 
-  char *files[] = {"../data/test.rea", "../data/rat.rea"};
+  char *files[] = {"../data/test.rea", "../data/natp-experiment.rea", "../data/z.rea"};
   for (i32 file_id=0; file_id < arrayCount(files); file_id++)
   {
     if (!beginInterpreterSession(permanent_arena, files[file_id]))

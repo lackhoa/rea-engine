@@ -228,7 +228,7 @@ struct Union {
 };
 
 struct FunctionDecl {
-  Ast       a;
+  embed_Ast(a);
   ArrowAst *signature;
   Ast      *body;
 };
