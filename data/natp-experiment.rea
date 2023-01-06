@@ -51,18 +51,41 @@ natpInjective :: (a: Nat) -> nat(natp(++(a))) = ++(a)
 natPreservesAddition :: (a,b: Natp) -> nat(a) + nat(b) = nat(a+b)
 {fork a {1  rewrite natpInjective(nat(b)),
          ++
-         rewrite natInjective(nat(a.p) + nat(b));
+         rewrite natpInjective(nat(a.p) + nat(b));
          }}
 
 addAssociative :: (a,b,c: Natp) -> (a+b)+c = a+b+c
 {
  => natp(nat(natp(nat(a) + nat(b))) + nat(c)) = natp(nat(a) + nat(natp(nat(b) + nat(c))));
+ => natp(nat(natp(nat(a + b))) + nat(c)) = natp(nat(a) + nat(natp(nat(b) + nat(c)))) {natPreservesAddition};
+ => natp(nat(a + b) + nat(c)) = natp(nat(a) + nat(natp(nat(b) + nat(c)))) {natInjective};
+ => natp(nat(a + b) + nat(c)) = natp(nat(a) + nat(natp(nat(b + c)))) {natPreservesAddition};
+ => natp(nat(a + b) + nat(c)) = natp(nat(a) + nat(b + c)) {natInjective};
+ => natp(nat((a + b) + c)) = natp(nat(a) + nat(b + c)) {natPreservesAddition};
+ => natp(nat((a + b) + c)) = natp(nat(a + b + c)) {natPreservesAddition};
+ => natp(nat(a + b + c)) = natp(nat(a + b + c)) {addAssociative};
  }
+
+natPreservesMultiplication :: (a,b: Natp) -> nat(a) * nat(b) = nat(a * b)
+{fork a {1
+         rewrite add0(nat(b));
+         rewrite add0(nat(b));
+         rewrite natInjective(b),
+
+         ++
+         => nat(b) + nat(a.p) * nat(b) = nat(natp(nat(b) + nat(a.p) * nat(b)));
+         => nat(b) + nat(a.p * b) = nat(natp(nat(b) + nat(a.p) * nat(b))) {natPreservesMultiplication(a.p, b)}
+         => nat(b + a.p * b) = nat(natp(nat(b) + nat(a.p) * nat(b))) {natPreservesAddition}
+         => nat(b + a.p * b) = nat(natp(nat(b) + nat(a.p * b))) {natPreservesMultiplication(a.p, b)}
+         ;; NOTE: once I get everything under one "nat", I win!
+         }}
 
 mulDistributive :: (a,b,c: Natp) -> a*c+b*c = (a+b)*c
 {
- => +++((c.p + a.p * ++(c.p)) + ++(c.p + b.p * ++(c.p))) = +++(c.p + (a.p + ++(b.p)) * ++(c.p))
- => +++((c.p + a.p * ++(c.p)) + ++(c.p + b.p * ++(c.p))) = +++(c.p + (a.p + ++(b.p)) * ++(c.p))
+ => natp(nat(natp(nat(a) * nat(c))) + nat(natp(nat(b) * nat(c)))) = natp(nat(natp(nat(a) + nat(b))) * nat(c));
+ => natp(nat(natp(nat(a) * nat(c))) + nat(natp(nat(b) * nat(c)))) = natp(nat(natp(nat(a + b))) * nat(c)) {natPreservesAddition};
+ => natp(nat(natp(nat(a) * nat(c)) + natp(nat(b) * nat(c)))) = natp(nat(natp(nat(a + b))) * nat(c)) {natPreservesAddition};
+ => natp(nat(a) * nat(c)) + natp(nat(b) * nat(c)) = natp(nat(natp(nat(a + b))) * nat(c)) {natInjective};
  }
 
 mulAssociative :: (a,b,c: Natp) -> (a*b)*c = a*b*c
