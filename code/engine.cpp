@@ -2717,7 +2717,10 @@ getFunctionOverloads(Typer *env, Identifier *ident, Term *output_type_goal)
     }
   }
   else
+  {
     parseError(&ident->a, "identifier not found");
+    attach("identifier", ident->token.string);
+  }
   return out;
 }
 
@@ -3473,6 +3476,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                 Term *hint = op_list.items[attempt];
                 b32 hint_is_valid = false;
                 Term *hint_type = getType(temp_arena, env, hint);
+                assert(noError());
                 if (Arrow *signature = castTerm(hint_type, Arrow))
                 {
                   hint_is_valid = true;
@@ -3553,8 +3557,6 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                 attach("type", eq);
               }
             }
-            else
-              parseError(in->eq_proof_hint, "invalid proof pattern");
 
             if (noError())
             {

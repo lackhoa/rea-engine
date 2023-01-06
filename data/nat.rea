@@ -111,3 +111,12 @@ mul0 :: (a: Nat) -> a * 0 = 0
   ++: rewrite mul0(a.p),
   }
  }
+
+mulCommutative :: (a,b: Nat) -> a*b = b*a
+{fork a
+ {0 : rewrite mul0(b),
+  ++: 
+  => b + a.p*b = b * ++(a.p)
+  => b + a.p*b = b + b*a.p { mulSRight(b, a.p) }
+  ;; => b + a.p*b = b + a.p*b { <- mulCommutative(a.p, b) }
+  }}

@@ -1,26 +1,27 @@
 #load "nat.rea"
 
-Natp :: union {1, ++(p: Natp)}
+Natp :: union {+++(p: Nat)}
 
 ;; literal translation
 nat :: fn(a: Natp) -> Nat
-{fork a {1: 1, ++: ++(nat(a.p))}}
+{fork a {+++: ++(a.p)}}
+
+1 : Natp := +++(0);
 
 natp :: fn(a: Nat) -> Natp
 {fork a {0  1,  ;; throwaway case
-         ++ fork a.p {0  1,
-                      ++ ++(natp(a.p))}}}
+         ++ +++(a.p)}}
 
+;; todo this is what I'm talking about with the union-with-one-constructor
+;; monkey business: you can't normalize unless you fork.
 natpNot0 :: (a: Natp) -> nat(a) != 0
-{fork a {1 id(False), ++ id(False)}}
+{fork a {+++ id(False)}}
 
 + :: fn(a,b: Natp) -> Natp
-{;; prove(nat(a) + nat(b) != 0) {addPos(nat(a), nat(b), natpNot0(a))};
- natp(nat(a) + nat(b))}
+{natp(nat(a) + nat(b))}
 
 * :: fn(a,b: Natp) -> Natp
-{;; prove(nat(a) * nat(b) != 0) {mulPos(nat(a), nat(b), natpNot0(a), natpNot0(b))};
- natp(nat(a) * nat(b))}
+{natp(nat(a) * nat(b))}
 
 addCommutative :: (a,b: Natp) -> (b+a = a+b)
 {
@@ -28,31 +29,24 @@ addCommutative :: (a,b: Natp) -> (b+a = a+b)
  => natp(nat(a) + nat(b)) = natp(nat(a) + nat(b)) {addCommutative}
  }
 
-;; todo this falsehood proving business is still annoying
-natpS :: (a: Nat, not0: a!=0) -> natp(++(a)) = ++(natp(a))
+;; ;; todo this falsehood proving business is still annoying
+;; natpS :: (a: Nat, not0: a!=0) -> natp(++(a)) = +++(natp(a))
+;; {fork a {0 norm not0; falsehood := not0(_); fork falsehood {},
+;;          ++}}
+
+natInjective :: (a: Natp) -> natp(nat(a)) = a
+{fork a {+++}}
+
+;; NOTE don't seem to need this
+natpInjective :: (a: Nat) -> nat(natp(++(a))) = ++(a)
+{fork a {0, ++}}
+
+natpInjective :: (a: Nat, not0: a!=0) -> nat(natp(a)) = a
 {fork a {0 norm not0; falsehood := not0(_); fork falsehood {},
          ++}}
 
-natpNot0 :: (a: Natp) -> nat(a) != 0
-{fork a {1 id(False), ++ id(False)}}
-
-natInjective :: (a: Natp) -> natp(nat(a)) = a
-{fork a {1 ,
-         ++
-         => natp(++(nat(a.p))) = ++(a.p);
-         => ++(natp(nat(a.p))) = ++(a.p) { natpS(nat(a.p), natpNot0(a.p)) }
-         => ++(a.p) = ++(a.p) { natInjective }
-         }}
-
-natpInjective :: (a: Nat) -> nat(natp(++(a))) = ++(a)
-{fork a {0  ,
-         ++ => ++(++(a.p)) = ++(++(a.p)) {natpInjective(a.p)}}}
-
 natPreservesAddition :: (a,b: Natp) -> nat(a) + nat(b) = nat(a+b)
-{fork a {1  rewrite natpInjective(nat(b)),
-         ++
-         rewrite natpInjective(nat(a.p) + nat(b));
-         }}
+{fork a {+++}}
 
 addAssociative :: (a,b,c: Natp) -> (a+b)+c = a+b+c
 {
@@ -67,25 +61,20 @@ addAssociative :: (a,b,c: Natp) -> (a+b)+c = a+b+c
  }
 
 natPreservesMultiplication :: (a,b: Natp) -> nat(a) * nat(b) = nat(a * b)
-{fork a {1
-         rewrite add0(nat(b));
-         rewrite add0(nat(b));
-         rewrite natInjective(b),
-
-         ++
-         => nat(b) + nat(a.p) * nat(b) = nat(natp(nat(b) + nat(a.p) * nat(b)));
-         => nat(b) + nat(a.p * b) = nat(natp(nat(b) + nat(a.p) * nat(b))) {natPreservesMultiplication(a.p, b)}
-         => nat(b + a.p * b) = nat(natp(nat(b) + nat(a.p) * nat(b))) {natPreservesAddition}
-         => nat(b + a.p * b) = nat(natp(nat(b) + nat(a.p * b))) {natPreservesMultiplication(a.p, b)}
-         ;; NOTE: once I get everything under one "nat", I win!
-         }}
+{fork a {+++ fork b {+++}}}
 
 mulDistributive :: (a,b,c: Natp) -> a*c+b*c = (a+b)*c
 {
- => natp(nat(natp(nat(a) * nat(c))) + nat(natp(nat(b) * nat(c)))) = natp(nat(natp(nat(a) + nat(b))) * nat(c));
- => natp(nat(natp(nat(a) * nat(c))) + nat(natp(nat(b) * nat(c)))) = natp(nat(natp(nat(a + b))) * nat(c)) {natPreservesAddition};
- => natp(nat(natp(nat(a) * nat(c)) + natp(nat(b) * nat(c)))) = natp(nat(natp(nat(a + b))) * nat(c)) {natPreservesAddition};
- => natp(nat(a) * nat(c)) + natp(nat(b) * nat(c)) = natp(nat(natp(nat(a + b))) * nat(c)) {natInjective};
+ fork a
+ {+++ fork b
+  {+++ fork c
+   {+++
+    => +++((c.p + ++(c.p) * a.p) + ++(c.p + b.p * ++(c.p))) = +++(c.p + (a.p + ++(b.p)) * ++(c.p)) {mulCommutative}
+    }}}
+ ;; => natp(nat(natp(nat(a) * nat(c))) + nat(natp(nat(b) * nat(c)))) = natp(nat(natp(nat(a) + nat(b))) * nat(c));
+ ;; => natp(nat(natp(nat(a) * nat(c))) + nat(natp(nat(b) * nat(c)))) = natp(nat(natp(nat(a + b))) * nat(c)) {natPreservesAddition};
+ ;; => natp(nat(natp(nat(a) * nat(c)) + natp(nat(b) * nat(c)))) = natp(nat(natp(nat(a + b))) * nat(c)) {natPreservesAddition};
+ ;; => natp(nat(a) * nat(c)) + natp(nat(b) * nat(c)) = natp(nat(natp(nat(a + b))) * nat(c)) {natInjective};
  }
 
 mulAssociative :: (a,b,c: Natp) -> (a*b)*c = a*b*c
