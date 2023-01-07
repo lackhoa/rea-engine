@@ -55,12 +55,13 @@ fillHole(MemoryArena *arena, Typer *env, Term *goal)
 }
 
 inline Term *
-newVariable(MemoryArena *arena, String name, i32 delta, i32 id)
+newVariable(MemoryArena *arena, Typer *env, String name, i32 delta, i32 id)
 {
   Variable *out = newTerm(arena, Variable, 0);
   out->name  = name;
   out->delta = delta;
   out->id    = id;
+  computeType(arena, env, &out->t);
   return &out->t;
 }
 
@@ -68,20 +69,11 @@ inline Term *
 newComposite(MemoryArena *arena, Typer *env, Term *op, i32 arg_count, Term **args)
 {
   // todo typecheck the arguments too maybe?
-  Term *type = 0;
-  if (Constructor *ctor = castTerm(op, Constructor))
-    type = &ctor->uni->t;
-  else
-  {
-    Term  *op_type0 = computeType(arena, env, op);
-    Arrow *op_type  = castTerm(op_type0, Arrow);
-    type = evaluate(arena, args, op_type->output_type);
-  }
   Composite *out = newTerm(arena, Composite, 0);
   out->op        = op;
   out->arg_count = arg_count;
   out->args      = args;
-  out->type      = type;
+  computeType(arena, env, &out->t);
   return &out->t;
 }
 
@@ -3690,6 +3682,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 
     case AC_DestructAst:
     {
+#if 0
       DestructAst *in = castAst(in0, DestructAst);
       if (BuildTerm build_eqp = buildTerm(arena, env, in->eqp, holev))
       {
@@ -3762,6 +3755,9 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         else
           parseError(in0, "expected an equality proof as argument");
       }
+#else
+      parseError(in0, "destruct syntax has been deprecated, waiting for something better to emerge");
+#endif
     } break;
 
     case AC_CtorAst:
@@ -4388,6 +4384,7 @@ buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
         {
           addGlobalBinding(ctor_name, &ctor->t);
 
+#if 0
           // todo #cleanup This powers the "destruct" syntax.
           i32 ctor_arg_count      = signature->param_count;
           i32 compare_param_count = ctor_arg_count*2 + 1;
@@ -4438,6 +4435,7 @@ buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
             Builtin *destruct = newTerm(arena, Builtin, &destruct_signature->t);
             destruct_list->items[arg_id] = &destruct->t;
           }
+#endif
         }
         else
         {

@@ -107,7 +107,8 @@ successorIsDifferent :: (a: Natp, P: ++(a) = a) -> False
  fork a
  {
   1:  P,
-  ++: Q := destruct[0]P; successorIsDifferent(a.p, Q),
+  ++:
+  Q := destruct[0]P; successorIsDifferent(a.p, Q),
   }
  }
 
