@@ -161,7 +161,7 @@ computeType(Constructor *ctor)
     return castTerm(ctor->type, Arrow);
   else
   {
-    Arrow *signature = ctor->uni->ctor_signatures[ctor->id];
+    Arrow *signature = ctor->uni->structs[ctor->id];
     ctor->type = &signature->t;
     return signature;
   }
@@ -177,33 +177,48 @@ newConstructor(MemoryArena *arena, Union *uni, i32 id)
   return ctor;
 }
 
-// todo this is a massive waste of time, maybe we can try using the data tree
-// directly.
-inline Composite *
-makeFakeRecord(MemoryArena *arena, Term *parent, DataTree *tree)
-{  
-  Composite *record = 0;
-  Constructor *ctor = newConstructor(arena, tree->uni, tree->ctor_id);  // todo need to rebase the union, no way this is correct
-  Arrow *ctor_sig = getType(ctor);
-  i32 param_count = ctor_sig->param_count;
-  record = newTerm(arena, Composite, 0);
-  record->op        = &ctor->t;
-  record->arg_count = param_count;
-  record->args      = pushArray(arena, param_count, Term*);
+inline Term **
+synthesizeMembers(MemoryArena *arena, Term *parent, i32 ctor_id)
+{
+  Union *uni = castTerm(parent->type, Union);
+  Arrow *struc = uni->structs[ctor_id];
+  i32 param_count = struc->param_count;
+  Term **args = pushArray(temp_arena, param_count, Term *);
   for (i32 field_id=0; field_id < param_count; field_id++)
   {
-    String field_name = ctor_sig->param_names[field_id];
-    Accessor *accessor = newTerm(arena, Accessor, 0);
+    String field_name = struc->param_names[field_id];
+    Term *type = evaluate(arena, args, struc->param_types[field_id]);
+    Accessor *accessor = newTerm(arena, Accessor, type);
     accessor->record     = parent;
     accessor->field_id   = field_id;
     accessor->field_name = field_name;
+    args[field_id] = &accessor->t;
+  }
+  return args;
+}
+
+inline Term *
+synthesizeTree(MemoryArena *arena, Term *parent, DataTree *tree)
+{
+  Composite *record = 0;
+  Union *uni   = castTerm(parent->type, Union);
+  Arrow *struc = uni->structs[tree->ctor_id];
+  Constructor *ctor = newConstructor(arena, tree->uni, tree->ctor_id);
+  i32 param_count = struc->param_count;
+  record = newTerm(arena, Composite, parent->type);
+  record->op        = &ctor->t;
+  record->arg_count = param_count;
+  record->args      = pushArray(arena, param_count, Term *);
+  Term **members = synthesizeMembers(arena, parent, tree->ctor_id);
+  for (i32 field_id=0; field_id < param_count; field_id++)
+  {
     DataTree *member_tree = tree->members[field_id];
     if (member_tree)
-      record->args[field_id] = &makeFakeRecord(arena, &accessor->t, member_tree)->t;
+      record->args[field_id] = synthesizeTree(arena, members[field_id], member_tree);
     else
-      record->args[field_id] = &accessor->t;
+      record->args[field_id] = members[field_id];
   }
-  return record;
+  return &record->t;
 }
 
 inline String
@@ -255,29 +270,6 @@ printDataMap(MemoryArena *buffer, Typer *env)
     if (map->next)
       print(buffer, ", ");
   }
-}
-
-// todo This is an even bigger waste of time, the worst thing is I don't know
-// how to get the type of a struct, does anybody know? Pretty please?
-inline Composite *
-makeShallowRecord(MemoryArena *arena, Term *parent, Union *uni, i32 ctor_id)
-{
-  Composite *record = newTerm(arena, Composite, 0);
-  Arrow *ctor_sig = uni->ctor_signatures[ctor_id];
-  i32 param_count = ctor_sig->param_count;
-  record->op        = &newConstructor(arena, uni, ctor_id)->t;  // todo you can't use "uni"
-  record->arg_count = param_count;
-  record->args      = pushArray(arena, param_count, Term *);
-  for (i32 field_id=0; field_id < param_count; field_id++)
-  {
-    String field_name = ctor_sig->param_names[field_id];
-    Accessor *accessor = newTerm(arena, Accessor, 0);
-    accessor->record     = parent;
-    accessor->field_id   = field_id;
-    accessor->field_name = field_name;
-    record->args[field_id] = &accessor->t;
-  }
-  return record;
 }
 
 inline Composite *
@@ -334,7 +326,7 @@ rewriteTerm(MemoryArena *arena, Term *rhs, TreePath *path, Term *in0)
 inline void
 initDataTree(MemoryArena *arena, DataTree *tree, Union *uni, i32 ctor_id)
 {
-  i32 ctor_arg_count = uni->ctor_signatures[ctor_id]->param_count;
+  i32 ctor_arg_count = uni->structs[ctor_id]->param_count;
   tree->uni          = uni;
   tree->ctor_id      = ctor_id;
   tree->member_count = ctor_arg_count;
@@ -575,28 +567,21 @@ computeType(MemoryArena *arena, Typer *env, Term *in0)
       case Term_Accessor:
       {
         Accessor *in = castTerm(in0, Accessor);
-        Composite *record = 0;
-
-        Arrow *signature = 0;
-        if ((record = castTerm(in->record, Composite)))
+        Term  **args  = 0;
+        if (Composite *record = castTerm(in->record, Composite))
         {
           if (Constructor *ctor = castTerm(record->op, Constructor))
-            signature = getType(ctor);
-          else
-            record = 0;  // back out since it's not an actual record.
-        }
-
-        if (!record)
-        {
-          Constructor ctor = getConstructor(env, in->record);
-          if (ctor.uni)
           {
-            signature = ctor.uni->ctor_signatures[ctor.id];
-            record = makeShallowRecord(arena, in->record, ctor.uni, ctor.id);
+            args  = record->args;
           }
         }
+        if (!args)
+        {
+          Constructor ctor = getConstructor(env, in->record);
+          args = synthesizeMembers(arena, in->record, ctor.id);
+        }
 
-        out0 = evaluate(arena, record->args, signature->param_types[in->field_id]);
+        out0 = args[in->field_id]->type;
       } break;
 
       case Term_Rewrite:
@@ -1188,7 +1173,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
             {
               print(buffer, in->ctor_names[ctor_id]);
               print(buffer, ": ");
-              print(buffer, &in->ctor_signatures[ctor_id]->t, new_opt);
+              print(buffer, &in->structs[ctor_id]->t, new_opt);
               if (ctor_id != in->ctor_count-1)
                 print(buffer, ", ");
             }
@@ -1537,11 +1522,11 @@ rebaseMain(MemoryArena *arena, Term *in0, i32 delta, i32 offset)
       {
         Union *in  = castTerm(in0, Union);
         Union *out = copyStruct(arena, in);
-        allocateArray(arena, in->ctor_count, out->ctor_signatures);
+        allocateArray(arena, in->ctor_count, out->structs);
         for (i32 id=0; id < in->ctor_count; id++)
         {
-          Term *rebased = rebaseMain(arena, &in->ctor_signatures[id]->t, delta, offset);
-          out->ctor_signatures[id] = castTerm(rebased, Arrow);
+          Term *rebased = rebaseMain(arena, &in->structs[id]->t, delta, offset);
+          out->structs[id] = castTerm(rebased, Arrow);
         }
         out0 = &out->t;
       } break;
@@ -1775,11 +1760,11 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
       {
         Union *in  = castTerm(in0, Union);
         Union *out = copyStruct(arena, in);
-        allocateArray(arena, in->ctor_count, out->ctor_signatures);
+        allocateArray(arena, in->ctor_count, out->structs);
         for (i32 id=0; id < in->ctor_count; id++)
         {
-          Arrow *signature = in->ctor_signatures[id];
-          out->ctor_signatures[id] = castTerm(evaluateMain(ctx, &signature->t), Arrow);
+          Arrow *signature = in->structs[id];
+          out->structs[id] = castTerm(evaluateMain(ctx, &signature->t), Arrow);
         }
         out0 = &out->t;
       } break;
@@ -1961,8 +1946,8 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
             b32 found_mismatch = false;
             for (i32 id=0; id < ctor_count; id++)
             {
-              if (!equal(&lhs->ctor_signatures[id]->t,
-                         &rhs->ctor_signatures[id]->t))
+              if (!equal(&lhs->structs[id]->t,
+                         &rhs->structs[id]->t))
               {
                 found_mismatch = true;
               }
@@ -2186,19 +2171,19 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
           }
         }
         if (tree)
-          out0 = &makeFakeRecord(arena, in0, tree)->t;
+          out0 = synthesizeTree(arena, in0, tree);
       } break;
 
       case Term_Union:
       {
         Union *in  = castTerm(in0, Union);
         Union *out = copyStruct(arena, in);
-        allocateArray(arena, in->ctor_count, out->ctor_signatures);
+        allocateArray(arena, in->ctor_count, out->structs);
         for (i32 id=0; id < in->ctor_count; id++)
         {
-          Term *signature = &in->ctor_signatures[id]->t;
+          Term *signature = &in->structs[id]->t;
           signature = normalizeMain(ctx, signature);
-          out->ctor_signatures[id] = castTerm(signature, Arrow);
+          out->structs[id] = castTerm(signature, Arrow);
         }
         out0 = &out->t;
       } break;
@@ -4358,7 +4343,7 @@ buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
   Union *uni = newTerm(arena, Union, &builtins.Set->t);
   uni->ctor_count = in->ctor_count;
   allocateArray(arena, in->ctor_count, uni->ctor_names);
-  allocateArray(arena, in->ctor_count, uni->ctor_signatures);
+  allocateArray(arena, in->ctor_count, uni->structs);
   // note: bind the type first to support recursive data structure.
   if (global_name)
     addGlobalBinding(global_name, &uni->t);
@@ -4375,7 +4360,7 @@ buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
     if (BuildTerm build_type = buildTerm(arena, env, &in->ctor_signatures[ctor_id]->a, holev))
     {
       Arrow *signature = castTerm(build_type.term, Arrow);
-      uni->ctor_signatures[ctor_id] = signature;
+      uni->structs[ctor_id] = signature;
       ctor->type                    = &signature->t;
 
       if (global_name)

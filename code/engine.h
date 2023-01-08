@@ -226,9 +226,9 @@ struct Constructor {
 
 struct Union {
   embed_Term(t);
-  i32          ctor_count;
-  String      *ctor_names;
-  Arrow      **ctor_signatures;
+  i32      ctor_count;
+  String  *ctor_names;
+  Arrow  **structs;
 };
 
 struct FunctionDecl {

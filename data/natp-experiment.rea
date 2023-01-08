@@ -71,10 +71,6 @@ mulDistributive :: (a,b,c: Natp) -> a*c+b*c = (a+b)*c
    {+++
     => +++((c.p + ++(c.p) * a.p) + ++(c.p + b.p * ++(c.p))) = +++(c.p + (a.p + ++(b.p)) * ++(c.p)) {mulCommutative}
     }}}
- ;; => natp(nat(natp(nat(a) * nat(c))) + nat(natp(nat(b) * nat(c)))) = natp(nat(natp(nat(a) + nat(b))) * nat(c));
- ;; => natp(nat(natp(nat(a) * nat(c))) + nat(natp(nat(b) * nat(c)))) = natp(nat(natp(nat(a + b))) * nat(c)) {natPreservesAddition};
- ;; => natp(nat(natp(nat(a) * nat(c)) + natp(nat(b) * nat(c)))) = natp(nat(natp(nat(a + b))) * nat(c)) {natPreservesAddition};
- ;; => natp(nat(a) * nat(c)) + natp(nat(b) * nat(c)) = natp(nat(natp(nat(a + b))) * nat(c)) {natInjective};
  }
 
 mulAssociative :: (a,b,c: Natp) -> (a*b)*c = a*b*c
