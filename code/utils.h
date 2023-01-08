@@ -16,10 +16,9 @@
 #endif
 
 #define UNUSED_VAR __attribute__((unused))
-#define unused_variable __attribute__((unused))
 
 #define internal        static
-#define global_variable unused_variable static
+#define global_variable UNUSED_VAR static
 #define local_persist   static
 
 typedef uint8_t  u8;

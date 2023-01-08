@@ -45,8 +45,8 @@ fillHole(MemoryArena *arena, Typer *env, Term *goal)
       Term *rhs_norm = normalize(temp_arena, env, eq->args[2]);
       if (equal(lhs_norm, rhs_norm))
       {
-        getType(arena, env, eq->args[1]);
-        getType(arena, env, eq->args[2]);
+        todoGetType(arena, env, eq->args[1]);
+        todoGetType(arena, env, eq->args[2]);
         out = newComputation(arena, eq->args[1], eq->args[2]);
       }
     }
@@ -504,7 +504,7 @@ getConstructor(Typer *env, Term *in0)
   }
   if (!is_record)
   {
-    if (Union *uni = castTerm(getType(temp_arena, env, in0), Union))
+    if (Union *uni = castTerm(todoGetType(temp_arena, env, in0), Union))
     {
       if (uni->ctor_count == 1)
         out = *newConstructor(temp_arena, uni, 0);
@@ -604,7 +604,7 @@ computeType(MemoryArena *arena, Typer *env, Term *in0)
         Rewrite *in = castTerm(in0, Rewrite);
         auto [lhs, rhs] = getEqualitySides(computeType(arena, env, in->eq_proof));
         Term *rewrite_to = in->right_to_left ? rhs : lhs;
-        out0 = rewriteTerm(arena, rewrite_to, in->path, getType(arena, env, in->body));
+        out0 = rewriteTerm(arena, rewrite_to, in->path, todoGetType(arena, env, in->body));
       } break;
 
       case Term_Constructor:
@@ -629,7 +629,7 @@ computeType(MemoryArena *arena, Typer *env, Term *in0)
 // todo this function is just a stub for direct type retrieval, until we can
 // transition fully to all-terms-have-types kinda deal thing.
 forward_declare inline Term *
-getType(MemoryArena *arena, Typer *env, Term *in0)
+todoGetType(MemoryArena *arena, Typer *env, Term *in0)
 {
   return computeType(arena, env, in0);
 }
@@ -2566,7 +2566,7 @@ unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *goal0)
         // todo the act of fetching lhs_type and goal_type should be the same!!!
         Term *lhs_type = lhs_scope->first->param_types[lhs->id];
         lhs_type = rebase(temp_arena, lhs_type, lhs->delta);
-        Term *goal_type = getType(temp_arena, env, goal0);
+        Term *goal_type = todoGetType(temp_arena, env, goal0);
         if (unify(env, stack, lhs_scope, lhs_type, goal_type))
         {
           // todo potential infinite loop with "Type"
@@ -3077,7 +3077,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           for (i32 value_id = 0; value_id < globals->count; value_id++)
           {
             Term *slot_value = globals->items[value_id];
-            if (matchType(getType(arena, env, slot_value), goal))
+            if (matchType(todoGetType(arena, env, slot_value), goal))
             {
               if (value)
               {// ambiguous
@@ -3150,7 +3150,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       {
         Term *op = op_list.items[attempt];
         out->op = op;
-        if (Arrow *signature = castTerm(getType(temp_arena, env, op), Arrow))
+        if (Arrow *signature = castTerm(todoGetType(temp_arena, env, op), Arrow))
         {
           if (signature->param_count != in->arg_count)
           {
@@ -3214,8 +3214,8 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                     assert(param_type->delta == 0);
                     Term *placeholder_arg = args[param_type->id];
                     assert(placeholder_arg->cat == Term_Hole);
-                    Term *arg_type = getType(arena, env, arg.term);
-                    Term *arg_type_type = getType(arena, env, arg_type);
+                    Term *arg_type = todoGetType(arena, env, arg.term);
+                    Term *arg_type_type = todoGetType(arena, env, arg_type);
                     if (equal(placeholder_arg->type, arg_type_type))
                       args[param_type->id] = arg_type;
                     else
@@ -3257,7 +3257,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         else
         {
           parseError(in->op, "operator must have an arrow type");
-          attach("operator type", getType(temp_arena, env, op));
+          attach("operator type", todoGetType(temp_arena, env, op));
         }
 
         if (op_list.count > 1)
@@ -3467,12 +3467,12 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
               {
                 Term *hint = op_list.items[attempt];
                 b32 hint_is_valid = false;
-                Term *hint_type = getType(temp_arena, env, hint);
+                Term *hint_type = todoGetType(temp_arena, env, hint);
                 assert(noError());
                 if (Arrow *signature = castTerm(hint_type, Arrow))
                 {
                   hint_is_valid = true;
-                  eq = newEquality(temp_arena, getType(temp_arena, env, from), from, to);
+                  eq = newEquality(temp_arena, todoGetType(temp_arena, env, from), from, to);
                   pushArray(temp_arena, signature->param_count, Term *, true);
                   if (Term **temp_args = inferArgs(temp_arena, env, hint, eq).args)
                   {
@@ -3497,7 +3497,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                       eq_proof_composite->args      = args;
                       out->eq_proof = &eq_proof_composite->t;
                       // since the proof was synthesized from unification, double-check the type
-                      Term *eq_check = getType(arena, env, out->eq_proof);
+                      Term *eq_check = todoGetType(arena, env, out->eq_proof);
                       assert(equal(eq_check, eq));
                     }
                   }
@@ -3542,7 +3542,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
             else if (BuildTerm build_eq_proof = buildTerm(arena, env, in->eq_proof_hint, holev))
             {// full proof of equality
               out->eq_proof = build_eq_proof.term;
-              eq = getType(temp_arena, env, build_eq_proof.term);
+              eq = todoGetType(temp_arena, env, build_eq_proof.term);
               if (!isEquality(eq))
               {
                 parseError(in->eq_proof_hint, "invalid proof pattern");
@@ -3575,7 +3575,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         if (BuildTerm eq_proof = buildTerm(arena, env, in->eq_proof_hint, holev))
         {
           out->eq_proof = eq_proof.term;
-          Term *eq = getType(temp_arena, env, eq_proof.term);
+          Term *eq = todoGetType(temp_arena, env, eq_proof.term);
           if (auto [from, to] = getEqualitySides(eq, false))
           {
             if (in->right_to_left) {auto tmp = from; from = to; to = tmp; out->right_to_left = true;}
@@ -3626,7 +3626,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           Term *rhs = build_rhs.term;
           Term *rhs_type = type_hint;
           if (type_hint->cat == Term_Hole)
-            rhs_type = getType(arena, env, build_rhs.term);
+            rhs_type = todoGetType(arena, env, build_rhs.term);
             
           if (in->type == LET_TYPE_NORMALIZE)
           {// type coercion
@@ -3634,7 +3634,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
             Term *computation = newComputation(arena, norm_rhs_type, rhs_type);
             rhs_type = norm_rhs_type;
             rhs = newRewrite(arena, computation, build_rhs.term, 0, false);
-            assert(equal(getType(temp_arena, env, rhs), rhs_type));
+            assert(equal(todoGetType(temp_arena, env, rhs), rhs_type));
           }
 
           Token *token = &in0->token;
@@ -3851,13 +3851,13 @@ buildFork(MemoryArena *arena, Typer *env, ForkAst *in, Term *goal)
   assert(goal && goal->cat != Term_Hole);
   Fork *out = newTerm(arena, Fork, goal);
   out->case_count = in->case_count;
-  i32 unused_variable serial = global_debug_serial++;
+  i32 UNUSED_VAR serial = global_debug_serial++;
   if (BuildTerm subject = buildTerm(arena, env, in->subject, holev))
   {
     out->subject = subject.term;
     i32 case_count = in->case_count;
 
-    Term *subject_type = getType(arena, env, subject.term);
+    Term *subject_type = todoGetType(arena, env, subject.term);
     if (Union *uni = castTerm(subject_type, Union))
     {
       if (uni->ctor_count == case_count)
@@ -4383,59 +4383,6 @@ buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
         if (signature->param_count > 0)
         {
           addGlobalBinding(ctor_name, &ctor->t);
-
-#if 0
-          // todo #cleanup This powers the "destruct" syntax.
-          i32 ctor_arg_count      = signature->param_count;
-          i32 compare_param_count = ctor_arg_count*2 + 1;
-          String  *param_names = pushArray(arena, compare_param_count, String);
-          Term   **param_types = pushArray(arena, compare_param_count, Term*);
-          for (i32 group=0; group <= 1; group++)
-          {
-            for (i32 arg_id=0; arg_id < ctor_arg_count; arg_id++)
-            {
-              String name = print(arena, "_");
-              concat(&name, print(arena, signature->param_names[arg_id]));
-              concat(&name, print(arena, "%d", group));
-              i32 offset   = (group == 0) ? 0 : ctor_arg_count;
-              i32 param_id = offset + arg_id;
-              param_names[param_id] = name;
-              param_types[param_id] = signature->param_types[arg_id];
-            }
-          }
-          Term **lhs_args = pushArray(arena, ctor_arg_count, Term*);
-          Term **rhs_args = pushArray(arena, ctor_arg_count, Term*);
-          for (i32 arg_id=0; arg_id < ctor_arg_count; arg_id++)
-          {
-            i32 lhs_param_id = arg_id;
-            i32 rhs_param_id = ctor_arg_count+arg_id;
-            lhs_args[arg_id] = newVariable(arena, param_names[lhs_param_id], 0, lhs_param_id);
-            rhs_args[arg_id] = newVariable(arena, param_names[rhs_param_id], 0, rhs_param_id);
-          }
-          Term *lhs = newComposite(arena, env, &ctor->t, ctor_arg_count, lhs_args);
-          Term *rhs = newComposite(arena, env, &ctor->t, ctor_arg_count, rhs_args);
-          param_names[compare_param_count-1] = toString("P");
-          param_types[compare_param_count-1] = newEquality(arena, &uni->t, lhs, rhs);
-
-          DestructList *destruct_list = pushStruct(global_state.arena, DestructList);
-          destruct_list->next = global_state.builtin_destructs;
-          global_state.builtin_destructs = destruct_list;
-          destruct_list->uni     = uni;
-          destruct_list->ctor_id = ctor_id;
-          allocateArray(arena, ctor_arg_count, destruct_list->items);
-          for (i32 arg_id=0; arg_id < ctor_arg_count; arg_id++)
-          {
-            Arrow *destruct_signature = newTerm(arena, Arrow, 0);
-            destruct_signature->param_count = compare_param_count;
-            destruct_signature->param_names = param_names;
-            destruct_signature->param_types = param_types;
-            allocateArray(arena, compare_param_count, destruct_signature->param_flags, true);
-            destruct_signature->output_type = newEquality(arena, signature->param_types[arg_id], lhs_args[arg_id], rhs_args[arg_id]);
-
-            Builtin *destruct = newTerm(arena, Builtin, &destruct_signature->t);
-            destruct_list->items[arg_id] = &destruct->t;
-          }
-#endif
         }
         else
         {
