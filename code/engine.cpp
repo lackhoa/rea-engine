@@ -2721,8 +2721,8 @@ getFunctionOverloads(Typer *env, Identifier *ident, Term *output_type_goal)
       if (out.count == 0)
       {
         parseError(&ident->a, "found no matching overload");
-        attach("function_name", ident->token.string);
-        attach("output_type", output_type_goal);
+        attach("function", ident->token.string);
+        attach("output_type_goal", output_type_goal);
         attachTerms("available_overloads", slot->count, slot->items);
       }
     }
@@ -2869,12 +2869,19 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
 
           if (optionalChar('{'))
           {
-            if (optionalString("<-"))  // todo: don't know whether to make a token type for this.
+            if (optionalChar('}'))
             {
-              rewrite->right_to_left = true;
+              // no hint provided, this case is just for editing convenience.
             }
-            rewrite->eq_proof_hint = parseExpressionToAst(arena);
-            requireChar('}');
+            else
+            {
+              if (optionalString("<-"))  // todo: don't know whether to make a token type for this.
+              {
+                rewrite->right_to_left = true;
+              }
+              rewrite->eq_proof_hint = parseExpressionToAst(arena);
+              requireChar('}');
+            }
           }
           else if (require_hint)
           {
@@ -3066,7 +3073,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         out0.term  = fill;
       else
       {
-        parseError(in0, "expression required");
+        parseError(in0, "please provide an expression here");
       }
     } break;
 
@@ -5108,7 +5115,7 @@ int engineMain()
   temp_memory_base = platformVirtualAlloc(temp_memory_base, permanent_memory_size);
   temp_arena_ = newArena(temp_memory_size, temp_memory_base);
 
-  char *files[] = {"../data/test.rea", "../data/natp-experiment.rea", "../data/z.rea"};
+  char *files[] = {"../data/test.rea", "../data/z.rea", "../data/natp-experiment.rea"};
   for (i32 file_id=0; file_id < arrayCount(files); file_id++)
   {
     if (!beginInterpreterSession(permanent_arena, files[file_id]))
