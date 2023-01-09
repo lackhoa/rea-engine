@@ -69,7 +69,7 @@ mulDistributive :: (a,b,c: Natp) -> a*c+b*c = (a+b)*c
  {+++ fork b
   {+++ fork c
    {+++
-    => +++((c.p + ++(c.p) * a.p) + ++(c.p + b.p * ++(c.p))) = +++(c.p + (a.p + ++(b.p)) * ++(c.p)) {mulCommutative}
+    => (c.p + ++(c.p) * a.p) + ++(c.p + b.p * ++(c.p)) = c.p + (a.p + ++(b.p)) * ++(c.p) {mulCommutative}
     }}}
  }
 

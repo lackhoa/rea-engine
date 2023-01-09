@@ -51,13 +51,13 @@ add0 :: (n: Nat) -> n + 0 = n
 {fork n
  {0 :,
   ++:
-  => ++(n.p) = ++(n.p) {add0}
+  => n.p = n.p {add0}
   }}
 
 addSRight :: (n, m: Nat) -> n + ++(m) = ++(n+m)
 {fork n
  {0 : ,
-  ++: => ++(++(n.p + m)) = ++(++(n.p + m)) {addSRight}}}
+  ++: => ++(n.p + m) = ++(n.p + m) {addSRight}}}
 
 addCommutative :: (m,n: Nat) -> (n+m = m+n)
 {fork n

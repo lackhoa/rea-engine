@@ -480,7 +480,11 @@ addAssociative :: (a,b,c: Z) -> (a+b)+c = a+b+c
                 0 rewrite add0(+(b.v) + -(1)),
                 + fork b.v {1, ++},
                 - fork b.v {1  fork c.v {1, ++},
-                            ++ fork c.v {1, ++ }}},
+                            ++ fork c.v {1, ++ fork b.v.p
+                                         {1
+                                          => -(c.v.p) = (-(1) + +(1)) + -(c.v.p) {<- addMinus1Associative}
+                                          ,
+                                          ++}}}},
                -},
    ++: }
   }

@@ -1581,12 +1581,46 @@ apply(MemoryArena *arena, Term *op, Term **args)
   }
   else
   {
-    // special casing for equality
     if (op == &builtins.equal->t)
     {// special case for equality
-      Term *lhs = args[1];
-      Term *rhs = args[2];
-      Trinary compare = equalTrinary(lhs, rhs);
+      Term *l0 = args[1];
+      Term *r0 = args[2];
+
+      if (Composite *l = castTerm(l0, Composite))
+      {
+        if (Constructor *lctor = castTerm(l->op, Constructor))
+        {
+          if (Composite *r = castTerm(r0, Composite))
+          {
+            if (Constructor *rctor = castTerm(r->op, Constructor))
+            {
+              if (lctor->id == rctor->id)
+              {
+                if (l->arg_count == 0)
+                {
+                  // we can't do anything here
+                }
+                else if (l->arg_count == 1)
+                {
+                  Term *larg = l->args[0];
+                  Term *rarg = r->args[0];
+                  Term **args = pushArray(arena, 3, Term*);
+                  args[0] = getType(larg);
+                  args[1] = larg;
+                  args[2] = rarg;
+                  out0 = apply(arena, &builtins.equal->t, args);
+                  if (!out0)
+                    out0 = newEquality(arena, getType(larg), larg, rarg);
+                }
+                else
+                  todoIncomplete;  // need conjunction
+              }
+            }
+          }
+        }
+      }
+
+      Trinary compare = equalTrinary(l0, r0);
       // #hack to handle inconsistency
       if (compare == Trinary_False)
         out0 = &builtins.False->t;
@@ -3377,6 +3411,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       should_check_type = false;
       RewriteAst *in  = castAst(in0, RewriteAst);
       Rewrite    *out = newTerm(arena, Rewrite, 0);
+      out->right_to_left = in->right_to_left;
       Term *new_goal = 0;
       if (!in->eq_proof_hint)
       {
@@ -3423,7 +3458,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         if (BuildTerm build_new_goal = buildTerm(arena, env, in->new_goal, holev))
         {
           new_goal = build_new_goal.term;
-          CompareTerms compare = compareTerms(arena,goal, new_goal);
+          CompareTerms compare = compareTerms(arena, goal, new_goal);
           if (compare.result == Trinary_True)
             parseError(in0, "new goal same as current goal");
           else
@@ -3431,7 +3466,9 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
             out->path = compare.diff_path;
             Term *from = subExpressionAtPath(goal, compare.diff_path);
             Term *to   = subExpressionAtPath(new_goal, compare.diff_path);
-            Term *eq = 0;
+            Term *lhs  = in->right_to_left ? to : from;
+            Term *rhs  = in->right_to_left ? from : to;
+            Term *wanted_eq = newEquality(temp_arena, todoGetType(arena, env, lhs), lhs, rhs);
 
             TermArray op_list = {};
             if (Identifier *op_ident = castAst(in->eq_proof_hint, Identifier))
@@ -3457,9 +3494,8 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                 if (Arrow *signature = castTerm(hint_type, Arrow))
                 {
                   hint_is_valid = true;
-                  eq = newEquality(temp_arena, todoGetType(temp_arena, env, from), from, to);
                   pushArray(temp_arena, signature->param_count, Term *, true);
-                  if (Term **temp_args = inferArgs(temp_arena, env, hint, eq).args)
+                  if (Term **temp_args = inferArgs(temp_arena, env, hint, wanted_eq).args)
                   {
                     Term **args = pushArray(arena, signature->param_count, Term *);
                     for (int id=0; id < signature->param_count; id++)
@@ -3476,30 +3512,32 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                     }
                     if (noError())
                     {
-                      Composite *eq_proof_composite = newTerm(arena, Composite, 0);
-                      eq_proof_composite->op        = hint;
-                      eq_proof_composite->arg_count = signature->param_count;
-                      eq_proof_composite->args      = args;
-                      out->eq_proof = &eq_proof_composite->t;
+                      // todo cleanup use "newComposite"
+                      out->eq_proof = newComposite(arena, env, hint, signature->param_count, args);
                       // since the proof was synthesized from unification, double-check the type
-                      Term *eq_check = todoGetType(arena, env, out->eq_proof);
-                      assert(equal(eq_check, eq));
+                      assert(equal(getType(out->eq_proof), wanted_eq));
                     }
                   }
                   else
                   {
                     parseError(in->eq_proof_hint, "unification failed");
-                    attach("lhs", signature->output_type);
-                    attach("rhs", eq);
+                    attach("term_to_unify", signature->output_type);
+                    attach("wanted_equality", wanted_eq);
                     attach("goal", goal);
                     attach("serial", serial);
                   }
                 }
                 else if (isEquality(hint_type))
                 {
-                  eq = hint_type;
                   hint_is_valid = true;
-                  out->eq_proof = hint;
+                  if (equal(hint_type, wanted_eq))
+                    out->eq_proof = hint;
+                  else
+                  {
+                    parseError(in->eq_proof_hint, "hint type differs from wanted equality");
+                    attach("hint_type", hint_type);
+                    attach("wanted_equality", wanted_eq);
+                  }
                 }
 
                 if (!hint_is_valid)
@@ -3527,29 +3565,12 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
             else if (BuildTerm build_eq_proof = buildTerm(arena, env, in->eq_proof_hint, holev))
             {// full proof of equality
               out->eq_proof = build_eq_proof.term;
-              eq = todoGetType(temp_arena, env, build_eq_proof.term);
-              if (!isEquality(eq))
+              Term *actual_eq = todoGetType(temp_arena, env, build_eq_proof.term);
+              if (!equal(actual_eq, wanted_eq))
               {
-                parseError(in->eq_proof_hint, "invalid proof pattern");
-                attach("type", eq);
-              }
-            }
-
-            if (noError())
-            {
-              auto [lhs,rhs] = getEqualitySides(eq);
-              Term *from, *to;
-              if (in->right_to_left) {from = rhs; to = lhs; out->right_to_left = true;}
-              else                   {from = lhs; to = rhs;}
-              Term *new_goal_check = rewriteTerm(arena, to, out->path, goal);
-              if (!equal(new_goal, new_goal_check))
-              {
-                parseError(in0, "invalid full-rewrite");
-                attach("original goal", goal);
-                attach("expected rewrite result", new_goal);
-                attach("actual rewrite result", new_goal_check);
-                attach("rewrite from", from);
-                attach("rewrite to", to);
+                parseError(in->eq_proof_hint, "hint does not prove wanted equality");
+                attach("wanted_eq", wanted_eq);
+                attach("actual_eq", actual_eq);
               }
             }
           }
@@ -3560,10 +3581,11 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         if (BuildTerm eq_proof = buildTerm(arena, env, in->eq_proof_hint, holev))
         {
           out->eq_proof = eq_proof.term;
-          Term *eq = todoGetType(temp_arena, env, eq_proof.term);
-          if (auto [from, to] = getEqualitySides(eq, false))
+          Term *proof_eq = todoGetType(temp_arena, env, eq_proof.term);
+          if (auto [lhs, rhs] = getEqualitySides(proof_eq, false))
           {
-            if (in->right_to_left) {auto tmp = from; from = to; to = tmp; out->right_to_left = true;}
+            Term *from = in->right_to_left ? rhs : lhs;
+            Term *to   = in->right_to_left ? lhs : rhs;
             SearchOutput search = searchExpression(arena, env, from, goal);
             if (search.found)
             {
@@ -3572,14 +3594,14 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
             }
             else
             {
-              parseError(in0, "substitution has no effect");
-              attach("substitution", eq);
+              parseError(in0, "rewrite has no effect");
+              attach("substitution", proof_eq);
             }
           }
           else
           {
-            parseError(in->eq_proof_hint, "please provide a proof of equality that can be used for substitution");
-            attach("got", eq);
+            parseError(in->eq_proof_hint, "please provide a proof of equality for rewrite");
+            attach("got", proof_eq);
           }
         }
       }
