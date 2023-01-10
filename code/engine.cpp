@@ -144,9 +144,9 @@ isSequenced(Ast *ast)
   b32 out = false;
   switch (ast->cat)
   {
-    case AC_RewriteAst:
-    case AC_Let:
-    case AC_ForkAst:
+    case Ast_RewriteAst:
+    case Ast_Let:
+    case Ast_ForkAst:
     {out = true;} break;
     default: out = false;
   }
@@ -665,11 +665,11 @@ deepCopy(MemoryArena *arena, Ast *in0)
   Ast *out0 = 0;
   switch (in0->cat)
   {
-    case AC_Hole:
-    case AC_Identifier:
+    case Ast_Hole:
+    case Ast_Identifier:
     {out0 = in0;} break;
 
-    case AC_CompositeAst:
+    case Ast_CompositeAst:
     {
       CompositeAst *in = castAst(in0, CompositeAst);
       CompositeAst *out = copyStruct(arena, in);
@@ -682,7 +682,7 @@ deepCopy(MemoryArena *arena, Ast *in0)
       out0 = &out->a;
     } break;
 
-    case AC_ArrowAst:
+    case Ast_ArrowAst:
     {
       ArrowAst *in = castAst(in0, ArrowAst);
       ArrowAst *out = copyStruct(arena, in);
@@ -695,7 +695,7 @@ deepCopy(MemoryArena *arena, Ast *in0)
       out0 = &out->a;
     } break;
 
-    case AC_Let:
+    case Ast_Let:
     {
       Let *in = castAst(in0, Let);
       Let *out = copyStruct(arena, in);
@@ -703,7 +703,7 @@ deepCopy(MemoryArena *arena, Ast *in0)
       out0 = &out->a;
     } break;
 
-    case AC_RewriteAst:
+    case Ast_RewriteAst:
     {
       RewriteAst *in = castAst(in0, RewriteAst);
       RewriteAst *out = copyStruct(arena, in);
@@ -711,7 +711,7 @@ deepCopy(MemoryArena *arena, Ast *in0)
       out0 = &out->a;
     } break;
 
-    case AC_AccessorAst:
+    case Ast_AccessorAst:
     {
       AccessorAst *in = castAst(in0, AccessorAst);
       AccessorAst *out = copyStruct(arena, in);
@@ -999,19 +999,19 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
 
     switch (in0->cat)
     {
-      case AC_Hole:
+      case Ast_Hole:
       {print(buffer, "_");} break;
 
-      case AC_SyntheticAst:
+      case Ast_SyntheticAst:
       {
         SyntheticAst *in = castAst(in0, SyntheticAst);
         print(buffer, in->term);
       } break;
 
-      case AC_Identifier:
+      case Ast_Identifier:
       {print(buffer, in0->token.string);} break;
 
-      case AC_RewriteAst:
+      case Ast_RewriteAst:
       {
         RewriteAst *in = castAst(in0, RewriteAst);
         print(buffer, "rewrite");
@@ -1021,12 +1021,12 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         print(buffer, in->eq_proof_hint, new_opt);
       } break;
 
-      case AC_CompositeAst:
+      case Ast_CompositeAst:
       {
         printComposite(buffer, in0, false, new_opt);
       } break;
 
-      case AC_ForkAst:
+      case Ast_ForkAst:
       {
         ForkAst *in = castAst(in0, ForkAst);
         print(buffer, "fork ");
@@ -1051,7 +1051,7 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         print(buffer, "}");
       } break;
 
-      case AC_ArrowAst:
+      case Ast_ArrowAst:
       {
         ArrowAst *in = castAst(in0, ArrowAst);
         print(buffer, "(");
@@ -1070,7 +1070,7 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         print(buffer, in->output_type, new_opt);
       } break;
 
-      case AC_AccessorAst:
+      case Ast_AccessorAst:
       {
         AccessorAst *in = castAst(in0, AccessorAst);
         print(buffer, in->record, new_opt);
@@ -1078,11 +1078,11 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         print(buffer, in->field_name.string);
       } break;
 
-      case AC_FunctionDecl: {print(buffer, "function decl");} break;
+      case Ast_FunctionDecl: {print(buffer, "function decl");} break;
 
-      case AC_Lambda: {print(buffer, "lambda");} break;
+      case Ast_Lambda: {print(buffer, "lambda");} break;
 
-      case AC_Let:
+      case Ast_Let:
       {
         Let *in = castAst(in0, Let);
         print(buffer, in->lhs);
@@ -1097,7 +1097,7 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         print(buffer, in->body, new_opt);
       } break;
 
-      case AC_ComputationAst:
+      case Ast_ComputationAst:
       {
         ComputationAst *computation = castAst(in0, ComputationAst);
         print(buffer, "computation: (");
@@ -1107,22 +1107,22 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         print(buffer, ")");
       } break;
 
-      case AC_UnionAst:
+      case Ast_UnionAst:
       {
         print(buffer, "<some union>");
       } break;
 
-      case AC_DestructAst:
+      case Ast_DestructAst:
       {
         print(buffer, "<some destruct>");
       } break;
 
-      case AC_CtorAst:
+      case Ast_CtorAst:
       {
         print(buffer, "<some ctor>");
       } break;
 
-      case AC_SeekAst:
+      case Ast_SeekAst:
       {
         print(buffer, "<some seek>");
       } break;
@@ -2462,15 +2462,15 @@ isExpressionEndMarker(Token *token)
   if (inString("{},);:", token))
     return true;
 
-  if (token->cat > TC_Directive_START && token->cat < TC_Directive_END)
+  if (token->cat > Token_Directive_START && token->cat < Token_Directive_END)
     return true;
 
   switch (token->cat)
   {
-    case TC_DoubleColon:
-    case TC_ColonEqual:
-    case TC_DoubleDash:
-    case TC_StrongArrow:
+    case Token_DoubleColon:
+    case Token_ColonEqual:
+    case Token_DoubleDash:
+    case Token_StrongArrow:
       return true;
     default: {}
   }
@@ -2693,7 +2693,7 @@ inferArgs(MemoryArena *arena, Typer *env, Term *op, Term *goal)
   if (Constructor *ctor = castTerm(op, Constructor))
   {
     if (equal(&ctor->uni->t, goal))
-      matches = true;  // I guess we wouldn't know what the memberse are in the constructor case.
+      matches = true;  // we wouldn't know what the memberse are in the constructor case.
   }
   else if (Arrow *signature = castTerm(getType(op), Arrow))
   {
@@ -2702,7 +2702,14 @@ inferArgs(MemoryArena *arena, Typer *env, Term *op, Term *goal)
     if (unify(env, stack, lhs_scopes, signature->output_type, goal))
     {
       matches = true;
-      args = stack->items;
+      b32 exists_missing_arg = false;
+      for (i32 id=0; id < signature->param_count; id++)
+      {
+        if (!(stack->items[id]))
+          exists_missing_arg = true;
+      }
+      if (!exists_missing_arg)
+        args = stack->items;
     }
   }
   return InferArgs{matches, args};
@@ -2837,7 +2844,7 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
     Ast *ast = 0;
     switch (token.cat)
     {
-      case TC_Keyword_norm:
+      case Token_Keyword_norm:
       {
         pushContext("norm [EXPRESSION]");
         if (seesExpressionEndMarker())
@@ -2851,7 +2858,7 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
           let->rhs  = expression;
           let->type = LET_TYPE_NORMALIZE;
           ast = &let->a;
-          if (expression->cat == AC_Identifier)
+          if (expression->cat == Ast_Identifier)
           {
             // borrow the name if the expression is an identifier 
             let->lhs  = expression->token.string;
@@ -2860,7 +2867,7 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
         popContext();
       } break;
 
-      case TC_Keyword_rewrite:
+      case Token_Keyword_rewrite:
       {
         RewriteAst *rewrite = newAst(arena, RewriteAst, &token);
 
@@ -2876,12 +2883,12 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
         ast = &rewrite->a;
       } break;
 
-      case TC_StrongArrow:
+      case Token_StrongArrow:
       {
         pushContext("Full-rewrite: => [NEW_GOAL] [{ EQ_PROOF_HINT }]");
         RewriteAst *rewrite = newAst(arena, RewriteAst, &token);
         ast = &rewrite->a;
-        if (!optionalCategory(TC_Keyword_norm))
+        if (!optionalCategory(Token_Keyword_norm))
         {
           b32 require_hint = false;
           if (optionalChar('_'))
@@ -2921,7 +2928,7 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
           Token after_name = nextToken();
           switch (after_name.cat)
           {
-            case TC_ColonEqual:
+            case Token_ColonEqual:
             {
               pushContext("let: NAME := VALUE");
               if (Ast *rhs = parseExpressionToAst(arena))
@@ -2934,12 +2941,12 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
               popContext();
             } break;
 
-            case TC_Colon:
+            case Token_Colon:
             {
               pushContext("typed let: NAME : TYPE := VALUE");
               if (Ast *type = parseExpressionToAst(arena))
               {
-                if (requireCategory(TC_ColonEqual, ""))
+                if (requireCategory(Token_ColonEqual, ""))
                 {
                   if (Ast *rhs = parseExpressionToAst(arena))
                   {
@@ -2965,7 +2972,7 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
         }
       } break;
 
-      case TC_Keyword_prove:
+      case Token_Keyword_prove:
       {
         pushContext("prove PROPOSITION {SEQUENCE}");
         if (Ast *proposition = parseExpressionToAst(arena))
@@ -2986,7 +2993,7 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
     if (noError() && !ast)
     {
       *global_tokenizer = tk_save;
-      if (optionalCategory(TC_Keyword_fork))
+      if (optionalCategory(Token_Keyword_fork))
         ast = parseFork(arena);
       else
         ast = parseExpressionToAst(arena);
@@ -3081,7 +3088,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 
   switch (in0->cat)
   {
-    case AC_Hole:
+    case Ast_Hole:
     {
       Term *fill = fillHole(arena, env, goal);
       if (fill)
@@ -3092,13 +3099,13 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       }
     } break;
 
-    case AC_SyntheticAst:
+    case Ast_SyntheticAst:
     {
       SyntheticAst *in = castAst(in0, SyntheticAst);
       out0.term = in->term;
     } break;
 
-    case AC_Identifier:
+    case Ast_Identifier:
     {
       // Identifier *in = castAst(in0, Identifier);
       Token *name = &in0->token;
@@ -3148,7 +3155,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       }
     } break;
 
-    case AC_CompositeAst:
+    case Ast_CompositeAst:
     {
       CompositeAst *in  = castAst(in0, CompositeAst);
       Composite    *out = newTerm(arena, Composite, 0);
@@ -3193,26 +3200,29 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         out->op = op;
         if (Arrow *signature = castTerm(todoGetType(temp_arena, env, op), Arrow))
         {
-          if (signature->param_count != in->arg_count)
+          Ast **expanded_args = in->args;
+          auto param_count = signature->param_count;
+          if (param_count != in->arg_count)
           {
             i32 explicit_param_count = getExplicitParamCount(signature);
             if (in->arg_count == explicit_param_count)
             {
-              Ast **supplied_args = in->args;
-              in->arg_count = signature->param_count;
-              in->args      = pushArray(arena, signature->param_count, Ast*);
+              allocateArray(arena, param_count, expanded_args);
               for (i32 param_id = 0, arg_id = 0;
-                   param_id < signature->param_count && noError();
+                   param_id < param_count && noError();
                    param_id++)
               {
                 if (isHiddenParameter(signature, param_id))
                 {
-                  in->args[param_id] = &newAst(arena, Hole, &in->op->token)->a;
+                  // NOTE: We fill the missing argument with hole, because the
+                  // user input might have actual holes in them, so we want the
+                  // code to be more uniform.
+                  expanded_args[param_id] = &newAst(arena, Hole, &in->op->token)->a;
                 }
                 else
                 {
                   assert(arg_id < explicit_param_count);
-                  in->args[param_id] = supplied_args[arg_id++];
+                  expanded_args[param_id] = in->args[arg_id++];
                 }
               }
             }
@@ -3224,16 +3234,16 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 
           if (noError())
           {
-            Term **args = pushArray(arena, in->arg_count, Term *);
+            Term **args = pushArray(arena, param_count, Term *);
             for (int arg_id = 0;
-                 (arg_id < in->arg_count) && noError();
+                 (arg_id < param_count) && noError();
                  arg_id++)
             {
               Term *param_type0 = signature->param_types[arg_id];
               Term *expected_arg_type = evaluate(arena, args, param_type0);
 
               // Typecheck & Inference for the arguments.
-              if (in->args[arg_id]->cat == AC_Hole)
+              if (expanded_args[arg_id]->cat == Ast_Hole)
               {
                 if (Term *fill = fillHole(arena, env, expected_arg_type))
                   args[arg_id] = fill;
@@ -3244,27 +3254,24 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                   args[arg_id] = placeholder_arg;
                 }
               }
-              else
+              else if (BuildTerm arg = buildTerm(arena, env, expanded_args[arg_id], expected_arg_type))
               {
-                if (BuildTerm arg = buildTerm(arena, env, in->args[arg_id], expected_arg_type))
+                args[arg_id] = arg.term;
+                if (expected_arg_type->cat == Term_Hole)
                 {
-                  args[arg_id] = arg.term;
-                  if (expected_arg_type->cat == Term_Hole)
+                  Variable *param_type = castTerm(param_type0, Variable);
+                  assert(param_type->delta == 0);
+                  Term *placeholder_arg = args[param_type->id];
+                  assert(placeholder_arg->cat == Term_Hole);
+                  Term *arg_type = todoGetType(arena, env, arg.term);
+                  Term *arg_type_type = todoGetType(arena, env, arg_type);
+                  if (equal(placeholder_arg->type, arg_type_type))
+                    args[param_type->id] = arg_type;
+                  else
                   {
-                    Variable *param_type = castTerm(param_type0, Variable);
-                    assert(param_type->delta == 0);
-                    Term *placeholder_arg = args[param_type->id];
-                    assert(placeholder_arg->cat == Term_Hole);
-                    Term *arg_type = todoGetType(arena, env, arg.term);
-                    Term *arg_type_type = todoGetType(arena, env, arg_type);
-                    if (equal(placeholder_arg->type, arg_type_type))
-                      args[param_type->id] = arg_type;
-                    else
-                    {
-                      parseError(in->args[arg_id], "type of argument has wrong type");
-                      attach("expected", placeholder_arg->type);
-                      attach("got", arg_type_type);
-                    }
+                    parseError(expanded_args[arg_id], "type of argument has wrong type");
+                    attach("expected", placeholder_arg->type);
+                    attach("got", arg_type_type);
                   }
                 }
               }
@@ -3272,23 +3279,30 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 
             if (noError())
             {
-              for (i32 arg_id = 0;
-                   arg_id < in->arg_count && noError();
-                   arg_id++)
+              b32 hole_remains = false;
+              for (i32 arg_id = 0; (arg_id < param_count); arg_id++)
               {
                 if (args[arg_id]->cat == Term_Hole)
                 {
-                  parseError(in->args[arg_id], "Cannot fill hole");
-                  attach("argument number", arg_id);
-                  attach("param type", signature->param_types[arg_id]);
+                  hole_remains = true;
+                  break;
                 }
+              }
+
+              if (hole_remains)
+              {
+                InferArgs infer_args = inferArgs(arena, env, op, goal);
+                if (infer_args.args)
+                  args = infer_args.args;
+                else
+                  parseError(in0, "Cannot fill holes");
               }
             }
 
             if (noError())
             {
-              out->arg_count = in->arg_count;
-              allocateArray(arena, out->arg_count, out->args);
+              out->arg_count = param_count;
+              allocateArray(arena, param_count, out->args);
               for (i32 id = 0; id < out->arg_count; id++)
                 out->args[id] = args[id];
               out0.term  = &out->t;
@@ -3318,7 +3332,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       }
     } break;
 
-    case AC_ArrowAst:
+    case Ast_ArrowAst:
     {
       ArrowAst *in = castAst(in0, ArrowAst);
       Arrow *out = newTerm(arena, Arrow, &builtins.Type->t);
@@ -3354,7 +3368,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       }
     } break;
 
-    case AC_AccessorAst:
+    case Ast_AccessorAst:
     {
       AccessorAst *in = castAst(in0, AccessorAst);
       Accessor *out = newTerm(arena, Accessor, 0);
@@ -3395,7 +3409,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       }
     } break;
 
-    case AC_Lambda:
+    case Ast_Lambda:
     {
       Lambda   *in  = castAst(in0, Lambda);
       Term *type = goal;
@@ -3427,7 +3441,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       }
     } break;
 
-    case AC_RewriteAst:
+    case Ast_RewriteAst:
     {
       should_check_type = false;
       RewriteAst *in  = castAst(in0, RewriteAst);
@@ -3517,28 +3531,11 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                 {
                   hint_is_valid = true;
                   pushArray(temp_arena, signature->param_count, Term *, true);
-                  if (Term **temp_args = inferArgs(temp_arena, env, hint, wanted_eq).args)
+                  if (Term **args = inferArgs(arena, env, hint, wanted_eq).args)
                   {
-                    Term **args = pushArray(arena, signature->param_count, Term *);
-                    for (int id=0; id < signature->param_count; id++)
-                    {
-                      if (temp_args[id])
-                      {
-                        args[id] = temp_args[id];
-                      }
-                      else
-                      {
-                        parseError(in0, "Internal compiler (or user) error: we were not able to infer all parameters");
-                        break;
-                      }
-                    }
-                    if (noError())
-                    {
-                      // todo cleanup use "newComposite"
-                      out->eq_proof = newComposite(arena, env, hint, signature->param_count, args);
-                      // since the proof was synthesized from unification, double-check the type
-                      assert(equal(getType(out->eq_proof), wanted_eq));
-                    }
+                    out->eq_proof = newComposite(arena, env, hint, signature->param_count, args);
+                    // since the proof was synthesized from unification, double-check the type.
+                    assert(equal(getType(out->eq_proof), wanted_eq));
                   }
                   else
                   {
@@ -3644,7 +3641,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       }
     } break;
 
-    case AC_Let:
+    case Ast_Let:
     {
       Let  *in = castAst(in0, Let);
       Term *type_hint = holev;
@@ -3701,20 +3698,20 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       }
     } break;
 
-    case AC_ForkAst:
+    case Ast_ForkAst:
     {// no need to return value since nobody uses the value of a fork
       ForkAst *fork = castAst(in0, ForkAst);
       out0.term = buildFork(arena, env, fork, goal);
       recursed = true;
     } break;
 
-    case AC_UnionAst:
+    case Ast_UnionAst:
     {
       UnionAst *uni = castAst(in0, UnionAst);
       out0.term = &buildUnion(arena, env, uni, 0)->t;
     } break;
 
-    case AC_DestructAst:
+    case Ast_DestructAst:
     {
 #if 0
       DestructAst *in = castAst(in0, DestructAst);
@@ -3794,12 +3791,12 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 #endif
     } break;
 
-    case AC_CtorAst:
+    case Ast_CtorAst:
     {
       parseError(in0, "please use this constructor syntax as an operator");
     } break;
 
-    case AC_SeekAst:
+    case Ast_SeekAst:
     {
       SeekAst *in = castAst(in0, SeekAst);
       Term *proposition = goal;
@@ -4023,7 +4020,7 @@ insertAutoNormalizations(MemoryArena *arena, NormList norm_list, Ast *in0)
 {
   switch (in0->cat)
   {
-    case AC_ForkAst:
+    case Ast_ForkAst:
     {
       ForkAst *in = castAst(in0, ForkAst);
       for (i32 case_id=0; case_id < in->case_count; case_id++)
@@ -4046,14 +4043,14 @@ insertAutoNormalizations(MemoryArena *arena, NormList norm_list, Ast *in0)
       }
     } break;
 
-    case AC_RewriteAst:
+    case Ast_RewriteAst:
     {
       RewriteAst *in = castAst(in0, RewriteAst);
       assert(in->body);
       insertAutoNormalizations(arena, norm_list, in->body);
     } break;
 
-    case AC_Let:
+    case Ast_Let:
     {
       Let *in = castAst(in0, Let);
       insertAutoNormalizations(arena, norm_list, in->body);
@@ -4075,7 +4072,7 @@ parseFunction(MemoryArena *arena, Token *name, b32 is_theorem)
     NormList norm_list = {};
     if (ArrowAst *signature = castAst(signature0, ArrowAst))
     {
-      if (optionalCategory(TC_Directive_norm))
+      if (optionalCategory(Token_Directive_norm))
       {
         pushContext("auto normalization: #norm(IDENTIFIER...)");
         if (requireChar('('))
@@ -4220,7 +4217,7 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
         else
         {
           i32 param_id = parsed_param_count++;
-          if (optionalCategory(TC_Directive_hidden))
+          if (optionalCategory(Token_Directive_hidden))
           {
             setFlag(&param_flags[param_id], ParameterFlag_Hidden);
           }
@@ -4303,7 +4300,7 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
     out->param_flags = param_flags;
     if (!is_struct)  // structs don't need return type
     {
-      if (requireCategory(TC_Arrow, "syntax: (param: type, ...) -> ReturnType"))
+      if (requireCategory(Token_Arrow, "syntax: (param: type, ...) -> ReturnType"))
       {
         if (Ast *return_type = parseExpressionToAst(arena))
           out->output_type = return_type;
@@ -4486,33 +4483,33 @@ parseOperand(MemoryArena *arena)
   {
     switch (token.cat)
     {
-      case TC_Keyword_seq:
+      case Token_Keyword_seq:
       {
         operand = parseSequence(arena);
       } break;
 
-      case TC_Keyword_union:
+      case Token_Keyword_union:
       {
         operand = &parseUnion(arena)->a;
       } break;
 
-      case TC_Keyword_destruct:
+      case Token_Keyword_destruct:
       {
         operand = &parseDestruct(arena)->a;
       } break;
 
-      case TC_Keyword_ctor:
+      case Token_Keyword_ctor:
       {
         operand = &parseCtor(arena)->a;
       } break;
 
-      case TC_Keyword_seek:
+      case Token_Keyword_seek:
       {
         operand = &parseSeek(arena)->a;
       } break;
 
-      case TC_Alphanumeric:
-      case TC_Special:
+      case Token_Alphanumeric:
+      case Token_Special:
       {
         operand = &newAst(arena, Identifier, &token)->a;
       } break;
@@ -4547,28 +4544,34 @@ parseOperand(MemoryArena *arena)
         branch->args      = args;
         operand = &branch->a;
         i32 parsed_arg_count = 0;
-        for (i32 stop = false;
-             hasMore () && !stop;
-             )
+        while (hasMore())
         {
           if (optionalChar(')'))
-            stop = true;
+            break;
           else
           {
             i32 arg_id = parsed_arg_count++;
-            Ast *arg = parseExpressionToAst(arena);
-            if (hasMore())
+            if (optionalCategory(Token_Ellipsis))
             {
-              args[arg_id] = arg;
-              if (!optionalChar(','))
+              requireChar(')', "ellipsis must be the only thing in the arg list");
+              break;
+            }
+            else
+            {
+              Ast *arg = parseExpressionToAst(arena);
+              if (hasMore())
               {
-                requireChar(')', "expected ',' or ')'");
-                stop = true;
+                args[arg_id] = arg;
+                if (!optionalChar(','))
+                {
+                  requireChar(')', "expected ',' or ')'");
+                  break;
+                }
               }
             }
           }
         }
-        if (hasMore())
+        if (noError())
         {
           assert(parsed_arg_count == expected_arg_count);
         }
@@ -4598,7 +4601,7 @@ seesArrowExpression()
   Tokenizer *tk = &tk_;
   if (requireChar('(', "", tk))
     if (eatUntilMatchingPair(tk))
-      out = nextToken(tk).cat == TC_Arrow;
+      out = nextToken(tk).cat == Token_Arrow;
   return out;
 }
 
@@ -4609,7 +4612,7 @@ inline b32 seesLambda()
   Tokenizer *tk = &tk_;
   if (requireChar('_', 0, tk))
   {
-    if (requireCategory(TC_StrongArrow, 0, tk))
+    if (requireCategory(Token_StrongArrow, 0, tk))
       out = true;
   }
   return out;
@@ -4749,11 +4752,11 @@ parseTopLevel(EngineState *state)
 
     switch (token.cat)
     {
-      case TC_Directive_load:
+      case Token_Directive_load:
       {
         pushContext("#load");
         Token file = nextToken();
-        if (file.cat != TC_StringLiteral)
+        if (file.cat != Token_StringLiteral)
           tokenError("expect \"FILENAME\"");
         else
         {
@@ -4783,7 +4786,7 @@ parseTopLevel(EngineState *state)
         popContext();
       } break;
 
-      case TC_Directive_should_fail:
+      case Token_Directive_should_fail:
       {
         if (optionalString("off"))
           should_fail_active = false;
@@ -4795,7 +4798,7 @@ parseTopLevel(EngineState *state)
         }
       } break;
 
-      case TC_Directive_debug:
+      case Token_Directive_debug:
       {
         if (optionalString("off"))
         {
@@ -4807,13 +4810,13 @@ parseTopLevel(EngineState *state)
         }
       } break;
 
-      case TC_Keyword_test_eval:
+      case Token_Keyword_test_eval:
       {
         if (BuildTerm expr = parseExpressionFull(temp_arena))
           normalize(arena, empty_env, expr.term);
       } break;
 
-      case TC_Keyword_print:
+      case Token_Keyword_print:
       {
         u32 flags = PrintFlag_Detailed|PrintFlag_PrintType;
         if (optionalString("lock_detailed"))
@@ -4826,7 +4829,7 @@ parseTopLevel(EngineState *state)
         }
       } break;
 
-      case TC_Keyword_print_raw:
+      case Token_Keyword_print_raw:
       {
         if (auto parsing = parseExpressionFull(temp_arena))
           print(0, parsing.term, {.flags = (PrintFlag_Detailed     |
@@ -4835,14 +4838,14 @@ parseTopLevel(EngineState *state)
         print(0, "\n");
       } break;
 
-      case TC_Keyword_print_ast:
+      case Token_Keyword_print_ast:
       {
         if (Ast *exp = parseExpressionToAst(temp_arena))
           print(0, exp, {.flags = PrintFlag_Detailed});
         print(0, "\n");
       } break;
 
-      case TC_Keyword_check:
+      case Token_Keyword_check:
       {
         pushContext("check TERM: TYPE");
         Term *expected_type = holev;
@@ -4859,7 +4862,7 @@ parseTopLevel(EngineState *state)
         popContext();
       } break;
 
-      case TC_Keyword_check_truth:
+      case Token_Keyword_check_truth:
       {
         pushContext("check_truth EQUALITY");
         if (Term *goal = parseExpressionFull(temp_arena).term)
@@ -4904,7 +4907,7 @@ parseTopLevel(EngineState *state)
 
           switch (after_name.cat)
           {
-            case TC_ColonEqual:
+            case Token_ColonEqual:
             {
               pushContext("constant definition: CONSTANT := VALUE;");
               if (BuildTerm rhs = parseExpressionFull(arena))
@@ -4915,10 +4918,10 @@ parseTopLevel(EngineState *state)
               popContext();
             } break;
 
-            case TC_DoubleColon:
+            case Token_DoubleColon:
             {
               Token after_dcolon = peekToken();
-              if (after_dcolon.cat == TC_Keyword_union)
+              if (after_dcolon.cat == Token_Keyword_union)
               {
                 nextToken();
                 if (UnionAst *ast = parseUnion(arena))
@@ -4927,7 +4930,7 @@ parseTopLevel(EngineState *state)
               else
               {
                 b32 is_theorem;
-                if (after_dcolon.cat == TC_Keyword_fn)
+                if (after_dcolon.cat == Token_Keyword_fn)
                 {
                   is_theorem = false;
                   nextToken();
@@ -4942,7 +4945,7 @@ parseTopLevel(EngineState *state)
             {
               if (BuildTerm type = parseExpressionFull(arena))
               {
-                if (requireCategory(TC_ColonEqual, "require :=, syntax: name : type := value"))
+                if (requireCategory(Token_ColonEqual, "require :=, syntax: name : type := value"))
                 {
                   if (BuildTerm rhs = parseExpression(arena, 0, type.term))
                     addGlobalBinding(&token, rhs.term);
@@ -5141,8 +5144,8 @@ int engineMain()
   setvbuf(stdout, NULL, _IONBF, 0);
 #endif
 
-  assert(arrayCount(keywords)       == TC_Keyword_END - TC_Keyword_START);
-  assert(arrayCount(metaDirectives) == TC_Directive_END - TC_Directive_START);
+  assert(arrayCount(keywords)       == Token_Keyword_END - Token_Keyword_START);
+  assert(arrayCount(metaDirectives) == Token_Directive_END - Token_Directive_START);
 
   void   *permanent_memory_base = (void*)teraBytes(2);
   size_t  permanent_memory_size = megaBytes(256);
@@ -5158,8 +5161,8 @@ int engineMain()
   char *files[] = {
     "../data/test.rea",
     "../data/z-experiment.rea",
-    // "../data/natp-experiment.rea",
-    // "../data/z.rea",
+    "../data/natp-experiment.rea",
+    "../data/z.rea",
   };
   for (i32 file_id=0; file_id < arrayCount(files); file_id++)
   {

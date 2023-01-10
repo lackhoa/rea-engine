@@ -20,7 +20,7 @@ normalize :: fn(a: Z) -> Z
 
 addCommutative :: (a,b: Z) -> a+b = b+a
 {fork a {+ fork b {+ addCommutative(a.v, b.v), -},
-         - fork b {+, - addCommutative(a.v, b.v)}}}
+         - fork b {+, - rewrite addCommutative(a.v, b.v)}}}
 
 == :: (a,b: Z) -> Bool
 {fork a
@@ -31,17 +31,37 @@ addCommutative :: (a,b: Z) -> a+b = b+a
                         ++ false},
             - a.v == b.v}}}
 
-add0Left :: (a: Z) -> +(0)+a == a = true
-{fork a {+, -}}
+eqReflexive :: (a: Z) -> a==a = true
+{fork a {+ eqReflexive(a.v), -eqReflexive(a.v)}}
+
+normalized :: fn(a: Z) -> Set {normalize(a) = a}
+
+add0Left :: (a: Z, p: normalize(a) = a) -> +(0)+a = a
+#norm(p)
+{fork a {+ , - fork a.v {0 fork p {}, ++}}}
+
+normalizeIdempotent :: (a: Z) -> normalize(normalize(a)) = normalize(a)
+{fork a {+, - fork a.v {0, ++}}}
+
+addNormalized :: (a,b: Z) -> normalize(a+b) = a+b
+{
+ fork a {+ fork b {+, - fork a.v {0 normalizeIdempotent(-(b.v)),
+                                  ++ addNormalized(+(++(a.v.p)), -(b.v))}},
+         - fork b {+ fork a.v {0  fork b.v {0, ++},
+                               ++ fork b.v {0, ++ addNormalized(+(b.v.p), -(a.v.p))}},
+                   - normalizeIdempotent(-(a.v + b.v))}}
+ }
 
 addAssociative :: (a,b,c: Z) -> (a+b)+c = a+b+c
 {fork a
  {+ fork b {+ fork c
-            {+ addAssociative(a.v,b.v,c.v),
+            {+
+             => a.v + b.v + c.v = a.v + b.v + c.v {addAssociative};
+             ,
              - fork a.v
-             {0  rewrite add0Left(+(b.v) + -(c.v)),
+             {0  rewrite add0Left(+(b.v) + -(c.v), addNormalized(+(b.v), -(c.v))),
               ++ fork b.v
-              {0  rewrite add0(a.v.p),
+              {0  rewrite add0(a.v.p); fork c.v {0 rewrite add0(a.v.p), ++},
                ++ fork c.v
                {0,
                 ++
@@ -54,7 +74,7 @@ addAssociative :: (a,b,c: Z) -> (a+b)+c = a+b+c
                 }}}},
             - fork a.v
             {
-             0 rewrite add0Left(-(b.v) + c),
+             0 rewrite add0Left(-(b.v) + c, addNormalized(...));,
              ++
              fork b.v
              {

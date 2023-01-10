@@ -5,47 +5,47 @@
 // todo: does enum automatically increment???
 enum TokenCategory
 {
-  TC_Colon         = ':',
+  Token_Colon         = ':',
   // 0-255 reserved for single-char ASCII types.
-  TC_Special       = 256,
-  // TC_PairingOpen   = 257,
-  // TC_PairingClose  = 258,
-  TC_Alphanumeric  = 259,
-  TC_DoubleDash    = 260,
-  TC_StringLiteral = 261,
-  TC_DoubleColon   = 262,
-  TC_ColonEqual    = 263,
-  TC_Arrow         = 264,
-  TC_StrongArrow   = 265,
+  Token_Special       = 256,
+  Token_Ellipsis      = 257,
+  // Token_PairingClose  = 258,
+  Token_Alphanumeric  = 259,
+  Token_DoubleDash    = 260,
+  Token_StringLiteral = 261,
+  Token_DoubleColon   = 262,
+  Token_ColonEqual    = 263,
+  Token_Arrow         = 264,
+  Token_StrongArrow   = 265,
 
-  TC_Keyword_START,
-  TC_Keyword_fn,
-  TC_Keyword_fork,
-  TC_Keyword_union,
-  TC_Keyword_ctor,
-  TC_Keyword_seq,
+  Token_Keyword_START,
+  Token_Keyword_fn,
+  Token_Keyword_fork,
+  Token_Keyword_union,
+  Token_Keyword_ctor,
+  Token_Keyword_seq,
 
-  TC_Keyword_rewrite,
-  TC_Keyword_norm,
-  TC_Keyword_destruct,
-  TC_Keyword_prove,
-  TC_Keyword_seek,
+  Token_Keyword_rewrite,
+  Token_Keyword_norm,
+  Token_Keyword_destruct,
+  Token_Keyword_prove,
+  Token_Keyword_seek,
 
-  TC_Keyword_test_eval,
-  TC_Keyword_print,
-  TC_Keyword_print_raw,
-  TC_Keyword_print_ast,
-  TC_Keyword_check,
-  TC_Keyword_check_truth,
-  TC_Keyword_END,
+  Token_Keyword_test_eval,
+  Token_Keyword_print,
+  Token_Keyword_print_raw,
+  Token_Keyword_print_ast,
+  Token_Keyword_check,
+  Token_Keyword_check_truth,
+  Token_Keyword_END,
 
-  TC_Directive_START,
-  TC_Directive_load,
-  TC_Directive_should_fail,
-  TC_Directive_debug,
-  TC_Directive_norm,
-  TC_Directive_hidden,
-  TC_Directive_END,
+  Token_Directive_START,
+  Token_Directive_load,
+  Token_Directive_should_fail,
+  Token_Directive_debug,
+  Token_Directive_norm,
+  Token_Directive_hidden,
+  Token_Directive_END,
 };
 
 const char *keywords[] = {
@@ -71,7 +71,7 @@ newToken(String text)
   out.string = text;
   out.line   = 0;
   out.column = 0;
-  out.cat    = TC_Alphanumeric;
+  out.cat    = Token_Alphanumeric;
   return out;
 }
 

@@ -318,7 +318,7 @@ eatToken(Tokenizer *tk = global_tokenizer)
     case '#':
     {
       out.string.chars++; // advance past the hash
-      out.cat = TC_Directive_START;
+      out.cat = Token_Directive_START;
       while (isAlphaNumeric(*tk->at))
         nextChar(tk);
     } break;
@@ -326,12 +326,24 @@ eatToken(Tokenizer *tk = global_tokenizer)
     case '"':
     {
       out.string.chars++; // advance past the opening double quote
-      out.cat = TC_StringLiteral;
+      out.cat = Token_StringLiteral;
       while (*tk->at != '"')
         nextChar(tk);
       // handle the closing double quote
       nextChar(tk);
       out.string.length = (i32)(tk->at - out.string.chars - 1);
+    } break;
+
+    case '.':
+    {
+      if ((*tk->at == '.') && (*(tk->at+1) == '.'))
+      {
+        nextChar(tk);
+        nextChar(tk);
+        out.cat = Token_Ellipsis;
+      }
+      else
+        out.cat = (TokenCategory)'.';
     } break;
 
     case '=':
@@ -340,13 +352,13 @@ eatToken(Tokenizer *tk = global_tokenizer)
       {
         case '>':
         {
-          out.cat = TC_StrongArrow;
+          out.cat = Token_StrongArrow;
           nextChar(tk);
         } break;
 
         default:
         {
-          out.cat = TC_Special;
+          out.cat = Token_Special;
           while (isSpecial(*tk->at))
             nextChar(tk);
         } break;
@@ -359,19 +371,19 @@ eatToken(Tokenizer *tk = global_tokenizer)
       {
         case '-':
         {
-          out.cat = TC_DoubleDash;
+          out.cat = Token_DoubleDash;
           nextChar(tk);
         } break;
 
         case '>':
         {
-          out.cat = TC_Arrow;
+          out.cat = Token_Arrow;
           nextChar(tk);
         } break;
 
         default:
         {
-          out.cat = TC_Special;
+          out.cat = Token_Special;
           while (isSpecial(*tk->at))
             nextChar(tk);
         } break;
@@ -384,13 +396,13 @@ eatToken(Tokenizer *tk = global_tokenizer)
       {
         case ':':
         {
-          out.cat = TC_DoubleColon;
+          out.cat = Token_DoubleColon;
           nextChar(tk);
         } break;
 
         case '=':
         {
-          out.cat = TC_ColonEqual;
+          out.cat = Token_ColonEqual;
           nextChar(tk);
         } break;
 
@@ -405,13 +417,13 @@ eatToken(Tokenizer *tk = global_tokenizer)
     {
       if (isAlphaNumeric(first_char))
       {
-        out.cat = TC_Alphanumeric;
+        out.cat = Token_Alphanumeric;
         while (isAlphaNumeric(*tk->at))
           nextChar(tk);
       }
       else if (isSpecial(first_char))
       {
-        out.cat = TC_Special;
+        out.cat = Token_Special;
         while (isSpecial(*tk->at))
           nextChar(tk);
       }
@@ -428,27 +440,27 @@ eatToken(Tokenizer *tk = global_tokenizer)
 
     switch (out.cat)
     {
-      case TC_Alphanumeric:
+      case Token_Alphanumeric:
       {
         // todo: lookup keywords with hash table
         for (int id = 1; id < arrayCount(keywords); id++)
         {
           if (equal(out.string, keywords[id]))
           {
-            out.cat = (TokenCategory)((int)TC_Keyword_START + id);
+            out.cat = (TokenCategory)((int)Token_Keyword_START + id);
             break;
           }
         }
       } break;
 
-      case TC_Directive_START:
+      case Token_Directive_START:
       {
         b32 found = false;
         for (int id = 1; id < arrayCount(metaDirectives); id++)
         {
           if (equal(out.string, metaDirectives[id]))
           {
-            out.cat = (TokenCategory)((int)TC_Directive_START + id);
+            out.cat = (TokenCategory)((int)Token_Directive_START + id);
             found = true;
             break;
           }
@@ -524,8 +536,8 @@ stringHash(String string)
 inline b32
 isIdentifier(Token *token)
 {
-    return ((token->cat == TC_Alphanumeric)
-            || (token->cat == TC_Special));
+    return ((token->cat == Token_Alphanumeric)
+            || (token->cat == Token_Special));
 }
 
 inline b32

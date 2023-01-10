@@ -25,26 +25,27 @@ struct LocalBindings;
 struct DataMap;
 
 enum AstCategory {
-  AC_Hole = 1,  // hole left in for type-checking
-  AC_SyntheticAst,
-  AC_Identifier, // result after initial parsing
+  Ast_Hole         = 1,         // hole left in for type-checking
+  Ast_Ellipsis     = 2,
+  Ast_SyntheticAst = 3,
+  Ast_Identifier   = 4,         // result after initial parsing
 
   // Expressions
-  AC_CompositeAst,
-  AC_ArrowAst,
-  AC_AccessorAst,
-  AC_ComputationAst,
-  AC_Lambda,
-  AC_DestructAst,
-  AC_CtorAst,
-  AC_SeekAst,
+  Ast_CompositeAst   = 5,
+  Ast_ArrowAst       = 6,
+  Ast_AccessorAst    = 7,
+  Ast_ComputationAst = 8,
+  Ast_Lambda         = 9,
+  Ast_DestructAst    = 10,
+  Ast_CtorAst        = 11,
+  Ast_SeekAst        = 12,
 
-  // sequence
-  AC_ForkAst,
-  AC_RewriteAst,
-  AC_FunctionDecl,  // todo: #cleanup probably don't need this anymore
-  AC_Let,
-  AC_UnionAst,
+  // Sequence
+  Ast_ForkAst      = 13,
+  Ast_RewriteAst   = 14,
+  Ast_FunctionDecl = 15,        // todo: #cleanup probably don't need this anymore
+  Ast_Let          = 16,
+  Ast_UnionAst     = 17,
 };
 
 enum TermCategory {
@@ -90,10 +91,10 @@ newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
 }
 
 #define newAst(arena, cat, token)        \
-  ((cat *) newAst_(arena, AC_##cat, token, sizeof(cat)))
+  ((cat *) newAst_(arena, Ast_##cat, token, sizeof(cat)))
 
-#define castAst(exp, Cat) ((exp)->cat == AC_##Cat ? (Cat*)(exp) : 0)
-#define polyAst(exp, Cat, Cat2) (((exp)->cat == AC_##Cat || (exp)->cat == AC_##Cat2) ? (Cat*)(exp) : 0)
+#define castAst(exp, Cat) ((exp)->cat == Ast_##Cat ? (Cat*)(exp) : 0)
+#define polyAst(exp, Cat, Cat2) (((exp)->cat == Ast_##Cat || (exp)->cat == Ast_##Cat2) ? (Cat*)(exp) : 0)
 
 #define castTerm(exp, Cat) ((exp)->cat == Term_##Cat ? (Cat*)(exp) : 0)
 
