@@ -63,14 +63,13 @@ addAssociative :: (a,b,c: Natp) -> (a+b)+c = a+b+c
 natPreservesMultiplication :: (a,b: Natp) -> nat(a) * nat(b) = nat(a * b)
 {fork a {+++ fork b {+++}}}
 
+;; NOTE: if you blindly normalize here, you're screwed
 mulDistributive :: (a,b,c: Natp) -> a*c+b*c = (a+b)*c
 {
- fork a
- {+++ fork b
-  {+++ fork c
-   {+++
-    => (c.p + ++(c.p) * a.p) + ++(c.p + b.p * ++(c.p)) = c.p + (a.p + ++(b.p)) * ++(c.p) {mulCommutative}
-    }}}
+ => natp(nat(a*c) + nat(b*c)) = natp(nat(a+b) * nat(c)) {}
+ => natp(nat(a*c + b*c)) = natp(nat(a+b) * nat(c)) {natPreservesAddition}
+ => natp(nat(a*c + b*c)) = natp(nat((a+b) * c)) {natPreservesMultiplication}
+ => natp(nat((a+b) * c)) = natp(nat((a+b) * c)) {mulDistributive}
  }
 
 mulAssociative :: (a,b,c: Natp) -> (a*b)*c = a*b*c

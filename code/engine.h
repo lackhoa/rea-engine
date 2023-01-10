@@ -12,8 +12,8 @@ global_variable MemoryArena *temp_arena = &temp_arena_;
 global_variable StringBuffer  error_buffer_;
 global_variable StringBuffer *error_buffer = &error_buffer_;
 
-global_variable b32 global_debug_mode;
-global_variable i32 global_debug_serial;
+global_variable b32 DEBUG_MODE;
+global_variable i32 DEBUG_SERIAL;
 
 struct Union;
 struct Arrow;
@@ -211,7 +211,7 @@ _newTerm(MemoryArena *arena, TermCategory cat, Term *type, size_t size)
 {
   Term *out = (Term *)pushSize(arena, size, true);
   initTerm(out, cat, type);
-  out->serial = global_debug_serial++;
+  out->serial = DEBUG_SERIAL++;
   return out;
 }
 
@@ -490,11 +490,15 @@ struct SyntheticAst {
   Term *term;
 };
 
+// todo Doesn't seem like we need both these flags, since "apply" is the only
+// place to sets both of those flags.
+const u32 UNUSED_VAR EvaluationFlag_ApplyMode = 1 << 0;
+
 struct EvaluationContext {
   MemoryArena  *arena;
   Term        **args;
-  b32           normalize;
   i32           offset;
+  u32           flags;
 };
 
 struct UnionAst {

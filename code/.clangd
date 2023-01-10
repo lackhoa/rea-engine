@@ -17,4 +17,4 @@ CompileFlags:
     - -Wno-unused-function
     - -Wno-pointer-to-int-cast
     - -Wshorten-64-to-32
-    - -Wswitch
+    # - -Wswitch

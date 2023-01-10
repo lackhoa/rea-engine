@@ -46,7 +46,7 @@ typedef long     i64;
 #endif
 
 #if REA_INTERNAL
-#  define assert(claim) if (!(claim)) { printf("assertion fired at line %d in file %s!", __LINE__, __FILE__); fflush(stdout); crash_the_program; }
+#  define assert(claim) if (!(claim)) { printf("%s:%d: assertion fired!", __FILE__, __LINE__); fflush(stdout); crash_the_program; }
 #else
 #  define assert(claim)
 #endif

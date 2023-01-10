@@ -59,12 +59,12 @@ addSRight :: (n, m: Nat) -> n + ++(m) = ++(n+m)
  {0 : ,
   ++: => ++(n.p + m) = ++(n.p + m) {addSRight}}}
 
-addCommutative :: (m,n: Nat) -> (n+m = m+n)
-{fork n
- {0 : => m = m {add0},
-  ++:
-  => ++(m + n.p) = m + ++(n.p) {addCommutative}
-  => ++(m + n.p) = ++(m + n.p) {addSRight}}}
+addCommutative :: (a,b: Nat) -> (a+b = b+a)
+{fork a
+ {0 : => b = b {add0},
+  ++ ;; ++(a.p + b) = b + ++(a.p)
+  => ++(a.p + b) = ++(a.p) + b {addCommutative}
+  }}
 
 addAssociative :: (a,b,c: Nat) -> (a+b)+c = a+b+c
 {fork a
@@ -131,3 +131,11 @@ mulCommutative :: (a,b: Nat) -> a*b = b*a
   => b + a.p*b = b + b*a.p { mulSRight(b, a.p) }
   => b + a.p*b = b + a.p*b { <- mulCommutative(a.p, b) }
   }}
+
+== :: (a,b: Nat) -> Bool
+{fork a {0  fork b {0 true , ++ false},
+         ++ fork b {0 false, ++ a.p == b.p}}}
+
+eqReflexive :: (a: Nat) -> a==a = true
+{fork a {0, ++ eqReflexive(a.p)}}
+

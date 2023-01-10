@@ -8,8 +8,8 @@ enum TokenCategory
   TC_Colon         = ':',
   // 0-255 reserved for single-char ASCII types.
   TC_Special       = 256,
-  TC_PairingOpen   = 257,
-  TC_PairingClose  = 258,
+  // TC_PairingOpen   = 257,
+  // TC_PairingClose  = 258,
   TC_Alphanumeric  = 259,
   TC_DoubleDash    = 260,
   TC_StringLiteral = 261,
@@ -24,6 +24,7 @@ enum TokenCategory
   TC_Keyword_union,
   TC_Keyword_ctor,
   TC_Keyword_seq,
+
   TC_Keyword_rewrite,
   TC_Keyword_norm,
   TC_Keyword_destruct,

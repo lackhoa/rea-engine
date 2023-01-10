@@ -401,18 +401,6 @@ eatToken(Tokenizer *tk = global_tokenizer)
       }
     } break;
 
-    case '(':
-    case '{':
-    {
-      out.cat = TC_PairingOpen;
-    } break;
-
-    case ')':
-    case '}':
-    {
-      out.cat = TC_PairingClose;
-    } break;
-
     default:
     {
       if (isAlphaNumeric(first_char))

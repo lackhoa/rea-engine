@@ -1,28 +1,65 @@
 #load "nat.rea"
 
 Z :: union
-{znil,
- +(v: Nat),
+{+(v: Nat),
  -(v: Nat)}
 
+normalize :: fn(a: Z) -> Z
+{fork a {+ a,
+         - fork a.v {0 +(0), ++ a}}}
+
 + :: fn(a,b: Z) -> Z
+{
+ fork a {+ fork b {+ +(a.v + b.v),
+                   - fork a.v {0  normalize(b),
+                               ++ fork b.v {0  normalize(a),
+                                            ++ +(a.v.p) + -(b.v.p)}}},
+         - fork b {+ b + a,
+                   - normalize(-(a.v + b.v))}}
+ }
+
+addCommutative :: (a,b: Z) -> a+b = b+a
+{fork a {+ fork b {+ addCommutative(a.v, b.v), -},
+         - fork b {+, - addCommutative(a.v, b.v)}}}
+
+== :: (a,b: Z) -> Bool
 {fork a
- {znil
-  znil,
+ {+ fork b {+ a.v == b.v,
+            - fork a.v {0  fork b.v {0 true, ++ false},
+                        ++ false}},
+  - fork b {+ fork a.v {0  fork b.v {0 true, ++ false},
+                        ++ false},
+            - a.v == b.v}}}
 
-  +:
-  fork b
-  {+: +(a.v + b.v),
-   -:  ;; a positive, b negative
-   fork (a.v)
-   {0 : b,
-    ++: fork b.v {0: znil, ++: fork b.v.p {0: +(a.v.p),
-                                           ++: +(a.v.p) + -(b.v.p)}}}},
+add0Left :: (a: Z) -> +(0)+a == a = true
+{fork a {+, -}}
 
-  -:
-  fork b
-  {znil: znil,
-   +: ;; a negative, b positve: symmetric case
-   b + a,
-   -: ;; both negative
-   -(a.v + b.v)}}}
+addAssociative :: (a,b,c: Z) -> (a+b)+c = a+b+c
+{fork a
+ {+ fork b {+ fork c
+            {+ addAssociative(a.v,b.v,c.v),
+             - fork a.v
+             {0  rewrite add0Left(+(b.v) + -(c.v)),
+              ++ fork b.v
+              {0  rewrite add0(a.v.p),
+               ++ fork c.v
+               {0,
+                ++
+                ;; +(a.v.p + ++(b.v.p)) + -(c.v.p) = +(++(a.v.p)) + +(b.v.p) + -(c.v.p)
+                => +(++(b.v.p) + a.v.p) + -(c.v.p) = +(++(a.v.p)) + +(b.v.p) + -(c.v.p) {addCommutative}
+                => +(++(b.v.p + a.v.p)) + -(c.v.p) = +(++(a.v.p)) + +(b.v.p) + -(c.v.p) {}
+                => +(++(a.v.p + b.v.p)) + -(c.v.p) = +(++(a.v.p)) + +(b.v.p) + -(c.v.p) {addCommutative}
+                => (+(a.v) + +(b.v.p)) + -(c.v.p) = +(a.v) + +(b.v.p) + -(c.v.p) {}
+                addAssociative(+(a.v), +(b.v.p), -(c.v.p))
+                }}}},
+            - fork a.v
+            {
+             0 rewrite add0Left(-(b.v) + c),
+             ++
+             fork b.v
+             {
+              0 ,
+              ++
+              }
+             }},
+  -}}

@@ -1,5 +1,7 @@
 #load "natp.rea"
 
+;; TODO To zoom out a bit, do we REALLY have to avoid zero?
+;; Major problem is that equality would cause an issue: +(0) != -(0)
 Z :: union
 {0,
  +(v: Natp),
@@ -50,6 +52,7 @@ cancellation :: (a: Natp) -> +(a) + -(a) = 0
          ++: => +(a.p) + -(a.p) = 0;
          rewrite cancellation(a.p)}}
 
+;; todo rename this to addOpposite
 cancellation :: (a: Z) -> a + -(a) = 0
 {fork a {0: ,
          +: rewrite cancellation(a.v),
@@ -536,33 +539,108 @@ addAssociative :: (a,b,c: Z) -> (a+b)+c = a+b+c
   }
  }
 
+;; NOTE this is the easiest proof on the planet?
+mulCommutative :: (a,b: Z) -> a*b = b*a
+{fork a
+ {0
+  rewrite mul0(b),
+  + fork b {0, + mulCommutative(a.v, b.v), - mulCommutative(a.v, b.v)} ,
+  - fork b {0, + mulCommutative(a.v, b.v), - mulCommutative(a.v, b.v)}}}
+
+mul1 :: (a: Z) -> a * +(1) = a
+{fork a {0, + mul1(a.v), - mul1(a.v)}}
+
+mulDistributiveHelper :: (a,b,c: Natp) -> +(a + b) + -(a + c) = +(b) + -(c)
+{
+ => (+(a) + +(b)) + -(a) + -(c)   = +(b) + -(c) {}
+ => ((+(a) + +(b)) + -(a)) + -(c) = +(b) + -(c) {<- addAssociative}
+ => (+(a) + +(b) + -(a)) + -(c)   = +(b) + -(c) {addAssociative}
+ => (+(a) + -(a) + +(b)) + -(c)   = +(b) + -(c) {addCommutative}
+ => ((+(a) + -(a)) + +(b)) + -(c) = +(b) + -(c) {<- addAssociative}
+ => (0 + +(b)) + -(c)             = +(b) + -(c) {cancellation}
+ }
+
 mulDistributive :: (a,b,c: Z) -> a*c+b*c = (a+b)*c
 {fork a
  {0: ,
   +: fork b
   {0: add0((+(a.v) * c)),
    +:
-   => +(a.v) * c + +(b.v) * c = +(a.v + b.v) * c;
    fork c
    {0: ,
-    +: => +(a.v * c.v + b.v * c.v) = +((a.v + b.v) * c.v)
+    +:
+    => +(a.v * c.v + b.v * c.v) = +((a.v + b.v) * c.v)
     => +((a.v + b.v) * c.v) = +((a.v + b.v) * c.v) {mulDistributive}
     ,
-    -: => -(a.v * c.v + b.v * c.v) = -((a.v + b.v) * c.v)
-    => -((a.v + b.v) * c.v) = -((a.v + b.v) * c.v) {mulDistributive},},
+    -:
+    => -(a.v * c.v + b.v * c.v) = -((a.v + b.v) * c.v)
+    => -((a.v + b.v) * c.v) = -((a.v + b.v) * c.v) {mulDistributive}},
 
-   -: => +(a.v) * c + -(+(b.v) * c) = (+(a.v) + -(b.v)) * c;
-   fork a.v
-   {1 : => +(1) * c + -(+(b.v) * c) = (+(1) + -(b.v)) * c
-    => c + -(+(b.v) * c) = (+(1) + -(b.v)) * c {mul1Left}
-    fork b.v {1 : rewrite mul1Left(c); rewrite cancellation(c),
-              ++:
-              => c + -(+(++(b.v.p)) * c) = -(+(b.v.p) * c)
-              => c + -(c + +(b.v.p) * c) = -(+(b.v.p) * c) {mulSLeft}
-              => c + -(c) + -(+(b.v.p) * c) = -(+(b.v.p) * c) {negationOfSum}
-              => (c + -(c)) + -(+(b.v.p) * c) = -(+(b.v.p) * c) {<- addAssociative}
-              }
+   -:
+   fork c
+   {
+    0 => =(Z, 0, 0) {mul0},
+    + ;; +(a.v * c.v) + -(b.v * c.v) = (+(a.v) + -(b.v)) * +(c.v)
+    fork a.v
+    {
+     1
+     fork b.v
+     {
+      1  cancellation(c.v),
+      ++ ;; +(c.v) + -(c.v + b.v.p * c.v) = -(b.v.p * c.v)
+      => +(c.v) + -(c.v) + -(b.v.p * c.v) = -(b.v.p * c.v) {}
+      => (+(c.v) + -(c.v)) + -(b.v.p * c.v) = -(b.v.p * c.v) {<- addAssociative}
+      => 0 + -(b.v.p * c.v) = -(b.v.p * c.v) {cancellation}
+      }
+     ,
+     ++ ;; +(c.v + a.v.p * c.v) + -(b.v * c.v) = (+(++(a.v.p)) + -(b.v)) * +(c.v)
+     fork b.v
+     {1 ;; +(c.v + a.v.p * c.v) + -(c.v) = +(a.v.p * c.v)
+      => -(c.v) + +(c.v + a.v.p * c.v) = +(a.v.p * c.v) {addCommutative}
+      => -(c.v) + +(c.v) + +(a.v.p * c.v) = +(a.v.p * c.v) {}
+      => (-(c.v) + +(c.v)) + +(a.v.p * c.v) = +(a.v.p * c.v) {<- addAssociative}
+      => (+(c.v) + -(c.v)) + +(a.v.p * c.v) = +(a.v.p * c.v) {addCommutative}
+      => 0 + +(a.v.p * c.v) = +(a.v.p * c.v) {cancellation}
+      ,
+      ++ ;; +(c.v + a.v.p * c.v) + -(c.v + b.v.p * c.v) = (+(a.v.p) + -(b.v.p)) * +(c.v)
+      fork c.v
+      {1 ;; +(a.v.p * 1) + -(b.v.p * 1) = (+(a.v.p) + -(b.v.p)) * +(1)
+       => +(a.v.p) + -(b.v.p * 1) = (+(a.v.p) + -(b.v.p)) * +(1) {mul1}
+       => +(a.v.p) + -(b.v.p) = (+(a.v.p) + -(b.v.p)) * +(1) {mul1}
+       => +(a.v.p) + -(b.v.p) = +(a.v.p) + -(b.v.p) {mul1}
+       ,
+       ++ ;; +(c.v.p + a.v.p * ++(c.v.p)) + -(c.v.p + b.v.p * ++(c.v.p)) = (+(a.v.p) + -(b.v.p)) * +(++(c.v.p))
+       => +(a.v.p * ++(c.v.p)) + -(b.v.p * ++(c.v.p)) = (+(a.v.p) + -(b.v.p)) * +(++(c.v.p)) {mulDistributiveHelper}
+       => +(a.v.p) * +(++(c.v.p)) + -(b.v.p) * +(++(c.v.p)) = (+(a.v.p) + -(b.v.p)) * +(++(c.v.p)) {}
+       mulDistributive(+(a.v.p), -(b.v.p), +(++(c.v.p)))
+       }
+      }
+     }
     ,
-    ++: }
+    - ;; +(b.v * c.v) + -(a.v * c.v) = (+(a.v) + -(b.v)) * -(c.v)
+    fork a.v
+    {1 ;; +(b.v * c.v) + -(c.v) = (+(1) + -(b.v)) * -(c.v)
+     fork b.v
+     {1  cancellation(c.v),
+      ++ ;; +(c.v + b.v.p * c.v) + -(c.v) = +(b.v.p * c.v)
+      => (+(c.v) + +(b.v.p * c.v)) + -(c.v) = +(b.v.p * c.v) {}
+      => (+(b.v.p * c.v) + +(c.v)) + -(c.v) = +(b.v.p * c.v) {addCommutative}
+      => +(b.v.p * c.v) + (+(c.v) + -(c.v)) = +(b.v.p * c.v) {addAssociative}
+      => +(b.v.p * c.v) + 0 = +(b.v.p * c.v) {cancellation}
+      }
+     ,
+     ++ ;; +(b.v * c.v) + -(c.v + a.v.p * c.v) = (+(++(a.v.p)) + -(b.v)) * -(c.v)
+     fork b.v
+     {1 ;; +(c.v) + -(c.v + a.v.p * c.v) = -(a.v.p * c.v)
+      => +(c.v) + -(c.v) + -(a.v.p * c.v) = -(a.v.p * c.v) {}
+      => (+(c.v) + -(c.v)) + -(a.v.p * c.v) = -(a.v.p * c.v) {<- addAssociative}
+      => 0 + -(a.v.p * c.v) = -(a.v.p * c.v) {cancellation}
+      ,
+      ++ ;; +(c.v + b.v.p * c.v) + -(c.v + a.v.p * c.v) = (+(a.v.p) + -(b.v.p)) * -(c.v)
+      => +(b.v.p * c.v) + -(a.v.p * c.v) = (+(a.v.p) + -(b.v.p)) * -(c.v) {mulDistributiveHelper}
+      => +(b.v.p) * +(c.v) + +(a.v.p) * -(c.v) = (+(a.v.p) + -(b.v.p)) * -(c.v) {}
+      }
+     }
+    }
    },
   -: }}

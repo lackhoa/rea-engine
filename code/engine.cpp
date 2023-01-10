@@ -24,6 +24,9 @@ global_variable Term *holev = &holev_;
 
 global_variable EngineState global_state;
 
+#define DEBUG_ON  {DEBUG_MODE = true; setvbuf(stdout, NULL, _IONBF, 0);}
+#define DEBUG_OFF {DEBUG_MODE = false; setvbuf(stdout, NULL, _IONBF, BUFSIZ);}
+
 inline String
 globalNameOf(Term *term)
 {
@@ -74,6 +77,17 @@ newComposite(MemoryArena *arena, Typer *env, Term *op, i32 arg_count, Term **arg
   out->arg_count = arg_count;
   out->args      = args;
   computeType(arena, env, &out->t);
+  return &out->t;
+}
+
+inline Term *
+newComposite(MemoryArena *arena, Term *op, i32 arg_count, Term **args, Term *type)
+{
+  // todo typecheck the arguments too maybe?
+  Composite *out = newTerm(arena, Composite, type);
+  out->op        = op;
+  out->arg_count = arg_count;
+  out->args      = args;
   return &out->t;
 }
 
@@ -513,7 +527,7 @@ getConstructor(Typer *env, Term *in0)
 forward_declare inline Term *
 computeType(MemoryArena *arena, Typer *env, Term *in0)
 {
-  i32 UNUSED_VAR serial = global_debug_serial++;
+  i32 UNUSED_VAR serial = DEBUG_SERIAL++;
   Term *out0 = 0;
   if (in0->type)
     out0 = in0->type;
@@ -789,19 +803,19 @@ unwindBindingsAndScope(Typer *env)
 forward_declare inline void dump(Term *in0) {print(0, in0, {});}
 forward_declare inline void dump(Ast *in0)  {print(0, in0, {});}
 
-i32 global_variable debug_indentation;
-forward_declare inline void debugIndent()
+i32 global_variable DEBUG_INDENTATION;
+forward_declare inline void DEBUG_INDENT()
 {
-  debug_indentation++;
-  for (i32 id = 0; id < debug_indentation; id++)
+  DEBUG_INDENTATION++;
+  for (i32 id = 0; id < DEBUG_INDENTATION; id++)
     dump(" ");
 }
 
-forward_declare inline void debugDedent()
+forward_declare inline void DEBUG_DEDENT()
 {
-  for (i32 id = 0; id < debug_indentation; id++)
+  for (i32 id = 0; id < DEBUG_INDENTATION; id++)
     dump(" ");
-  debug_indentation--;
+  DEBUG_INDENTATION--;
 }
 
 #define NULL_WHEN_ERROR(name) if (noError()) {assert(name);} else {name = {};}
@@ -832,7 +846,7 @@ precedenceOf(String op)
     out = 40;
   else if (equal(op, "=") || equal(op, "!="))
     out = 50;
-  else if (equal(op, "<") || equal(op, ">") || equal(op, "=?"))
+  else if (equal(op, "<") || equal(op, ">") || equal(op, "=?") || equal(op, "=="))
     out = 55;
   else if (equal(op, "|")
            || equal(op, "+")
@@ -895,7 +909,7 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
     printed_args = pushArray(temp_arena, op_signature->param_count, void*);
     for (i32 param_id = 0; param_id < op_signature->param_count; param_id++)
     {
-      b32 print_all_arguments = global_debug_mode && DEBUG_print_all_arguments;
+      b32 print_all_arguments = DEBUG_MODE && DEBUG_print_all_arguments;
       if (print_all_arguments || !isHiddenParameter(op_signature, param_id))
         printed_args[arg_count++] = raw_args[param_id];
     }
@@ -1146,7 +1160,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
         else
           print(buffer, "anon");
 
-        if (!in->name.chars || global_debug_mode)
+        if (!in->name.chars || DEBUG_MODE)
           print(buffer, "[%d:%d]", in->delta, in->id);
       } break;
 
@@ -1564,71 +1578,72 @@ rebase(MemoryArena *arena, Term *in0, i32 delta)
 }
 
 internal Term *
-apply(MemoryArena *arena, Term *op, Term **args)
+apply(MemoryArena *arena, Term *op, i32 arg_count, Term **args, Term *type)
 {
   Term *out0 = 0;
 
 #if DEBUG_LOG_apply
-  i32 serial = global_debug_serial++;
-  if (global_debug_mode)
+  i32 serial = DEBUG_SERIAL++;
+  if (DEBUG_MODE)
   {debugIndent(); DUMP("apply(", serial, "): ", op, "(...)\n");}
 #endif
 
   if (Function *fun = castTerm(op, Function))
   {// Function application
     if (fun->body != &dummy_function_being_built)
-      out0 = evaluateAndNormalize(arena, args, fun->body);
+      out0 = evaluate(arena, args, fun->body, EvaluationFlag_ApplyMode);
   }
-  else
-  {
-    if (op == &builtins.equal->t)
-    {// special case for equality
-      Term *l0 = args[1];
-      Term *r0 = args[2];
+  else if (op == &builtins.equal->t)
+  {// special case for equality
+    Term *l0 = args[1];
+    Term *r0 = args[2];
 
-      if (Composite *l = castTerm(l0, Composite))
+    if (Composite *l = castTerm(l0, Composite))
+    {
+      if (Constructor *lctor = castTerm(l->op, Constructor))
       {
-        if (Constructor *lctor = castTerm(l->op, Constructor))
+        if (Composite *r = castTerm(r0, Composite))
         {
-          if (Composite *r = castTerm(r0, Composite))
+          if (Constructor *rctor = castTerm(r->op, Constructor))
           {
-            if (Constructor *rctor = castTerm(r->op, Constructor))
+            if (lctor->id == rctor->id)
             {
-              if (lctor->id == rctor->id)
+              if (l->arg_count == 0)
               {
-                if (l->arg_count == 0)
-                {
-                  // we can't do anything here
-                }
-                else if (l->arg_count == 1)
-                {
-                  Term *larg = l->args[0];
-                  Term *rarg = r->args[0];
-                  Term **args = pushArray(arena, 3, Term*);
-                  args[0] = getType(larg);
-                  args[1] = larg;
-                  args[2] = rarg;
-                  out0 = apply(arena, &builtins.equal->t, args);
-                  if (!out0)
-                    out0 = newEquality(arena, getType(larg), larg, rarg);
-                }
-                else
-                  todoIncomplete;  // need conjunction
+                // we can't do anything here
               }
+              else if (l->arg_count == 1)
+              {
+                Term *larg = l->args[0];
+                Term *rarg = r->args[0];
+                Term **args = pushArray(arena, 3, Term*);
+                args[0] = getType(larg);
+                args[1] = larg;
+                args[2] = rarg;
+                out0 = apply(arena, &builtins.equal->t, 3, args, type);
+                if (!out0)
+                  out0 = newEquality(arena, getType(larg), larg, rarg);
+              }
+              else
+                todoIncomplete;  // need conjunction
             }
           }
         }
       }
-
-      Trinary compare = equalTrinary(l0, r0);
-      // #hack to handle inconsistency
-      if (compare == Trinary_False)
-        out0 = &builtins.False->t;
     }
+
+    Trinary compare = equalTrinary(l0, r0);
+    // #hack to handle inconsistency
+    if (compare == Trinary_False)
+      out0 = &builtins.False->t;
+  }
+  else if (op->cat == Term_Constructor)
+  {
+    out0 = newComposite(arena, op, arg_count, args, type);
   }
 
 #if DEBUG_LOG_apply
-  if (global_debug_mode) {debugDedent(); DUMP("=> ", out0, "\n");}
+  if (DEBUG_MODE) {debugDedent(); DUMP("=> ", out0, "\n");}
 #endif
   return out0;
 }
@@ -1640,9 +1655,9 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
   MemoryArena *arena = ctx->arena;
 
 #if DEBUG_LOG_evaluate
-  i32 serial = global_debug_serial++;
-  if (global_debug_mode)
-  {debugIndent(); DUMP("evaluate(", serial, "): ", in0, "\n");}
+  i32 serial = DEBUG_SERIAL++;
+  if (DEBUG_MODE)
+  {DEBUG_INDENT(); DUMP("evaluate(", serial, "): ", in0, "\n");}
   assert(ctx->offset >= 0);
 #endif
 
@@ -1674,12 +1689,18 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
       {
         Composite *in = castTerm(in0, Composite);
         Term **args = pushArray(arena, in->arg_count, Term *);
+
         Term *op = evaluateMain(ctx, in->op);
         for (i32 id=0; id < in->arg_count; id++)
+        {
           args[id] = evaluateMain(ctx, in->args[id]);
+          assert(args[id]);
+        }
 
-        if (ctx->normalize)
-          out0 = apply(arena, op, args);
+        if (checkFlag(ctx->flags, EvaluationFlag_ApplyMode))
+        {
+          out0 = apply(arena, op, in->arg_count, args, getType(in0));
+        }
 
         if (!out0)
         {
@@ -1714,12 +1735,12 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
         Function *out = copyStruct(arena, in);
         out->type = evaluateMain(ctx, in->type);
 
-        b32 old_normalize = ctx->normalize;
-        ctx->normalize = false;
+        u32 old_flags = ctx->flags;
+        unsetFlag(&ctx->flags, EvaluationFlag_ApplyMode);
         ctx->offset++;
         out->body = evaluateMain(ctx, in->body);
         ctx->offset--;
-        ctx->normalize = old_normalize;
+        ctx->flags = old_flags;
 
         out0 = &out->t;
       } break;
@@ -1744,11 +1765,11 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
         Computation *in  = castTerm(in0, Computation);
         Computation *out = copyStruct(arena, in);
         // NOTE: semi-hack so it doesn't normalize our propositions.
-        b32 old_normalize = ctx->normalize;
-        ctx->normalize = false;
+        u32 old_flags = ctx->flags;
+        unsetFlag(&ctx->flags, EvaluationFlag_ApplyMode);
         out->lhs = evaluateMain(ctx, in->lhs);
         out->rhs = evaluateMain(ctx, in->rhs);
-        ctx->normalize = old_normalize;
+        ctx->flags = old_flags;
         out0 = &out->t;
       } break;
 
@@ -1770,9 +1791,9 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
       case Term_Fork:
       {
         Fork *in = castTerm(in0, Fork);
-        if (ctx->normalize)
+        Term *subject0 = evaluateMain(ctx, in->subject);
+        if (checkFlag(ctx->flags, EvaluationFlag_ApplyMode))
         {
-          Term *subject0 = evaluateMain(ctx, in->subject);
           if (Composite *subject = castTerm(subject0, Composite))
           {
             if (Constructor *ctor = castTerm(subject->op, Constructor))
@@ -1782,7 +1803,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
         else
         {
           Fork *out = copyStruct(arena, in);
-          out->subject = evaluateMain(ctx, in->subject);
+          out->subject = subject0;
           allocateArray(arena, in->case_count, out->bodies);
           for (i32 id=0; id < in->case_count; id++)
             out->bodies[id] = evaluateMain(ctx, in->bodies[id]);
@@ -1797,8 +1818,8 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
         allocateArray(arena, in->ctor_count, out->structs);
         for (i32 id=0; id < in->ctor_count; id++)
         {
-          Arrow *signature = in->structs[id];
-          out->structs[id] = castTerm(evaluateMain(ctx, &signature->t), Arrow);
+          Term *struc = evaluateMain(ctx, &in->structs[id]->t);
+          out->structs[id] = castTerm(struc, Arrow);
         }
         out0 = &out->t;
       } break;
@@ -1811,24 +1832,24 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
   }
 
 #if DEBUG_LOG_evaluate
-  if (global_debug_mode) {debugDedent(); DUMP("=> ", out0, "\n");}
+  if (DEBUG_MODE) {DEBUG_DEDENT(); DUMP("=> ", out0, "\n");}
 #endif
 
-  assert(isSequenced(in0) || out0);
+  assert(checkFlag(ctx->flags, EvaluationFlag_ApplyMode) || out0);
   return out0;
 }
 
 forward_declare inline Term *
 evaluate(MemoryArena *arena, Term **args, Term *in0)
 {
-  EvaluationContext ctx = {.arena=arena, .args=args, .normalize=false};
+  EvaluationContext ctx = {.arena=arena, .args=args};
   return evaluateMain(&ctx, in0);
 }
 
 forward_declare inline Term *
-evaluateAndNormalize(MemoryArena *arena, Term **args, Term *in0)
+evaluate(MemoryArena *arena, Term **args, Term *in0, u32 flags)
 {
-  EvaluationContext ctx = {.arena=arena, .args=args, .normalize=true};
+  EvaluationContext ctx = {.arena=arena, .args=args, .flags=flags};
   return evaluateMain(&ctx, in0);
 }
 
@@ -1841,8 +1862,8 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
   out.result = Trinary_Unknown;
 
 #if DEBUG_LOG_compare
-  i32 serial = global_debug_serial++;
-  if (global_debug_mode)
+  i32 serial = DEBUG_SERIAL++;
+  if (DEBUG_MODE)
   {
     debugIndent(); DUMP("comparing(", serial, "): ", lhs0, " and ", rhs0, "\n");
   }
@@ -2002,7 +2023,7 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
   }
 
 #if DEBUG_LOG_compare
-  if (global_debug_mode)
+  if (DEBUG_MODE)
   {debugDedent(); dump("=> "); dump(out.result); dump();}
 #endif
 
@@ -2110,9 +2131,9 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
   MemoryArena *arena = ctx->arena;
 
 #if DEBUG_LOG_normalize
-  i32 serial = global_debug_serial++;
-  if (global_debug_mode)
-  {debugIndent(); DUMP("normalize(", serial, "): ", in0, "\n");}
+  i32 serial = DEBUG_SERIAL++;
+  if (DEBUG_MODE)
+  {DEBUG_INDENT(); DUMP("normalize(", serial, "): ", in0, "\n");}
 #endif
 
   if (!in0->global_name)
@@ -2136,9 +2157,9 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
         Term *norm_op = normalizeMain(ctx, in->op);
         progressed = progressed || (norm_op != in->op);
 
-        if (Term *app = apply(arena, norm_op, norm_args))
-          out0 = app;
-        else if (progressed)
+        out0 = apply(arena, norm_op, in->arg_count, norm_args, getType(in0));
+
+        if (!out0)
         {
           Composite *out = copyStruct(arena, in);
           out->op   = norm_op;
@@ -2235,11 +2256,12 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
   }
 
 #if DEBUG_LOG_normalize
-  if (global_debug_mode)
-  {debugDedent(); dump("=> "); dump(out0); dump();}
+  if (DEBUG_MODE)
+  {DEBUG_DEDENT(); dump("=> "); dump(out0); dump();}
 #endif
 
-  assert(isSequenced(in0) || out0);
+  // assert(isSequenced(in0) || out0);
+  assert(out0);
   return out0;
 }
 
@@ -2554,9 +2576,9 @@ unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *goal0)
 {
   b32 success = false;
 
-  i32 UNUSED_VAR serial = global_debug_serial++;
+  i32 UNUSED_VAR serial = DEBUG_SERIAL++;
 #if DEBUG_LOG_unify
-  if (global_debug_mode)
+  if (DEBUG_MODE)
   {debugIndent(); DUMP("unify(", serial, ") ", lhs0, " with ", goal0, "\n");}
 #endif
 
@@ -2656,7 +2678,7 @@ unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *goal0)
   }
 
 #if DEBUG_LOG_unify
-  if (global_debug_mode)
+  if (DEBUG_MODE)
   {debugDedent(); DUMP("=>(", serial, ") ", ((char *)(success ? "true\n" : "false\n")));}
 #endif
 
@@ -2875,7 +2897,7 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
             }
             else
             {
-              if (optionalString("<-"))  // todo: don't know whether to make a token type for this.
+              if (optionalString("<-"))
               {
                 rewrite->right_to_left = true;
               }
@@ -2964,18 +2986,11 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
     if (noError() && !ast)
     {
       *global_tokenizer = tk_save;
-      Token token = peekToken();
-      if (token.cat == TC_Keyword_fork)
-      {
-        nextToken();
-        ast = &parseFork(arena)->a;
-        stop = true;
-      }
+      if (optionalCategory(TC_Keyword_fork))
+        ast = parseFork(arena);
       else
-      {
         ast = parseExpressionToAst(arena);
-        stop = true;
-      }
+      stop = true;
     }
 
     if (noError())
@@ -3058,7 +3073,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
   // todo return the type, since we typecheck it anyway.
   // todo print out the goal whenever we fail
   // beware: Usually we mutate in-place, but we may also allocate anew.
-  i32 serial = global_debug_serial++;
+  i32 serial = DEBUG_SERIAL++;
   BuildTerm out0 = {};
   assert(goal);
   b32 should_check_type = true;
@@ -3138,7 +3153,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       CompositeAst *in  = castAst(in0, CompositeAst);
       Composite    *out = newTerm(arena, Composite, 0);
 
-      // i32 serial = global_debug_serial++;
+      // i32 serial = DEBUG_SERIAL++;
       TermArray op_list = {};
       b32 should_build_op = true;
       // I want this part to be built-in to the parsing, so it's a different thing entirely?
@@ -3295,7 +3310,6 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
             {
               parseError(in->op, "found no suitable overload");
               attachTerms("available_overloads", op_list.count, op_list.items);
-              attach("serial", serial);
             }
           }
           else
@@ -3468,7 +3482,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           CompareTerms compare = compareTerms(arena, goal, new_goal);
           if (compare.result == Trinary_True)
             parseError(in0, "new goal same as current goal");
-          else
+          else if (compare.diff_path)
           {
             out->path = compare.diff_path;
             Term *from = subExpressionAtPath(goal, compare.diff_path);
@@ -3492,6 +3506,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
               else
                 op_list = getFunctionOverloads(env, op_ident, holev);
 
+              serial = DEBUG_SERIAL++;
               for (int attempt=0; attempt < op_list.count; attempt++)
               {
                 Term *hint = op_list.items[attempt];
@@ -3562,6 +3577,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                     {
                       parseError(&op_ident->a, "found no suitable overload");
                       attachTerms("available_overloads", op_list.count, op_list.items);
+                      attach("wanted_equality", wanted_eq);
                     }
                   }
                   else
@@ -3580,6 +3596,10 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                 attach("actual_eq", actual_eq);
               }
             }
+          }
+          else
+          {
+            parseError(in0, "current goal and new_goal don't match at all");
           }
         }
       }
@@ -3862,10 +3882,13 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 forward_declare internal Term *
 buildFork(MemoryArena *arena, Typer *env, ForkAst *in, Term *goal)
 {
-  assert(goal && goal->cat != Term_Hole);
+  if (goal->cat == Term_Hole)
+  {
+    parseError(&in->a, "fork expressions require a goal, please provide one (f.ex instead of writing \"a := b\", write \"a: A := b\")");
+  }
   Fork *out = newTerm(arena, Fork, goal);
   out->case_count = in->case_count;
-  i32 UNUSED_VAR serial = global_debug_serial++;
+  i32 UNUSED_VAR serial = DEBUG_SERIAL++;
   if (BuildTerm subject = buildTerm(arena, env, in->subject, holev))
   {
     out->subject = subject.term;
@@ -4102,7 +4125,7 @@ parseFunction(MemoryArena *arena, Token *name, b32 is_theorem)
   return out;
 }
 
-forward_declare internal ForkAst *
+forward_declare internal Ast *
 parseFork(MemoryArena *arena)
 {
   ForkAst *out = 0;
@@ -4160,7 +4183,7 @@ parseFork(MemoryArena *arena)
     }
   }
 
-  return out;
+  return &out->a;
 }
 
 internal ArrowAst *
@@ -4459,38 +4482,52 @@ parseOperand(MemoryArena *arena)
   {
     operand = &newAst(arena, Hole, &token)->a;
   }
-  else if (token.cat == TC_Keyword_seq)
-  {
-    operand = parseSequence(arena);
-  }
-  else if (token.cat == TC_Keyword_union)
-  {
-    operand = &parseUnion(arena)->a;
-  }
-  else if (token.cat == TC_Keyword_destruct)
-  {
-    operand = &parseDestruct(arena)->a;
-  }
-  else if (token.cat == TC_Keyword_ctor)
-  {
-    operand = &parseCtor(arena)->a;
-  }
-  else if (token.cat == TC_Keyword_seek)
-  {
-    operand = &parseSeek(arena)->a;
-  }
-  else if (isIdentifier(&token))
-  {
-    operand = &newAst(arena, Identifier, &token)->a;
-  }
-  else if (equal(&token, '('))
-  {
-    operand = parseExpressionToAst(arena);
-    requireChar(')');
-  }
   else
   {
-    tokenError("expected start of expression");
+    switch (token.cat)
+    {
+      case TC_Keyword_seq:
+      {
+        operand = parseSequence(arena);
+      } break;
+
+      case TC_Keyword_union:
+      {
+        operand = &parseUnion(arena)->a;
+      } break;
+
+      case TC_Keyword_destruct:
+      {
+        operand = &parseDestruct(arena)->a;
+      } break;
+
+      case TC_Keyword_ctor:
+      {
+        operand = &parseCtor(arena)->a;
+      } break;
+
+      case TC_Keyword_seek:
+      {
+        operand = &parseSeek(arena)->a;
+      } break;
+
+      case TC_Alphanumeric:
+      case TC_Special:
+      {
+        operand = &newAst(arena, Identifier, &token)->a;
+      } break;
+
+      case '(':
+      {
+        operand = parseExpressionToAst(arena);
+        requireChar(')');
+      } break;
+
+      default:
+      {
+        tokenError("expected start of expression");
+      }
+    }
   }
 
   while (hasMore())
@@ -4761,9 +4798,13 @@ parseTopLevel(EngineState *state)
       case TC_Directive_debug:
       {
         if (optionalString("off"))
-          global_debug_mode = false;
+        {
+          DEBUG_OFF;
+        }
         else
-          global_debug_mode = true;
+        {
+          DEBUG_ON;
+        }
       } break;
 
       case TC_Keyword_test_eval:
@@ -4834,7 +4875,6 @@ parseTopLevel(EngineState *state)
               if (!equal(lhs, rhs))
               {
                 parseError(&token, "equality cannot be proven by computation");
-                global_debug_mode = true;
                 Term *lhs = normalize(temp_arena, empty_env, eq->args[1]);
                 attach("lhs", lhs);
                 attach("rhs", rhs);
@@ -5038,7 +5078,7 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
 internal b32
 beginInterpreterSession(MemoryArena *arena, char *initial_file)
 {
-  global_debug_mode = false;
+  DEBUG_OFF;
   global_state       = {};
   global_state.arena = arena;
 
@@ -5115,7 +5155,12 @@ int engineMain()
   temp_memory_base = platformVirtualAlloc(temp_memory_base, permanent_memory_size);
   temp_arena_ = newArena(temp_memory_size, temp_memory_base);
 
-  char *files[] = {"../data/test.rea", "../data/z.rea", "../data/natp-experiment.rea"};
+  char *files[] = {
+    "../data/test.rea",
+    "../data/z-experiment.rea",
+    // "../data/natp-experiment.rea",
+    // "../data/z.rea",
+  };
   for (i32 file_id=0; file_id < arrayCount(files); file_id++)
   {
     if (!beginInterpreterSession(permanent_arena, files[file_id]))
