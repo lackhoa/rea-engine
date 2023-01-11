@@ -30,6 +30,7 @@ enum TokenCategory
   Token_Keyword_destruct,
   Token_Keyword_prove,
   Token_Keyword_seek,
+  Token_Keyword_auto,
 
   Token_Keyword_test_eval,
   Token_Keyword_print,
@@ -50,7 +51,7 @@ enum TokenCategory
 
 const char *keywords[] = {
   "", "fn", "fork", "union", "ctor", "seq",
-  "rewrite", "norm", "destruct", "prove", "seek",
+  "rewrite", "norm", "destruct", "prove", "seek", "auto",
   "test_eval", "print", "print_raw", "print_ast", "check", "check_truth"
 };
 

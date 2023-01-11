@@ -211,3 +211,6 @@ unionRebasing :: (a: Nat) -> union {eq(a = a)}
 testAnonymousParameter :: fn (A: Set, A) -> A
 { seek(A) }
 ;; print testAnonymousParameter;
+
+testTactics :: (a: Nat) -> a + 0 = a
+{}

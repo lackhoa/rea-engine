@@ -39,13 +39,14 @@ enum AstCategory {
   Ast_DestructAst    = 10,
   Ast_CtorAst        = 11,
   Ast_SeekAst        = 12,
+  Ast_Auto           = 13,
 
   // Sequence
-  Ast_ForkAst      = 13,
-  Ast_RewriteAst   = 14,
-  Ast_FunctionDecl = 15,        // todo: #cleanup probably don't need this anymore
-  Ast_Let          = 16,
-  Ast_UnionAst     = 17,
+  Ast_ForkAst      = 14,
+  Ast_RewriteAst   = 15,
+  Ast_FunctionDecl = 16,        // todo: #cleanup probably don't need this anymore
+  Ast_Let          = 17,
+  Ast_UnionAst     = 18,
 };
 
 enum TermCategory {
@@ -98,9 +99,15 @@ newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
 
 #define castTerm(exp, Cat) ((exp)->cat == Term_##Cat ? (Cat*)(exp) : 0)
 
-struct Hole       {embed_Ast(a);};
-struct Ellipsis   {embed_Ast(a);};
-struct Identifier {embed_Ast(a);};
+struct Identifier {
+  embed_Ast(a);
+  // NOTE: Since the ast has a token, which already has the identifier in it, we
+  // don't need to put it in the identifier struct. But that might change.
+};
+
+typedef Ast Hole;
+typedef Ast Ellipsis;
+typedef Ast Auto;
 
 struct ForkAst {
   embed_Ast(a);

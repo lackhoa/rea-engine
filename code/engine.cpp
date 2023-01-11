@@ -2694,7 +2694,7 @@ inferArgs(MemoryArena *arena, Typer *env, Term *op, Term *goal)
   if (Constructor *ctor = castTerm(op, Constructor))
   {
     if (equal(&ctor->uni->t, goal))
-      matches = true;  // we wouldn't know what the memberse are in the constructor case.
+      matches = true;  // we wouldn't know what the members are in the constructor case.
   }
   else if (Arrow *signature = castTerm(getType(op), Arrow))
   {
@@ -2780,20 +2780,26 @@ getMatchingFunctionCall(MemoryArena *arena, Typer *env, Identifier *ident, Term 
   {
     if (output_type_goal->cat != Term_Hole)
     {
-      for (int slot_id=0; slot_id < slot->count; slot_id++)
+      for (int slot_id=0;
+           (slot_id < slot->count && noError() && !out);
+           slot_id++)
       {
         Term *item = slot->items[slot_id];
         InferArgs infer = inferArgs(arena, env, item, output_type_goal);
         if (infer.matches)
         {
-          out = newComposite(arena, env, slot->items[slot_id], infer.arg_count, infer.args);
-          assert(equal(getType(out), output_type_goal));
-          // NOTE: we don't care which function matches, just grab whichever
-          // matches first.
-          break;
+          if (infer.args)
+          {
+            out = newComposite(arena, env, slot->items[slot_id], infer.arg_count, infer.args);
+            assert(equal(getType(out), output_type_goal));
+            // NOTE: we don't care which function matches, just grab whichever
+            // matches first.
+          }
+          else
+            parseError(&ident->token, "cannot automatically fill in some arguments");
         }
       }
-      if (!out)
+      if (!out && noError())
       {
         parseError(&ident->a, "found no matching overload");
         attach("identifier", ident->token.string);
@@ -3018,7 +3024,7 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
         else if (isExpressionEndMarker(&token))
         {// synthetic hole
           *global_tokenizer = tk_save;
-          ast  = &newAst(arena, Hole, &token)->a; // todo do we print this out correctly?
+          ast  = newAst(arena, Hole, &token);
           stop = true;
         }
       } break;
@@ -3145,9 +3151,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       if (fill)
         out0.term  = fill;
       else
-      {
         parseError(in0, "please provide an expression here");
-      }
     } break;
 
     case Ast_SyntheticAst:
@@ -3278,7 +3282,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                     // NOTE: We fill the missing argument with synthetic holes,
                     // because the user input might also have actual holes, so
                     // we want the code to be more uniform.
-                    expanded_args[param_id] = &newAst(arena, Hole, &in->op->token)->a;
+                    expanded_args[param_id] = newAst(arena, Hole, &in->op->token);
                   }
                   else
                   {
@@ -4471,7 +4475,7 @@ parseOperand(MemoryArena *arena)
   Token token = nextToken();
   if (equal(&token, '_'))
   {
-    operand = &newAst(arena, Hole, &token)->a;
+    operand = newAst(arena, Hole, &token);
   }
   else
   {
@@ -4500,6 +4504,11 @@ parseOperand(MemoryArena *arena)
       case Token_Keyword_seek:
       {
         operand = &parseSeek(arena)->a;
+      } break;
+
+      case Token_Keyword_auto:
+      {
+        operand = newAst(arena, Auto, &token);
       } break;
 
       case Token_Alphanumeric:
@@ -4548,7 +4557,7 @@ parseOperand(MemoryArena *arena)
             if (optionalCategory(Token_Ellipsis))
             {
               if (arg_id == 0)
-                args[0] = &newAst(arena, Ellipsis, &global_tokenizer->last_token)->a;
+                args[0] = newAst(arena, Ellipsis, &global_tokenizer->last_token);
               else
                 parseError("ellipsis must be the only argument");
 
