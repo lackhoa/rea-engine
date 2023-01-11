@@ -46,6 +46,7 @@ enum TokenCategory
   Token_Directive_debug,
   Token_Directive_norm,
   Token_Directive_hidden,
+  Token_Directive_hint,
   Token_Directive_END,
 };
 
@@ -54,8 +55,7 @@ const char *keywords[] = {
   "rewrite", "norm", "destruct", "prove", "seek", "auto",
   "test_eval", "print", "print_raw", "print_ast", "check", "check_truth"
 };
-
-const char *metaDirectives[] = {"", "load", "should_fail", "debug", "norm", "hidden"};
+const char *metaDirectives[] = {"", "load", "should_fail", "debug", "norm", "hidden", "hint"};
 
 struct Token
 {

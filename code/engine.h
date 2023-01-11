@@ -44,7 +44,7 @@ enum AstCategory {
   // Sequence
   Ast_ForkAst      = 14,
   Ast_RewriteAst   = 15,
-  Ast_FunctionDecl = 16,        // todo: #cleanup probably don't need this anymore
+  Ast_FunctionDecl = 16,
   Ast_Let          = 17,
   Ast_UnionAst     = 18,
 };
@@ -240,10 +240,13 @@ struct Union {
   Arrow  **structs;
 };
 
+// NOTE: For now, this FunctionDecl ast only holds global function only so it's
+// redundant. But we might allow local function definitions later.
 struct FunctionDecl {
   embed_Ast(a);
   ArrowAst *signature;
   Ast      *body;
+  b32       add_to_global_hints;
 };
 
 /* struct GlobalId {i32 v;}; */
@@ -340,7 +343,7 @@ struct Arrow {
 struct GlobalBinding {
   String key;
   i32    count;
-  Term *(items[8]);           // todo: #grow
+  Term *(items[8]);             // todo: #grow
   GlobalBinding *next_hash_slot;
 };
 
@@ -387,11 +390,20 @@ struct DestructList {
   DestructList  *next;
 };
 
+// todo better hint lookup
+struct HintDatabase {
+  // wip: we probably only want functions in here, but let's store term to make
+  // it play nice with the rest.
+  Term         *first;
+  HintDatabase *next;
+};
+
+// :global_state_cleared_at_startup
 struct EngineState {
   MemoryArena    *arena;
   FileList       *file_list;
   GlobalBindings *bindings;
-  DestructList   *builtin_destructs;
+  HintDatabase   *hints;
 };
 
 u32 PrintFlag_Detailed     = 1 << 0;

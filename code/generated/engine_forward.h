@@ -1,7 +1,7 @@
 void eatToken(Tokenizer * tk);
 Token nextToken(Tokenizer * tk);
 Token peekToken(Tokenizer * tk);
-Term * newComputation(MemoryArena * arena, Term * lhs, Term * rhs);
+Term * newComputation(MemoryArena * arena, Typer * env, Term * lhs, Term * rhs);
 Term * computeType(MemoryArena * arena, Typer * env, Term * in0);
 Term * todoGetType(MemoryArena * arena, Typer * env, Term * in0);
 Arrow * getType(Constructor * ctor);
@@ -32,7 +32,6 @@ void introduceSignature(Typer * env, Arrow * signature, b32 add_bindings);
 BuildTerm buildTerm(MemoryArena * arena, Typer * env, Ast * in0, Term * goal);
 Term * buildFork(MemoryArena * arena, Typer * env, ForkAst * in, Term * goal);
 Term * newRewrite(MemoryArena * arena, Term * eq_proof, Term * body, TreePath * path, b32 right_to_left);
-FunctionDecl * parseFunction(MemoryArena * arena, Token * name, b32 is_theorem);
 Ast * parseFork(MemoryArena * arena);
 Union * buildUnion(MemoryArena * arena, Typer * env, UnionAst * in, Token * global_name);
 Ast * parseExpressionToAst(MemoryArena * arena);

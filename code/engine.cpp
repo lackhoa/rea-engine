@@ -36,27 +36,6 @@ globalNameOf(Term *term)
     return {};
 }
 
-internal Term *
-fillHole(MemoryArena *arena, Typer *env, Term *goal)
-{
-  Term *out = 0;
-  if (Composite *eq = castTerm(goal, Composite))
-  {
-    if (eq->op == &builtins.equal->t)
-    {
-      Term *lhs_norm = normalize(temp_arena, env, eq->args[1]);
-      Term *rhs_norm = normalize(temp_arena, env, eq->args[2]);
-      if (equal(lhs_norm, rhs_norm))
-      {
-        todoGetType(arena, env, eq->args[1]);
-        todoGetType(arena, env, eq->args[2]);
-        out = newComputation(arena, eq->args[1], eq->args[2]);
-      }
-    }
-  }
-  return out;
-}
-
 inline Term *
 newVariable(MemoryArena *arena, Typer *env, String name, i32 delta, i32 id)
 {
@@ -106,11 +85,12 @@ newEquality(MemoryArena *arena, Term *type, Term *lhs, Term *rhs)
 
 // todo #typesafe error out when the sides don't match
 forward_declare inline Term *
-newComputation(MemoryArena *arena, Term *lhs, Term *rhs)
+newComputation(MemoryArena *arena, Typer *env, Term *lhs, Term *rhs)
 {
   Computation *out = newTerm(arena, Computation, 0);
   out->lhs = lhs;
   out->rhs = rhs;
+  computeType(arena, env, &out->t);
   return &out->t;
 }
 
@@ -2431,11 +2411,14 @@ inline b32
 optionalChar(char c, Tokenizer *tk=global_tokenizer)
 {
   b32 out = false;
-  Token token = peekToken(tk);
-  if (equal(&token, c))
+  if (hasMore())
   {
-    out = true;
-    nextToken(tk);
+    Token token = peekToken(tk);
+    if (equal(&token, c))
+    {
+      out = true;
+      nextToken(tk);
+    }
   }
   return out;
 }
@@ -2444,11 +2427,14 @@ inline b32
 optionalString(char *str, Tokenizer *tk=global_tokenizer)
 {
   b32 out = false;
-  Token token = peekToken(tk);
-  if (equal(&token, str))
+  if (hasMore())
   {
-    out = true;
-    nextToken(tk);
+    Token token = peekToken(tk);
+    if (equal(&token, str))
+    {
+      out = true;
+      nextToken(tk);
+    }
   }
   return out;
 }
@@ -2570,9 +2556,9 @@ newStack(MemoryArena *arena, Stack *outer, i32 count)
   return stack;
 }
 
-// todo We don't need "env", we only need the scope.
+// todo we don't even need the scope, since type is in term now.
 internal b32
-unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *goal0)
+unify(Stack *stack, Term *l0, Term *goal0)
 {
   b32 success = false;
 
@@ -2582,52 +2568,39 @@ unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *goal0)
   {debugIndent(); DUMP("unify(", serial, ") ", lhs0, " with ", goal0, "\n");}
 #endif
 
-  switch (lhs0->cat)
+  switch (l0->cat)
   {
     case Term_Variable:
     {
-      Variable *lhs = castTerm(lhs0, Variable);
+      Variable *lhs = castTerm(l0, Variable);
       Stack *lookup_stack = stack;
       for (i32 delta=0; delta < lhs->delta; delta++)
       {
         lookup_stack = lookup_stack->outer;
       }
-      if (Term *replaced = lookup_stack->items[lhs->id])
+      if (Term *lookup = lookup_stack->items[lhs->id])
       {
-        if (equal(replaced, goal0))
+        if (equal(lookup, goal0))
           success = true;
       }
-      else
+      else if (unify(stack, getType(l0), getType(goal0)))
       {
-        // todo cleanup
-        for (i32 delta=0; delta < lhs->delta; delta++)
-        {
-          lhs_scope = lhs_scope->outer;
-        }
-        // todo the act of fetching lhs_type and goal_type should be the same!!!
-        Term *lhs_type = lhs_scope->first->param_types[lhs->id];
-        lhs_type = rebase(temp_arena, lhs_type, lhs->delta);
-        Term *goal_type = todoGetType(temp_arena, env, goal0);
-        if (unify(env, stack, lhs_scope, lhs_type, goal_type))
-        {
-          // todo potential infinite loop with "Type"
-          stack->items[lhs->id] = goal0;
-          success = true;
-        }
+        stack->items[lhs->id] = goal0;
+        success = true;
       }
     } break;
 
     case Term_Composite:
     {
-      Composite *lhs = castTerm(lhs0, Composite);
+      Composite *lhs = castTerm(l0, Composite);
       if (Composite *goal = castTerm(goal0, Composite))
       {
-        if (unify(env, stack, lhs_scope, lhs->op, goal->op))
+        if (unify(stack, lhs->op, goal->op))
         {
           success = true;
           for (int id=0; id < lhs->arg_count; id++)
           {
-            if (!unify(env, stack, lhs_scope, lhs->args[id], goal->args[id]))
+            if (!unify(stack, lhs->args[id], goal->args[id]))
             {
               success = false;
               break;
@@ -2639,18 +2612,16 @@ unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *goal0)
 
     case Term_Arrow:
     {
-      Arrow *lhs = castTerm(lhs0, Arrow);
+      Arrow *lhs = castTerm(l0, Arrow);
       if (Arrow *goal = castTerm(goal0, Arrow))
       {
         if (lhs->param_count == goal->param_count)
         {
-          Scope *new_lhs_scope = newScope(lhs_scope, lhs);
-          env->scope = newScope(env->scope, goal);
           b32 failed = false;
           Stack *new_stack = newStack(temp_arena, stack, lhs->param_count);
           for (i32 id=0; id < lhs->param_count; id++)
           {
-            if (!unify(env, new_stack, new_lhs_scope, lhs->param_types[id], goal->param_types[id]))
+            if (!unify(new_stack, lhs->param_types[id], goal->param_types[id]))
             {
               failed = true;
               break;
@@ -2658,7 +2629,6 @@ unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *goal0)
           }
           if (!failed)
             success = true;
-          unwindScope(env);
         }
       }
     } break;
@@ -2668,7 +2638,7 @@ unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *goal0)
     case Term_Constructor:
     case Term_Builtin:
     {
-      success = equal(lhs0, goal0);
+      success = equal(l0, goal0);
     } break;
 
     default:
@@ -2686,7 +2656,7 @@ unify(Typer *env, Stack *stack, Scope *lhs_scope, Term *lhs0, Term *goal0)
 }
 
 inline InferArgs
-inferArgs(MemoryArena *arena, Typer *env, Term *op, Term *goal)
+inferArgs(MemoryArena *arena, Term *op, Term *goal)
 {
   b32    matches   = false;
   i32    arg_count = 0;
@@ -2699,8 +2669,7 @@ inferArgs(MemoryArena *arena, Typer *env, Term *op, Term *goal)
   else if (Arrow *signature = castTerm(getType(op), Arrow))
   {
     Stack *stack = newStack(arena, 0, signature->param_count);
-    Scope *lhs_scopes = newScope(0, signature);
-    if (unify(env, stack, lhs_scopes, signature->output_type, goal))
+    if (unify(stack, signature->output_type, goal))
     {
       matches   = true;
       arg_count = signature->param_count;
@@ -2718,6 +2687,39 @@ inferArgs(MemoryArena *arena, Typer *env, Term *op, Term *goal)
   return InferArgs{matches, arg_count, args};
 }
 
+inline Term *
+inferFromGlobalHints(Term *goal)
+{
+  Term *out = 0;
+  for (HintDatabase *hints = global_state.hints; hints; hints = hints->next)
+  {
+    Term *hint = hints->first;
+    // inferArgs(temp_arena);  // bookmark we need to pass in the env, don't we
+  }
+  return out;
+}
+
+internal Term *
+fillHole(MemoryArena *arena, Typer *env, Term *goal)
+{
+  Term *out = 0;
+  if (Composite *eq = castTerm(goal, Composite))
+  {
+    if (eq->op == &builtins.equal->t)
+    {
+      Term *lhs_norm = normalize(temp_arena, env, eq->args[1]);
+      Term *rhs_norm = normalize(temp_arena, env, eq->args[2]);
+      if (equal(lhs_norm, rhs_norm))
+        out = newComputation(arena, env, eq->args[1], eq->args[2]);
+    }
+  }
+
+  if (!out)
+    out = inferFromGlobalHints(goal);
+
+  return out;
+}
+
 inline void
 attachTerms(char *key, i32 count, Term **terms)
 {
@@ -2731,7 +2733,7 @@ attachTerms(char *key, i32 count, Term **terms)
 }
 
 inline TermArray
-getFunctionOverloads(Typer *env, Identifier *ident, Term *output_type_goal)
+getFunctionOverloads(Identifier *ident, Term *output_type_goal)
 {
   TermArray out = {};
   if (GlobalBinding *slot = lookupGlobalNameSlot(ident->token.string, false))
@@ -2747,7 +2749,7 @@ getFunctionOverloads(Typer *env, Identifier *ident, Term *output_type_goal)
       for (int slot_id=0; slot_id < slot->count; slot_id++)
       {
         Term *item = slot->items[slot_id];
-        if (inferArgs(temp_arena, env, item, output_type_goal).matches)
+        if (inferArgs(temp_arena, item, output_type_goal).matches)
           out.items[out.count++] = slot->items[slot_id];
       }
       if (out.count == 0)
@@ -2780,17 +2782,18 @@ getMatchingFunctionCall(MemoryArena *arena, Typer *env, Identifier *ident, Term 
   {
     if (output_type_goal->cat != Term_Hole)
     {
-      for (int slot_id=0;
-           (slot_id < slot->count && noError() && !out);
-           slot_id++)
+      for (int slot_i=0;
+           (slot_i < slot->count && noError() && !out);
+           slot_i++)
       {
-        Term *item = slot->items[slot_id];
-        InferArgs infer = inferArgs(arena, env, item, output_type_goal);
+        Term *item = slot->items[slot_i];
+        InferArgs infer = inferArgs(temp_arena, item, output_type_goal);
         if (infer.matches)
         {
           if (infer.args)
           {
-            out = newComposite(arena, env, slot->items[slot_id], infer.arg_count, infer.args);
+            Term **args = copyArray(arena, infer.arg_count, infer.args);
+            out = newComposite(arena, env, slot->items[slot_i], infer.arg_count, args);
             assert(equal(getType(out), output_type_goal));
             // NOTE: we don't care which function matches, just grab whichever
             // matches first.
@@ -3233,7 +3236,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           if (!lookupLocalName(env, &in->op->token))
           {
             should_build_op = false;
-            op_list = getFunctionOverloads(env, op_ident, goal);
+            op_list = getFunctionOverloads(op_ident, goal);
           }
         }
         else if (CtorAst *op_ctor = castAst(in->op, CtorAst))
@@ -3537,7 +3540,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
             }
             if (noError())
             {
-              Term *com = newComputation(arena, goal, new_goal);
+              Term *com = newComputation(arena, env, goal, new_goal);
               out->eq_proof = com;
             }
           }
@@ -3660,7 +3663,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           if (in->type == LET_TYPE_NORMALIZE)
           {// type coercion
             Term *norm_rhs_type = normalize(arena, env, rhs_type);
-            Term *computation = newComputation(arena, norm_rhs_type, rhs_type);
+            Term *computation = newComputation(arena, env, norm_rhs_type, rhs_type);
             rhs_type = norm_rhs_type;
             rhs = newRewrite(arena, computation, build_rhs.term, 0, false);
             assert(equal(todoGetType(temp_arena, env, rhs), rhs_type));
@@ -4059,8 +4062,8 @@ insertAutoNormalizations(MemoryArena *arena, NormList norm_list, Ast *in0)
   }
 }
 
-forward_declare internal FunctionDecl *
-parseFunction(MemoryArena *arena, Token *name, b32 is_theorem)
+internal FunctionDecl *
+parseGlobalFunction(MemoryArena *arena, Token *name, b32 is_theorem)
 {
   FunctionDecl *out = newAst(arena, FunctionDecl, name);
   assert(isIdentifier(name));
@@ -4070,38 +4073,45 @@ parseFunction(MemoryArena *arena, Token *name, b32 is_theorem)
     NormList norm_list = {};
     if (ArrowAst *signature = castAst(signature0, ArrowAst))
     {
-      if (optionalCategory(Token_Directive_norm))
+      while (true)
       {
-        pushContext("auto normalization: #norm(IDENTIFIER...)");
-        if (requireChar('('))
+        if (optionalCategory(Token_Directive_norm))
         {
-          Tokenizer tk_copy = *global_tokenizer;
-          i32 norm_count = getCommaSeparatedListLength(&tk_copy);
-          if (noError(&tk_copy))
+          pushContext("auto normalization: #norm(IDENTIFIER...)");
+          if (requireChar('('))
           {
-            norm_list.items = pushArray(temp_arena, norm_count, Identifier*);
-            for (; noError(); )
+            Tokenizer tk_copy = *global_tokenizer;
+            i32 norm_count = getCommaSeparatedListLength(&tk_copy);
+            if (noError(&tk_copy))
             {
-              if (optionalChar(')'))
-                break;
-              else if (requireIdentifier("expect auto-normalized parameter"))
+              norm_list.items = pushArray(temp_arena, norm_count, Identifier*);
+              for (; noError(); )
               {
-                // todo handle unbound identifier: all names in the norm list
-                // should be in the function signature.
-                Token *name = &global_tokenizer->last_token;
-                i32 norm_id = norm_list.count++;
-                assert(norm_id < norm_count);
-                norm_list.items[norm_id] = newAst(arena, Identifier, name);
-                if (!optionalChar(','))
-                {
-                  requireChar(')');
+                if (optionalChar(')'))
                   break;
+                else if (requireIdentifier("expect auto-normalized parameter"))
+                {
+                  // todo handle unbound identifier: all names in the norm list
+                  // should be in the function signature.
+                  Token *name = &global_tokenizer->last_token;
+                  i32 norm_id = norm_list.count++;
+                  assert(norm_id < norm_count);
+                  norm_list.items[norm_id] = newAst(arena, Identifier, name);
+                  if (!optionalChar(','))
+                  {
+                    requireChar(')');
+                    break;
+                  }
                 }
               }
             }
           }
+          popContext();
         }
-        popContext();
+        else if (optionalCategory(Token_Directive_hint))
+          out->add_to_global_hints = true;
+        else
+          break;
       }
 
       if (Ast *body = parseSequence(arena))
@@ -4708,33 +4718,47 @@ parseExpressionToAst(MemoryArena *arena)
   return parseExpressionToAstMain(arena, ParseExpressionOptions{});
 }
 
-internal Function *
-buildGlobalFunction(MemoryArena *arena, FunctionDecl *decl)
+inline void
+addGlobalHint(Function *fun)
 {
-  Function *funv = 0;
+  HintDatabase *new_hint = pushStruct(global_state.arena, HintDatabase);
+  new_hint->first = &fun->t;
+  new_hint->next  = global_state.hints;
+  global_state.hints = new_hint;
+}
+
+internal Function *
+buildGlobalFunction(MemoryArena *arena, FunctionDecl *in)
+{
+  pushContext(in->token.string);
+  Function *out = 0;
   Typer typer_ = {};
   auto  typer  = &typer_;
 
-  pushContext(decl->token.string);
-  if (BuildTerm build_signature = buildTerm(arena, typer, &decl->signature->a, holev))
+  if (BuildTerm build_signature = buildTerm(arena, typer, &in->signature->a, holev))
   {
     Arrow *signature = castTerm(build_signature.term, Arrow);
-    funv = newTerm(arena, Function, build_signature.term);
-    funv->body = &dummy_function_being_built;
+    out = newTerm(arena, Function, build_signature.term);
+    out->body = &dummy_function_being_built;
 
-    // note: add binding first to support recursion
-    addGlobalBinding(&decl->a.token, &funv->t);
+    // NOTE: add binding first to support recursion
+    addGlobalBinding(&in->a.token, &out->t);
 
     if (noError())
     {
       introduceSignature(typer, signature, true);
-      if (BuildTerm body = buildTerm(arena, typer, decl->body, signature->output_type))
-        funv->body = body.term;
+      if (BuildTerm body = buildTerm(arena, typer, in->body, signature->output_type))
+      {
+        out->body = body.term;
+        if (in->add_to_global_hints)
+          addGlobalHint(out);
+      }
       unwindBindingsAndScope(typer);
     }
   }
+
   popContext();
-  return funv;
+  return out;
 }
 
 // NOTE: Main dispatch parse function
@@ -4942,7 +4966,7 @@ parseTopLevel(EngineState *state)
                   nextToken();
                 }
                 else is_theorem = true;
-                if (FunctionDecl *fun = parseFunction(arena, &token, is_theorem))
+                if (FunctionDecl *fun = parseGlobalFunction(arena, &token, is_theorem))
                   buildGlobalFunction(arena, fun);
               }
             } break;
@@ -5034,7 +5058,7 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
           print(0, context->first);
           if (context->next)
           {
-            print(0, " -> ");
+            print(0, "/");
           }
         }
         print(0, "] ");
@@ -5088,6 +5112,8 @@ internal b32
 beginInterpreterSession(MemoryArena *arena, char *initial_file)
 {
   DEBUG_OFF;
+  // :global_state_cleared_at_startup Clear global state as we might run the
+  // interpreter multiple times.
   global_state       = {};
   global_state.arena = arena;
 
