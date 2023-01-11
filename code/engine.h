@@ -99,6 +99,7 @@ newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
 #define castTerm(exp, Cat) ((exp)->cat == Term_##Cat ? (Cat*)(exp) : 0)
 
 struct Hole       {embed_Ast(a);};
+struct Ellipsis   {embed_Ast(a);};
 struct Identifier {embed_Ast(a);};
 
 struct ForkAst {
@@ -531,6 +532,6 @@ struct SeekAst {
   Ast *proposition;
 };
 
-struct InferArgs {b32 matches; Term **args;};
+struct InferArgs {b32 matches; i32 arg_count; Term **args;};
 
 #include "generated/engine_forward.h"

@@ -143,6 +143,12 @@ pushContext(char *string, Tokenizer *tk=global_tokenizer)
   pushContext(toString(string), tk);
 }
 
+inline void
+pushContext(const char *string, Tokenizer *tk=global_tokenizer)
+{
+  pushContext(toString(string), tk);
+}
+
 internal void
 popContext(Tokenizer *tk = global_tokenizer)
 {
@@ -282,11 +288,11 @@ parseError(Tokenizer *tk, Token *token, char *format, ...)
   __crt_va_end(arg_list);
 }
 
+// todo cleanup always use the global tokenizer, so we can get rid of this function
 internal void
 tokenError(Token *token, char *message, Tokenizer *tk=global_tokenizer)
 {
   parseError(tk, token, "%s", message);
-  attach("token", token, tk);
 }
 
 internal void
@@ -295,6 +301,11 @@ tokenError(char *message, Tokenizer *tk=global_tokenizer)
   tokenError(&tk->last_token, message, tk);
 }
 
+internal void
+parseError(char *message, Tokenizer *tk=global_tokenizer)
+{
+  parseError(tk, &tk->last_token, message);
+}
 
 internal void
 parseError(Token *token, char *format, ...)
