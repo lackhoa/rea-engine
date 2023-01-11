@@ -1010,7 +1010,6 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
       {
         RewriteAst *in = castAst(in0, RewriteAst);
         print(buffer, "rewrite");
-        print(buffer, in->path);
         print(buffer, " ");
         if (in->right_to_left) print(buffer, "<- ");
         print(buffer, in->eq_proof_hint, new_opt);
@@ -1105,11 +1104,6 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
       case Ast_UnionAst:
       {
         print(buffer, "<some union>");
-      } break;
-
-      case Ast_DestructAst:
-      {
-        print(buffer, "<some destruct>");
       } break;
 
       case Ast_CtorAst:
@@ -2917,12 +2911,13 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
   else
     brace_opened = optionalChar('{');
 
-  b32 stop = false;
-  while (noError() && !stop)
+  for (b32 reached_end_of_sequence = false;
+       noError() && !reached_end_of_sequence;
+       )
   {
     Tokenizer tk_save = *global_tokenizer;
     Token token = nextToken();
-    Ast *ast = 0;
+    Ast *ast0 = 0;
     switch (token.cat)
     {
       case Token_Keyword_norm:
@@ -2931,14 +2926,14 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
         if (seesExpressionEndMarker())
         {// normalize goal
           RewriteAst *rewrite = newAst(arena, RewriteAst, &token);
-          ast = &rewrite->a;
+          ast0 = &rewrite->a;
         }
         else if (Ast *expression = parseExpressionToAst(arena))
         {
           Let *let = newAst(arena, Let, &token);
           let->rhs  = expression;
           let->type = LET_TYPE_NORMALIZE;
-          ast = &let->a;
+          ast0 = &let->a;
           if (expression->cat == Ast_Identifier)
           {
             // borrow the name if the expression is an identifier 
@@ -2961,23 +2956,18 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
         }
 
         rewrite->eq_proof_hint = parseExpressionToAst(arena);
-        ast = &rewrite->a;
+        ast0 = &rewrite->a;
       } break;
 
       case Token_StrongArrow:
       {
-        pushContext("Full-rewrite: => [NEW_GOAL] [{ EQ_PROOF_HINT }]");
-        RewriteAst *rewrite = newAst(arena, RewriteAst, &token);
-        ast = &rewrite->a;
+        pushContext("Goal transform: => [NEW_GOAL] [{ EQ_PROOF_HINT }]; ...");
+        GoalTransform *ast = newAst(arena, GoalTransform, &token);
+        ast0 = &ast->a;
         if (!optionalCategory(Token_Keyword_norm))
         {
-          b32 require_hint = false;
-          if (optionalChar('_'))
-            require_hint = true;
-          else
-            rewrite->new_goal = parseExpressionToAst(arena);
-
-          if (optionalChar('{'))
+          ast->new_goal = parseExpressionToAst(arena);
+          if (requireChar('{'))
           {
             if (optionalChar('}'))
             {
@@ -2985,17 +2975,9 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
             }
             else
             {
-              if (optionalString("<-"))
-              {
-                rewrite->right_to_left = true;
-              }
-              rewrite->eq_proof_hint = parseExpressionToAst(arena);
+              ast->hint = parseExpressionToAst(arena);
               requireChar('}');
             }
-          }
-          else if (require_hint)
-          {
-            tokenError(&global_tokenizer->last_token, "you didn't provide new goal, so we require a proof hint (otherwise we'd have no idea what you want)");
           }
         }
         popContext();
@@ -3015,7 +2997,7 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
               if (Ast *rhs = parseExpressionToAst(arena))
               {
                 Let *let = newAst(arena, Let, name);
-                ast = &let->a;
+                ast0 = &let->a;
                 let->lhs = name->string;
                 let->rhs = rhs;
               }
@@ -3035,7 +3017,7 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
                     let->lhs  = name->string;
                     let->rhs  = rhs;
                     let->type = type;
-                    ast = &let->a;
+                    ast0 = &let->a;
                   }
                 }
               }
@@ -3048,8 +3030,8 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
         else if (isExpressionEndMarker(&token))
         {// synthetic hole
           *global_tokenizer = tk_save;
-          ast  = newAst(arena, Hole, &token);
-          stop = true;
+          ast0  = newAst(arena, Hole, &token);
+          reached_end_of_sequence = true;
         }
       } break;
 
@@ -3064,28 +3046,28 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
             let->lhs  = toString("anon");
             let->rhs  = proof;
             let->type = proposition;
-            ast = &let->a;
+            ast0 = &let->a;
           }
         }
         popContext();
       } break;
     }
 
-    if (noError() && !ast)
+    if (noError() && !ast0)
     {
       *global_tokenizer = tk_save;
       if (optionalCategory(Token_Keyword_fork))
-        ast = parseFork(arena);
+        ast0 = parseFork(arena);
       else
-        ast = parseExpressionToAst(arena);
-      stop = true;
+        ast0 = parseExpressionToAst(arena);
+      reached_end_of_sequence = true;
     }
 
     if (noError())
     {
       count++;
       AstList *new_list = pushStruct(temp_arena, AstList);
-      new_list->first = ast;
+      new_list->first = ast0;
       new_list->next  = list;
       list = new_list;
       // f.ex function definitions doesn't need to end with ';'
@@ -3102,15 +3084,19 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
     Ast *previous = 0;
     for (i32 id = 0; id < count; id++)
     {
-      Ast *item = list->first;
+      Ast *item0 = list->first;
       if (id > 0)
       {
-        if (Let *let = castAst(item, Let))
+        if (Let *let = castAst(item0, Let))
           let->body = previous;
-        else if (RewriteAst *rewrite = castAst(item, RewriteAst))
+        else if (RewriteAst *rewrite = castAst(item0, RewriteAst))
           rewrite->body = previous;
+        else if (GoalTransform *item = castAst(item0, GoalTransform))
+          item->body = previous;
+        else
+          invalidCodePath;
       }
-      previous = item;
+      previous = item0;
       if (id != count-1)
         list = list->next;
     }
@@ -3282,10 +3268,9 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         }
 
         for (i32 attempt=0;
-             (attempt < op_list.count) && !(out0.term);
+             (attempt < op_list.count) && !(out0.term) && noError();
              attempt++)
         {
-          assert(noError());
           Term *op = op_list.items[attempt];
           if (Arrow *signature = castTerm(todoGetType(temp_arena, env, op), Arrow))
           {
@@ -3524,48 +3509,72 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
     {
       should_check_type = false;
       RewriteAst *in  = castAst(in0, RewriteAst);
-      Rewrite    *out = newTerm(arena, Rewrite, 0);
-      out->right_to_left = in->right_to_left;
       Term *new_goal = 0;
-      if (!in->eq_proof_hint)
+      if (BuildTerm eq_proof = buildTerm(arena, env, in->eq_proof_hint, holev))
+      {
+        Term *proof_type = todoGetType(temp_arena, env, eq_proof.term);
+        if (auto [lhs, rhs] = getEqualitySides(proof_type, false))
+        {
+          Term *from = in->right_to_left ? rhs : lhs;
+          Term *to   = in->right_to_left ? lhs : rhs;
+          SearchOutput search = searchExpression(arena, env, from, goal);
+          if (search.found)
+          {
+            new_goal = rewriteTerm(arena, to, search.path, goal);
+            if (BuildTerm body = buildTerm(arena, env, in->body, new_goal))
+              out0.term = newRewrite(arena, eq_proof.term, body.term, search.path, in->right_to_left);
+          }
+          else
+          {
+            parseError(in0, "rewrite has no effect");
+            attach("substitution", proof_type);
+          }
+        }
+        else
+        {
+          parseError(in->eq_proof_hint, "please provide a proof of equality for rewrite");
+          attach("got", proof_type);
+        }
+      }
+    } break;
+
+    case Ast_GoalTransform:
+    {
+      GoalTransform *in = castAst(in0, GoalTransform);
+      Term     *new_goal     = 0;
+      Term     *eq_proof     = 0;
+      TreePath *rewrite_path = 0;
+      if (!in->hint)
       {
         // No hint -> Auto tactics.
-        b32 skip_goal_comparison = false;
         if (!in->new_goal)
-        {
           new_goal = normalize(arena, env, goal);
-          skip_goal_comparison = true;
-        }
         else if (BuildTerm build = buildTerm(arena, env, in->new_goal, holev))
+        {
           new_goal = build.term;
+          Term *new_goal_norm = normalize(arena, env, new_goal);
+          Term *goal_norm     = normalize(arena, env, goal);
+          if (!equal(new_goal_norm, goal_norm))
+          {
+            parseError(in0, "new goal does not match original");
+            // equal(new_goal_norm, goal_norm);
+            attach("new goal normalized", new_goal_norm);
+            attach("current goal normalized", goal_norm);
+          }
+        }
 
         if (noError())
         {
           if (checkFlag(in->flags, AstFlag_Generated) &&
               equal(new_goal, goal))
-          {// superfluous auto-generated rewrite: remove it
+          {// check for superfluous auto-generated rewrites.
             recursed = true;
             out0 = buildTerm(arena, env, in->body, goal);
           }
           else
           {
-            if (!skip_goal_comparison)
-            {
-              Term *new_goal_norm = normalize(arena, env, new_goal);
-              Term *goal_norm     = normalize(arena, env, goal);
-              if (!equal(new_goal_norm, goal_norm))
-              {
-                parseError(in0, "new goal does not match original");
-                // equal(new_goal_norm, goal_norm);
-                attach("new goal normalized", new_goal_norm);
-                attach("current goal normalized", goal_norm);
-              }
-            }
-            if (noError())
-            {
-              Term *com = newComputation(arena, env, goal, new_goal);
-              out->eq_proof = com;
-            }
+            eq_proof = newComputation(arena, env, goal, new_goal);
+            rewrite_path = 0;
           }
         }
       }
@@ -3579,15 +3588,16 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
             parseError(in0, "new goal same as current goal");
           else if (compare.diff_path)
           {
-            out->path = compare.diff_path;
+            rewrite_path = compare.diff_path;
             Term *from = subExpressionAtPath(goal, compare.diff_path);
             Term *to   = subExpressionAtPath(new_goal, compare.diff_path);
-            Term *lhs  = in->right_to_left ? to : from;
-            Term *rhs  = in->right_to_left ? from : to;
+            // todo bookmark infer the rewrite direction here
+            Term *lhs  = from;
+            Term *rhs  = to;
             Term *wanted_eq = newEquality(temp_arena, todoGetType(arena, env, lhs), lhs, rhs);
 
             b32 is_global_identifier = false;
-            if (Identifier *op_ident = castAst(in->eq_proof_hint, Identifier))
+            if (Identifier *op_ident = castAst(in->hint, Identifier))
             {
               // operator hint: handled just like if we had an ellipsis in the
               // argument list (the only reason why we don't have ellipsis is for
@@ -3595,23 +3605,23 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
               //
               // NOTE: If the identifier hint is global, then we treat it as an
               // operator, if it's local then we treat it as the entire
-              // proof. Sounds kinda janky.
+              // proof -> pretty janky.
               if (!lookupLocalName(env, &op_ident->token))
               {
                 is_global_identifier = true;
-                out->eq_proof = getMatchingFunctionCall(arena, env, op_ident, wanted_eq);
+                eq_proof = getMatchingFunctionCall(arena, env, op_ident, wanted_eq);
               }
             }
 
             if (!is_global_identifier)
             {
-              if (BuildTerm build_eq_proof = buildTerm(arena, env, in->eq_proof_hint, holev))
+              if (BuildTerm build_eq_proof = buildTerm(arena, env, in->hint, holev))
               {// full proof of equality
-                out->eq_proof = build_eq_proof.term;
+                eq_proof = build_eq_proof.term;
                 Term *actual_eq = todoGetType(temp_arena, env, build_eq_proof.term);
                 if (!equal(actual_eq, wanted_eq))
                 {
-                  parseError(in->eq_proof_hint, "hint does not prove wanted equality");
+                  parseError(in->hint, "hint does not prove wanted equality");
                   attach("wanted_eq", wanted_eq);
                   attach("actual_eq", actual_eq);
                 }
@@ -3619,48 +3629,15 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
             }
           }
           else
-          {
             parseError(in0, "current goal and new_goal don't match at all");
-          }
-        }
-      }
-      else
-      {// search
-        if (BuildTerm eq_proof = buildTerm(arena, env, in->eq_proof_hint, holev))
-        {
-          out->eq_proof = eq_proof.term;
-          Term *proof_eq = todoGetType(temp_arena, env, eq_proof.term);
-          if (auto [lhs, rhs] = getEqualitySides(proof_eq, false))
-          {
-            Term *from = in->right_to_left ? rhs : lhs;
-            Term *to   = in->right_to_left ? lhs : rhs;
-            SearchOutput search = searchExpression(arena, env, from, goal);
-            if (search.found)
-            {
-              out->path = search.path;
-              new_goal = rewriteTerm(arena, to, out->path, goal);
-            }
-            else
-            {
-              parseError(in0, "rewrite has no effect");
-              attach("substitution", proof_eq);
-            }
-          }
-          else
-          {
-            parseError(in->eq_proof_hint, "please provide a proof of equality for rewrite");
-            attach("got", proof_eq);
-          }
         }
       }
 
       if (noError() && !recursed)
       {
-        assert(new_goal);
-        if (BuildTerm body = buildTerm(arena, env, in->body, new_goal))
+        if (Term *body = buildTerm(arena, env, in->body, new_goal))
         {
-          out->body = body.term;
-          out0.term = &out->t;
+          out0.term = newRewrite(arena, eq_proof, body, rewrite_path, false);
         }
       }
     } break;
@@ -3735,86 +3712,6 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       out0.term = &buildUnion(arena, env, uni, 0)->t;
     } break;
 
-    case Ast_DestructAst:
-    {
-#if 0
-      DestructAst *in = castAst(in0, DestructAst);
-      if (BuildTerm build_eqp = buildTerm(arena, env, in->eqp, holev))
-      {
-        Term *eq = getType(arena, env, build_eqp.term);
-        if (TermPair sides = getEqualitySides(eq, false))
-        {
-          Constructor *ctor = 0;
-          Composite *lhs = 0;
-          Composite *rhs = 0;
-          if ((lhs = castTerm(sides.lhs, Composite)))
-          {
-            if (Constructor *lhs_ctor = castTerm(lhs->op, Constructor))
-            {
-              if ((rhs = castTerm(sides.rhs, Composite)))
-              {
-                if (Constructor *rhs_ctor = castTerm(rhs->op, Constructor))
-                {
-                  if (equal(&rhs_ctor->t, &lhs_ctor->t))
-                    ctor = lhs_ctor;
-                  else
-                    parseError(in0, "lhs constructor is not equal to rhs constructor");
-                }
-                else
-                  parseError(in0, "rhs must be a record");
-              }
-            }
-            else
-              parseError(in0, "lhs must be a record");
-          }
-          else
-            parseError(in0, "lhs must be a record");
-
-          if (hasError())
-            attach("type", eq);
-          else
-          {
-            i32 param_count = castTerm(ctor->type, Arrow)->param_count;
-            if (in->arg_id < param_count)
-            {
-              for (DestructList *destructs = global_state.builtin_destructs;
-                   destructs;
-                   destructs = destructs->next)
-              {
-                // todo #speed
-                if ((destructs->uni == ctor->uni) && (destructs->ctor_id == ctor->id))
-                {
-                  Composite *out = newTerm(arena, Composite, 0);
-                  out->op        = destructs->items[in->arg_id];
-                  out->arg_count = lhs->arg_count*2+1;
-                  out->args      = pushArray(arena, out->arg_count, Term*);
-                  // todo cleanup: use parameter type inference
-                  for (i32 id=0; id < out->arg_count; id++)
-                  {
-                    if (id == out->arg_count-1)
-                      out->args[id] = build_eqp.term;
-                    else if (id < lhs->arg_count)
-                      out->args[id] = lhs->args[id];
-                    else
-                      out->args[id] = rhs->args[id - lhs->arg_count];
-                  }
-                  out0.term = &out->t;
-                  break;
-                }
-              }
-            }
-            else
-              parseError(in0, "constructor only has %d parameters", param_count);
-          }
-        }
-        else
-          parseError(in0, "expected an equality proof as argument");
-      }
-#else
-      parseError(in0, "destruct syntax has been deprecated, waiting for something better to emerge");
-#endif
-    } break;
-
     case Ast_CtorAst:
     {
       parseError(in0, "please use this constructor syntax as an operator");
@@ -3850,9 +3747,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           delta++;
         }
         if (!out0.term)
-        {
           parseError(in0, "cannot find a matching proof on the stack");
-        }
       }
     } break;
 
@@ -4006,7 +3901,11 @@ buildFork(MemoryArena *arena, Typer *env, ForkAst *in, Term *goal)
 forward_declare inline Term *
 newRewrite(MemoryArena *arena, Term *eq_proof, Term *body, TreePath *path, b32 right_to_left)
 {
-  Rewrite *out = newTerm(arena, Rewrite, 0);
+  auto [lhs, rhs] = getEqualitySides(getType(eq_proof));
+  Term *rewrite_to = right_to_left ? rhs : lhs;
+  Term *type = rewriteTerm(arena, rewrite_to, path, getType(body));
+
+  Rewrite *out = newTerm(arena, Rewrite, type);
   out->eq_proof      = eq_proof;
   out->body          = body;
   out->path          = path;
@@ -4054,14 +3953,16 @@ insertAutoNormalizations(MemoryArena *arena, NormList norm_list, Ast *in0)
         for (i32 norm_id=0; norm_id < norm_list.count; norm_id++)
         {
           Identifier *item = norm_list.items[norm_id];
+          // todo cleanup: we'll need to clean useless let-normalization too!
           Let *new_body = newAst(arena, Let, &item->token);
-          new_body->lhs  = item->token.string;
-          new_body->rhs  = &item->a;
-          new_body->type = LET_TYPE_NORMALIZE;
-          new_body->body = body;
+          new_body->lhs   = item->token.string;
+          new_body->rhs   = &item->a;
+          new_body->type  = LET_TYPE_NORMALIZE;
+          new_body->body  = body;
+          setFlag(&new_body->flags, AstFlag_Generated);
           body = &new_body->a;
         }
-        RewriteAst *new_body = newAst(arena, RewriteAst, &body->token);
+        GoalTransform *new_body = newAst(arena, GoalTransform, &body->token);
         setFlag(&new_body->flags, AstFlag_Generated);
         new_body->body = body;
         in->bodies[case_id] = &new_body->a;
@@ -4464,21 +4365,6 @@ buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
   return uni;
 }
 
-inline DestructAst *
-parseDestruct(MemoryArena *arena)
-{
-  DestructAst *out = newAst(arena, DestructAst, &global_tokenizer->last_token);
-  if (requireChar('['))
-  {
-    out->arg_id = parseInt32();
-    if (requireChar(']'))
-    {
-      out->eqp = parseExpressionToAst(arena);
-    }
-  }
-  return out;
-}
-
 inline CtorAst *
 parseCtor(MemoryArena *arena)
 {
@@ -4523,11 +4409,6 @@ parseOperand(MemoryArena *arena)
       case Token_Keyword_union:
       {
         operand = &parseUnion(arena)->a;
-      } break;
-
-      case Token_Keyword_destruct:
-      {
-        operand = &parseDestruct(arena)->a;
       } break;
 
       case Token_Keyword_ctor:

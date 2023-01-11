@@ -50,3 +50,83 @@
             destruct_list->items[arg_id] = &destruct->t;
           }
 #endif
+
+    case Ast_DestructAst:
+    {
+#if 0
+      DestructAst *in = castAst(in0, DestructAst);
+      if (BuildTerm build_eqp = buildTerm(arena, env, in->eqp, holev))
+      {
+        Term *eq = getType(arena, env, build_eqp.term);
+        if (TermPair sides = getEqualitySides(eq, false))
+        {
+          Constructor *ctor = 0;
+          Composite *lhs = 0;
+          Composite *rhs = 0;
+          if ((lhs = castTerm(sides.lhs, Composite)))
+          {
+            if (Constructor *lhs_ctor = castTerm(lhs->op, Constructor))
+            {
+              if ((rhs = castTerm(sides.rhs, Composite)))
+              {
+                if (Constructor *rhs_ctor = castTerm(rhs->op, Constructor))
+                {
+                  if (equal(&rhs_ctor->t, &lhs_ctor->t))
+                    ctor = lhs_ctor;
+                  else
+                    parseError(in0, "lhs constructor is not equal to rhs constructor");
+                }
+                else
+                  parseError(in0, "rhs must be a record");
+              }
+            }
+            else
+              parseError(in0, "lhs must be a record");
+          }
+          else
+            parseError(in0, "lhs must be a record");
+
+          if (hasError())
+            attach("type", eq);
+          else
+          {
+            i32 param_count = castTerm(ctor->type, Arrow)->param_count;
+            if (in->arg_id < param_count)
+            {
+              for (DestructList *destructs = global_state.builtin_destructs;
+                   destructs;
+                   destructs = destructs->next)
+              {
+                // todo #speed
+                if ((destructs->uni == ctor->uni) && (destructs->ctor_id == ctor->id))
+                {
+                  Composite *out = newTerm(arena, Composite, 0);
+                  out->op        = destructs->items[in->arg_id];
+                  out->arg_count = lhs->arg_count*2+1;
+                  out->args      = pushArray(arena, out->arg_count, Term*);
+                  // todo cleanup: use parameter type inference
+                  for (i32 id=0; id < out->arg_count; id++)
+                  {
+                    if (id == out->arg_count-1)
+                      out->args[id] = build_eqp.term;
+                    else if (id < lhs->arg_count)
+                      out->args[id] = lhs->args[id];
+                    else
+                      out->args[id] = rhs->args[id - lhs->arg_count];
+                  }
+                  out0.term = &out->t;
+                  break;
+                }
+              }
+            }
+            else
+              parseError(in0, "constructor only has %d parameters", param_count);
+          }
+        }
+        else
+          parseError(in0, "expected an equality proof as argument");
+      }
+#else
+      parseError(in0, "destruct syntax has been deprecated, waiting for something better to emerge");
+#endif
+    } break;

@@ -27,7 +27,6 @@ enum TokenCategory
 
   Token_Keyword_rewrite,
   Token_Keyword_norm,
-  Token_Keyword_destruct,
   Token_Keyword_prove,
   Token_Keyword_seek,
   Token_Keyword_auto,
@@ -52,7 +51,7 @@ enum TokenCategory
 
 const char *keywords[] = {
   "", "fn", "fork", "union", "ctor", "seq",
-  "rewrite", "norm", "destruct", "prove", "seek", "auto",
+  "rewrite", "norm", "prove", "seek", "auto",
   "test_eval", "print", "print_raw", "print_ast", "check", "check_truth"
 };
 const char *metaDirectives[] = {"", "load", "should_fail", "debug", "norm", "hidden", "hint"};

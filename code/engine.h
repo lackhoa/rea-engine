@@ -36,17 +36,18 @@ enum AstCategory {
   Ast_AccessorAst    = 7,
   Ast_ComputationAst = 8,
   Ast_Lambda         = 9,
-  Ast_DestructAst    = 10,
+  // Ast_DestructAst    = 10,
   Ast_CtorAst        = 11,
   Ast_SeekAst        = 12,
   Ast_Auto           = 13,
 
   // Sequence
-  Ast_ForkAst      = 14,
-  Ast_RewriteAst   = 15,
-  Ast_FunctionDecl = 16,
-  Ast_Let          = 17,
-  Ast_UnionAst     = 18,
+  Ast_ForkAst       = 14,
+  Ast_RewriteAst    = 15,
+  Ast_FunctionDecl  = 16,
+  Ast_Let           = 17,
+  Ast_UnionAst      = 18,
+  Ast_GoalTransform = 19,
 };
 
 enum TermCategory {
@@ -359,16 +360,24 @@ struct BuildTerm
 {
   Term *term;
   operator bool() { return term; }
+  operator Term*() { return term; }
 };
 
 struct RewriteAst
 {
   embed_Ast(a);
-  TreePath *path;
   Ast      *eq_proof_hint;
   Ast      *new_goal;
   Ast      *body;
   b32       right_to_left;
+};
+
+struct GoalTransform
+{
+  embed_Ast(a);
+  Ast *hint;
+  Ast *new_goal;
+  Ast *body;
 };
 
 struct AccessorAst
@@ -384,13 +393,6 @@ struct FileList {
   char     *first_path;
   char     *first_content;
   FileList *next;
-};
-
-struct DestructList {
-  Union         *uni;
-  i32            ctor_id;
-  Term         **items;
-  DestructList  *next;
 };
 
 // todo better hint lookup
@@ -474,6 +476,7 @@ struct Rewrite {
 
 struct ComputationAst {
   embed_Ast(a);
+  // todo #cleanup we won't need lhs and rhs anymore since types are there.
   Ast *lhs;
   Ast *rhs;
 };

@@ -83,7 +83,8 @@ mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*b*c
 {fork a
  {0: ,
   ++:
-  => (b + a.p*b)*c  = b*c + (a.p*b)*c {<- mulAssociative(a.p, b, c)}
+  => (b + a.p*b)*c  = b*c + (a.p*b)*c {;; <-
+                                       mulAssociative(a.p, b, c)}
   => (b + a.p*b)*c  = (b + a.p*b)*c {mulDistributive(b, a.p*b, c)}}}
 test_eval mulAssociative(1,0,0);
 ;; print mulAssociative(1,0,0);

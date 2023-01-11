@@ -14,6 +14,7 @@ CompileFlags:
     - -Wno-writable-strings
     - -Wunused-parameter
     - -Wunused-variable
+    - -Wno-unused-const-variable
     - -Wno-unused-function
     - -Wno-pointer-to-int-cast
     - -Wshorten-64-to-32
