@@ -48,14 +48,26 @@ newVariable(MemoryArena *arena, Typer *env, String name, i32 delta, i32 id)
 }
 
 inline Term *
-newComposite(MemoryArena *arena, Typer *env, Term *op, i32 arg_count, Term **args)
+newComposite(MemoryArena *arena, Term *op, i32 arg_count, Term **args)
 {
   // todo typecheck the arguments too maybe?
   Composite *out = newTerm(arena, Composite, 0);
   out->op        = op;
   out->arg_count = arg_count;
   out->args      = args;
-  computeType(arena, env, &out->t);
+
+  // todo cutnpaste
+  if (Constructor *ctor = castTerm(op, Constructor))
+  {
+    assert(ctor->uni);
+    out->type = &ctor->uni->t;  // todo this makes me nervous!
+  }
+  else
+  {
+    Arrow *op_type = castTerm(getType(op), Arrow);
+    out->type = evaluate(arena, args, op_type->output_type);
+  }
+
   return &out->t;
 }
 
@@ -533,7 +545,10 @@ computeType(MemoryArena *arena, Typer *env, Term *in0)
       {
         Composite *in = castTerm(in0, Composite);
         if (Constructor *ctor = castTerm(in->op, Constructor))
-          out0 = &ctor->uni->t;
+        {
+          assert(ctor->uni);
+          out0 = &ctor->uni->t;  // todo this makes me nervous!
+        }
         else
         {
           Term *op_type0 = computeType(arena, env, in->op);
@@ -2688,13 +2703,19 @@ inferArgs(MemoryArena *arena, Term *op, Term *goal)
 }
 
 inline Term *
-inferFromGlobalHints(Term *goal)
+inferFromGlobalHints(MemoryArena *arena, Term *goal)
 {
   Term *out = 0;
-  for (HintDatabase *hints = global_state.hints; hints; hints = hints->next)
+  for (HintDatabase *hints = global_state.hints;
+       hints && !out;
+       hints = hints->next)
   {
     Term *hint = hints->first;
-    // inferArgs(temp_arena);  // bookmark we need to pass in the env, don't we
+    InferArgs infer = inferArgs(temp_arena, hint, goal);
+    if (infer.args)
+    {
+      out = newComposite(arena, hint, infer.arg_count, infer.args, goal);
+    }
   }
   return out;
 }
@@ -2715,7 +2736,7 @@ fillHole(MemoryArena *arena, Typer *env, Term *goal)
   }
 
   if (!out)
-    out = inferFromGlobalHints(goal);
+    out = inferFromGlobalHints(arena, goal);
 
   return out;
 }
@@ -2793,7 +2814,7 @@ getMatchingFunctionCall(MemoryArena *arena, Typer *env, Identifier *ident, Term 
           if (infer.args)
           {
             Term **args = copyArray(arena, infer.arg_count, infer.args);
-            out = newComposite(arena, env, slot->items[slot_i], infer.arg_count, args);
+            out = newComposite(arena, slot->items[slot_i], infer.arg_count, args);
             assert(equal(getType(out), output_type_goal));
             // NOTE: we don't care which function matches, just grab whichever
             // matches first.
@@ -3508,6 +3529,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       Term *new_goal = 0;
       if (!in->eq_proof_hint)
       {
+        // No hint -> Auto tactics.
         b32 skip_goal_comparison = false;
         if (!in->new_goal)
         {
@@ -3519,8 +3541,9 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 
         if (noError())
         {
-          if (equal(new_goal, goal))
-          {// superfluous rewrite -> remove
+          if (checkFlag(in->flags, AstFlag_Generated) &&
+              equal(new_goal, goal))
+          {// superfluous auto-generated rewrite: remove it
             recursed = true;
             out0 = buildTerm(arena, env, in->body, goal);
           }
@@ -4039,6 +4062,7 @@ insertAutoNormalizations(MemoryArena *arena, NormList norm_list, Ast *in0)
           body = &new_body->a;
         }
         RewriteAst *new_body = newAst(arena, RewriteAst, &body->token);
+        setFlag(&new_body->flags, AstFlag_Generated);
         new_body->body = body;
         in->bodies[case_id] = &new_body->a;
       }

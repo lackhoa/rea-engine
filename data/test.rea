@@ -133,7 +133,7 @@ somethingWickedUsage :: () -> (x,y,z: Nat) -> (somethingWicked(x,y,z))
 StructWithFunction :: union {makeStructWithFunction(a: Nat, b: (E: a=0) -> False)}
 oneEqualZeroImpliesFalse : ((E: 1=0) -> False) := seq{norm; _ => {E}};
 testFunctionInComposite :: fn (x: StructWithFunction, E: x.a = 0) -> False
-{norm; x.b(E)}
+{x.b(E)}
 testFunctionInCompositeUsage :: (Wrong: 1=0) -> False
 {
  obj := testFunctionInComposite(makeStructWithFunction(1, oneEqualZeroImpliesFalse), Wrong);
@@ -212,5 +212,6 @@ testAnonymousParameter :: fn (A: Set, A) -> A
 { seek(A) }
 ;; print testAnonymousParameter;
 
-testTactics :: (a: Nat) -> a + 0 = a
+testFillHole :: (a: Nat) -> a + 0 = a
 {}
+print testFillHole;

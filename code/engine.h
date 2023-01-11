@@ -65,9 +65,12 @@ enum TermCategory {
   Term_Rewrite     = 13,
 };
 
+const u32 AstFlag_Generated = 1 << 0;
+
 embed_struct struct Ast {
   AstCategory cat;
   Token       token;
+  u32         flags;
 };
 
 inline Ast **

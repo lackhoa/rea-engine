@@ -61,8 +61,7 @@ mulDistributive :: (a,b,c: Natp) -> a*c+b*c = (a+b)*c
  fork a
  {
   1,
-  ++
-  => (c + a.p * c) + b * c = c + (a.p + b) * c;
+  ++ ;; (c + a.p * c) + b * c = c + (a.p + b) * c
   => c + (a.p * c + b * c) = c + (a.p + b) * c {addAssociative}
   => c + ((a.p + b) * c) = c + (a.p + b) * c {mulDistributive(a.p,b,c)}
   }
@@ -95,8 +94,7 @@ mulSRight :: (a,b: Natp) -> a * ++(b) = a + a*b
 mulCommutative :: (a,b: Natp) -> a*b = b*a
 {fork a
  {1 : rewrite mul1(b),
-  ++: 
-  => b + a.p*b = b * ++(a.p)
+  ++: ;; b + a.p*b = b * ++(a.p)
   => b + a.p*b = b + b*a.p { mulSRight(b, a.p) }
   => b + a.p*b = b + a.p*b { <- mulCommutative(a.p, b) }}}
 
