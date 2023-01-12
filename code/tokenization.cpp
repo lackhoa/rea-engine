@@ -129,30 +129,31 @@ inline void attach(char *key, i32 n, Tokenizer *tk=global_tokenizer)
 }
 
 inline void
-pushContext(String string, Tokenizer *tk=global_tokenizer)
+pushContext(String string, b32 is_important, Tokenizer *tk=global_tokenizer)
 {
   ParseContext *context = pushStruct(temp_arena, ParseContext);
-  context->first = string;
-  context->next  = tk->context;
-  tk->context    = context;
+  context->first        = string;
+  context->is_important = is_important;
+  context->next         = tk->context;
+  tk->context = context;
 }
 
 inline void
-pushContext(char *string, Tokenizer *tk=global_tokenizer)
+pushContext(char *string, b32 is_important=false)
 {
-  pushContext(toString(string), tk);
+  pushContext(toString(string), is_important);
 }
 
 inline void
-pushContext(const char *string, Tokenizer *tk=global_tokenizer)
+pushContext(const char *string, b32 is_important=false)
 {
-  pushContext(toString(string), tk);
+  pushContext(toString(string), is_important);
 }
 
 internal void
 popContext(Tokenizer *tk = global_tokenizer)
 {
-    tk->context = tk->context->next;
+  tk->context = tk->context->next;
 }
 
 inline b32
@@ -256,9 +257,9 @@ parseErrorVA(i32 line, i32 column, char *format, va_list arg_list, Tokenizer *tk
   for (ParseContext *it = tk->context; it; it=it->next)
   {
     // note: we reverse the context list here, which is convenient for printing.
-    ParseContext *new_context = pushStruct(temp_arena, ParseContext);
-    new_context->first = it->first;
-    new_context->next  = context;
+    // TODO #speed don't do this in here! Since we sometimes recover from error.
+    ParseContext *new_context = copyStruct(temp_arena, it);
+    new_context->next = context;
     context = new_context;
   }
 

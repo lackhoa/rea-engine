@@ -559,4 +559,10 @@ struct SeekAst {
 
 struct InferArgs {b32 matches; i32 arg_count; Term **args;};
 
+struct MatchingFunctionCall {
+  Term *term;
+  Term *goal;
+  operator bool() {return term;};
+};
+
 #include "generated/engine_forward.h"

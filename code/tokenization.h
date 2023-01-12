@@ -62,6 +62,7 @@ struct Token
   i32           line;
   i32           column;
   TokenCategory cat;
+  operator String() {return string;};
 };
 
 inline Token
@@ -89,7 +90,7 @@ u32 ErrorUnrecoverable = 1 << 2;
 u32 ErrorAmbiguousName = 1 << 3;
 u32 ErrorGoalAttached  = 1 << 4;
 
-struct ParseContext { String first; ParseContext *next; };
+struct ParseContext { String first; ParseContext *next; b32 is_important; };
 
 struct ParseError
 {

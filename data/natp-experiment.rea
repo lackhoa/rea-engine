@@ -25,7 +25,7 @@ natpNot0 :: (a: Natp) -> nat(a) != 0
 
 addCommutative :: (a,b: Natp) -> (b+a = a+b)
 {
- => natp(nat(b) + nat(a)) = natp(nat(a) + nat(b));
+ => natp(nat(b) + nat(a)) = natp(nat(a) + nat(b)) {}
  => natp(nat(a) + nat(b)) = natp(nat(a) + nat(b)) {addCommutative}
  }
 
@@ -50,7 +50,7 @@ natPreservesAddition :: (a,b: Natp) -> nat(a) + nat(b) = nat(a+b)
 
 addAssociative :: (a,b,c: Natp) -> (a+b)+c = a+b+c
 {
- => natp(nat(natp(nat(a) + nat(b))) + nat(c)) = natp(nat(a) + nat(natp(nat(b) + nat(c))));
+ => natp(nat(natp(nat(a) + nat(b))) + nat(c)) = natp(nat(a) + nat(natp(nat(b) + nat(c)))) {}
  => natp(nat(natp(nat(a + b))) + nat(c)) = natp(nat(a) + nat(natp(nat(b) + nat(c)))) {natPreservesAddition};
  => natp(nat(a + b) + nat(c)) = natp(nat(a) + nat(natp(nat(b) + nat(c)))) {natInjective};
  => natp(nat(a + b) + nat(c)) = natp(nat(a) + nat(natp(nat(b + c)))) {natPreservesAddition};

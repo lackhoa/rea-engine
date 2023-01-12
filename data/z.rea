@@ -286,13 +286,13 @@ add0Infer :: (a,b: Z, p: (a+b =? a) = true) -> b=0
   +
   lem1 := addPositiveIncreases(a, b.v);
   p := eqCorrect(a + +(b.v), a, p);
-  lem2 : a > a = true := seq {=> a + +(b.v) > a = true {<- p}; lem1};
+  lem2 : a > a = true := seq {=> a + +(b.v) > a = true {p}; lem1};
   gtAntiReflexive(a, lem2),
 
   -
   lem1 := addNegativeDecreases(a, b.v);
   p := eqCorrect(a + -(b.v), a, p);
-  lem2 : a > a = true := seq {=> a > a + -(b.v) = true {<- p}; lem1};
+  lem2 : a > a = true := seq {=> a > a + -(b.v) = true {p}; lem1};
   gtAntiReflexive(a, lem2),
   }
  }
@@ -490,17 +490,17 @@ addAssociative :: (a,b,c: Z) -> (a+b)+c = a+b+c
                  {1,
                   ++
                   => +(b.v.p) + -(++(c.v.p)) = -(1) + -(c.v.p) + +(b.v.p) {addCommutative};
-                  => +(b.v.p) + -(++(c.v.p)) = (-(1) + -(c.v.p)) + +(b.v.p) {<- addMinus1Associative};
+                  => +(b.v.p) + -(++(c.v.p)) = (-(1) + -(c.v.p)) + +(b.v.p) {addMinus1Associative};
                   }}},
                -
-               => -(++(b.v)) + c = (-(1) + -(b.v)) + c {<- addMinus1Associative}},
+               => -(++(b.v)) + c = (-(1) + -(b.v)) + c {addMinus1Associative}},
    ++: fork b {0,
                + fork b.v
                {1
                 => -(a.v.p) + c = (+(1) + c) + -(++(a.v.p)) {addCommutative}
                 => -(a.v.p) + c = +(1) + c + -(++(a.v.p)) {addAssociative}
                 => -(a.v.p) + c = +(1) + -(++(a.v.p)) + c {addCommutative}
-                => -(a.v.p) + c = (+(1) + -(++(a.v.p))) + c {<- add1Associative}
+                => -(a.v.p) + c = (+(1) + -(++(a.v.p))) + c {add1Associative}
                 ,
                 ++
                 fork c
@@ -516,7 +516,7 @@ addAssociative :: (a,b,c: Z) -> (a+b)+c = a+b+c
                  {1
                   => -(1) + +(b.v.p) + -(a.v.p) = +(b.v.p) + -(++(a.v.p)) {addCommutative}
                   => -(1) + -(a.v.p) + +(b.v.p) = +(b.v.p) + -(++(a.v.p)) {addCommutative}
-                  => (-(1) + -(a.v.p)) + +(b.v.p) = +(b.v.p) + -(++(a.v.p)) {<- addMinus1Associative}
+                  => (-(1) + -(a.v.p)) + +(b.v.p) = +(b.v.p) + -(++(a.v.p)) {addMinus1Associative}
                   ,
                   ++
                   => -(++(c.v.p)) + (+(b.v.p) + -(a.v.p)) = -(++(a.v.p)) + +(b.v.p) + -(c.v.p) {addCommutative}
@@ -552,10 +552,10 @@ mul1 :: (a: Z) -> a * +(1) = a
 mulDistributiveHelper :: (a,b,c: Natp) -> +(a + b) + -(a + c) = +(b) + -(c)
 {
  => (+(a) + +(b)) + -(a) + -(c)   = +(b) + -(c) {}
- => ((+(a) + +(b)) + -(a)) + -(c) = +(b) + -(c) {<- addAssociative}
+ => ((+(a) + +(b)) + -(a)) + -(c) = +(b) + -(c) {addAssociative}
  => (+(a) + +(b) + -(a)) + -(c)   = +(b) + -(c) {addAssociative}
  => (+(a) + -(a) + +(b)) + -(c)   = +(b) + -(c) {addCommutative}
- => ((+(a) + -(a)) + +(b)) + -(c) = +(b) + -(c) {<- addAssociative}
+ => ((+(a) + -(a)) + +(b)) + -(c) = +(b) + -(c) {addAssociative}
  => (0 + +(b)) + -(c)             = +(b) + -(c) {cancellation}
  }
 
@@ -588,7 +588,7 @@ mulDistributive :: (a,b,c: Z) -> a*c+b*c = (a+b)*c
       1  cancellation(c.v),
       ++ ;; +(c.v) + -(c.v + b.v.p * c.v) = -(b.v.p * c.v)
       => +(c.v) + -(c.v) + -(b.v.p * c.v) = -(b.v.p * c.v) {}
-      => (+(c.v) + -(c.v)) + -(b.v.p * c.v) = -(b.v.p * c.v) {<- addAssociative}
+      => (+(c.v) + -(c.v)) + -(b.v.p * c.v) = -(b.v.p * c.v) {addAssociative}
       => 0 + -(b.v.p * c.v) = -(b.v.p * c.v) {cancellation}
       }
      ,
@@ -597,7 +597,7 @@ mulDistributive :: (a,b,c: Z) -> a*c+b*c = (a+b)*c
      {1 ;; +(c.v + a.v.p * c.v) + -(c.v) = +(a.v.p * c.v)
       => -(c.v) + +(c.v + a.v.p * c.v) = +(a.v.p * c.v) {addCommutative}
       => -(c.v) + +(c.v) + +(a.v.p * c.v) = +(a.v.p * c.v) {}
-      => (-(c.v) + +(c.v)) + +(a.v.p * c.v) = +(a.v.p * c.v) {<- addAssociative}
+      => (-(c.v) + +(c.v)) + +(a.v.p * c.v) = +(a.v.p * c.v) {addAssociative}
       => (+(c.v) + -(c.v)) + +(a.v.p * c.v) = +(a.v.p * c.v) {addCommutative}
       => 0 + +(a.v.p * c.v) = +(a.v.p * c.v) {cancellation}
       ,
@@ -632,7 +632,7 @@ mulDistributive :: (a,b,c: Z) -> a*c+b*c = (a+b)*c
      fork b.v
      {1 ;; +(c.v) + -(c.v + a.v.p * c.v) = -(a.v.p * c.v)
       => +(c.v) + -(c.v) + -(a.v.p * c.v) = -(a.v.p * c.v) {}
-      => (+(c.v) + -(c.v)) + -(a.v.p * c.v) = -(a.v.p * c.v) {<- addAssociative}
+      => (+(c.v) + -(c.v)) + -(a.v.p * c.v) = -(a.v.p * c.v) {addAssociative}
       => 0 + -(a.v.p * c.v) = -(a.v.p * c.v) {cancellation}
       ,
       ++ ;; +(c.v + b.v.p * c.v) + -(c.v + a.v.p * c.v) = (+(a.v.p) + -(b.v.p)) * -(c.v)

@@ -130,3 +130,73 @@
       parseError(in0, "destruct syntax has been deprecated, waiting for something better to emerge");
 #endif
     } break;
+
+// todo #cleanup a lot of the copies are unnecessary, we must think about where
+// we can put stack values. and whether to have stack values at all.
+//
+// todo #cleanup I think this is now only for the global overloads typecheck for
+// composites?  If so then just copy the composite, no need to deepcopy
+internal Ast *
+deepCopy(MemoryArena *arena, Ast *in0)
+{
+  Ast *out0 = 0;
+  switch (in0->cat)
+  {
+    case Ast_Hole:
+    case Ast_Identifier:
+    {out0 = in0;} break;
+
+    case Ast_CompositeAst:
+    {
+      CompositeAst *in = castAst(in0, CompositeAst);
+      CompositeAst *out = copyStruct(arena, in);
+      out->op = deepCopy(arena, in->op);
+      allocateArray(arena, out->arg_count, out->args);
+      for (i32 id=0; id < in->arg_count; id++)
+      {
+        out->args[id] = deepCopy(arena, in->args[id]);
+      }
+      out0 = &out->a;
+    } break;
+
+    case Ast_ArrowAst:
+    {
+      ArrowAst *in = castAst(in0, ArrowAst);
+      ArrowAst *out = copyStruct(arena, in);
+      out->output_type = deepCopy(arena, in->output_type);
+      allocateArray(arena, out->param_count, out->param_types);
+      for (i32 id=0; id < in->param_count; id++)
+      {
+        out->param_types[id] = deepCopy(arena, in->param_types[id]);
+      }
+      out0 = &out->a;
+    } break;
+
+    case Ast_Let:
+    {
+      Let *in = castAst(in0, Let);
+      Let *out = copyStruct(arena, in);
+      out->rhs = deepCopy(arena, in->rhs);
+      out0 = &out->a;
+    } break;
+
+    case Ast_RewriteAst:
+    {
+      RewriteAst *in = castAst(in0, RewriteAst);
+      RewriteAst *out = copyStruct(arena, in);
+      out->eq_proof_hint = deepCopy(arena, in->eq_proof_hint);
+      out0 = &out->a;
+    } break;
+
+    case Ast_AccessorAst:
+    {
+      AccessorAst *in = castAst(in0, AccessorAst);
+      AccessorAst *out = copyStruct(arena, in);
+      out->record = deepCopy(arena, in->record);
+      out0 = &out->a;
+    } break;
+
+    invalidDefaultCase;
+  }
+  return out0;
+}

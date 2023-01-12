@@ -7,7 +7,7 @@
   - make "computation" be a builtin
   - debug serial situation
   - clean up the data tree containing constructors
-  - we're printing the stack every time we encounter an error, but the error might be recoverable so it's just wasted work. Either pass the intention down, or abandon the recoveriy route.
+  - we're printing terms every time we encounter an error, but the error might be recoverable so it's just wasted work. Either pass the intention down, or abandon the recoveriy route.
  */
 
 #include "utils.h"
@@ -85,6 +85,7 @@ newComposite(MemoryArena *arena, Term *op, i32 arg_count, Term **args, Term *typ
 inline Term *
 newEquality(MemoryArena *arena, Term *type, Term *lhs, Term *rhs)
 {
+  assert(type);
   Composite *eq = newTerm(arena, Composite, &builtins.Set->t);
   allocateArray(arena, 3, eq->args);
   eq->op        = &builtins.equal->t;
@@ -648,123 +649,6 @@ getTypeGlobal(Term *in0)
 }
 
 inline void setType(Term *term, Term *type) {term->type = type;}
-
-// todo #cleanup a lot of the copies are unnecessary, we must think about where
-// we can put stack values. and whether to have stack values at all.
-//
-// todo #cleanup I think this is now only for the global overloads typecheck for
-// composites?  If so then just copy the composite, no need to deepcopy
-internal Ast *
-deepCopy(MemoryArena *arena, Ast *in0)
-{
-  Ast *out0 = 0;
-  switch (in0->cat)
-  {
-    case Ast_Hole:
-    case Ast_Identifier:
-    {out0 = in0;} break;
-
-    case Ast_CompositeAst:
-    {
-      CompositeAst *in = castAst(in0, CompositeAst);
-      CompositeAst *out = copyStruct(arena, in);
-      out->op = deepCopy(arena, in->op);
-      allocateArray(arena, out->arg_count, out->args);
-      for (i32 id=0; id < in->arg_count; id++)
-      {
-        out->args[id] = deepCopy(arena, in->args[id]);
-      }
-      out0 = &out->a;
-    } break;
-
-    case Ast_ArrowAst:
-    {
-      ArrowAst *in = castAst(in0, ArrowAst);
-      ArrowAst *out = copyStruct(arena, in);
-      out->output_type = deepCopy(arena, in->output_type);
-      allocateArray(arena, out->param_count, out->param_types);
-      for (i32 id=0; id < in->param_count; id++)
-      {
-        out->param_types[id] = deepCopy(arena, in->param_types[id]);
-      }
-      out0 = &out->a;
-    } break;
-
-    case Ast_Let:
-    {
-      Let *in = castAst(in0, Let);
-      Let *out = copyStruct(arena, in);
-      out->rhs = deepCopy(arena, in->rhs);
-      out0 = &out->a;
-    } break;
-
-    case Ast_RewriteAst:
-    {
-      RewriteAst *in = castAst(in0, RewriteAst);
-      RewriteAst *out = copyStruct(arena, in);
-      out->eq_proof_hint = deepCopy(arena, in->eq_proof_hint);
-      out0 = &out->a;
-    } break;
-
-    case Ast_AccessorAst:
-    {
-      AccessorAst *in = castAst(in0, AccessorAst);
-      AccessorAst *out = copyStruct(arena, in);
-      out->record = deepCopy(arena, in->record);
-      out0 = &out->a;
-    } break;
-
-    invalidDefaultCase;
-  }
-  return out0;
-}
-
-internal Term *
-deepCopy(MemoryArena *arena, Term *in0)
-{
-  Term *out0 = 0;
-  switch (in0->cat)
-  {
-    case Term_Composite:
-    {
-      Composite *in  = castTerm(in0, Composite);
-      Composite *out = copyStruct(arena, in);
-      out->op = deepCopy(arena, in->op);
-      allocateArray(arena, in->arg_count, out->args);
-      for (i32 id=0; id < in->arg_count; id++)
-        out->args[id] = deepCopy(arena, in->args[id]);
-      out0 = &out->t;
-    } break;
-
-    case Term_Arrow:
-    {
-      Arrow *in  = castTerm(in0, Arrow);
-      Arrow *out = copyStruct(arena, in);
-      allocateArray(arena, in->param_count, out->param_types);
-      for (i32 id=0; id < in->param_count; id++)
-        out->param_types[id] = deepCopy(arena, in->param_types[id]);
-      out->output_type = deepCopy(arena, in->output_type);
-      out0 = &out->t;
-    } break;
-
-    case Term_Accessor:
-    {
-      Accessor *in  = castTerm(in0, Accessor);
-      Accessor *out = copyStruct(arena, in);
-      out->record = deepCopy(arena, in->record);
-      out0 = &out->t;
-    } break;
-
-    case Term_Builtin:
-    case Term_Union:
-    case Term_Constructor:
-    case Term_Function:
-    {out0 = in0;} break;
-
-    default: todoIncomplete;
-  }
-  return out0;
-}
 
 inline LocalBindings *
 extendBindings(MemoryArena *arena, Typer *env)
@@ -2062,6 +1946,12 @@ lookupGlobalNameSlot(String key, b32 add_new)
   return slot;
 }
 
+internal GlobalBinding *
+lookupGlobalNameSlot(Identifier *ident, b32 add_new)
+{
+  return lookupGlobalNameSlot(ident->token.string, add_new);
+}
+
 struct LookupCurrentFrame { LocalBinding* slot; b32 found; };
 
 internal LookupCurrentFrame
@@ -2736,13 +2626,13 @@ fillHole(MemoryArena *arena, Typer *env, Term *goal)
 }
 
 inline void
-attachTerms(char *key, i32 count, Term **terms)
+attach(char *key, i32 count, Term **terms)
 {
   StartString start = startString(error_buffer);
   for (i32 id=0; id < count; id++)
   {
     print(error_buffer, "\n");
-    print(error_buffer, terms[id]->type);
+    print(error_buffer, terms[id], PrintOptions{.flags=PrintFlag_PrintType});
   }
   attach(key, endString(start));
 }
@@ -2751,7 +2641,7 @@ inline TermArray
 getFunctionOverloads(Identifier *ident, Term *output_type_goal)
 {
   TermArray out = {};
-  if (GlobalBinding *slot = lookupGlobalNameSlot(ident->token.string, false))
+  if (GlobalBinding *slot = lookupGlobalNameSlot(ident, false))
   {
     if (output_type_goal->cat == Term_Hole)
     {
@@ -2772,7 +2662,7 @@ getFunctionOverloads(Identifier *ident, Term *output_type_goal)
         parseError(&ident->a, "found no matching overload");
         attach("function", ident->token.string);
         attach("output_type_goal", output_type_goal);
-        attachTerms("available_overloads", slot->count, slot->items);
+        attach("available_overloads", slot->count, slot->items);
       }
     }
   }
@@ -2784,50 +2674,56 @@ getFunctionOverloads(Identifier *ident, Term *output_type_goal)
   return out;
 }
 
-inline Term *
-getMatchingFunctionCall(MemoryArena *arena, Typer *env, Identifier *ident, Term *output_type_goal)
+inline MatchingFunctionCall
+getMatchingFunctionCall(MemoryArena *arena, Typer *env, Identifier *ident, TermArray goals)
 {
   Term *out = 0;
+  Term *matching_goal = 0;
   pushContext(__func__);
   if (lookupLocalName(env, &ident->token))
   {
     todoIncomplete;
   }
-  else if (GlobalBinding *slot = lookupGlobalNameSlot(ident->token.string, false))
+  else if (GlobalBinding *slot = lookupGlobalNameSlot(ident, false))
   {
-    if (output_type_goal->cat != Term_Hole)
+    for (int slot_i=0;
+         slot_i < slot->count && noError() && !out;
+         slot_i++)
     {
-      for (int slot_i=0;
-           (slot_i < slot->count && noError() && !out);
-           slot_i++)
+      Term *item = slot->items[slot_i];
+      for (i32 goal_i=0;
+           goal_i < goals.count && !out;
+           goal_i++)
       {
-        Term *item = slot->items[slot_i];
-        InferArgs infer = inferArgs(temp_arena, item, output_type_goal);
+        Term *goal = goals.items[goal_i];
+        assert(goal->cat != Term_Hole);
+        InferArgs infer = inferArgs(temp_arena, item, goal);
         if (infer.matches)
         {
           if (infer.args)
           {
             Term **args = copyArray(arena, infer.arg_count, infer.args);
-            out = newComposite(arena, slot->items[slot_i], infer.arg_count, args);
-            assert(equal(getType(out), output_type_goal));
+            out           = newComposite(arena, slot->items[slot_i], infer.arg_count, args);
+            matching_goal = goal;
+            assert(equal(getType(out), goal));
             // NOTE: we don't care which function matches, just grab whichever
             // matches first.
           }
           else
+          {
             parseError(&ident->token, "cannot automatically fill in some arguments");
+            attach("function", item);
+            attach("goal", goal);
+          }
         }
       }
-      if (!out && noError())
-      {
-        parseError(&ident->a, "found no matching overload");
-        attach("identifier", ident->token.string);
-        attach("output_type_goal", output_type_goal);
-        attachTerms("available_overloads", slot->count, slot->items);
-      }
     }
-    else
+    if (!out && noError())
     {
-      parseError(&ident->a, "cannot infer arguments sinsce we do know what the output type of this function should be");
+      parseError(&ident->a, "found no matching overload");
+      attach("identifier", ident->token.string);
+      attach("goals", goals.count, goals.items);
+      attach("available_overloads", slot->count, slot->items);
     }
   }
   else
@@ -2836,6 +2732,22 @@ getMatchingFunctionCall(MemoryArena *arena, Typer *env, Identifier *ident, Term 
     attach("identifier", ident->token.string);
   }
   popContext();
+  return MatchingFunctionCall{.term=out, .goal=matching_goal};
+}
+
+inline Term *
+getMatchingFunctionCall(MemoryArena *arena, Typer *env, Identifier *ident, Term *goal)
+{
+  if (goal == &builtins.Set->t)
+    debugbreak;
+  Term *out = 0;
+  if (goal->cat == Term_Hole)
+    parseError(&ident->a, "cannot infer arguments since we do know what the output type of this function should be");
+  else
+  {
+    TermArray goals = {.count=1, .items=&goal};
+    out = getMatchingFunctionCall(arena, env, ident, goals).term;
+  }
   return out;
 }
 
@@ -2925,11 +2837,11 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
         pushContext("norm [EXPRESSION]");
         if (seesExpressionEndMarker())
         {// normalize goal
-          RewriteAst *rewrite = newAst(arena, RewriteAst, &token);
-          ast0 = &rewrite->a;
+          GoalTransform *ast = newAst(arena, GoalTransform, &token);
+          ast0 = &ast->a;
         }
         else if (Ast *expression = parseExpressionToAst(arena))
-        {
+        {// normalize with let.
           Let *let = newAst(arena, Let, &token);
           let->rhs  = expression;
           let->type = LET_TYPE_NORMALIZE;
@@ -2967,7 +2879,7 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
         if (!optionalCategory(Token_Keyword_norm))
         {
           ast->new_goal = parseExpressionToAst(arena);
-          if (requireChar('{'))
+          if (optionalChar('{'))
           {
             if (optionalChar('}'))
             {
@@ -3147,7 +3059,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
   // todo return the type, since we typecheck it anyway.
   // todo print out the goal whenever we fail
   // beware: Usually we mutate in-place, but we may also allocate anew.
-  i32 serial = DEBUG_SERIAL++;
+  i32 UNUSED_VAR serial = DEBUG_SERIAL++;
   BuildTerm out0 = {};
   assert(goal);
   b32 should_check_type = true;
@@ -3386,7 +3298,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
               if (attempt == op_list.count-1)
               {
                 parseError(in->op, "found no suitable overload");
-                attachTerms("available_overloads", op_list.count, op_list.items);
+                attach("available_overloads", op_list.count, op_list.items);
               }
             }
             else
@@ -3544,6 +3456,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       Term     *new_goal     = 0;
       Term     *eq_proof     = 0;
       TreePath *rewrite_path = 0;
+      b32       right_to_left = false;
       if (!in->hint)
       {
         // No hint -> Auto tactics.
@@ -3591,15 +3504,18 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
             rewrite_path = compare.diff_path;
             Term *from = subExpressionAtPath(goal, compare.diff_path);
             Term *to   = subExpressionAtPath(new_goal, compare.diff_path);
-            // todo bookmark infer the rewrite direction here
-            Term *lhs  = from;
-            Term *rhs  = to;
-            Term *wanted_eq = newEquality(temp_arena, todoGetType(arena, env, lhs), lhs, rhs);
+
+            Term *from_type = getType(from);
+            Term *lr_eq = newEquality(temp_arena, from_type, from, to);
+            Term *rl_eq = newEquality(temp_arena, from_type, to, from);
+            TermArray lr_rl_eqs = {.count=2, .items=pushArray(temp_arena, 2, Term *)};
+            lr_rl_eqs.items[0] = lr_eq;
+            lr_rl_eqs.items[1] = rl_eq;
 
             b32 is_global_identifier = false;
             if (Identifier *op_ident = castAst(in->hint, Identifier))
             {
-              // operator hint: handled just like if we had an ellipsis in the
+              // Operator hint: handled just like if we had an ellipsis in the
               // argument list (the only reason why we don't have ellipsis is for
               // brevity).
               //
@@ -3609,7 +3525,15 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
               if (!lookupLocalName(env, &op_ident->token))
               {
                 is_global_identifier = true;
-                eq_proof = getMatchingFunctionCall(arena, env, op_ident, wanted_eq);
+                if (auto matching = getMatchingFunctionCall(arena, env, op_ident, lr_rl_eqs))
+                {
+                  if (matching.goal == rl_eq)
+                    right_to_left = true;
+                  else
+                    assert(matching.goal == lr_eq);
+
+                    eq_proof = matching.term;
+                }
               }
             }
 
@@ -3618,12 +3542,17 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
               if (BuildTerm build_eq_proof = buildTerm(arena, env, in->hint, holev))
               {// full proof of equality
                 eq_proof = build_eq_proof.term;
-                Term *actual_eq = todoGetType(temp_arena, env, build_eq_proof.term);
-                if (!equal(actual_eq, wanted_eq))
+                Term *actual_eq = getType(build_eq_proof.term);
+                if (!equal(actual_eq, lr_eq))
                 {
-                  parseError(in->hint, "hint does not prove wanted equality");
-                  attach("wanted_eq", wanted_eq);
-                  attach("actual_eq", actual_eq);
+                  if (equal(actual_eq, rl_eq))
+                    right_to_left = true;
+                  else
+                  {
+                    parseError(in->hint, "hint does not prove the wanted equality in either direction");
+                    attach("wanted_eq", lr_eq);
+                    attach("actual_eq", actual_eq);
+                  }
                 }
               }
             }
@@ -3637,7 +3566,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       {
         if (Term *body = buildTerm(arena, env, in->body, new_goal))
         {
-          out0.term = newRewrite(arena, eq_proof, body, rewrite_path, false);
+          out0.term = newRewrite(arena, eq_proof, body, rewrite_path, right_to_left);
         }
       }
     } break;
@@ -3763,7 +3692,6 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       {
         parseError(in0, "actual type differs from expected type");
         attach("got", actual);
-        attach("serial", serial);
       }
     }
   }
@@ -4635,7 +4563,7 @@ addGlobalHint(Function *fun)
 internal Function *
 buildGlobalFunction(MemoryArena *arena, FunctionDecl *in)
 {
-  pushContext(in->token.string);
+  pushContext(in->token.string, true);
   Function *out = 0;
   Typer typer_ = {};
   auto  typer  = &typer_;
@@ -4689,7 +4617,7 @@ parseTopLevel(EngineState *state)
     {
       case Token_Directive_load:
       {
-        pushContext("#load");
+        pushContext("load");
         Token file = nextToken();
         if (file.cat != Token_StringLiteral)
           tokenError("expect \"FILENAME\"");
@@ -4958,12 +4886,15 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
       if (error->context)
       {
         print(0, "[");
-        for (ParseContext *context = error->context; context; context=context->next)
+        for (ParseContext *context = error->context;
+             context;
+             context=context->next)
         {
-          print(0, context->first);
-          if (context->next)
+          if (context->is_important || !context->next)
           {
-            print(0, "/");
+            print(0, context->first);
+            if (context->next)
+              print(0, " / ");
           }
         }
         print(0, "] ");
