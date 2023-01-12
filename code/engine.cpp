@@ -27,6 +27,53 @@ global_variable EngineState global_state;
 #define DEBUG_ON  {DEBUG_MODE = true; setvbuf(stdout, NULL, _IONBF, 0);}
 #define DEBUG_OFF {DEBUG_MODE = false; setvbuf(stdout, NULL, _IONBF, BUFSIZ);}
 
+inline void attach(char *key, String value, Tokenizer *tk=global_tokenizer)
+{
+  ParseError *error = tk->error;
+  assert(error->attachment_count < arrayCount(error->attachments));
+  error->attachments[error->attachment_count++] = {key, value};
+}
+
+inline void
+attach(char *key, i32 count, Term **terms, PrintOptions print_options={})
+{
+  StartString start = startString(error_buffer);
+  for (i32 id=0; id < count; id++)
+  {
+    print(error_buffer, "\n");
+    print(error_buffer, terms[id], print_options);
+  }
+  attach(key, endString(start));
+}
+
+inline void attach(char *key, Token *token, Tokenizer *tk=global_tokenizer)
+{
+  attach(key, token->string, tk);
+}
+
+inline void attach(char *key, Ast *ast, Tokenizer *tk=global_tokenizer)
+{
+  StartString start = startString(error_buffer);
+  print(error_buffer, ast);
+  attach(key, endString(start), tk);
+}
+
+inline void
+attach(char *key, Term *value, Tokenizer *tk=global_tokenizer)
+{
+  StartString start = startString(error_buffer);
+  print(error_buffer, value);
+  attach(key, endString(start), tk);
+}
+
+inline void attach(char *key, i32 n, Tokenizer *tk=global_tokenizer)
+{
+  StartString start = startString(error_buffer);
+  print(error_buffer, "%d", n);
+  attach(key, endString(start), tk);
+}
+
+
 inline String
 globalNameOf(Term *term)
 {
@@ -37,13 +84,13 @@ globalNameOf(Term *term)
 }
 
 inline Term *
-newVariable(MemoryArena *arena, Typer *env, String name, i32 delta, i32 id)
+newVariable(MemoryArena *arena, Typer *typer, String name, i32 delta, i32 id)
 {
   Variable *out = newTerm(arena, Variable, 0);
   out->name  = name;
   out->delta = delta;
   out->id    = id;
-  computeType(arena, env, &out->t);
+  computeType(arena, typer, &out->t);
   return &out->t;
 }
 
@@ -96,14 +143,18 @@ newEquality(MemoryArena *arena, Term *type, Term *lhs, Term *rhs)
   return &eq->t;
 }
 
-// todo #typesafe error out when the sides don't match
 forward_declare inline Term *
-newComputation(MemoryArena *arena, Typer *env, Term *lhs, Term *rhs)
+newComputation(MemoryArena *arena, Typer *typer, Term *lhs, Term *rhs)
 {
   Computation *out = newTerm(arena, Computation, 0);
   out->lhs = lhs;
   out->rhs = rhs;
-  computeType(arena, env, &out->t);
+  computeType(arena, typer, &out->t);
+
+#if REA_DIAGNOSTICS
+  assert(equal(normalize(temp_arena, typer, lhs), normalize(temp_arena, typer, rhs)));
+#endif
+
   return &out->t;
 }
 
@@ -896,7 +947,7 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         print(buffer, "rewrite");
         print(buffer, " ");
         if (in->right_to_left) print(buffer, "<- ");
-        print(buffer, in->eq_proof_hint, new_opt);
+        print(buffer, in->eq_proof, new_opt);
       } break;
 
       case Ast_CompositeAst:
@@ -1284,9 +1335,15 @@ isCompositeConstructor(Term *in0)
 }
 
 inline b32
+isGlobalValue(Term *in0)
+{
+  return (b32)in0->global_name;
+}
+
+inline b32
 isGround(Term *in0)
 {
-  if (in0->global_name)
+  if (isGlobalValue(in0))
     return true;
 
   switch (in0->cat)
@@ -1525,16 +1582,16 @@ internal Term *
 evaluateMain(EvaluationContext *ctx, Term *in0)
 {
   Term *out0 = 0;
+  assert(ctx->offset >= 0);
   MemoryArena *arena = ctx->arena;
 
 #if DEBUG_LOG_evaluate
   i32 serial = DEBUG_SERIAL++;
   if (DEBUG_MODE)
   {DEBUG_INDENT(); DUMP("evaluate(", serial, "): ", in0, "\n");}
-  assert(ctx->offset >= 0);
 #endif
 
-  if (in0->global_name)
+  if (isGlobalValue(in0))
     out0 = in0;
   else
   {
@@ -1864,7 +1921,7 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
 
       case Term_Union:
       {
-        if (!lhs0->global_name && !rhs0->global_name)  // only support anonymous union compare rn, to avoid dealing with recursive structs
+        if (!isGlobalValue(lhs0) && !isGlobalValue(rhs0))  // only support anonymous union compare rn, to avoid dealing with recursive structs
         {
           Union *lhs = castTerm(lhs0, Union);
           Union *rhs = castTerm(rhs0, Union);
@@ -1929,7 +1986,7 @@ lookupGlobalNameSlot(String key, b32 add_new)
       {
         if (add_new)
         {
-          slot->next_hash_slot = pushStruct(global_state.arena, GlobalBinding, true);
+          slot->next_hash_slot = pushStruct(global_state.top_level_arena, GlobalBinding, true);
           slot = slot->next_hash_slot;
           slot->key = key;
         }
@@ -2015,7 +2072,7 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
   {DEBUG_INDENT(); DUMP("normalize(", serial, "): ", in0, "\n");}
 #endif
 
-  if (!in0->global_name)
+  if (!isGlobalValue(in0))
   {
     switch (in0->cat)
     {
@@ -2213,7 +2270,7 @@ addGlobalBinding(Token *name, Term *value)
   // TODO #cleanup check for type conflict
   slot->items[slot->count++] = value;
   assert(slot->count < arrayCount(slot->items));
-  Token *name_copy = copyStruct(global_state.arena, name);
+  Token *name_copy = copyStruct(global_state.top_level_arena, name);
   value->global_name = name_copy;
 }
 
@@ -2587,54 +2644,83 @@ inferArgs(MemoryArena *arena, Term *op, Term *goal)
 }
 
 inline Term *
-inferFromGlobalHints(MemoryArena *arena, Term *goal)
+inferFromHints(MemoryArena *arena, HintDatabase *local_hints, Term *goal)
 {
+#if DEBUG_LOG_inferFromHints
+  i32 serial = DEBUG_SERIAL++;
+  if (DEBUG_MODE)
+  {DEBUG_INDENT(); DUMP("inferFromHints(", serial, "): ", goal, "\n");}
+#endif
+
   Term *out = 0;
-  for (HintDatabase *hints = global_state.hints;
-       hints && !out;
+  b32 tried_global_hints = false;
+  for (HintDatabase *hints = local_hints;
+       !out;
        hints = hints->next)
   {
-    Term *hint = hints->first;
-    InferArgs infer = inferArgs(temp_arena, hint, goal);
-    if (infer.args)
+    if (!hints)
     {
-      out = newComposite(arena, hint, infer.arg_count, infer.args, goal);
+      if (!tried_global_hints)
+      {
+        hints = global_state.hints;
+        tried_global_hints = true;
+      }
     }
+
+    if (hints)
+    {
+      Term *hint = hints->first;
+      if (getType(hint)->cat == Term_Arrow)
+      {
+        InferArgs infer = inferArgs(temp_arena, hint, goal);
+        if (infer.args)
+        {
+          Term **args = copyArray(arena, infer.arg_count, infer.args);
+          out = newComposite(arena, hint, infer.arg_count, args, goal);
+        }
+      }
+      else if (equal(getType(hint), goal))
+        out = hint;
+    }
+    else
+      break;
   }
+
+#if DEBUG_LOG_inferFromHints
+  if (DEBUG_MODE) {DEBUG_DEDENT(); DUMP("=> ", out, "\n");}
+#endif
+
   return out;
 }
 
 internal Term *
-fillHole(MemoryArena *arena, Typer *env, Term *goal)
+fillHole(MemoryArena *arena, Typer *env, HintDatabase *local_hints, Term *goal)
 {
   Term *out = 0;
-  if (Composite *eq = castTerm(goal, Composite))
+  b32 should_attempt_inference = true;
+  if (goal == &builtins.Set->t)
+    should_attempt_inference = false;
+  else if (Union *uni = castTerm(goal, Union))
   {
-    if (eq->op == &builtins.equal->t)
+    if (uni->global_name)
+      should_attempt_inference = false;
+  }
+
+  if (should_attempt_inference)
+  {
+    if (auto [l,r] = getEqualitySides(goal, false))
     {
-      Term *lhs_norm = normalize(temp_arena, env, eq->args[1]);
-      Term *rhs_norm = normalize(temp_arena, env, eq->args[2]);
-      if (equal(lhs_norm, rhs_norm))
-        out = newComputation(arena, env, eq->args[1], eq->args[2]);
+      if (equal(normalize(temp_arena, env, l), normalize(temp_arena, env, r)))
+        out = newComputation(arena, env, l, r);
     }
+
+    if (!out)
+      out = inferFromHints(arena, local_hints, goal);
+
+    if (out)
+      assert(equal(getType(out), goal));
   }
-
-  if (!out)
-    out = inferFromGlobalHints(arena, goal);
-
   return out;
-}
-
-inline void
-attach(char *key, i32 count, Term **terms)
-{
-  StartString start = startString(error_buffer);
-  for (i32 id=0; id < count; id++)
-  {
-    print(error_buffer, "\n");
-    print(error_buffer, terms[id], PrintOptions{.flags=PrintFlag_PrintType});
-  }
-  attach(key, endString(start));
 }
 
 inline TermArray
@@ -2662,7 +2748,7 @@ getFunctionOverloads(Identifier *ident, Term *output_type_goal)
         parseError(&ident->a, "found no matching overload");
         attach("function", ident->token.string);
         attach("output_type_goal", output_type_goal);
-        attach("available_overloads", slot->count, slot->items);
+        attach("available_overloads", slot->count, slot->items, printOptionPrintType());
       }
     }
   }
@@ -2723,7 +2809,7 @@ getMatchingFunctionCall(MemoryArena *arena, Typer *env, Identifier *ident, TermA
       parseError(&ident->a, "found no matching overload");
       attach("identifier", ident->token.string);
       attach("goals", goals.count, goals.items);
-      attach("available_overloads", slot->count, slot->items);
+      attach("available_overloads", slot->count, slot->items, printOptionPrintType());
     }
   }
   else
@@ -2738,8 +2824,6 @@ getMatchingFunctionCall(MemoryArena *arena, Typer *env, Identifier *ident, TermA
 inline Term *
 getMatchingFunctionCall(MemoryArena *arena, Typer *env, Identifier *ident, Term *goal)
 {
-  if (goal == &builtins.Set->t)
-    debugbreak;
   Term *out = 0;
   if (goal->cat == Term_Hole)
     parseError(&ident->a, "cannot infer arguments since we do know what the output type of this function should be");
@@ -2867,7 +2951,7 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
           rewrite->right_to_left = true;
         }
 
-        rewrite->eq_proof_hint = parseExpressionToAst(arena);
+        rewrite->eq_proof = parseExpressionToAst(arena);
         ast0 = &rewrite->a;
       } break;
 
@@ -3051,6 +3135,15 @@ buildCtorAst(MemoryArena *arena, CtorAst *in, Term *output_type)
   return out;
 }
 
+inline HintDatabase *
+addHint(MemoryArena *arena, HintDatabase *hint_db, Term *term)
+{
+  HintDatabase *new_hints = pushStruct(arena, HintDatabase, true);
+  new_hints->first = term;
+  new_hints->next  = hint_db;
+  return new_hints;
+}
+
 forward_declare internal BuildTerm
 buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 {
@@ -3069,7 +3162,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
   {
     case Ast_Hole:
     {
-      Term *fill = fillHole(arena, env, goal);
+      Term *fill = fillHole(arena, env, 0, goal);
       if (fill)
         out0.term  = fill;
       else
@@ -3231,7 +3324,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                 // Typecheck & Inference for the arguments.
                 if (expanded_args[arg_id]->cat == Ast_Hole)
                 {
-                  if (Term *fill = fillHole(arena, env, expected_arg_type))
+                  if (Term *fill = fillHole(arena, env, 0, expected_arg_type))
                     args[arg_id] = fill;
                   else
                   {
@@ -3298,7 +3391,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
               if (attempt == op_list.count-1)
               {
                 parseError(in->op, "found no suitable overload");
-                attach("available_overloads", op_list.count, op_list.items);
+                attach("available_overloads", op_list.count, op_list.items, printOptionPrintType());
               }
             }
             else
@@ -3422,7 +3515,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       should_check_type = false;
       RewriteAst *in  = castAst(in0, RewriteAst);
       Term *new_goal = 0;
-      if (BuildTerm eq_proof = buildTerm(arena, env, in->eq_proof_hint, holev))
+      if (BuildTerm eq_proof = buildTerm(arena, env, in->eq_proof, holev))
       {
         Term *proof_type = todoGetType(temp_arena, env, eq_proof.term);
         if (auto [lhs, rhs] = getEqualitySides(proof_type, false))
@@ -3444,7 +3537,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         }
         else
         {
-          parseError(in->eq_proof_hint, "please provide a proof of equality for rewrite");
+          parseError(in->eq_proof, "please provide a proof of equality for rewrite");
           attach("got", proof_type);
         }
       }
@@ -3453,112 +3546,92 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
     case Ast_GoalTransform:
     {
       GoalTransform *in = castAst(in0, GoalTransform);
-      Term     *new_goal     = 0;
-      Term     *eq_proof     = 0;
-      TreePath *rewrite_path = 0;
+      Term     *new_goal      = 0;
+      Term     *eq_proof      = 0;
+      TreePath *rewrite_path  = 0;
       b32       right_to_left = false;
-      if (!in->hint)
-      {
-        // No hint -> Auto tactics.
-        if (!in->new_goal)
-          new_goal = normalize(arena, env, goal);
-        else if (BuildTerm build = buildTerm(arena, env, in->new_goal, holev))
-        {
-          new_goal = build.term;
-          Term *new_goal_norm = normalize(arena, env, new_goal);
-          Term *goal_norm     = normalize(arena, env, goal);
-          if (!equal(new_goal_norm, goal_norm))
-          {
-            parseError(in0, "new goal does not match original");
-            // equal(new_goal_norm, goal_norm);
-            attach("new goal normalized", new_goal_norm);
-            attach("current goal normalized", goal_norm);
-          }
-        }
 
-        if (noError())
+      if (!in->new_goal)
+      {// just normalize the goal, no need for tactics (for now).
+        Term *norm_goal = normalize(arena, env, goal);
+        if (checkFlag(in->flags, AstFlag_Generated) &&
+            equal(goal, norm_goal))
+        {// superfluous auto-generated transforms.
+          recursed = true;
+          out0 = buildTerm(arena, env, in->body, goal);
+        }
+        else
         {
-          if (checkFlag(in->flags, AstFlag_Generated) &&
-              equal(new_goal, goal))
-          {// check for superfluous auto-generated rewrites.
-            recursed = true;
-            out0 = buildTerm(arena, env, in->body, goal);
-          }
-          else
-          {
-            eq_proof = newComputation(arena, env, goal, new_goal);
-            rewrite_path = 0;
-          }
+          new_goal = norm_goal;
+          eq_proof = newComputation(arena, env, goal, new_goal);
+          rewrite_path = 0;
         }
       }
-      else if (in->new_goal)
-      {// diff
-        if (BuildTerm build_new_goal = buildTerm(arena, env, in->new_goal, holev))
+      else if ((new_goal = buildTerm(arena, env, in->new_goal, holev)))
+      {
+        CompareTerms compare = compareTerms(arena, goal, new_goal);
+        if (compare.result == Trinary_True)
+          parseError(in0, "new goal is exactly the same as current goal");
+        else
         {
-          new_goal = build_new_goal.term;
-          CompareTerms compare = compareTerms(arena, goal, new_goal);
-          if (compare.result == Trinary_True)
-            parseError(in0, "new goal same as current goal");
-          else if (compare.diff_path)
+          rewrite_path = compare.diff_path;
+          Term *from = subExpressionAtPath(goal, compare.diff_path);
+          Term *to   = subExpressionAtPath(new_goal, compare.diff_path);
+
+          b32 is_global_identifier = false;
+          HintDatabase *hints = 0;
+          if (in->hint)
           {
-            rewrite_path = compare.diff_path;
-            Term *from = subExpressionAtPath(goal, compare.diff_path);
-            Term *to   = subExpressionAtPath(new_goal, compare.diff_path);
-
-            Term *from_type = getType(from);
-            Term *lr_eq = newEquality(temp_arena, from_type, from, to);
-            Term *rl_eq = newEquality(temp_arena, from_type, to, from);
-            TermArray lr_rl_eqs = {.count=2, .items=pushArray(temp_arena, 2, Term *)};
-            lr_rl_eqs.items[0] = lr_eq;
-            lr_rl_eqs.items[1] = rl_eq;
-
-            b32 is_global_identifier = false;
-            if (Identifier *op_ident = castAst(in->hint, Identifier))
+            if (Identifier *ident = castAst(in->hint, Identifier))
             {
-              // Operator hint: handled just like if we had an ellipsis in the
-              // argument list (the only reason why we don't have ellipsis is for
-              // brevity).
-              //
-              // NOTE: If the identifier hint is global, then we treat it as an
-              // operator, if it's local then we treat it as the entire
-              // proof -> pretty janky.
-              if (!lookupLocalName(env, &op_ident->token))
+              // NOTE: If the identifier is global, we treat it as an operator, if
+              // it's local then treat it as the entire proof -> pretty janky.
+              if (!lookupLocalName(env, &ident->token))
               {
-                is_global_identifier = true;
-                if (auto matching = getMatchingFunctionCall(arena, env, op_ident, lr_rl_eqs))
+                if (GlobalBinding *slot = lookupGlobalNameSlot(ident, false))
                 {
-                  if (matching.goal == rl_eq)
-                    right_to_left = true;
-                  else
-                    assert(matching.goal == lr_eq);
-
-                    eq_proof = matching.term;
-                }
-              }
-            }
-
-            if (!is_global_identifier)
-            {
-              if (BuildTerm build_eq_proof = buildTerm(arena, env, in->hint, holev))
-              {// full proof of equality
-                eq_proof = build_eq_proof.term;
-                Term *actual_eq = getType(build_eq_proof.term);
-                if (!equal(actual_eq, lr_eq))
-                {
-                  if (equal(actual_eq, rl_eq))
-                    right_to_left = true;
-                  else
+                  is_global_identifier = true;
+                  for (i32 i=0; i < slot->count; i++)
                   {
-                    parseError(in->hint, "hint does not prove the wanted equality in either direction");
-                    attach("wanted_eq", lr_eq);
-                    attach("actual_eq", actual_eq);
+                    hints = addHint(temp_arena, hints, slot->items[i]);
                   }
+                }
+                else
+                {
+                  parseError(&ident->a, "identifier not found");
+                  attach("identifier", ident->token.string);
                 }
               }
             }
           }
-          else
-            parseError(in0, "current goal and new_goal don't match at all");
+
+          if (!is_global_identifier)
+          {
+            if (in->hint)
+            {
+              if ((eq_proof = buildTerm(arena, env, in->hint, holev).term))
+              {
+                hints = addHint(temp_arena, hints, eq_proof);
+              }
+            }
+          }
+
+          Term *from_type = getType(from);
+          Term *lr_eq = newEquality(temp_arena, from_type, from, to);
+          Term *rl_eq = newEquality(temp_arena, from_type, to, from);
+
+          if (!(eq_proof = fillHole(arena, env, hints, lr_eq)))
+          {
+            if ((eq_proof = fillHole(arena, env, hints, rl_eq)))
+            {
+              right_to_left = true;
+            }
+            else
+            {
+              parseError(in0, "cannot infer equality proof");
+              attach("equality", lr_eq);
+            }
+          }
         }
       }
 
@@ -4554,7 +4627,7 @@ parseExpressionToAst(MemoryArena *arena)
 inline void
 addGlobalHint(Function *fun)
 {
-  HintDatabase *new_hint = pushStruct(global_state.arena, HintDatabase);
+  HintDatabase *new_hint = pushStruct(global_state.top_level_arena, HintDatabase);
   new_hint->first = &fun->t;
   new_hint->next  = global_state.hints;
   global_state.hints = new_hint;
@@ -4598,7 +4671,7 @@ buildGlobalFunction(MemoryArena *arena, FunctionDecl *in)
 internal void
 parseTopLevel(EngineState *state)
 {
-  MemoryArena *arena = state->arena;
+  MemoryArena *arena = state->top_level_arena;
   b32 should_fail_active = false;
 
   Token token = nextToken(); 
@@ -4852,7 +4925,7 @@ parseTopLevel(EngineState *state)
 forward_declare internal b32
 interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
 {
-  MemoryArena *arena = state->arena;
+  MemoryArena *arena = state->top_level_arena;
   b32 success = true;
 #define REA_PROFILE 0
 #if REA_PROFILE
@@ -4951,7 +5024,7 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
   // :global_state_cleared_at_startup Clear global state as we might run the
   // interpreter multiple times.
   global_state       = {};
-  global_state.arena = arena;
+  global_state.top_level_arena = arena;
 
   {
     global_state.bindings = pushStruct(arena, GlobalBindings);  // :global-bindings-zero-at-startup
@@ -4976,7 +5049,7 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
       builtins.equal = newTerm(arena, Builtin, equal_type.term);
       addBuiltinGlobalBinding("=", &builtins.equal->t);
 
-      EngineState builtin_engine_state = EngineState{.arena=arena};
+      EngineState builtin_engine_state = EngineState{.top_level_arena=arena};
       builtin_tk.at = "True :: union { truth }";
       parseTopLevel(&builtin_engine_state);
       assert(noError());

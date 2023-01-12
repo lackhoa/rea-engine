@@ -366,7 +366,7 @@ struct BuildTerm
 struct RewriteAst
 {
   embed_Ast(a);
-  Ast      *eq_proof_hint;
+  Ast      *eq_proof;
   Ast      *new_goal;
   Ast      *body;
   b32       right_to_left;
@@ -376,7 +376,7 @@ struct GoalTransform
 {
   embed_Ast(a);
   Ast *hint;
-  Ast *new_goal;
+  Ast *new_goal;  // NOTE: 0 means "the normalized version of the current goal"
   Ast *body;
 };
 
@@ -405,7 +405,7 @@ struct HintDatabase {
 
 // :global_state_cleared_at_startup
 struct EngineState {
-  MemoryArena    *arena;
+  MemoryArena    *top_level_arena;
   FileList       *file_list;
   GlobalBindings *bindings;
   HintDatabase   *hints;
@@ -415,11 +415,18 @@ u32 PrintFlag_Detailed     = 1 << 0;
 u32 PrintFlag_LockDetailed = 1 << 1;
 u32 PrintFlag_PrintType    = 1 << 2;
 
-struct PrintOptions{
+struct PrintOptions {
   u32 flags;
   u16 indentation;
   u16 no_paren_precedence;
 };
+
+inline PrintOptions
+printOptionPrintType(PrintOptions options={})
+{
+  setFlag(&options.flags, PrintFlag_PrintType);
+  return options;
+}
 
 struct Builtins {
   Union       *True;
@@ -466,6 +473,7 @@ struct AstArray {
   Term *items;
 };
 
+// NOTE: rewrite is done from "type" to "body", which is arguably backward (todo change it).
 struct Rewrite {
   embed_Term(t);
   TreePath *path;

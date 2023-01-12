@@ -95,39 +95,6 @@ inline b32 checkErrorFlag(u32 flag, Tokenizer *tk=global_tokenizer)
   return checkFlag(tk->error->flags, flag);
 }
 
-inline void attach(char *key, String value, Tokenizer *tk=global_tokenizer)
-{
-  ParseError *error = tk->error;
-  assert(error->attachment_count < arrayCount(error->attachments));
-  error->attachments[error->attachment_count++] = {key, value};
-}
-
-inline void attach(char *key, Token *token, Tokenizer *tk=global_tokenizer)
-{
-  attach(key, token->string, tk);
-}
-
-inline void attach(char *key, Ast *ast, Tokenizer *tk=global_tokenizer)
-{
-  StartString start = startString(error_buffer);
-  print(error_buffer, ast);
-  attach(key, endString(start), tk);
-}
-
-inline void attach(char *key, Term *value, Tokenizer *tk=global_tokenizer)
-{
-  StartString start = startString(error_buffer);
-  print(error_buffer, value);
-  attach(key, endString(start), tk);
-}
-
-inline void attach(char *key, i32 n, Tokenizer *tk=global_tokenizer)
-{
-  StartString start = startString(error_buffer);
-  print(error_buffer, "%d", n);
-  attach(key, endString(start), tk);
-}
-
 inline void
 pushContext(String string, b32 is_important, Tokenizer *tk=global_tokenizer)
 {

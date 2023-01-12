@@ -74,18 +74,18 @@ addAssociative :: (a,b,c: Nat) -> (a+b)+c = a+b+c
 mulDistributive :: (a,b,c: Nat) -> a*c+b*c = (a+b)*c
 {fork a
  {0:,
-  ++:
-  => c + a.p*c + b*c = c + (a.p+b)*c {addAssociative(c, (a.p * c), (b * c))}
-  => c + (a.p+b)*c   = c + (a.p+b)*c {mulDistributive(a.p, b, c)}}}
+  ++: ;; (c + a.p * c) + b * c = c + (a.p + b) * c
+  => c + a.p*c + b*c = c + (a.p+b)*c {addAssociative(c, a.p * c, b * c)}
+  => c + (a.p+b)*c   = c + (a.p+b)*c {mulDistributive(a.p, b, c)}
+  }}
 test_eval mulDistributive(1+1,0,0);
 
 mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*b*c
 {fork a
  {0: ,
   ++:
-  => (b + a.p*b)*c  = b*c + (a.p*b)*c {;; <-
-                                       mulAssociative(a.p, b, c)}
-  => (b + a.p*b)*c  = (b + a.p*b)*c {mulDistributive(b, a.p*b, c)}}}
+  => (b + a.p*b)*c  = b*c + (a.p*b)*c {mulAssociative(a.p, b, c)}
+  => (b + a.p*b)*c  = (b + a.p*b)*c   {mulDistributive(b, a.p*b, c)}}}
 test_eval mulAssociative(1,0,0);
 ;; print mulAssociative(1,0,0);
 

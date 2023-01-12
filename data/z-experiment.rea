@@ -59,7 +59,7 @@ addAssociative :: (a,b,c: Z) -> (a+b)+c = a+b+c
              => a.v + b.v + c.v = a.v + b.v + c.v {addAssociative};
              ,
              - fork a.v
-             {0  rewrite add0Left(+(b.v) + -(c.v), addNormalized(+(b.v), -(c.v))),
+             {0  rewrite add0Left(+(b.v) + -(c.v), addNormalized(...)),
               ++ fork b.v
               {0  rewrite add0(a.v.p); fork c.v {0 rewrite add0(a.v.p), ++},
                ++ fork c.v
@@ -76,6 +76,7 @@ addAssociative :: (a,b,c: Z) -> (a+b)+c = a+b+c
             {
              0 ;; normalize(-(b.v)) + c = +(0) + -(b.v) + c
              ;; rewrite add0Left(-(b.v) + c, addNormalized(...));
+             ;; => normalize(-(b.v)) + c = -(b.v) + c {add0Left(-(b.v) + c, addNormalized(...))}
              => normalize(-(b.v)) + c = -(b.v) + c {}
              ,
              ++

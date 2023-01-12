@@ -212,6 +212,4 @@ testAnonymousParameter :: fn (A: Set, A) -> A
 { seek(A) }
 ;; print testAnonymousParameter;
 
-testFillHole :: (a: Nat) -> a + 0 = a
-{}
-print testFillHole;
+testFillHole :: (a: Nat) -> a + 0 = a {}

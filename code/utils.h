@@ -115,6 +115,10 @@ pushSize(MemoryArena *arena, size_t size, b32 zero = false)
     assert(arena->used <= arena->cap);
     if (zero)
         zeroSize(out, size);
+
+    if (arena->used > 9*(arena->cap / 10))
+      invalidCodePath;  // watch the program to see what's going on;
+
     return(out);
 }
 
