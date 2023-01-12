@@ -1,0 +1,3 @@
+#load "natp.rea"
+
+;; Z :: union {l | r}

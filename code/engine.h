@@ -565,12 +565,15 @@ struct SeekAst {
   Ast *proposition;
 };
 
-struct InferArgs {b32 matches; i32 arg_count; Term **args;};
+struct SolveArgs {b32 matches; i32 arg_count; Term **args;};
 
-struct MatchingFunctionCall {
-  Term *term;
-  Term *goal;
-  operator bool() {return term;};
+#define MAX_SOLVE_DEPTH 3
+struct Solver {
+  MemoryArena  *arena;
+  Typer        *env;
+  HintDatabase *local_hints;
+  i32           depth;
+  b32           use_global_hints;
 };
 
 #include "generated/engine_forward.h"

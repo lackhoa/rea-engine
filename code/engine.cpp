@@ -2611,8 +2611,8 @@ unify(Stack *stack, Term *l0, Term *goal0)
   return success;
 }
 
-inline InferArgs
-inferArgs(MemoryArena *arena, Term *op, Term *goal)
+inline SolveArgs
+solveArgs(Solver *solver, Term *op, Term *goal)
 {
   b32    matches   = false;
   i32    arg_count = 0;
@@ -2620,86 +2620,54 @@ inferArgs(MemoryArena *arena, Term *op, Term *goal)
   if (Constructor *ctor = castTerm(op, Constructor))
   {
     if (equal(&ctor->uni->t, goal))
-      matches = true;  // we wouldn't know what the members are in the constructor case.
+      matches = true;  // we don't know what the members are in the constructor case.
   }
   else if (Arrow *signature = castTerm(getType(op), Arrow))
   {
-    Stack *stack = newStack(arena, 0, signature->param_count);
+    Stack *stack = newStack(solver->arena, 0, signature->param_count);
     if (unify(stack, signature->output_type, goal))
     {
       matches   = true;
       arg_count = signature->param_count;
       args      = stack->items;
-      for (i32 id=0; id < signature->param_count; id++)
+      for (i32 i=0; i < signature->param_count; i++)
       {
-        if (!stack->items[id])
+        // solving loop
+        if (!args[i])
         {
-          args = 0;
-          break;
+          // todo #leak the type could be referenced
+          Term *type = evaluate(solver->arena, args, signature->param_types[i]);
+          if (!(args[i] = solveForGoal(solver, type)))
+          {
+            args = 0;
+            break;
+          }
         }
       }
     }
   }
-  return InferArgs{matches, arg_count, args};
+  return SolveArgs{matches, arg_count, args};
 }
 
-inline Term *
-inferFromHints(MemoryArena *arena, HintDatabase *local_hints, Term *goal)
+inline SolveArgs
+solveArgs(Solver solver, Term *op, Term *goal)
 {
-#if DEBUG_LOG_inferFromHints
-  i32 serial = DEBUG_SERIAL++;
-  if (DEBUG_MODE)
-  {DEBUG_INDENT(); DUMP("inferFromHints(", serial, "): ", goal, "\n");}
-#endif
-
-  Term *out = 0;
-  b32 tried_global_hints = false;
-  for (HintDatabase *hints = local_hints;
-       !out;
-       hints = hints->next)
-  {
-    if (!hints)
-    {
-      if (!tried_global_hints)
-      {
-        hints = global_state.hints;
-        tried_global_hints = true;
-      }
-    }
-
-    if (hints)
-    {
-      Term *hint = hints->first;
-      if (getType(hint)->cat == Term_Arrow)
-      {
-        InferArgs infer = inferArgs(temp_arena, hint, goal);
-        if (infer.args)
-        {
-          Term **args = copyArray(arena, infer.arg_count, infer.args);
-          out = newComposite(arena, hint, infer.arg_count, args, goal);
-        }
-      }
-      else if (equal(getType(hint), goal))
-        out = hint;
-    }
-    else
-      break;
-  }
-
-#if DEBUG_LOG_inferFromHints
-  if (DEBUG_MODE) {DEBUG_DEDENT(); DUMP("=> ", out, "\n");}
-#endif
-
-  return out;
+  return solveArgs(&solver, op, goal);
 }
 
-internal Term *
-fillHole(MemoryArena *arena, Typer *env, HintDatabase *local_hints, Term *goal)
+forward_declare internal Term *
+solveForGoal(Solver *solver, Term *goal)
 {
   Term *out = 0;
+  solver->depth++;
+
   b32 should_attempt_inference = true;
-  if (goal == &builtins.Set->t)
+  if (solver->depth > MAX_SOLVE_DEPTH ||
+      goal == &builtins.Set->t ||
+      goal->cat == Term_Hole)
+  {
     should_attempt_inference = false;
+  }
   else if (Union *uni = castTerm(goal, Union))
   {
     if (uni->global_name)
@@ -2708,19 +2676,74 @@ fillHole(MemoryArena *arena, Typer *env, HintDatabase *local_hints, Term *goal)
 
   if (should_attempt_inference)
   {
+#if DEBUG_LOG_solve
+  i32 serial = DEBUG_SERIAL++;
+  if (DEBUG_MODE)
+  {DEBUG_INDENT(); DUMP("solve(", serial, "): ", goal, "\n");}
+#endif
+
     if (auto [l,r] = getEqualitySides(goal, false))
     {
-      if (equal(normalize(temp_arena, env, l), normalize(temp_arena, env, r)))
-        out = newComputation(arena, env, l, r);
+      if (equal(normalize(temp_arena, solver->env, l),
+                normalize(temp_arena, solver->env, r)))
+      {
+        out = newComputation(solver->arena, solver->env, l, r);
+      }
     }
 
     if (!out)
-      out = inferFromHints(arena, local_hints, goal);
+    {
+      b32 tried_global_hints = false;
+      for (HintDatabase *hints = solver->local_hints;
+           !out;
+           hints = hints->next)
+      {
+        if (!hints)
+        {
+          if (!tried_global_hints && solver->use_global_hints)
+          {
+            hints = global_state.hints;
+            tried_global_hints = true;
+          }
+        }
+
+        if (hints)
+        {
+          Term *hint = hints->first;
+          if (getType(hint)->cat == Term_Arrow)
+          {
+            SolveArgs solution = solveArgs(solver, hint, goal);
+            if (solution.args)
+            {
+              MemoryArena *arena = solver->arena;
+              Term **args = copyArray(arena, solution.arg_count, solution.args);
+              out = newComposite(arena, hint, solution.arg_count, args, goal);
+            }
+          }
+          else if (equal(getType(hint), goal))
+            out = hint;
+        }
+        else
+          break;
+      }
+    }
 
     if (out)
       assert(equal(getType(out), goal));
+
+#if DEBUG_LOG_solve
+  if (DEBUG_MODE) {DEBUG_DEDENT(); DUMP("=> ", out, "\n");}
+#endif
   }
+
+  solver->depth--;
   return out;
+}
+
+internal Term *
+solveForGoal(Solver solver, Term *goal)
+{
+  return solveForGoal(&solver, goal);
 }
 
 inline TermArray
@@ -2740,7 +2763,7 @@ getFunctionOverloads(Identifier *ident, Term *output_type_goal)
       for (int slot_id=0; slot_id < slot->count; slot_id++)
       {
         Term *item = slot->items[slot_id];
-        if (inferArgs(temp_arena, item, output_type_goal).matches)
+        if (solveArgs(Solver{.arena=temp_arena}, item, output_type_goal).matches)
           out.items[out.count++] = slot->items[slot_id];
       }
       if (out.count == 0)
@@ -2760,13 +2783,19 @@ getFunctionOverloads(Identifier *ident, Term *output_type_goal)
   return out;
 }
 
-inline MatchingFunctionCall
-getMatchingFunctionCall(MemoryArena *arena, Typer *env, Identifier *ident, TermArray goals)
+inline Term *
+getMatchingFunctionCall(MemoryArena *arena, Typer *env, Identifier *ident, Term *goal)
 {
+  // NOTE: This routine is different from "solveForGoal" in that the top-level
+  // operator is fixed.
   Term *out = 0;
-  Term *matching_goal = 0;
   pushContext(__func__);
-  if (lookupLocalName(env, &ident->token))
+
+  if (goal->cat == Term_Hole)
+  {
+    parseError(&ident->a, "cannot infer arguments since we do know what the output type of this function should be");
+  }
+  else if (lookupLocalName(env, &ident->token))
   {
     todoIncomplete;
   }
@@ -2777,38 +2806,28 @@ getMatchingFunctionCall(MemoryArena *arena, Typer *env, Identifier *ident, TermA
          slot_i++)
     {
       Term *item = slot->items[slot_i];
-      for (i32 goal_i=0;
-           goal_i < goals.count && !out;
-           goal_i++)
+      SolveArgs solution = solveArgs(Solver{.arena=temp_arena}, item, goal);
+      if (solution.matches)
       {
-        Term *goal = goals.items[goal_i];
-        assert(goal->cat != Term_Hole);
-        InferArgs infer = inferArgs(temp_arena, item, goal);
-        if (infer.matches)
+        if (solution.args)
         {
-          if (infer.args)
-          {
-            Term **args = copyArray(arena, infer.arg_count, infer.args);
-            out           = newComposite(arena, slot->items[slot_i], infer.arg_count, args);
-            matching_goal = goal;
-            assert(equal(getType(out), goal));
-            // NOTE: we don't care which function matches, just grab whichever
-            // matches first.
-          }
-          else
-          {
-            parseError(&ident->token, "cannot automatically fill in some arguments");
-            attach("function", item);
-            attach("goal", goal);
-          }
+          Term **args = copyArray(arena, solution.arg_count, solution.args);
+          out = newComposite(arena, slot->items[slot_i], solution.arg_count, args);
+          assert(equal(getType(out), goal));
+          // NOTE: we don't care which function matches, just grab whichever
+          // matches first.
+        }
+        else
+        {
+          parseError(&ident->token, "cannot automatically fill in some arguments");
+          attach("function", item);
+          attach("goal", goal);
         }
       }
     }
     if (!out && noError())
     {
       parseError(&ident->a, "found no matching overload");
-      attach("identifier", ident->token.string);
-      attach("goals", goals.count, goals.items);
       attach("available_overloads", slot->count, slot->items, printOptionPrintType());
     }
   }
@@ -2817,21 +2836,8 @@ getMatchingFunctionCall(MemoryArena *arena, Typer *env, Identifier *ident, TermA
     parseError(&ident->a, "identifier not found");
     attach("identifier", ident->token.string);
   }
+  
   popContext();
-  return MatchingFunctionCall{.term=out, .goal=matching_goal};
-}
-
-inline Term *
-getMatchingFunctionCall(MemoryArena *arena, Typer *env, Identifier *ident, Term *goal)
-{
-  Term *out = 0;
-  if (goal->cat == Term_Hole)
-    parseError(&ident->a, "cannot infer arguments since we do know what the output type of this function should be");
-  else
-  {
-    TermArray goals = {.count=1, .items=&goal};
-    out = getMatchingFunctionCall(arena, env, ident, goals).term;
-  }
   return out;
 }
 
@@ -3162,9 +3168,8 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
   {
     case Ast_Hole:
     {
-      Term *fill = fillHole(arena, env, 0, goal);
-      if (fill)
-        out0.term  = fill;
+      if (Term *solution = solveForGoal(Solver{.arena=arena, .env=env, .use_global_hints=true}, goal))
+        out0.term = solution;
       else
         parseError(in0, "please provide an expression here");
     } break;
@@ -3234,7 +3239,9 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       {
         // Infer all arguments.
         if (Identifier *op_ident = castAst(in->op, Identifier))
+        {
           out0.term = getMatchingFunctionCall(arena, env, op_ident, goal);
+        }
         else
           parseError(in->args[0], "todo: ellipsis only works with identifier atm");
       }
@@ -3324,7 +3331,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                 // Typecheck & Inference for the arguments.
                 if (expanded_args[arg_id]->cat == Ast_Hole)
                 {
-                  if (Term *fill = fillHole(arena, env, 0, expected_arg_type))
+                  if (Term *fill = solveForGoal(Solver{.arena=arena, .env=env}, expected_arg_type))
                     args[arg_id] = fill;
                   else
                   {
@@ -3620,15 +3627,16 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           Term *lr_eq = newEquality(temp_arena, from_type, from, to);
           Term *rl_eq = newEquality(temp_arena, from_type, to, from);
 
-          if (!(eq_proof = fillHole(arena, env, hints, lr_eq)))
+          Solver solver = Solver{.arena=arena, .env=env, .local_hints=hints, .use_global_hints=true};
+          if (!(eq_proof = solveForGoal(&solver, lr_eq)))
           {
-            if ((eq_proof = fillHole(arena, env, hints, rl_eq)))
+            if ((eq_proof = solveForGoal(&solver, rl_eq)))
             {
               right_to_left = true;
             }
             else
             {
-              parseError(in0, "cannot infer equality proof");
+              parseError(in0, "cannot solve for equality proof");
               attach("equality", lr_eq);
             }
           }
@@ -5100,10 +5108,11 @@ int engineMain()
   temp_arena_ = newArena(temp_memory_size, temp_memory_base);
 
   char *files[] = {
-    "../data/test.rea",
-    "../data/z-experiment.rea",
+    "../data/z-normalize-experiment.rea",
     "../data/natp-experiment.rea",
+    "../data/z-slider-experiment.rea",
     "../data/z.rea",
+    "../data/test.rea",
   };
   for (i32 file_id=0; file_id < arrayCount(files); file_id++)
   {

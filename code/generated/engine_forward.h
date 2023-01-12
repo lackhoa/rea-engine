@@ -1,7 +1,7 @@
 void eatToken(Tokenizer * tk);
 Token nextToken(Tokenizer * tk);
 Token peekToken(Tokenizer * tk);
-Term * newComputation(MemoryArena * arena, Typer * env, Term * lhs, Term * rhs);
+Term * newComputation(MemoryArena * arena, Typer * typer, Term * lhs, Term * rhs);
 Term * computeType(MemoryArena * arena, Typer * env, Term * in0);
 Term * todoGetType(MemoryArena * arena, Typer * env, Term * in0);
 Arrow * getType(Constructor * ctor);
@@ -29,6 +29,7 @@ Trinary equalTrinary(Term * lhs0, Term * rhs0);
 Term * normalize(MemoryArena * arena, DataMap * map, i32 depth, Term * in0);
 Term * normalize(MemoryArena * arena, Typer * env, Term * in0);
 void introduceSignature(Typer * env, Arrow * signature, b32 add_bindings);
+Term * solveForGoal(Solver * solver, Term * goal);
 BuildTerm buildTerm(MemoryArena * arena, Typer * env, Ast * in0, Term * goal);
 Term * buildFork(MemoryArena * arena, Typer * env, ForkAst * in, Term * goal);
 Term * newRewrite(MemoryArena * arena, Term * eq_proof, Term * body, TreePath * path, b32 right_to_left);

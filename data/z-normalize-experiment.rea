@@ -41,9 +41,11 @@ add0Left :: (a: Z, p: normalize(a) = a) -> +(0)+a = a
 {fork a {+ , - fork a.v {0 fork p {}, ++}}}
 
 normalizeIdempotent :: (a: Z) -> normalize(normalize(a)) = normalize(a)
+#hint
 {fork a {+, - fork a.v {0, ++}}}
 
 addNormalized :: (a,b: Z) -> normalize(a+b) = a+b
+#hint
 {
  fork a {+ fork b {+, - fork a.v {0 normalizeIdempotent(-(b.v)),
                                   ++ addNormalized(+(++(a.v.p)), -(b.v))}},
@@ -75,8 +77,6 @@ addAssociative :: (a,b,c: Z) -> (a+b)+c = a+b+c
             - fork a.v
             {
              0 ;; normalize(-(b.v)) + c = +(0) + -(b.v) + c
-             ;; rewrite add0Left(-(b.v) + c, addNormalized(...));
-             ;; => normalize(-(b.v)) + c = -(b.v) + c {add0Left(-(b.v) + c, addNormalized(...))}
              => normalize(-(b.v)) + c = -(b.v) + c {}
              ,
              ++
