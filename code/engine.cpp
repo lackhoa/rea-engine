@@ -149,14 +149,10 @@ newEquality(MemoryArena *arena, Term *type, Term *lhs, Term *rhs)
 }
 
 forward_declare inline Term *
-newComputation(MemoryArena *arena, Typer *typer, Term *lhs, Term *rhs)
+newComputation(MemoryArena *arena, Term *lhs, Term *rhs)
 {
   Term *eq = newEquality(arena, getType(lhs), lhs, rhs);
   Computation *out = newTerm(arena, Computation, eq);
-
-#if REA_DIAGNOSTICS
-  assert(equal(normalize(temp_arena, typer, lhs), normalize(temp_arena, typer, rhs)));
-#endif
 
   return out;
 }
@@ -1205,7 +1201,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
 
       case Term_Computation:
       {
-        print(buffer, "computation");
+        print(buffer, "computation(%d)", in0->serial);
       } break;
 
       case Term_Accessor:
@@ -1791,7 +1787,7 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
   i32 serial = DEBUG_SERIAL++;
   if (DEBUG_MODE)
   {
-    debugIndent(); DUMP("comparing(", serial, "): ", lhs0, " and ", rhs0, "\n");
+    DEBUG_INDENT(); DUMP("comparing(", serial, "): ", lhs0, " and ", rhs0, "\n");
   }
 #endif
 
@@ -1907,7 +1903,11 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
       {
         Accessor *lhs = castTerm(lhs0, Accessor);
         Accessor *rhs = castTerm(rhs0, Accessor);
-        out.result = compareTerms(arena,lhs->record, rhs->record).result;
+        if (equal(lhs->record, rhs->record) &&
+            lhs->field_id == rhs->field_id)
+        {
+          out.result = Trinary_True;
+        }
       } break;
 
       case Term_Builtin:
@@ -1950,7 +1950,7 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
 
 #if DEBUG_LOG_compare
   if (DEBUG_MODE)
-  {debugDedent(); dump("=> "); dump(out.result); dump();}
+  {DEBUG_DEDENT(); dump("=> "); dump(out.result); dump();}
 #endif
 
   return out;
@@ -2683,7 +2683,7 @@ solveForGoal(Solver *solver, Term *goal)
       if (equal(normalize(temp_arena, solver->env, l),
                 normalize(temp_arena, solver->env, r)))
       {
-        out = newComputation(solver->arena, solver->env, l, r);
+        out = newComputation(solver->arena, l, r);
       }
     }
 
@@ -3566,7 +3566,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         else
         {
           new_goal = norm_goal;
-          eq_proof = newComputation(arena, env, goal, new_goal);
+          eq_proof = newComputation(arena, goal, new_goal);
           rewrite_path = 0;
         }
       }
@@ -3669,7 +3669,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           if (in->type == LET_TYPE_NORMALIZE)
           {// type coercion
             Term *norm_rhs_type = normalize(arena, env, rhs_type);
-            Term *computation = newComputation(arena, env, norm_rhs_type, rhs_type);
+            Term *computation = newComputation(arena, norm_rhs_type, rhs_type);
             rhs_type = norm_rhs_type;
             rhs = newRewrite(arena, computation, build_rhs.term, 0, false);
             assert(equal(todoGetType(temp_arena, env, rhs), rhs_type));
