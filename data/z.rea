@@ -7,7 +7,7 @@ Z :: union
  +(v: Natp),
  -(v: Natp)}
 
-+ :: fn (a, b: Z) -> Z
++ :: fn(a,b: Z) -> Z
 {fork a
  {0: b,
 

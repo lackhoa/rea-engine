@@ -36,7 +36,7 @@ enum AstCategory {
   Ast_AccessorAst    = 7,
   Ast_ComputationAst = 8,
   Ast_Lambda         = 9,
-  // Ast_DestructAst    = 10,
+  Ast_OverloadAst    = 10,
   Ast_CtorAst        = 11,
   Ast_SeekAst        = 12,
   Ast_Auto           = 13,
@@ -543,10 +543,10 @@ struct UnionAst {
   ArrowAst **ctor_signatures;
 };
 
-struct DestructAst {
+struct OverloadAst {
   embed_Ast(a);
-  i32  arg_id;
-  Ast *eqp;
+  Token  function_name;
+  Ast   *distinguisher;
 };
 
 struct CtorAst {

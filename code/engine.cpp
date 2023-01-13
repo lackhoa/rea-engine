@@ -73,6 +73,11 @@ inline void attach(char *key, i32 n, Tokenizer *tk=global_tokenizer)
   attach(key, endString(start), tk);
 }
 
+inline Token *
+lastToken()
+{
+  return &global_tokenizer->last_token;
+}
 
 inline String
 globalNameOf(Term *term)
@@ -778,10 +783,10 @@ precedenceOf(String op)
     out = 50;
   else if (equal(op, "<") || equal(op, ">") || equal(op, "=?") || equal(op, "=="))
     out = 55;
-  else if (equal(op, "|")
-           || equal(op, "+")
-           || equal(op, "-"))
+  else if (equal(op, "+") || equal(op, "-"))
     out = 60;
+  else if (equal(op, "|"))
+    out = 65;
   else if (equal(op, "&")
            || equal(op, "*"))
     out = 70;
@@ -3761,6 +3766,34 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       }
     } break;
 
+    case Ast_OverloadAst:
+    {
+      OverloadAst *in = castAst(in0, OverloadAst);
+      if (GlobalBinding *lookup = lookupGlobalName(&in->function_name))
+      {
+        if (Term *distinguisher = buildTerm(temp_arena, env, in->distinguisher, holev).term)
+        {
+          for (i32 slot_i=0;
+               slot_i < lookup->count && !out0.term;
+               slot_i++)
+          {
+            Term *item = lookup->items[slot_i];
+            if (Arrow *signature = castTerm(getType(item), Arrow))
+            {
+              b32 matches = false;
+              if (distinguisher->cat == Term_Union)
+                matches = equal(signature->param_types[0], distinguisher);
+              else
+                todoIncomplete;
+
+              if (matches)
+                out0.term = item;
+            }
+          }
+        }
+      }
+    } break;
+
     invalidDefaultCase;
   }
 
@@ -4397,6 +4430,26 @@ parseSeek(MemoryArena *arena)
   return seek;
 }
 
+inline Ast *
+parseOverload(MemoryArena *arena)
+{
+  OverloadAst *out = newAst(arena, OverloadAst, lastToken());
+  if (requireChar('('))
+  {
+    if (requireIdentifier("require a function name"))
+    {
+      out->function_name = *lastToken();
+      if (requireChar(','))
+      {
+        out->distinguisher = parseExpressionToAst(arena);
+      }
+    }
+    requireChar(')');
+  }
+  if (hasError()) out = 0;
+  return &out->a;
+}
+
 internal Ast *
 parseOperand(MemoryArena *arena)
 {
@@ -4410,9 +4463,21 @@ parseOperand(MemoryArena *arena)
   {
     switch (token.cat)
     {
+      case '(':
+      {
+        operand = parseExpressionToAst(arena);
+        requireChar(')');
+      } break;
+
       case Token_Keyword_seq:
       {
         operand = parseSequence(arena);
+      } break;
+
+      case Token_Alphanumeric:
+      case Token_Special:
+      {
+        operand = &newAst(arena, Identifier, &token)->a;
       } break;
 
       case Token_Keyword_union:
@@ -4435,16 +4500,9 @@ parseOperand(MemoryArena *arena)
         operand = newAst(arena, Auto, &token);
       } break;
 
-      case Token_Alphanumeric:
-      case Token_Special:
+      case Token_Keyword_overload:
       {
-        operand = &newAst(arena, Identifier, &token)->a;
-      } break;
-
-      case '(':
-      {
-        operand = parseExpressionToAst(arena);
-        requireChar(')');
+        operand = parseOverload(arena);
       } break;
 
       default:
@@ -5108,8 +5166,8 @@ int engineMain()
   temp_arena_ = newArena(temp_memory_size, temp_memory_base);
 
   char *files[] = {
-    "../data/z-normalize-experiment.rea",
-    "../data/natp-experiment.rea",
+    // "../data/z-normalize-experiment.rea",
+    // "../data/natp-experiment.rea",
     "../data/z-slider-experiment.rea",
     "../data/z.rea",
     "../data/test.rea",

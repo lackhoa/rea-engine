@@ -24,6 +24,7 @@ enum TokenCategory
   Token_Keyword_union,
   Token_Keyword_ctor,
   Token_Keyword_seq,
+  Token_Keyword_overload,
 
   Token_Keyword_rewrite,
   Token_Keyword_norm,
@@ -50,7 +51,7 @@ enum TokenCategory
 };
 
 const char *keywords[] = {
-  "", "fn", "fork", "union", "ctor", "seq",
+  "", "fn", "fork", "union", "ctor", "seq", "overload",
   "rewrite", "norm", "prove", "seek", "auto",
   "test_eval", "print", "print_raw", "print_ast", "check", "check_truth"
 };

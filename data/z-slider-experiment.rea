@@ -1,3 +1,20 @@
 #load "natp.rea"
 
-;; Z :: union {l | r}
+Z :: union {|(l,r: Natp)}
+
+== :: fn(a,b: Z) -> Set
+{a.l+b.r = a.r+b.l}
+
++ :: fn(a,b: Z) -> Z
+{(a.l+b.l) | (a.r+b.r)}
+
+* :: fn(a,b: Z) -> Z
+{(a.l*b.r + a.r*b.l) | (a.l*b.l + a.r*b.r)}
+
+addCommutative :: (a,b: Z) -> a+b == b+a
+{
+ => (a+b).l + (b+a).r = (a+b).r + (b+a).l;
+ => (a.l+b.l) + b.r+a.r = (a.r+b.r) + b.l+a.l
+ }
+
+print overload(addCommutative, Natp);
