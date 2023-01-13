@@ -151,16 +151,14 @@ newEquality(MemoryArena *arena, Term *type, Term *lhs, Term *rhs)
 forward_declare inline Term *
 newComputation(MemoryArena *arena, Typer *typer, Term *lhs, Term *rhs)
 {
-  Computation *out = newTerm(arena, Computation, 0);
-  out->lhs = lhs;
-  out->rhs = rhs;
-  computeType(arena, typer, &out->t);
+  Term *eq = newEquality(arena, getType(lhs), lhs, rhs);
+  Computation *out = newTerm(arena, Computation, eq);
 
 #if REA_DIAGNOSTICS
   assert(equal(normalize(temp_arena, typer, lhs), normalize(temp_arena, typer, rhs)));
 #endif
 
-  return &out->t;
+  return out;
 }
 
 inline b32
@@ -574,7 +572,7 @@ getConstructor(Typer *env, Term *in0)
 }
 
 forward_declare inline Term *
-computeType(MemoryArena *arena, Typer *env, Term *in0)
+computeType(MemoryArena *arena, Typer *typer, Term *in0)
 {
   i32 UNUSED_VAR serial = DEBUG_SERIAL++;
   Term *out0 = 0;
@@ -587,11 +585,11 @@ computeType(MemoryArena *arena, Typer *env, Term *in0)
       case Term_Variable:
       {
         Variable *in = castTerm(in0, Variable);
-        Scope *scope = env->scope;
+        Scope *scope = typer->scope;
         for (i32 id=0; id < in->delta; id++)
           scope=scope->outer;
         
-        assert(scope->depth == env->scope->depth - in->delta);
+        assert(scope->depth == typer->scope->depth - in->delta);
         out0 = scope->first->param_types[in->id];
         out0 = rebase(arena, out0, in->delta);
 
@@ -608,7 +606,7 @@ computeType(MemoryArena *arena, Typer *env, Term *in0)
         }
         else
         {
-          Term *op_type0 = computeType(arena, env, in->op);
+          Term *op_type0 = computeType(arena, typer, in->op);
           Arrow *op_type = castTerm(op_type0, Arrow);
           out0 = evaluate(arena, in->args, op_type->output_type);
         }
@@ -626,8 +624,7 @@ computeType(MemoryArena *arena, Typer *env, Term *in0)
 
       case Term_Computation:
       {
-        Computation *in = castTerm(in0, Computation);
-        out0 = newEquality(arena, computeType(arena, env, in->lhs), in->lhs, in->rhs);
+        invalidCodePath;
       } break;
 
       case Term_Accessor:
@@ -643,7 +640,7 @@ computeType(MemoryArena *arena, Typer *env, Term *in0)
         }
         if (!args)
         {
-          Constructor ctor = getConstructor(env, in->record);
+          Constructor ctor = getConstructor(typer, in->record);
           args = synthesizeMembers(arena, in->record, ctor.id);
         }
 
@@ -653,9 +650,9 @@ computeType(MemoryArena *arena, Typer *env, Term *in0)
       case Term_Rewrite:
       {
         Rewrite *in = castTerm(in0, Rewrite);
-        auto [lhs, rhs] = getEqualitySides(computeType(arena, env, in->eq_proof));
+        auto [lhs, rhs] = getEqualitySides(computeType(arena, typer, in->eq_proof));
         Term *rewrite_to = in->right_to_left ? rhs : lhs;
-        out0 = rewriteTerm(arena, rewrite_to, in->path, todoGetType(arena, env, in->body));
+        out0 = rewriteTerm(arena, rewrite_to, in->path, todoGetType(arena, typer, in->body));
       } break;
 
       case Term_Constructor:
@@ -1031,16 +1028,6 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
         print(buffer, in->body, new_opt);
       } break;
 
-      case Ast_ComputationAst:
-      {
-        ComputationAst *computation = castAst(in0, ComputationAst);
-        print(buffer, "computation: (");
-        print(buffer, computation->lhs, new_opt);
-        print(buffer, ") => (");
-        print(buffer, computation->rhs, new_opt);
-        print(buffer, ")");
-      } break;
-
       case Ast_UnionAst:
       {
         print(buffer, "<some union>");
@@ -1192,11 +1179,11 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
       case Term_Rewrite:
       {
         Rewrite *rewrite = castTerm(in0, Rewrite);
-        // print(buffer, getTypeNoEnv(temp_arena, &rewrite->t), new_opt);
+        print(buffer, getType(&rewrite->t), new_opt);
         skip_print_type = true;
         print(buffer, " <=>");
         newlineAndIndent(buffer, opt.indentation);
-        // print(buffer, getTypeNoEnv(temp_arena, rewrite->body), new_opt);
+        print(buffer, getType(rewrite->body), new_opt);
         newlineAndIndent(buffer, opt.indentation);
 
         print(buffer, "rewrite");
@@ -1218,12 +1205,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
 
       case Term_Computation:
       {
-        print(buffer, "computation: (");
-        Computation *computation = castTerm(in0, Computation);
-        print(buffer, computation->lhs, new_opt);
-        print(buffer, ") => (");
-        print(buffer, computation->rhs, new_opt);
-        print(buffer, ")");
+        print(buffer, "computation");
       } break;
 
       case Term_Accessor:
@@ -1259,7 +1241,9 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
       } break;
     }
 
-    if (checkFlag(opt.flags, PrintFlag_PrintType) && !skip_print_type)
+    if ((checkFlag(opt.flags, PrintFlag_PrintType) ||
+         in0->cat == Term_Computation) &&
+        !skip_print_type)
     {
       print(buffer, ": ");
       print(buffer, getTypeGlobal(in0), new_opt);
@@ -1386,6 +1370,9 @@ isGround(Term *in0)
 }
 
 // todo make this an inline mutation
+// TODO handle type!
+// TODO handle type!
+// TODO handle type!
 internal Term *
 rebaseMain(MemoryArena *arena, Term *in0, i32 delta, i32 offset)
 {
@@ -1454,9 +1441,7 @@ rebaseMain(MemoryArena *arena, Term *in0, i32 delta, i32 offset)
       {
         Computation *in  = castTerm(in0, Computation);
         Computation *out = copyStruct(arena, in);
-        out->lhs = rebaseMain(arena, in->lhs, delta, offset);
-        out->rhs = rebaseMain(arena, in->rhs, delta, offset);
-        out0 = &out->t;
+        out0 = out;
       } break;
 
       case Term_Function:
@@ -1583,6 +1568,9 @@ apply(MemoryArena *arena, Term *op, i32 arg_count, Term **args, Term *type)
   return out0;
 }
 
+// TODO handle type!
+// TODO handle type!
+// TODO handle type!
 internal Term *
 evaluateMain(EvaluationContext *ctx, Term *in0)
 {
@@ -1699,13 +1687,16 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
       {
         Computation *in  = castTerm(in0, Computation);
         Computation *out = copyStruct(arena, in);
+        // TODO need to evaluate the type too!
+#if 0
         // NOTE: semi-hack so it doesn't normalize our propositions.
         u32 old_flags = ctx->flags;
         unsetFlag(&ctx->flags, EvaluationFlag_ApplyMode);
         out->lhs = evaluateMain(ctx, in->lhs);
         out->rhs = evaluateMain(ctx, in->rhs);
         ctx->flags = old_flags;
-        out0 = &out->t;
+#endif
+        out0 = out;
       } break;
 
       case Term_Rewrite:
@@ -5166,9 +5157,9 @@ int engineMain()
   temp_arena_ = newArena(temp_memory_size, temp_memory_base);
 
   char *files[] = {
-    // "../data/z-normalize-experiment.rea",
-    // "../data/natp-experiment.rea",
     "../data/z-slider-experiment.rea",
+    "../data/z-normalize-experiment.rea",
+    "../data/natp-experiment.rea",
     "../data/z.rea",
     "../data/test.rea",
   };

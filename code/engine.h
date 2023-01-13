@@ -34,7 +34,7 @@ enum AstCategory {
   Ast_CompositeAst   = 5,
   Ast_ArrowAst       = 6,
   Ast_AccessorAst    = 7,
-  Ast_ComputationAst = 8,
+  // Ast_ComputationAst = 8,
   Ast_Lambda         = 9,
   Ast_OverloadAst    = 10,
   Ast_CtorAst        = 11,
@@ -482,18 +482,7 @@ struct Rewrite {
   Term     *body;
 };
 
-struct ComputationAst {
-  embed_Ast(a);
-  // todo #cleanup we won't need lhs and rhs anymore since types are there.
-  Ast *lhs;
-  Ast *rhs;
-};
-
-struct Computation {
-  embed_Term(t);
-  Term *lhs;
-  Term *rhs;
-};
+typedef Term Computation;
 
 struct SearchOutput {b32 found; TreePath *path;};
 

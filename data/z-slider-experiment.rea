@@ -13,8 +13,9 @@ Z :: union {|(l,r: Natp)}
 
 addCommutative :: (a,b: Z) -> a+b == b+a
 {
- => (a+b).l + (b+a).r = (a+b).r + (b+a).l;
- => (a.l+b.l) + b.r+a.r = (a.r+b.r) + b.l+a.l
+ ;; => (a+b).l + (b+a).r = (a+b).r + (b+a).l;
+ ;; => (a.l+b.l) + b.r+a.r = (a.r+b.r) + b.l+a.l
+ norm;
  }
 
-print overload(addCommutative, Natp);
+print overload(addCommutative, Z);
