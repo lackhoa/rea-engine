@@ -44,15 +44,6 @@ mulCommutative :: (a,b: Z) -> b*a == a*b
  => (b.l * a.l + b.r * a.r) + a.l * b.r + a.r * b.l = (b.l * a.l + b.r * a.r) + a.l * b.r + a.r * b.l
  }
 
-algebraTest :: (a,b,c,d: Natp) -> (a+b)+c+d = a+(c+b)+d
-{
- ;; These steps would have solved the goal
- ;; => a+b+c+d = a+(c+b)+d
- ;; => a+(b+c)+d = a+(c+b)+d
- ;; => a+(b+c)+d = a+(b+c)+d
- algebraic_manipulation
- }
-
 mulDistributive :: (a,b,c: Z) -> a*c+b*c == (a+b)*c
 {
  norm;
@@ -89,8 +80,6 @@ mulDistributive :: (a,b,c: Z) -> a*c+b*c == (a+b)*c
  => ((((a.l + b.l) + a.r + b.r)*c.r) + ((a.l + b.l + b.r + a.r)*c.l) =
      ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
  => (((a.l + b.l + a.r + b.r)*c.r) + ((a.l + b.l + b.r + a.r)*c.l) =
-     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
- => (((a.l + b.l + a.r + b.r)*c.r) + ((a.l + b.l + a.r + b.r)*c.l) =
      ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
  => (((a.l + b.l + a.r + b.r)*c.r) + ((a.l + b.l + a.r + b.r)*c.l) =
      ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)

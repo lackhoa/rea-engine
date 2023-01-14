@@ -213,3 +213,14 @@ testAnonymousParameter :: fn (A: Set, A) -> A
 ;; print testAnonymousParameter;
 
 testFillHole :: (a: Nat) -> a + 0 = a {}
+
+#load "natp.rea"
+algebraTest :: (a,b,c,d: Natp) -> (a+b)+c+d = a+(c+b)+d
+{
+ ;; These steps would have solved the goal
+ ;; => a+b+c+d = a+(c+b)+d
+ ;; => a+(b+c)+d = a+(c+b)+d
+ ;; => a+(b+c)+d = a+(b+c)+d
+ ordering := algebraic_norm(b+a);
+ }
+

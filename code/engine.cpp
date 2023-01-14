@@ -21,6 +21,7 @@ global_variable Builtin *builtin_Type;
 global_variable Builtin *builtin_Set;
 global_variable Builtin *builtin_equal;
 global_variable Union   *builtin_False;
+// global_variable Builtin *builtin_algebraic_norm;
 
 global_variable Term dummy_function_being_built;
 global_variable Term  holev_ = {.cat = Term_Hole};
@@ -106,22 +107,30 @@ newVariable(MemoryArena *arena, Typer *typer, String name, i32 delta, i32 id)
 inline Term *
 newComposite(MemoryArena *arena, Term *op, i32 arg_count, Term **args)
 {
-  // todo typecheck the arguments too maybe?
   Composite *out = newTerm(arena, Composite, 0);
   out->op        = op;
   out->arg_count = arg_count;
   out->args      = args;
 
+  Arrow *signature = 0;
   // todo cutnpaste
   if (Constructor *ctor = castTerm(op, Constructor))
   {
     assert(ctor->uni);
     out->type = &ctor->uni->t;  // todo this makes me nervous!
+    signature = ctor->uni->structs[ctor->id];
   }
   else
   {
-    Arrow *op_type = castTerm(getType(op), Arrow);
-    out->type = evaluate(arena, args, op_type->output_type);
+    signature = castTerm(getType(op), Arrow);
+    out->type = evaluate(arena, args, signature->output_type);
+  }
+
+  for (i32 i=0; i < arg_count; i++)
+  {
+    Term *actual_type   = getType(args[i]);
+    Term *expected_type = evaluate(arena, args, signature->param_types[i]);
+    assert(equal(actual_type, expected_type));
   }
 
   return &out->t;
@@ -214,10 +223,10 @@ isSequenced(Term *term)
   return out;
 }
 
-// todo removeme don't need this anymore now that we put the type in the constructor
 inline Arrow *
-computeType(Constructor *ctor)
+getConstructorType(Constructor *ctor)
 {
+  // NOTE: We can play fast-and-loose with constructor type, since only the union matters.
   if (ctor->type)
     return castTerm(ctor->type, Arrow);
   else
@@ -234,7 +243,7 @@ newConstructor(MemoryArena *arena, Union *uni, i32 id)
   Constructor *ctor = newTerm(arena, Constructor, 0);
   ctor->uni = uni;
   ctor->id  = id;
-  computeType(ctor);
+  getConstructorType(ctor);
   return ctor;
 }
 
@@ -557,7 +566,7 @@ getConstructor(Typer *env, Term *in0)
   }
   if (!is_record)
   {
-    if (Union *uni = castTerm(todoGetType(temp_arena, env, in0), Union))
+    if (Union *uni = castTerm(getType(in0), Union))
     {
       if (uni->ctor_count == 1)
         out = *newConstructor(temp_arena, uni, 0);
@@ -652,13 +661,13 @@ computeType(MemoryArena *arena, Typer *typer, Term *in0)
         Rewrite *in = castTerm(in0, Rewrite);
         auto [lhs, rhs] = getEqualitySides(computeType(arena, typer, in->eq_proof));
         Term *rewrite_to = in->right_to_left ? rhs : lhs;
-        out0 = rewriteTerm(arena, rewrite_to, in->path, todoGetType(arena, typer, in->body));
+        out0 = rewriteTerm(arena, rewrite_to, in->path, getType(in->body));
       } break;
 
       case Term_Constructor:
       {
         Constructor *ctor = castTerm(in0, Constructor);
-        out0 = &computeType(ctor)->t;
+        out0 = &getConstructorType(ctor)->t;
       } break;
 
       default:
@@ -674,31 +683,13 @@ computeType(MemoryArena *arena, Typer *typer, Term *in0)
   return out0;
 }
 
-// todo this function is just a stub for direct type retrieval, until we can
-// transition fully to all-terms-have-types kinda deal thing.
-forward_declare inline Term *
-todoGetType(MemoryArena *arena, Typer *env, Term *in0)
-{
-  return computeType(arena, env, in0);
-}
-
-forward_declare inline Arrow *
-getType(Constructor *ctor)
-{
-  return castTerm(ctor->type, Arrow);
-}
-
-// NOTE: this is how I want to aim at for the type architecture: just one pointer deref.
 forward_declare inline Term *
 getType(Term *in0)
 {
-  return in0->type;
-}
-
-forward_declare inline Term *
-getTypeGlobal(Term *in0)
-{
-  return in0->type;
+  Term *out = in0->type;
+  if (Constructor *ctor = castTerm(in0, Constructor))
+    out = &getConstructorType(ctor)->t;
+  return out;
 }
 
 inline void setType(Term *term, Term *type) {term->type = type;}
@@ -816,7 +807,7 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
 
     if (in->op && in->op->cat != Term_Variable)
     {
-      op_signature = castTerm((getTypeGlobal(in->op)), Arrow);
+      op_signature = castTerm((getType(in->op)), Arrow);
       assert(op_signature);
       if (Token *global_name = in->op->global_name)
         precedence = precedenceOf(global_name->string);
@@ -1246,7 +1237,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
         !skip_print_type)
     {
       print(buffer, ": ");
-      print(buffer, getTypeGlobal(in0), new_opt);
+      print(buffer, getType(in0), new_opt);
     }
   }
   else
@@ -1990,15 +1981,19 @@ lookupGlobalNameSlot(String key, b32 add_new)
           slot = slot->next_hash_slot;
           slot->key = key;
         }
-        else slot = 0;
+        else
+          slot = 0;
         break;
       }
     }
   }
-  else if (add_new) slot->key = key;
-  else slot = 0;
+  else if (add_new)
+    slot->key = key;
+  else
+    slot = 0;
 
-  if (slot && !add_new) assert(slot->count != 0);
+  if (slot && !add_new)
+    assert(slot->count != 0);
 
   return slot;
 }
@@ -2754,6 +2749,7 @@ getFunctionOverloads(Identifier *ident, Term *output_type_goal)
   {
     if (output_type_goal->cat == Term_Hole)
     {
+      // bypass typechecking.
       out.items = slot->items;
       out.count = slot->count;
     }
@@ -3212,6 +3208,21 @@ getOverloadFromDistinguisher(Token *token, const char *name, Term *distinguisher
   return out;
 }
 
+inline b32
+isAlgebraicNorm(Ast *ast)
+{
+  // Could be extended to a general macro matcher, if we need more macros.
+  b32 out = false;
+  if (Identifier *ident = castAst(ast, Identifier))
+  {
+    if (equal(&ident->a.token, "algebraic_norm"))
+    {
+      out = true;
+    }
+  }
+  return out;
+}
+
 forward_declare internal BuildTerm
 buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 {
@@ -3221,7 +3232,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
   // todo print out the goal whenever we fail
   // beware: Usually we mutate in-place, but we may also allocate anew.
   i32 UNUSED_VAR serial = DEBUG_SERIAL++;
-  BuildTerm out0 = {};
+  Term *out0 = {};
   assert(goal);
   b32 should_check_type = true;
   b32 recursed = false;
@@ -3231,7 +3242,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
     case Ast_Hole:
     {
       if (Term *solution = solveForGoal(Solver{.arena=arena, .env=env, .use_global_hints=true}, goal))
-        out0.term = solution;
+        out0 = solution;
       else
         parseError(in0, "please provide an expression here");
     } break;
@@ -3239,7 +3250,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
     case Ast_SyntheticAst:
     {
       SyntheticAst *in = castAst(in0, SyntheticAst);
-      out0.term = in->term;
+      out0 = in->term;
     } break;
 
     case Ast_Identifier:
@@ -3252,7 +3263,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         var->name  = in0->token.string;
         var->id    = local.var_id;
         var->delta = local.stack_delta;
-        out0.term  = &var->t;
+        out0  = &var->t;
       }
       else
       {
@@ -3262,7 +3273,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           for (i32 value_id = 0; value_id < globals->count; value_id++)
           {
             Term *slot_value = globals->items[value_id];
-            if (matchType(todoGetType(arena, env, slot_value), goal))
+            if (matchType(getType(slot_value), goal))
             {
               if (value)
               {// ambiguous
@@ -3280,14 +3291,14 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
             attach("name", name);
             attach("expected_type", goal);
             if (globals->count == 1)
-              attach("actual_type", getTypeGlobal(globals->items[0]));
+              attach("actual_type", getType(globals->items[0]));
           }
         }
 
         if (value)
         {
           should_check_type = false;
-          out0.term = value;
+          out0 = value;
         }
       }
     } break;
@@ -3302,10 +3313,42 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         // Infer all arguments.
         if (Identifier *op_ident = castAst(in->op, Identifier))
         {
-          out0.term = getMatchingFunctionCall(arena, env, op_ident, goal);
+          out0 = getMatchingFunctionCall(arena, env, op_ident, goal);
         }
         else
           parseError(in->args[0], "todo: ellipsis only works with identifier atm");
+      }
+      else if (isAlgebraicNorm(in->op))
+      {
+        // macro interception
+        if (in->arg_count == 1)
+        {
+          if (Term *expression0 = buildTerm(arena, env, in->args[0], holev))
+          {
+            for (AlgebraDatabase *algebras=global_state.algebras;
+                 algebras && !out0;
+                 algebras=algebras->next)
+            {
+              Algebra *algebra = &algebras->first;
+              if (equal(getType(expression0), algebra->type))
+              {
+                if (Composite *expression = castTerm(expression0, Composite))
+                {
+                  if (equal(expression->op, algebra->add))
+                  {
+                    todoIncomplete;
+                    // if (algebraicallyLessThan(expression->args[1], expression->args[0]))
+                    // {
+                    //   newComposite(expression->args[0]);
+                    // }
+                  }
+                }
+              }
+            }
+          }
+        }
+        else
+          parseError("expected 1 argument");
       }
       else
       {
@@ -3333,20 +3376,20 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 
         if (noError() && should_build_op)
         {
-          if (BuildTerm build_op = buildTerm(arena, env, in->op, holev))
+          if (Term *op = buildTerm(arena, env, in->op, holev).term)
           {
             op_list.count = 1;
             allocateArray(temp_arena, 1, op_list.items);
-            op_list.items[0] = build_op.term;
+            op_list.items[0] = op;
           }
         }
 
         for (i32 attempt=0;
-             (attempt < op_list.count) && !(out0.term) && noError();
+             (attempt < op_list.count) && (!out0) && noError();
              attempt++)
         {
           Term *op = op_list.items[attempt];
-          if (Arrow *signature = castTerm(todoGetType(temp_arena, env, op), Arrow))
+          if (Arrow *signature = castTerm(getType(op), Arrow))
           {
             i32 param_count = signature->param_count;
             Ast **expanded_args = in->args;
@@ -3402,17 +3445,17 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                     args[arg_id] = placeholder_arg;
                   }
                 }
-                else if (BuildTerm arg = buildTerm(arena, env, expanded_args[arg_id], expected_arg_type))
+                else if (Term *arg = buildTerm(arena, env, expanded_args[arg_id], expected_arg_type).term)
                 {
-                  args[arg_id] = arg.term;
+                  args[arg_id] = arg;
                   if (expected_arg_type->cat == Term_Hole)
                   {
                     Variable *param_type = castTerm(param_type0, Variable);
                     assert(param_type->delta == 0);
                     Term *placeholder_arg = args[param_type->id];
                     assert(placeholder_arg->cat == Term_Hole);
-                    Term *arg_type = todoGetType(arena, env, arg.term);
-                    Term *arg_type_type = todoGetType(arena, env, arg_type);
+                    Term *arg_type = getType(arg);
+                    Term *arg_type_type = getType(arg_type);
                     if (equal(placeholder_arg->type, arg_type_type))
                       args[param_type->id] = arg_type;
                     else
@@ -3442,14 +3485,14 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
                 out->op        = op;
                 out->arg_count = param_count;
                 out->args      = copyArray(arena, param_count, args);
-                out0.term  = &out->t;
+                out0  = &out->t;
               }
             }
           }
           else
           {
             parseError(in->op, "operator must have an arrow type");
-            attach("operator type", todoGetType(temp_arena, env, op));
+            attach("operator type", getType(op));
           }
 
           if (op_list.count > 1)
@@ -3484,10 +3527,9 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
         allocateArray(arena, param_count, out->param_types);
         for (i32 index=0; index < param_count && noError(); index++)
         {
-          BuildTerm param_type = buildTerm(arena, env, in->param_types[index], holev);
-          if (param_type)
+          if (Term *param_type = buildTerm(arena, env, in->param_types[index], holev))
           {
-            out->param_types[index] = param_type.term;
+            out->param_types[index] = param_type;
             String name = in->param_names[index];
             addLocalBinding(env, name, index);
           }
@@ -3495,11 +3537,11 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 
         if (noError())
         {
-          out0.term = &out->t;
+          out0 = &out->t;
           if (in->output_type)
           {
-            if (BuildTerm output_type = buildTerm(arena, env, in->output_type, holev))
-              out->output_type = output_type.term;
+            if (Term *output_type = buildTerm(arena, env, in->output_type, holev).term)
+              out->output_type = output_type;
           }
         }
         unwindBindingsAndScope(env);
@@ -3511,13 +3553,13 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       AccessorAst *in = castAst(in0, AccessorAst);
       Accessor *out = newTerm(arena, Accessor, 0);
       out->field_name = in->field_name.string;
-      if (BuildTerm build_record = buildTerm(arena, env, in->record, holev))
+      if (Term *record = buildTerm(arena, env, in->record, holev).term)
       {
-        Constructor ctor = getConstructor(env, build_record.term);
+        Constructor ctor = getConstructor(env, record);
         if (ctor.uni)
         {
-          out->record = build_record.term;
-          Arrow *op_type = getType(&ctor);
+          out->record = record;
+          Arrow *op_type = getConstructorType(&ctor);
           i32 param_count = op_type->param_count;
           b32 valid_param_name = false;
           for (i32 param_id=0; param_id < param_count; param_id++)
@@ -3531,7 +3573,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           }
 
           if (valid_param_name)
-            out0.term = &out->t;
+            out0 = &out->t;
           else
           {
             tokenError(&in->field_name, "accessor has invalid member");
@@ -3549,13 +3591,10 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 
     case Ast_Lambda:
     {
-      Lambda   *in  = castAst(in0, Lambda);
-      Term *type = goal;
+      Lambda *in   = castAst(in0, Lambda);
+      Term   *type = goal;
       if (in->signature)
-      {
-        if (BuildTerm build = buildTerm(arena, env, in->signature, holev))
-          type = build.term;
-      }
+        type = buildTerm(arena, env, in->signature, holev).term;
 
       if (noError())
       {
@@ -3565,11 +3604,11 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           fun->type = &signature->t;
 
           introduceSignature(env, signature, true);
-          if (BuildTerm body = buildTerm(arena, env, in->body, signature->output_type))
-            fun->body = body.term;
+          if (Term *body = buildTerm(arena, env, in->body, signature->output_type).term)
+            fun->body = body;
           unwindBindingsAndScope(env);
           if (noError())
-            out0.term  = &fun->t;
+            out0  = &fun->t;
         }
         else
         {
@@ -3584,9 +3623,9 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       should_check_type = false;
       RewriteAst *in  = castAst(in0, RewriteAst);
       Term *new_goal = 0;
-      if (BuildTerm eq_proof = buildTerm(arena, env, in->eq_proof, holev))
+      if (Term *eq_proof = buildTerm(arena, env, in->eq_proof, holev).term)
       {
-        Term *proof_type = todoGetType(temp_arena, env, eq_proof.term);
+        Term *proof_type = getType(eq_proof);
         if (auto [lhs, rhs] = getEqualitySides(proof_type, false))
         {
           Term *from = in->right_to_left ? rhs : lhs;
@@ -3595,8 +3634,8 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           if (search.found)
           {
             new_goal = rewriteTerm(arena, to, search.path, goal);
-            if (BuildTerm body = buildTerm(arena, env, in->body, new_goal))
-              out0.term = newRewrite(arena, eq_proof.term, body.term, search.path, in->right_to_left);
+            if (Term *body = buildTerm(arena, env, in->body, new_goal).term)
+              out0 = newRewrite(arena, eq_proof, body, search.path, in->right_to_left);
           }
           else
           {
@@ -3709,7 +3748,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       {
         if (Term *body = buildTerm(arena, env, in->body, new_goal))
         {
-          out0.term = newRewrite(arena, eq_proof, body, rewrite_path, right_to_left);
+          out0 = newRewrite(arena, eq_proof, body, rewrite_path, right_to_left);
         }
       }
     } break;
@@ -3720,14 +3759,14 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       Term *type_hint = holev;
       if (in->type && in->type != AST_NORMALIZE_ME)
       {
-        if (BuildTerm type = buildTerm(arena, env, in->type, holev))
-          type_hint = type.term;
+        if (Term *type = buildTerm(arena, env, in->type, holev).term)
+          type_hint = type;
       }
       if (noError())
       {
-        if (BuildTerm build_rhs = buildTerm(arena, env, in->rhs, type_hint))
+        if (Term *build_rhs = buildTerm(arena, env, in->rhs, type_hint).term)
         {
-          Term *rhs = build_rhs.term;
+          Term *rhs = build_rhs;
           Term *rhs_type = type_hint;
           if (type_hint->cat == Term_Hole)
             rhs_type = getType(rhs);
@@ -3737,7 +3776,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
             Term *norm_rhs_type = normalize(arena, env, rhs_type);
             Term *computation = newComputation(arena, norm_rhs_type, rhs_type);
             rhs_type = norm_rhs_type;
-            rhs = newRewrite(arena, computation, build_rhs.term, 0, false);
+            rhs = newRewrite(arena, computation, build_rhs, 0, false);
             assert(equal(getType(rhs), rhs_type));
           }
 
@@ -3774,14 +3813,14 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
     case Ast_ForkAst:
     {// no need to return value since nobody uses the value of a fork
       ForkAst *fork = castAst(in0, ForkAst);
-      out0.term = buildFork(arena, env, fork, goal);
+      out0 = buildFork(arena, env, fork, goal);
       recursed = true;
     } break;
 
     case Ast_UnionAst:
     {
       UnionAst *uni = castAst(in0, UnionAst);
-      out0.term = &buildUnion(arena, env, uni, 0)->t;
+      out0 = &buildUnion(arena, env, uni, 0)->t;
     } break;
 
     case Ast_CtorAst:
@@ -3813,12 +3852,12 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
               var->name  = arrow->param_names[param_id];
               var->delta = delta;
               var->id    = param_id;
-              out0.term = &var->t;
+              out0 = &var->t;
             }
           }
           delta++;
         }
-        if (!out0.term)
+        if (!out0)
           parseError(in0, "cannot find a matching proof on the stack");
       }
     } break;
@@ -3830,8 +3869,8 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       {
         if (Term *distinguisher = buildTerm(temp_arena, env, in->distinguisher, holev).term)
         {
-          out0.term = getOverloadFromDistinguisher(lookup, distinguisher);
-          if (!out0.term)
+          out0 = getOverloadFromDistinguisher(lookup, distinguisher);
+          if (!out0)
             parseError(in0, "found no overload corresponding to distinguisher");
         }
       }
@@ -3842,7 +3881,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
 
   if (noError())
   {// typecheck if needed
-    Term *actual = computeType(arena, env, out0.term);
+    Term *actual = computeType(arena, env, out0);
     if (should_check_type && !recursed)
     {
       if (!matchType(actual, goal))
@@ -3877,7 +3916,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
   {
     assert(out0);
   }
-  return out0;
+  return BuildTerm{.term=out0};
 }
 
 forward_declare internal Term *
@@ -3895,7 +3934,7 @@ buildFork(MemoryArena *arena, Typer *env, ForkAst *in, Term *goal)
     out->subject = subject.term;
     i32 case_count = in->case_count;
 
-    Term *subject_type = todoGetType(arena, env, subject.term);
+    Term *subject_type = getType(subject.term);
     if (Union *uni = castTerm(subject_type, Union))
     {
       if (uni->ctor_count == case_count)
@@ -4429,7 +4468,7 @@ buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
     {
       Arrow *signature = castTerm(build_type.term, Arrow);
       uni->structs[ctor_id] = signature;
-      ctor->type                    = &signature->t;
+      ctor->type            = &signature->t;
 
       if (global_name)
       {
@@ -4439,9 +4478,7 @@ buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
         }
         else
         {
-          Composite *record = newTerm(arena, Composite, 0);
-          record->op = &ctor->t;
-          addGlobalBinding(ctor_name, &record->t);
+          addGlobalBinding(ctor_name, newComposite(arena, &ctor->t, 0, 0));
         }
       }
     }
@@ -4937,29 +4974,29 @@ parseTopLevel(EngineState *state)
       {
         if (Term *type = parseExpressionAndBuild(arena).term)
         {
-          if (Union *uni = castTerm(type, Union))
-          {
-            Algebra algebra = {.type=uni};
-            const i32 function_count = 7;
-            const char *function_names[function_count] = {
-              "+", "addCommutative", "addAssociative",
-              "*", "mulCommutative", "mulAssociative",
-              "mulDistributive",
-            };
-            Term **functions[function_count] = {
-              &algebra.add, &algebra.addCommutative, &algebra.addAssociative,
-              &algebra.mul, &algebra.mulCommutative, &algebra.mulAssociative,
-              &algebra.mulDistributive,
-            };
+          AlgebraDatabase *new_algebras = pushStruct(global_state.top_level_arena, AlgebraDatabase);
+          new_algebras->next            = global_state.algebras;
+          global_state.algebras = new_algebras;
 
-            for (i32 i=0; i < function_count && noError(); i++)
-            {
-              if (Term *function = getOverloadFromDistinguisher(token, function_names[i], type))
-                *functions[i] = function;
-            }
+          Algebra *algebra = &new_algebras->first;
+          algebra->type = type;
+          const i32 function_count = 7;
+          const char *function_names[function_count] = {
+            "+", "addCommutative", "addAssociative",
+            "*", "mulCommutative", "mulAssociative",
+            "mulDistributive",
+          };
+          Term **functions[function_count] = {
+            &algebra->add, &algebra->addCommutative, &algebra->addAssociative,
+            &algebra->mul, &algebra->mulCommutative, &algebra->mulAssociative,
+            &algebra->mulDistributive,
+          };
+
+          for (i32 i=0; i < function_count && noError(); i++)
+          {
+            if (Term *function = getOverloadFromDistinguisher(token, function_names[i], type))
+              *functions[i] = function;
           }
-          else
-            parseError(token, "please supply a union");
         }
       } break;
 
@@ -5152,19 +5189,20 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
 }
 
 internal b32
-beginInterpreterSession(MemoryArena *arena, char *initial_file)
+beginInterpreterSession(MemoryArena *top_level_arena, char *initial_file)
 {
   DEBUG_OFF;
   // :global_state_cleared_at_startup Clear global state as we might run the
   // interpreter multiple times.
+  auto arena = top_level_arena;
   global_state       = {};
   global_state.top_level_arena = arena;
 
   global_state.bindings = pushStruct(arena, GlobalBindings);  // :global-bindings-zero-at-startup because // :global_state_cleared_at_startup
 
-  // NOTE: Rn we gotta create the builtins every interpreter session, since the
-  // parsing depends on the global bindings. And the global bindings resets
-  // every time. Since aren't many sessions, the work duplication is fine.
+  // NOTE: Atm we gotta create the builtins every interpreter session, since the
+  // parsing depends on the global bindings, which resets every time. Since
+  // aren't many sessions, this redundancy is fine, just ugly.
   {
     builtin_Type       = newTerm(arena, Builtin, 0);
     builtin_Type->type = &builtin_Type->t; // NOTE: circular types
@@ -5181,11 +5219,14 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
     builtin_equal = newTerm(arena, Builtin, equal_type.term);
     addBuiltinGlobalBinding("=", &builtin_equal->t);
 
-    EngineState builtin_engine_state = EngineState{.top_level_arena=arena};
+    EngineState builtin_engine_state = EngineState{.top_level_arena=top_level_arena};
     // todo this could just be an expression now, since we have union expression!
     builtin_tk.at = "False :: union { }";
     parseTopLevel(&builtin_engine_state);
     builtin_False = castTerm(lookupBuiltinGlobalName("False"), Union);
+
+    // builtin_algebraic_norm = newTerm(arena, Builtin, 0);
+    // addBuiltinGlobalBinding("algebraic_norm", &builtin_algebraic_norm->t);
 
     resetArena(temp_arena);
   }
@@ -5230,10 +5271,10 @@ int engineMain()
 
   char *files[] = {
     // "../data/z-normalize-experiment.rea",
-    "../data/test.rea",
     "../data/natp-experiment.rea",
     "../data/z.rea",
     "../data/z-slider-experiment.rea",
+    "../data/test.rea",
   };
   for (i32 file_id=0; file_id < arrayCount(files); file_id++)
   {

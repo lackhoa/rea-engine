@@ -403,14 +403,6 @@ struct HintDatabase {
   HintDatabase *next;
 };
 
-// :global_state_cleared_at_startup
-struct EngineState {
-  MemoryArena    *top_level_arena;
-  FileList       *file_list;
-  GlobalBindings *bindings;
-  HintDatabase   *hints;
-};
-
 u32 PrintFlag_Detailed     = 1 << 0;
 u32 PrintFlag_LockDetailed = 1 << 1;
 u32 PrintFlag_PrintType    = 1 << 2;
@@ -557,7 +549,7 @@ struct Solver {
 };
 
 struct Algebra {
-  Union *type;
+  Term *type;
 
   Term *add;
   Term *addCommutative;
@@ -568,6 +560,20 @@ struct Algebra {
   Term *mulAssociative;
 
   Term *mulDistributive;
+};
+
+struct AlgebraDatabase {
+  Algebra          first;
+  AlgebraDatabase *next;
+};
+
+// :global_state_cleared_at_startup
+struct EngineState {
+  MemoryArena     *top_level_arena;
+  FileList        *file_list;
+  GlobalBindings  *bindings;
+  HintDatabase    *hints;
+  AlgebraDatabase *algebras;
 };
 
 #include "generated/engine_forward.h"
