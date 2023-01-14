@@ -17,7 +17,11 @@
 #include "tokenization.cpp"
 #include "debug_config.h"
 
-global_variable Builtins builtins;
+global_variable Builtin *builtin_Type;
+global_variable Builtin *builtin_Set;
+global_variable Builtin *builtin_equal;
+global_variable Union   *builtin_False;
+
 global_variable Term dummy_function_being_built;
 global_variable Term  holev_ = {.cat = Term_Hole};
 global_variable Term *holev = &holev_;
@@ -138,9 +142,9 @@ inline Term *
 newEquality(MemoryArena *arena, Term *type, Term *lhs, Term *rhs)
 {
   assert(type);
-  Composite *eq = newTerm(arena, Composite, &builtins.Set->t);
+  Composite *eq = newTerm(arena, Composite, &builtin_Set->t);
   allocateArray(arena, 3, eq->args);
-  eq->op        = &builtins.equal->t;
+  eq->op        = &builtin_equal->t;
   eq->arg_count = 3;
   eq->args[0]   = type;
   eq->args[1]   = lhs;
@@ -162,7 +166,7 @@ isEquality(Term *eq0)
 {
   if (Composite *eq = castTerm(eq0, Composite))
   {
-    if (eq->op == &builtins.equal->t)
+    if (eq->op == &builtin_equal->t)
       return true;
   }
   return false;
@@ -174,7 +178,7 @@ getEqualitySides(Term *eq0, b32 must_succeed=true)
   TermPair out = {};
   if (Composite *eq = castTerm(eq0, Composite))
   {
-    if (eq->op == &builtins.equal->t)
+    if (eq->op == &builtin_equal->t)
       out = TermPair{eq->args[1], eq->args[2]};
   }
   assert(!must_succeed || out)
@@ -610,7 +614,7 @@ computeType(MemoryArena *arena, Typer *typer, Term *in0)
 
       case Term_Arrow:
       {
-        out0 = &builtins.Type->t;
+        out0 = &builtin_Type->t;
       } break;
 
       case Term_Function:
@@ -1158,11 +1162,11 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
 
       case Term_Builtin:
       {
-        if (in0 == &builtins.equal->t)
+        if (in0 == &builtin_equal->t)
           print(buffer, "=");
-        else if (in0 == &builtins.Set->t)
+        else if (in0 == &builtin_Set->t)
           print(buffer, "Set");
-        else if (in0 == &builtins.Type->t)
+        else if (in0 == &builtin_Type->t)
           print(buffer, "Type");
       } break;
 
@@ -1509,7 +1513,7 @@ apply(MemoryArena *arena, Term *op, i32 arg_count, Term **args, Term *type)
     if (fun->body != &dummy_function_being_built)
       out0 = evaluate(arena, args, fun->body, EvaluationFlag_ApplyMode);
   }
-  else if (op == &builtins.equal->t)
+  else if (op == &builtin_equal->t)
   {// special case for equality
     Term *l0 = args[1];
     Term *r0 = args[2];
@@ -1536,7 +1540,7 @@ apply(MemoryArena *arena, Term *op, i32 arg_count, Term **args, Term *type)
                 args[0] = getType(larg);
                 args[1] = larg;
                 args[2] = rarg;
-                out0 = apply(arena, &builtins.equal->t, 3, args, type);
+                out0 = apply(arena, &builtin_equal->t, 3, args, type);
                 if (!out0)
                   out0 = newEquality(arena, getType(larg), larg, rarg);
               }
@@ -1551,7 +1555,7 @@ apply(MemoryArena *arena, Term *op, i32 arg_count, Term **args, Term *type)
     Trinary compare = equalTrinary(l0, r0);
     // #hack to handle inconsistency
     if (compare == Trinary_False)
-      out0 = &builtins.False->t;
+      out0 = &builtin_False->t;
   }
   else if (op->cat == Term_Constructor)
   {
@@ -2659,7 +2663,7 @@ solveGoal(Solver *solver, Term *goal)
 
   b32 should_attempt_inference = true;
   if (solver->depth > MAX_SOLVE_DEPTH ||
-      goal == &builtins.Set->t ||
+      goal == &builtin_Set->t ||
       goal->cat == Term_Hole)
   {
     should_attempt_inference = false;
@@ -3469,7 +3473,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
     case Ast_ArrowAst:
     {
       ArrowAst *in = castAst(in0, ArrowAst);
-      Arrow *out = newTerm(arena, Arrow, &builtins.Type->t);
+      Arrow *out = newTerm(arena, Arrow, &builtin_Type->t);
       i32 param_count = in->param_count;
       out->param_count   = param_count;
       out->param_names   = copyArray(arena, param_count, in->param_names);  // todo copy festival
@@ -4404,7 +4408,7 @@ parseUnion(MemoryArena *arena)
 forward_declare internal Union *
 buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
 {
-  Union *uni = newTerm(arena, Union, &builtins.Set->t);
+  Union *uni = newTerm(arena, Union, &builtin_Set->t);
   uni->ctor_count = in->ctor_count;
   allocateArray(arena, in->ctor_count, uni->ctor_names);
   allocateArray(arena, in->ctor_count, uni->structs);
@@ -4906,7 +4910,7 @@ parseTopLevel(EngineState *state)
           if (Composite *eq = castTerm(goal, Composite))
           {
             b32 goal_valid = false;
-            if (eq->op == &builtins.equal->t)
+            if (eq->op == &builtin_equal->t)
             {
               goal_valid = true;
               Term *lhs = normalize(temp_arena, empty_env, eq->args[1]);
@@ -5156,39 +5160,33 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
   global_state       = {};
   global_state.top_level_arena = arena;
 
+  global_state.bindings = pushStruct(arena, GlobalBindings);  // :global-bindings-zero-at-startup because // :global_state_cleared_at_startup
+
+  // NOTE: Rn we gotta create the builtins every interpreter session, since the
+  // parsing depends on the global bindings. And the global bindings resets
+  // every time. Since aren't many sessions, the work duplication is fine.
   {
-    global_state.bindings = pushStruct(arena, GlobalBindings);  // :global-bindings-zero-at-startup
+    builtin_Type       = newTerm(arena, Builtin, 0);
+    builtin_Type->type = &builtin_Type->t; // NOTE: circular types
+    addBuiltinGlobalBinding("Type", &builtin_Type->t);
 
-    builtins = {};
-    {// Type and Set
-      // Token superset_name = newToken("Type");
-      builtins.Type = newTerm(arena, Builtin, 0);
-      builtins.Type->type = &builtins.Type->t; // NOTE: circular types
-      addBuiltinGlobalBinding("Type", &builtins.Type->t);
+    builtin_Set = newTerm(arena, Builtin, &builtin_Type->t);
+    addBuiltinGlobalBinding("Set", &builtin_Set->t);
 
-      builtins.Set = newTerm(arena, Builtin, &builtins.Type->t);
-      addBuiltinGlobalBinding("Set", &builtins.Set->t);
-    }
+    Tokenizer builtin_tk = newTokenizer(toString("<builtin_not_a_real_dir>"), 0);
+    global_tokenizer = &builtin_tk;
+    builtin_tk.at = "(#hidden A: Set, a,b: A) -> Set";
+    BuildTerm equal_type = parseExpressionAndBuild(arena); 
+    assert(noError());
+    builtin_equal = newTerm(arena, Builtin, equal_type.term);
+    addBuiltinGlobalBinding("=", &builtin_equal->t);
 
-    {// more builtins
-      Tokenizer builtin_tk = newTokenizer(toString("<builtin>"), 0);
-      global_tokenizer = &builtin_tk;
-      builtin_tk.at = "(#hidden A: Set, a,b: A) -> Set";
-      BuildTerm equal_type = parseExpressionAndBuild(arena); 
-      assert(noError());
-      builtins.equal = newTerm(arena, Builtin, equal_type.term);
-      addBuiltinGlobalBinding("=", &builtins.equal->t);
+    EngineState builtin_engine_state = EngineState{.top_level_arena=arena};
+    // todo this could just be an expression now, since we have union expression!
+    builtin_tk.at = "False :: union { }";
+    parseTopLevel(&builtin_engine_state);
+    builtin_False = castTerm(lookupBuiltinGlobalName("False"), Union);
 
-      EngineState builtin_engine_state = EngineState{.top_level_arena=arena};
-      builtin_tk.at = "True :: union { truth }";
-      parseTopLevel(&builtin_engine_state);
-      assert(noError());
-      builtins.True  = castTerm(lookupBuiltinGlobalName("True"), Union);
-      builtins.truth = castTerm(lookupBuiltinGlobalName("truth"), Constructor);
-      builtin_tk.at = "False :: union { }";
-      parseTopLevel(&builtin_engine_state);
-      builtins.False = castTerm(lookupBuiltinGlobalName("False"), Union);
-    }
     resetArena(temp_arena);
   }
 
@@ -5219,16 +5217,16 @@ int engineMain()
   assert(arrayCount(meta_directives)   == Token_Directive_END - Token_Directive_START);
   assert(arrayCount(language_tactics)  == Tactic_COUNT);
 
-  void   *permanent_memory_base = (void*)teraBytes(2);
-  size_t  permanent_memory_size = megaBytes(256);
-  permanent_memory_base = platformVirtualAlloc(permanent_memory_base, permanent_memory_size);
-  MemoryArena permanent_arena_ = newArena(permanent_memory_size, permanent_memory_base);
-  MemoryArena *permanent_arena = &permanent_arena_;
+  void   *top_level_arena_base = (void*)teraBytes(2);
+  size_t  top_level_arena_size = megaBytes(256);
+  top_level_arena_base = platformVirtualAlloc(top_level_arena_base, top_level_arena_size);
+  MemoryArena top_level_arena_ = newArena(top_level_arena_size, top_level_arena_base);
+  MemoryArena *top_level_arena = &top_level_arena_;
 
-  void   *temp_memory_base = (void*)teraBytes(3);
-  size_t  temp_memory_size = megaBytes(2);
-  temp_memory_base = platformVirtualAlloc(temp_memory_base, permanent_memory_size);
-  temp_arena_ = newArena(temp_memory_size, temp_memory_base);
+  void   *temp_arena_base = (void*)teraBytes(3);
+  size_t  temp_arena_size = megaBytes(2);
+  temp_arena_base = platformVirtualAlloc(temp_arena_base, top_level_arena_size);
+  temp_arena_ = newArena(temp_arena_size, temp_arena_base);
 
   char *files[] = {
     // "../data/z-normalize-experiment.rea",
@@ -5239,9 +5237,9 @@ int engineMain()
   };
   for (i32 file_id=0; file_id < arrayCount(files); file_id++)
   {
-    if (!beginInterpreterSession(permanent_arena, files[file_id]))
+    if (!beginInterpreterSession(top_level_arena, files[file_id]))
       success = false;
-    resetArena(permanent_arena, true);
+    resetArena(top_level_arena, true);
   }
   return success;
 }

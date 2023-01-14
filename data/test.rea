@@ -1,7 +1,6 @@
 #load "boolean.rea"
 #load "nat.rea"
 
-check True: Set;
 ;; print_raw (x: False) -> (x = x);
 ;; print_raw false & true | true & false | true;
 
@@ -148,6 +147,8 @@ foo :: (a: Bool) -> union {f(p: a=false), t(p: a=true)}
   true  return ctor[1](_),
   }
  }
+
+True :: union {truth}
 
 arrowTypeUnification :: (x: True) -> (a: True) -> a=x {return _ => {fork a {truth: fork x {truth: }}}}
 test_eval arrowTypeUnification(truth);

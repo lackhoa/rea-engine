@@ -20,7 +20,6 @@ enum TokenCategory
 
   Token_Keyword_START,
   Token_Keyword_fn,
-  // Token_Keyword_fork,
   Token_Keyword_union,
   Token_Keyword_ctor,
   Token_Keyword_seq,
@@ -56,7 +55,6 @@ enum TokenCategory
 
 const char *language_keywords[] = {
   "", "fn", "union", "ctor", "seq", "overload", "seek",
-  // "rewrite", "norm", "prove", "algebraic_manipulation",
   "test_eval", "print", "print_raw", "print_ast", "check", "check_truth", "algebra_declare",
 };
 const char *meta_directives[] = {"", "load", "should_fail", "debug", "norm", "hidden", "hint"};
@@ -68,12 +66,11 @@ enum TacticEnum {
   Tactic_return,
   Tactic_fork,
   Tactic_prove,
-  Tactic_algebraic_manipulation,
   Tactic_seek,
 
   Tactic_COUNT,
 };
-const char *language_tactics[] = {"", "rewrite", "=>", "norm", "return", "fork", "prove", "algebraic_manipulation", "seek"};
+const char *language_tactics[] = {"", "rewrite", "=>", "norm", "return", "fork", "prove", "seek"};
 
 struct Token
 {

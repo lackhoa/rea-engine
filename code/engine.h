@@ -428,15 +428,6 @@ printOptionPrintType(PrintOptions options={})
   return options;
 }
 
-struct Builtins {
-  Union       *True;
-  Constructor *truth;
-  Union       *False;
-  Builtin     *equal;
-  Builtin     *Set;
-  Builtin     *Type;
-};
-
 enum MatcherCategory {
   MC_Unknown,
   MC_Exact,
