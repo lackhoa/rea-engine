@@ -3,19 +3,95 @@
 Z :: union {|(l,r: Natp)}
 
 == :: fn(a,b: Z) -> Set
-{a.l+b.r = a.r+b.l}
+{return a.l+b.r = a.r+b.l}
 
 + :: fn(a,b: Z) -> Z
-{(a.l+b.l) | (a.r+b.r)}
+{return (a.l+b.l) | (a.r+b.r)}
 
 * :: fn(a,b: Z) -> Z
-{(a.l*b.r + a.r*b.l) | (a.l*b.l + a.r*b.r)}
+{return (a.l*b.r + a.r*b.l) | (a.l*b.l + a.r*b.r)}
 
 addCommutative :: (a,b: Z) -> a+b == b+a
+#hint
 {
- ;; => (a+b).l + (b+a).r = (a+b).r + (b+a).l;
- ;; => (a.l+b.l) + b.r+a.r = (a.r+b.r) + b.l+a.l
  norm;
+ ;; (a.l + b.l) + b.r + a.r = (a.r + b.r) + b.l + a.l;
+ => (b.r + a.r) + a.l + b.l = (a.r + b.r) + b.l + a.l;
+ => (a.r + b.r) + a.l + b.l = (a.r + b.r) + b.l + a.l;
+ => (a.r + b.r) + b.l + a.l = (a.r + b.r) + b.l + a.l;
  }
 
-print overload(addCommutative, Z);
+addAssociative :: (a,b,c: Z) -> (a+b)+c == a+b+c
+#hint
+{
+ norm;
+ ;; ((a.l + b.l) + c.l) + a.r + b.r + c.r = ((a.r + b.r) + c.r) + a.l + b.l + c.l
+ => (a.r + b.r + c.r) + (a.l + b.l) + c.l = ((a.r + b.r) + c.r) + a.l + b.l + c.l;
+ => ((a.r + b.r) + c.r) + (a.l + b.l) + c.l = ((a.r + b.r) + c.r) + a.l + b.l + c.l;
+ => ((a.r + b.r) + c.r) + a.l + b.l + c.l = ((a.r + b.r) + c.r) + a.l + b.l + c.l;
+ }
+
+mulCommutative :: (a,b: Z) -> b*a == a*b
+#hint
+{
+ norm;
+ ;; (b.l * a.r + b.r * a.l) + a.l * b.l + a.r * b.r = (b.l * a.l + b.r * a.r) + a.l * b.r + a.r * b.l
+ => (a.l * b.l + a.r * b.r) + b.l * a.r + b.r * a.l = (b.l * a.l + b.r * a.r) + a.l * b.r + a.r * b.l
+ => (b.l * a.l + a.r * b.r) + b.l * a.r + b.r * a.l = (b.l * a.l + b.r * a.r) + a.l * b.r + a.r * b.l
+ => (b.l * a.l + b.r * a.r) + b.l * a.r + b.r * a.l = (b.l * a.l + b.r * a.r) + a.l * b.r + a.r * b.l
+ => (b.l * a.l + b.r * a.r) + a.r * b.l + b.r * a.l = (b.l * a.l + b.r * a.r) + a.l * b.r + a.r * b.l
+ => (b.l * a.l + b.r * a.r) + a.r * b.l + a.l * b.r = (b.l * a.l + b.r * a.r) + a.l * b.r + a.r * b.l
+ => (b.l * a.l + b.r * a.r) + a.l * b.r + a.r * b.l = (b.l * a.l + b.r * a.r) + a.l * b.r + a.r * b.l
+ }
+
+algebraTest :: (a,b,c,d: Natp) -> (a+b)+c+d = a+(c+b)+d
+{
+ ;; These steps would have solved the goal
+ ;; => a+b+c+d = a+(c+b)+d
+ ;; => a+(b+c)+d = a+(c+b)+d
+ ;; => a+(b+c)+d = a+(b+c)+d
+ algebraic_manipulation
+ }
+
+mulDistributive :: (a,b,c: Z) -> a*c+b*c == (a+b)*c
+{
+ norm;
+ ;; (((a.l * c.r + a.r * c.l) + b.l * c.r + b.r * c.l) + (a.l + b.l) * c.l + (a.r + b.r) * c.r =
+ ;;  ((a.l * c.l + a.r * c.r) + b.l * c.l + b.r * c.r) + (a.l + b.l) * c.r + (a.r + b.r) * c.l);
+ => ((a.l*c.r + a.r*c.l + (b.l*c.r + b.r*c.l)) + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
+     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ => ((a.l*c.r + (b.l*c.r + b.r*c.l) + a.r*c.l) + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
+     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ => (((a.l*c.r + b.l*c.r + b.r*c.l) + a.r*c.l) + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
+     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ => ((((a.l*c.r + b.l*c.r) + b.r*c.l) + a.r*c.l) + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
+     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ => ((((a.l + b.l)*c.r + b.r*c.l) + a.r*c.l) + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
+     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ => (((a.l + b.l)*c.r + b.r*c.l + a.r*c.l) + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
+     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ => (((a.l + b.l)*c.r + (b.r + a.r)*c.l) + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
+     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ => ((a.l + b.l)*c.r + (b.r + a.r)*c.l + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
+     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ => ((a.l + b.l)*c.r + ((b.r + a.r)*c.l + (a.l + b.l)*c.l) + (a.r + b.r)*c.r =
+     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ => ((a.l + b.l)*c.r + (((b.r + a.r) + a.l + b.l)*c.l) + (a.r + b.r)*c.r =
+     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ => ((a.l + b.l)*c.r + (((a.l + b.l) + b.r + a.r)*c.l) + (a.r + b.r)*c.r =
+     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ => ((a.l + b.l)*c.r + ((a.l + b.l + b.r + a.r)*c.l) + (a.r + b.r)*c.r =
+     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ => ((a.l + b.l)*c.r + (a.r + b.r)*c.r + ((a.l + b.l + b.r + a.r)*c.l) =
+     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ => (((a.l + b.l)*c.r + (a.r + b.r)*c.r) + ((a.l + b.l + b.r + a.r)*c.l) =
+     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ => ((((a.l + b.l) + a.r + b.r)*c.r) + ((a.l + b.l + b.r + a.r)*c.l) =
+     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ => (((a.l + b.l + a.r + b.r)*c.r) + ((a.l + b.l + b.r + a.r)*c.l) =
+     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ => (((a.l + b.l + a.r + b.r)*c.r) + ((a.l + b.l + a.r + b.r)*c.l) =
+     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ => (((a.l + b.l + a.r + b.r)*c.r) + ((a.l + b.l + a.r + b.r)*c.l) =
+     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ }

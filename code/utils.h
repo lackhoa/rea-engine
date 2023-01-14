@@ -94,12 +94,6 @@ newArena(size_t cap, void *base)
     return arena;
 }
 
-inline u8 *
-getNextU8(MemoryArena *arena)
-{
-    return arena->base + arena->used;
-}
-
 inline size_t
 getArenaFree(MemoryArena *arena)
 {
@@ -217,11 +211,11 @@ struct String
   i32   length;                 // note: does not include the nil terminator
 };
 
-inline char *
+inline void *
 getNext(MemoryArena *buffer)
 {
   if (buffer)
-    return (char *)(buffer->base + buffer->used);
+    return (buffer->base + buffer->used);
   else
     return 0;
 }
@@ -245,7 +239,7 @@ endString(StartString start)
   if (start.buffer)
   {
     out.chars = start.chars;
-    out.length = (i32)(getNext(start.buffer) - start.chars);
+    out.length = (i32)((char*)getNext(start.buffer) - start.chars);
   }
   return out;
 }

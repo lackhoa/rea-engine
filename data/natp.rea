@@ -3,20 +3,16 @@
 Natp :: union {1, ++(p: Natp)}
 
 + :: fn(a,b: Natp) -> Natp
-{
- fork a
- {
-  1:  ++(b),
-  ++: ++(a.p + b)
-  }
- }
+{fork a
+ {1:  return ++(b),
+  ++: return ++(a.p + b)}}
 
 * :: fn(a,b: Natp) -> Natp
 {
  fork a
  {
-  1:  b,
-  ++: b + (a.p * b),
+  1:  return b,
+  ++: return b + (a.p * b),
   }
  }
 
@@ -39,6 +35,7 @@ addS :: (a,b: Natp) -> a + ++(b) = ++(a + b)
  }
 
 addCommutative :: (a,b: Natp) -> (b+a = a+b)
+#hint
 {
  fork a
  {
@@ -48,6 +45,7 @@ addCommutative :: (a,b: Natp) -> (b+a = a+b)
  }
 
 addAssociative :: (a,b,c: Natp) -> (a+b)+c = a+b+c
+#hint
 {
  fork a
  {
@@ -57,6 +55,7 @@ addAssociative :: (a,b,c: Natp) -> (a+b)+c = a+b+c
  }
 
 mulDistributive :: (a,b,c: Natp) -> a*c+b*c = (a+b)*c
+#hint
 {
  fork a
  {
@@ -92,11 +91,21 @@ mulSRight :: (a,b: Natp) -> a * ++(b) = a + a*b
 ;; print(mulSRight);
 
 mulCommutative :: (a,b: Natp) -> a*b = b*a
+#hint
 {fork a
  {1 : rewrite mul1(b),
   ++: ;; b + a.p*b = b * ++(a.p)
   => b + a.p*b = b + b*a.p { mulSRight(b, a.p) }
   => b + a.p*b = b + a.p*b { mulCommutative(a.p, b) }}}
+
+mulAssociative :: (a,b,c: Natp) -> (a*b)*c = a*b*c
+#hint
+{fork a
+ {1,
+  ++ ;; (b + a.p * b) * c = b * c + a.p * b * c
+  => (b + a.p * b) * c = b * c + (a.p * b) * c {mulAssociative(a.p, b, c)}
+  => (b + a.p * b) * c = (b + a.p * b) * c     {mulDistributive}
+  }}
 
 ;; todo this really should be built-in
 successorIsDifferent :: (a: Natp, P: ++(a) = a) -> False
@@ -104,8 +113,8 @@ successorIsDifferent :: (a: Natp, P: ++(a) = a) -> False
 {
  fork a
  {
-  1:  P,
-  ++: successorIsDifferent(a.p, P),
+  1:  return P,
+  ++: return successorIsDifferent(a.p, P),
   }
  }
 
@@ -115,113 +124,107 @@ differentFromTwoSuccessor :: (a: Natp, P: ++(++(a)) = a) -> False
 {
  fork a
  {
-  1:  P,
-  ++: differentFromTwoSuccessor(a.p, P),
+  1:  return P,
+  ++: return differentFromTwoSuccessor(a.p, P),
   }
  }
 
 > :: fn(a, b: Natp) -> Bool
 {fork a
- {1 : false,
-  ++: fork b {1: true, ++: a.p > b.p}}}
+ {1 : return false,
+  ++: fork b {1: return true, ++: return a.p > b.p}}}
 
 successorIsLarger :: (a: Natp) -> ++(a) > a = true
 {fork a
  {1 : ,
-  ++: successorIsLarger(a.p)}}
+  ++: return successorIsLarger(a.p)}}
 
 gtAntiReflexive :: (a: Natp, p: a>a = true) -> False
 #norm(p)
 {fork a
- {1:  p,
-  ++: gtAntiReflexive(a.p, p)}}
+ {1:  return p,
+  ++: return gtAntiReflexive(a.p, p)}}
 
 gtTransitive :: (a,b,c: Natp, P: a>b = true, Q: b>c = true) -> a>c = true
 #norm(P,Q)
 {
  fork a {
-         1  P,
+         1  return P,
          ++ fork b {1 fork Q {},
-                    ++ fork c {1, ++ gtTransitive(a.p,b.p,c.p, P, Q)}},
+                    ++ fork c {1, ++ return gtTransitive(a.p,b.p,c.p, P, Q)}},
          }
  }
 
 addIncreases :: (a,b: Natp) -> a+b > a = true
 {
- fork a {1, ++ addIncreases(a.p, b)}
+ fork a {1, ++ return addIncreases(a.p, b)}
  }
 
 addDifferent :: (a,b: Natp, p: a+b = a) -> False
 #norm(p)
 {
  lem1: a + b > a = true := addIncreases(a,b);
- lem2: a > a = true     := seq {=> a + b > a = true {p}; lem1};
- gtAntiReflexive(a, lem2);
+ lem2: a > a = true     := seq {=> a + b > a = true {p}; return lem1};
+ return gtAntiReflexive(a, lem2);
  }
 
 sumCancellation :: (a,b,c: Natp, p: a + b = a + c) -> (b = c)
 #norm(p)
 {
  fork a {
-         1  p,
-         ++ sumCancellation(a.p,b,c, p)}
+         1  return p,
+         ++ return sumCancellation(a.p,b,c, p)}
  }
 
 =? :: fn(a,b: Natp) -> Bool
 {
  fork a
  {
-  1 fork b {1 true, ++ false},
-  ++ fork b {1 false, ++ a.p =? b.p}
+  1  fork b {1 return true,  ++ return false},
+  ++ fork b {1 return false, ++ return a.p =? b.p}
   }
  }
 
 add1DifferentFromAddS :: (a,b: Natp) -> a + 1 =? a + ++(b) = false
-{
- fork a
- {
-  1,
-  ++ add1DifferentFromAddS(a.p, b);
-  }
- }
+{fork a
+ {1,
+  ++ return add1DifferentFromAddS(a.p, b);}}
 
 eqSymmetric :: (a,b: Natp, p: a=?b = true) -> (b=?a = true)
 #norm(p)
-{
- fork a
- {
-  1 fork b {1, ++ p},
-  ++ fork b {1 p, ++ eqSymmetric(a.p, b.p, p)}
-  }
- }
+{fork a
+ {1  fork b {1, ++ return p},
+  ++ fork b {1 return p,
+             ++ return eqSymmetric(a.p, b.p, p)}}}
 
 sumCancellation :: (a,b,c: Natp, p: a+b =? a+c = true) -> (b =? c = true)
 #norm(p)
 {
  fork a {
-         1 p,
-         ++ fork b {1 fork c {1, ++ trueNotFalse(a.p + 1 =? a.p + ++(c.p),
-                                                 p,
-                                                 add1DifferentFromAddS(a.p, c.p))},
+         1 return p,
+         ++ fork b {1 fork c {1, ++ return trueNotFalse(a.p + 1 =? a.p + ++(c.p),
+                                                        p,
+                                                        add1DifferentFromAddS(a.p, c.p))},
                     ++ fork c
-                    {1 lem1 := eqSymmetric(a.p + ++(b.p), a.p + 1, p);
+                    {1
+                     lem1 := eqSymmetric(a.p + ++(b.p), a.p + 1, p);
                      lem2 := add1DifferentFromAddS(a.p, b.p);
-                     trueNotFalse(a.p + 1 =? a.p + ++(b.p), lem1, lem2)
+                     return trueNotFalse(a.p + 1 =? a.p + ++(b.p), lem1, lem2)
                      ,
                      ++
                      lem1 : ++(b.p) + a.p =? ++(c.p) + a.p = true :=
                      seq {=> a.p + ++(b.p) =? ++(c.p) + a.p = true {addCommutative}
                           => a.p + ++(b.p) =? a.p + ++(c.p) = true {addCommutative}
-                          p
+                          return p
                           };
                      norm lem1;
                      lem2: a.p + b.p =? a.p + c.p = true :=
                      seq {
                           => b.p + a.p =? a.p + c.p = true {addCommutative}
                           => b.p + a.p =? c.p + a.p = true {addCommutative}
-                          lem1;
+                          return lem1;
                           };
-                     sumCancellation(a.p,b.p,c.p, lem2)
+                     return sumCancellation(a.p,b.p,c.p, lem2)
                      }}}
  }
 
@@ -230,53 +233,48 @@ eqCorrect :: (a,b: Natp, p: a =? b = true) -> a = b
 {
  fork a
  {
-  1  fork b {1  , ++ p},
-  ++ fork b {1 p, ++ rewrite eqCorrect(a.p, b.p, p)}
+  1  fork b {1, ++ return p},
+  ++ fork b {1 return p, ++ rewrite eqCorrect(a.p, b.p, p)}
   }
  }
 
 addIsDifferent :: (a,b: Natp) -> a+b =? a = false
-{fork a {1, ++ addIsDifferent(a.p, b)}}
+{fork a {1, ++ return addIsDifferent(a.p, b)}}
 
 addIsDifferent :: (a,b: Natp) -> a =? a+b = false
-{fork a {1, ++ addIsDifferent(a.p,b)}}
+{fork a {1, ++ return addIsDifferent(a.p,b)}}
 
 eqReflexive :: (a: Natp) -> a =? a = true
-{
- fork a
- {
-  1,
-  ++ eqReflexive(a.p),
-  }
- }
+{fork a
+ {1,
+  ++ return eqReflexive(a.p)}}
 
 addPreservesGt :: (a,b,c: Natp, p: a>b=true) -> a+c > b+c = true
 #norm(p)
 {
  fork a
  {
-  1 fork p {},
-  ++ fork b {1 rewrite addCommutative(c, a.p); addIncreases(c, a.p),
-             ++ addPreservesGt(a.p,b.p,c, p)},
+  1  fork p {},
+  ++ fork b {1 rewrite addCommutative(c, a.p); return addIncreases(c, a.p),
+             ++ return addPreservesGt(a.p,b.p,c, p)},
   }
  }
 
-totalOrder :: (a,b: Natp) -> union {
-                                    eq(p: a = b),
+totalOrder :: (a,b: Natp) -> union {eq(p: a = b),
                                     gt(p: a > b = true),
-                                    lt(p: b > a = true),
-                                    }
+                                    lt(p: b > a = true)}
 {
  fork a
  {
-  1 fork b {1 ctor[0](_), ++ ctor[2](_)},
+  1 fork b {1 return ctor[0](_), ++ return ctor[2](_)},
   ++ fork b
   {
-   1 ctor[1](_),
-   ++ ind := totalOrder(a.p, b.p);
-   fork ind {eq lem := ind.p; ctor[0](seq{rewrite lem}),
-             gt ctor[1](ind.p),
-             lt ctor[2](ind.p)} 
+   1 return ctor[1](_),
+   ++
+   ind := totalOrder(a.p, b.p);
+   fork ind {eq lem := ind.p; return ctor[0](seq{rewrite lem}),
+             gt return ctor[1](ind.p),
+             lt return ctor[2](ind.p)} 
    }
   }
  }
@@ -286,9 +284,10 @@ differentFromPlus :: (a: Natp, b: Natp, p: a = a+b) -> False
 {
  fork a
  {
-  1: p,
-  ++: differentFromPlus(a.p, b, p)
+  1  return p,
+  ++ return differentFromPlus(a.p, b, p)
   ,
   }
  }
 
+algebra_declare Natp;

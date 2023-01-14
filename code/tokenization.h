@@ -5,41 +5,45 @@
 // todo: does enum automatically increment???
 enum TokenCategory
 {
-  Token_Colon         = ':',
+  Token_Colon   = ':',
   // 0-255 reserved for single-char ASCII types.
-  Token_Special       = 256,
-  Token_Ellipsis      = 257,
-  // Token_PairingClose  = 258,
-  Token_Alphanumeric  = 259,
-  Token_DoubleDash    = 260,
-  Token_StringLiteral = 261,
-  Token_DoubleColon   = 262,
-  Token_ColonEqual    = 263,
-  Token_Arrow         = 264,
-  Token_StrongArrow   = 265,
+
+  Token_Special = 256,
+  Token_Ellipsis,
+  Token_Alphanumeric,
+  Token_DoubleDash,
+  Token_StringLiteral,
+  Token_DoubleColon,
+  Token_ColonEqual,
+  Token_Arrow,
+  Token_StrongArrow,  // NOTE: strong arrow is used for lambda, might as well use it as a tactic.
 
   Token_Keyword_START,
   Token_Keyword_fn,
-  Token_Keyword_fork,
+  // Token_Keyword_fork,
   Token_Keyword_union,
   Token_Keyword_ctor,
   Token_Keyword_seq,
   Token_Keyword_overload,
-
-  Token_Keyword_rewrite,
-  Token_Keyword_norm,
-  Token_Keyword_prove,
   Token_Keyword_seek,
-  Token_Keyword_auto,
 
+  // Token_Keyword_rewrite,
+  // Token_Keyword_norm,
+  // Token_Keyword_prove,
+  // Token_Keyword_algebraic_manipulation,
+
+  // todo #cleanup These commands can just be dispatched by the top-level parser!
   Token_Keyword_test_eval,
   Token_Keyword_print,
   Token_Keyword_print_raw,
   Token_Keyword_print_ast,
   Token_Keyword_check,
   Token_Keyword_check_truth,
+  Token_Keyword_algebra_declare,
+
   Token_Keyword_END,
 
+  // todo #cleanup We don't want token categories for these! Just dispatch when you see "#".
   Token_Directive_START,
   Token_Directive_load,
   Token_Directive_should_fail,
@@ -50,12 +54,26 @@ enum TokenCategory
   Token_Directive_END,
 };
 
-const char *keywords[] = {
-  "", "fn", "fork", "union", "ctor", "seq", "overload",
-  "rewrite", "norm", "prove", "seek", "auto",
-  "test_eval", "print", "print_raw", "print_ast", "check", "check_truth"
+const char *language_keywords[] = {
+  "", "fn", "union", "ctor", "seq", "overload", "seek",
+  // "rewrite", "norm", "prove", "algebraic_manipulation",
+  "test_eval", "print", "print_raw", "print_ast", "check", "check_truth", "algebra_declare",
 };
-const char *metaDirectives[] = {"", "load", "should_fail", "debug", "norm", "hidden", "hint"};
+const char *meta_directives[] = {"", "load", "should_fail", "debug", "norm", "hidden", "hint"};
+
+enum TacticEnum {
+  Tactic_rewrite = 1,
+  Tactic_goal_transform,
+  Tactic_norm,
+  Tactic_return,
+  Tactic_fork,
+  Tactic_prove,
+  Tactic_algebraic_manipulation,
+  Tactic_seek,
+
+  Tactic_COUNT,
+};
+const char *language_tactics[] = {"", "rewrite", "=>", "norm", "return", "fork", "prove", "algebraic_manipulation", "seek"};
 
 struct Token
 {
@@ -65,23 +83,6 @@ struct Token
   TokenCategory cat;
   operator String() {return string;};
 };
-
-inline Token
-newToken(String text)
-{
-  Token out;
-  out.string = text;
-  out.line   = 0;
-  out.column = 0;
-  out.cat    = Token_Alphanumeric;
-  return out;
-}
-
-inline Token
-newToken(const char *text)
-{
-  return newToken(toString(text));
-}
 
 struct ErrorAttachment { char *key; String value; };
 
@@ -121,16 +122,3 @@ struct Tokenizer
 };
 
 void eatAllSpaces(Tokenizer *tk);
-
-inline Tokenizer
-newTokenizer(String directory, char *input)
-{
-  Tokenizer out = {};
-  out.line         = 1;
-  out.column       = 1;
-  out.directory    = directory;
-  out.at           = input;
-  if (input)
-    eatAllSpaces(&out);
-  return out;
-}

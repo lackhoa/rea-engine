@@ -31,15 +31,15 @@ enum AstCategory {
   Ast_Identifier   = 4,         // result after initial parsing
 
   // Expressions
-  Ast_CompositeAst   = 5,
-  Ast_ArrowAst       = 6,
-  Ast_AccessorAst    = 7,
-  // Ast_ComputationAst = 8,
-  Ast_Lambda         = 9,
-  Ast_OverloadAst    = 10,
-  Ast_CtorAst        = 11,
-  Ast_SeekAst        = 12,
-  Ast_Auto           = 13,
+  Ast_CompositeAst          = 5,
+  Ast_ArrowAst              = 6,
+  Ast_AccessorAst           = 7,
+  // Ast_ComputationAst     = 8,
+  Ast_Lambda                = 9,
+  Ast_OverloadAst           = 10,
+  Ast_CtorAst               = 11,
+  Ast_SeekAst               = 12,
+  // Ast_AlgebraicManipulation = 13,
 
   // Sequence
   Ast_ForkAst       = 14,
@@ -111,7 +111,7 @@ struct Identifier {
 
 typedef Ast Hole;
 typedef Ast Ellipsis;
-typedef Ast Auto;
+typedef Ast AlgebraicManipulation;
 
 struct ForkAst {
   embed_Ast(a);
@@ -259,8 +259,8 @@ struct Function {
   Term  *body;
 };
 
-Ast LET_TYPE_NORMALIZE_;
-Ast *LET_TYPE_NORMALIZE = &LET_TYPE_NORMALIZE_;
+Ast AST_NORMALIZE_ME_;
+Ast *AST_NORMALIZE_ME = &AST_NORMALIZE_ME_;
 struct Let {
   embed_Ast(a);
   String  lhs;
@@ -563,6 +563,20 @@ struct Solver {
   HintDatabase *local_hints;
   i32           depth;
   b32           use_global_hints;
+};
+
+struct Algebra {
+  Union *type;
+
+  Term *add;
+  Term *addCommutative;
+  Term *addAssociative;
+
+  Term *mul;
+  Term *mulCommutative;
+  Term *mulAssociative;
+
+  Term *mulDistributive;
 };
 
 #include "generated/engine_forward.h"

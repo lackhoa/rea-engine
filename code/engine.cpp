@@ -2633,7 +2633,7 @@ solveArgs(Solver *solver, Term *op, Term *goal)
         {
           // todo #leak the type could be referenced
           Term *type = evaluate(solver->arena, args, signature->param_types[i]);
-          if (!(args[i] = solveForGoal(solver, type)))
+          if (!(args[i] = solveGoal(solver, type)))
           {
             args = 0;
             break;
@@ -2652,7 +2652,7 @@ solveArgs(Solver solver, Term *op, Term *goal)
 }
 
 forward_declare internal Term *
-solveForGoal(Solver *solver, Term *goal)
+solveGoal(Solver *solver, Term *goal)
 {
   Term *out = 0;
   solver->depth++;
@@ -2739,7 +2739,7 @@ solveForGoal(Solver *solver, Term *goal)
 internal Term *
 solveForGoal(Solver solver, Term *goal)
 {
-  return solveForGoal(&solver, goal);
+  return solveGoal(&solver, goal);
 }
 
 inline TermArray
@@ -2913,24 +2913,26 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
        noError() && !reached_end_of_sequence;
        )
   {
+    // Can't get out of this rewind business, because sometimes the sequence is empty :<
     Tokenizer tk_save = *global_tokenizer;
     Token token = nextToken();
     Ast *ast0 = 0;
-    switch (token.cat)
+    switch (TacticEnum tactic = matchTactic(token.string))
     {
-      case Token_Keyword_norm:
+      case Tactic_norm:
       {
         pushContext("norm [EXPRESSION]");
         if (seesExpressionEndMarker())
         {// normalize goal
           GoalTransform *ast = newAst(arena, GoalTransform, &token);
+          ast->new_goal = AST_NORMALIZE_ME;
           ast0 = &ast->a;
         }
-        else if (Ast *expression = parseExpressionToAst(arena))
+        else if (Ast *expression = parseExpression(arena))
         {// normalize with let.
           Let *let = newAst(arena, Let, &token);
           let->rhs  = expression;
-          let->type = LET_TYPE_NORMALIZE;
+          let->type = AST_NORMALIZE_ME;
           ast0 = &let->a;
           if (expression->cat == Ast_Identifier)
           {
@@ -2941,7 +2943,7 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
         popContext();
       } break;
 
-      case Token_Keyword_rewrite:
+      case Tactic_rewrite:
       {
         RewriteAst *rewrite = newAst(arena, RewriteAst, &token);
 
@@ -2953,18 +2955,22 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
           rewrite->right_to_left = true;
         }
 
-        rewrite->eq_proof = parseExpressionToAst(arena);
+        rewrite->eq_proof = parseExpression(arena);
         ast0 = &rewrite->a;
       } break;
 
-      case Token_StrongArrow:
+      case Tactic_goal_transform:
       {
-        pushContext("Goal transform: => [NEW_GOAL] [{ EQ_PROOF_HINT }]; ...");
+        pushContext("Goal transform: => NEW_GOAL [{ EQ_PROOF_HINT }]; ...");
         GoalTransform *ast = newAst(arena, GoalTransform, &token);
         ast0 = &ast->a;
-        if (!optionalCategory(Token_Keyword_norm))
+        if (optionalString("norm"))
         {
-          ast->new_goal = parseExpressionToAst(arena);
+          ast->new_goal = AST_NORMALIZE_ME;
+        }
+        else
+        {
+          ast->new_goal = parseExpression(arena);
           if (optionalChar('{'))
           {
             if (optionalChar('}'))
@@ -2973,7 +2979,7 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
             }
             else
             {
-              ast->hint = parseExpressionToAst(arena);
+              ast->hint = parseExpression(arena);
               requireChar('}');
             }
           }
@@ -2981,62 +2987,10 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
         popContext();
       } break;
 
-      default:
-      {
-        if (isIdentifier(&token))
-        {
-          Token *name = &token;
-          Token after_name = nextToken();
-          switch (after_name.cat)
-          {
-            case Token_ColonEqual:
-            {
-              pushContext("let: NAME := VALUE");
-              if (Ast *rhs = parseExpressionToAst(arena))
-              {
-                Let *let = newAst(arena, Let, name);
-                ast0 = &let->a;
-                let->lhs = name->string;
-                let->rhs = rhs;
-              }
-              popContext();
-            } break;
-
-            case Token_Colon:
-            {
-              pushContext("typed let: NAME : TYPE := VALUE");
-              if (Ast *type = parseExpressionToAst(arena))
-              {
-                if (requireCategory(Token_ColonEqual, ""))
-                {
-                  if (Ast *rhs = parseExpressionToAst(arena))
-                  {
-                    Let *let = newAst(arena, Let, name);
-                    let->lhs  = name->string;
-                    let->rhs  = rhs;
-                    let->type = type;
-                    ast0 = &let->a;
-                  }
-                }
-              }
-              popContext();
-            } break;
-
-            default: {};
-          }
-        }
-        else if (isExpressionEndMarker(&token))
-        {// synthetic hole
-          *global_tokenizer = tk_save;
-          ast0  = newAst(arena, Hole, &token);
-          reached_end_of_sequence = true;
-        }
-      } break;
-
-      case Token_Keyword_prove:
+      case Tactic_prove:
       {
         pushContext("prove PROPOSITION {SEQUENCE}");
-        if (Ast *proposition = parseExpressionToAst(arena))
+        if (Ast *proposition = parseExpression(arena))
         {
           if (Ast *proof = parseSequence(arena, true))
           {
@@ -3049,16 +3003,85 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
         }
         popContext();
       } break;
-    }
 
-    if (noError() && !ast0)
-    {
-      *global_tokenizer = tk_save;
-      if (optionalCategory(Token_Keyword_fork))
+      case Tactic_return:
+      {
+        ast0 = parseExpression(arena);
+        reached_end_of_sequence = true;
+      } break;
+
+      case Tactic_fork:
+      {
         ast0 = parseFork(arena);
-      else
-        ast0 = parseExpressionToAst(arena);
-      reached_end_of_sequence = true;
+        reached_end_of_sequence = true;
+      } break;
+
+      case Tactic_seek:
+      {
+        SeekAst *ast = newAst(arena, SeekAst, &token);
+        ast0 = &ast->a;
+        reached_end_of_sequence = true;
+      } break;
+
+      case (TacticEnum)0:
+      {
+        if (isIdentifier(&token))
+        {
+          // NOTE: identifiers can't be tactics, but I don't think that's a concern.
+          Token *name = &token;
+          Token after_name = nextToken();
+          switch (after_name.cat)
+          {
+            case Token_ColonEqual:
+            {
+              pushContext("let: NAME := VALUE");
+              if (Ast *rhs = parseExpression(arena))
+              {
+                Let *let = newAst(arena, Let, name);
+                ast0 = &let->a;
+                let->lhs = name->string;
+                let->rhs = rhs;
+              }
+              popContext();
+            } break;
+
+            case Token_Colon:
+            {
+              pushContext("typed let: NAME : TYPE := VALUE");
+              if (Ast *type = parseExpression(arena))
+              {
+                if (requireCategory(Token_ColonEqual, ""))
+                {
+                  if (Ast *rhs = parseExpression(arena))
+                  {
+                    Let *let = newAst(arena, Let, name);
+                    let->lhs  = name->string;
+                    let->rhs  = rhs;
+                    let->type = type;
+                    ast0 = &let->a;
+                  }
+                }
+              }
+              popContext();
+            } break;
+
+            default:
+            {
+              parseError("unexpected token following identifier");
+            } break;
+          }
+        }
+        else if (isExpressionEndMarker(&token))
+        {// synthetic hole
+          ast0  = newAst(arena, Hole, &token);
+          *global_tokenizer = tk_save;
+          reached_end_of_sequence = true;
+        }
+        else
+        {
+          parseError("expected a sequence item");
+        }
+      } break;
     }
 
     if (noError())
@@ -3144,6 +3167,45 @@ addHint(MemoryArena *arena, HintDatabase *hint_db, Term *term)
   new_hints->first = term;
   new_hints->next  = hint_db;
   return new_hints;
+}
+
+inline Term *
+getOverloadFromDistinguisher(GlobalBinding *lookup, Term *distinguisher)
+{
+  Term *out = 0;
+  for (i32 slot_i=0;
+       slot_i < lookup->count && !out;
+       slot_i++)
+  {
+    Term *item = lookup->items[slot_i];
+    if (Arrow *signature = castTerm(getType(item), Arrow))
+    {
+      b32 matches = false;
+      if (distinguisher->cat == Term_Union)
+        // TODO very #hacky
+        matches = equal(signature->param_types[0], distinguisher);
+      else
+        todoIncomplete;
+
+      if (matches)
+        out = item;
+    }
+  }
+  return out;
+}
+
+inline Term *
+getOverloadFromDistinguisher(Token *token, const char *name, Term *distinguisher)
+{
+  Term *out = 0;
+  if (GlobalBinding *lookup = lookupGlobalNameSlot(toString(name), false))
+  {
+    out = getOverloadFromDistinguisher(lookup, distinguisher);
+  }
+  else
+    parseError(token, "no function named \"%s\" found that matches distinguisher", name);
+
+  return out;
 }
 
 forward_declare internal BuildTerm
@@ -3554,7 +3616,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       TreePath *rewrite_path  = 0;
       b32       right_to_left = false;
 
-      if (!in->new_goal)
+      if (in->new_goal == AST_NORMALIZE_ME)
       {// just normalize the goal, no need for tactics (for now).
         Term *norm_goal = normalize(arena, env, goal);
         if (checkFlag(in->flags, AstFlag_Generated) &&
@@ -3624,9 +3686,9 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           Term *rl_eq = newEquality(temp_arena, from_type, to, from);
 
           Solver solver = Solver{.arena=arena, .env=env, .local_hints=hints, .use_global_hints=true};
-          if (!(eq_proof = solveForGoal(&solver, lr_eq)))
+          if (!(eq_proof = solveGoal(&solver, lr_eq)))
           {
-            if ((eq_proof = solveForGoal(&solver, rl_eq)))
+            if ((eq_proof = solveGoal(&solver, rl_eq)))
             {
               right_to_left = true;
             }
@@ -3652,7 +3714,7 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
     {
       Let  *in = castAst(in0, Let);
       Term *type_hint = holev;
-      if (in->type && in->type != LET_TYPE_NORMALIZE)
+      if (in->type && in->type != AST_NORMALIZE_ME)
       {
         if (BuildTerm type = buildTerm(arena, env, in->type, holev))
           type_hint = type.term;
@@ -3664,15 +3726,15 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
           Term *rhs = build_rhs.term;
           Term *rhs_type = type_hint;
           if (type_hint->cat == Term_Hole)
-            rhs_type = todoGetType(arena, env, build_rhs.term);
+            rhs_type = getType(rhs);
             
-          if (in->type == LET_TYPE_NORMALIZE)
+          if (in->type == AST_NORMALIZE_ME)
           {// type coercion
             Term *norm_rhs_type = normalize(arena, env, rhs_type);
             Term *computation = newComputation(arena, norm_rhs_type, rhs_type);
             rhs_type = norm_rhs_type;
             rhs = newRewrite(arena, computation, build_rhs.term, 0, false);
-            assert(equal(todoGetType(temp_arena, env, rhs), rhs_type));
+            assert(equal(getType(rhs), rhs_type));
           }
 
           Token *token = &in0->token;
@@ -3764,23 +3826,9 @@ buildTerm(MemoryArena *arena, Typer *env, Ast *in0, Term *goal)
       {
         if (Term *distinguisher = buildTerm(temp_arena, env, in->distinguisher, holev).term)
         {
-          for (i32 slot_i=0;
-               slot_i < lookup->count && !out0.term;
-               slot_i++)
-          {
-            Term *item = lookup->items[slot_i];
-            if (Arrow *signature = castTerm(getType(item), Arrow))
-            {
-              b32 matches = false;
-              if (distinguisher->cat == Term_Union)
-                matches = equal(signature->param_types[0], distinguisher);
-              else
-                todoIncomplete;
-
-              if (matches)
-                out0.term = item;
-            }
-          }
+          out0.term = getOverloadFromDistinguisher(lookup, distinguisher);
+          if (!out0.term)
+            parseError(in0, "found no overload corresponding to distinguisher");
         }
       }
     } break;
@@ -3947,23 +3995,22 @@ newRewrite(MemoryArena *arena, Term *eq_proof, Term *body, TreePath *path, b32 r
 }
 
 inline BuildTerm
-parseExpression(MemoryArena *arena, LocalBindings *bindings, Term *expected_type)
+parseExpressionAndBuild(MemoryArena *arena, LocalBindings *bindings, Term *expected_type)
 {
   BuildTerm out = {};
-  if (Ast *ast = parseExpressionToAst(arena))
+  if (Ast *ast = parseExpression(arena))
   {
     Typer env = {};
     env.bindings = bindings;
     out = buildTerm(arena, &env, ast, expected_type);
   }
-  NULL_WHEN_ERROR(out);
   return out;
 }
 
 inline BuildTerm
-parseExpressionFull(MemoryArena *arena)
+parseExpressionAndBuild(MemoryArena *arena)
 {
-  return parseExpression(arena, 0, holev);
+  return parseExpressionAndBuild(arena, 0, holev);
 }
 
 struct NormList {
@@ -3971,6 +4018,7 @@ struct NormList {
   Identifier **items;
 };
 
+// todo No need to normalize a fork if that fork contains other forks inside.
 inline void
 insertAutoNormalizations(MemoryArena *arena, NormList norm_list, Ast *in0)
 {
@@ -3990,12 +4038,13 @@ insertAutoNormalizations(MemoryArena *arena, NormList norm_list, Ast *in0)
           Let *new_body = newAst(arena, Let, &item->token);
           new_body->lhs   = item->token.string;
           new_body->rhs   = &item->a;
-          new_body->type  = LET_TYPE_NORMALIZE;
+          new_body->type  = AST_NORMALIZE_ME;
           new_body->body  = body;
           setFlag(&new_body->flags, AstFlag_Generated);
           body = &new_body->a;
         }
         GoalTransform *new_body = newAst(arena, GoalTransform, &body->token);
+        new_body->new_goal = AST_NORMALIZE_ME;
         setFlag(&new_body->flags, AstFlag_Generated);
         new_body->body = body;
         in->bodies[case_id] = &new_body->a;
@@ -4026,7 +4075,7 @@ parseGlobalFunction(MemoryArena *arena, Token *name, b32 is_theorem)
   FunctionDecl *out = newAst(arena, FunctionDecl, name);
   assert(isIdentifier(name));
 
-  if (Ast *signature0 = parseExpressionToAst(arena))
+  if (Ast *signature0 = parseExpression(arena))
   {
     NormList norm_list = {};
     if (ArrowAst *signature = castAst(signature0, ArrowAst))
@@ -4093,7 +4142,7 @@ parseFork(MemoryArena *arena)
 {
   ForkAst *out = 0;
   Token token = global_tokenizer->last_token;
-  Ast *subject = parseExpressionToAst(arena);
+  Ast *subject = parseExpression(arena);
   if (requireChar('{', "to open the typedef body"))
   {
     Tokenizer tk_copy = *global_tokenizer;
@@ -4199,7 +4248,7 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
               eatToken();
               param_name = maybe_param_name_token.string;
               pushContext("parameter type");
-              if (Ast *param_type = parseExpressionToAst(arena))
+              if (Ast *param_type = parseExpression(arena))
               {
                 param_types[param_id] = param_type;
                 if (typeless_run)
@@ -4226,7 +4275,7 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
             *global_tokenizer = tk_save;
             pushContext("anonymous parameter");
             Token anonymous_parameter_token = global_tokenizer->last_token;
-            if (Ast *param_type = parseExpressionToAst(arena))
+            if (Ast *param_type = parseExpression(arena))
             {
               param_types[param_id] = param_type;
               if (typeless_run)
@@ -4268,7 +4317,7 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
     {
       if (requireCategory(Token_Arrow, "syntax: (param: type, ...) -> ReturnType"))
       {
-        if (Ast *return_type = parseExpressionToAst(arena))
+        if (Ast *return_type = parseExpression(arena))
           out->output_type = return_type;
       }
     }
@@ -4416,7 +4465,7 @@ parseSeek(MemoryArena *arena)
   SeekAst *seek = newAst(arena, SeekAst, &global_tokenizer->last_token);
   if (!seesExpressionEndMarker())
   {
-    seek->proposition = parseExpressionToAst(arena);
+    seek->proposition = parseExpression(arena);
   }
   return seek;
 }
@@ -4432,7 +4481,7 @@ parseOverload(MemoryArena *arena)
       out->function_name = *lastToken();
       if (requireChar(','))
       {
-        out->distinguisher = parseExpressionToAst(arena);
+        out->distinguisher = parseExpression(arena);
       }
     }
     requireChar(')');
@@ -4446,60 +4495,53 @@ parseOperand(MemoryArena *arena)
 {
   Ast *operand = 0;
   Token token = nextToken();
-  if (equal(&token, '_'))
+  switch (token.cat)
   {
-    operand = newAst(arena, Hole, &token);
-  }
-  else
-  {
-    switch (token.cat)
+    case '_':
     {
-      case '(':
-      {
-        operand = parseExpressionToAst(arena);
-        requireChar(')');
-      } break;
+      operand = newAst(arena, Hole, &token);
+    } break;
 
-      case Token_Keyword_seq:
-      {
-        operand = parseSequence(arena);
-      } break;
+    case '(':
+    {
+      operand = parseExpression(arena);
+      requireChar(')');
+    } break;
 
-      case Token_Alphanumeric:
-      case Token_Special:
-      {
-        operand = &newAst(arena, Identifier, &token)->a;
-      } break;
+    case Token_Keyword_seq:
+    {
+      operand = parseSequence(arena);
+    } break;
 
-      case Token_Keyword_union:
-      {
-        operand = &parseUnion(arena)->a;
-      } break;
+    case Token_Alphanumeric:
+    case Token_Special:
+    {
+      operand = &newAst(arena, Identifier, &token)->a;
+    } break;
 
-      case Token_Keyword_ctor:
-      {
-        operand = &parseCtor(arena)->a;
-      } break;
+    case Token_Keyword_union:
+    {
+      operand = &parseUnion(arena)->a;
+    } break;
 
-      case Token_Keyword_seek:
-      {
-        operand = &parseSeek(arena)->a;
-      } break;
+    case Token_Keyword_ctor:
+    {
+      operand = &parseCtor(arena)->a;
+    } break;
 
-      case Token_Keyword_auto:
-      {
-        operand = newAst(arena, Auto, &token);
-      } break;
+    case Token_Keyword_seek:
+    {
+      operand = &parseSeek(arena)->a;
+    } break;
 
-      case Token_Keyword_overload:
-      {
-        operand = parseOverload(arena);
-      } break;
+    case Token_Keyword_overload:
+    {
+      operand = parseOverload(arena);
+    } break;
 
-      default:
-      {
-        tokenError("expected start of expression");
-      }
+    default:
+    {
+      tokenError("expected start of expression");
     }
   }
 
@@ -4539,7 +4581,7 @@ parseOperand(MemoryArena *arena)
             }
             else
             {
-              if ((args[arg_id] = parseExpressionToAst(arena)))
+              if ((args[arg_id] = parseExpression(arena)))
               {
                 if (!optionalChar(','))
                 {
@@ -4609,7 +4651,7 @@ parseLambda(MemoryArena *arena)
 }
 
 internal Ast *
-parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
+parseExpressionMain(MemoryArena *arena, ParseExpressionOptions opt)
 {
   Ast *out = 0;
   if (seesArrowExpression())
@@ -4639,7 +4681,7 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
             //      ^
             ParseExpressionOptions opt1 = opt;
             opt1.min_precedence = precedence;
-            if (Ast *recurse = parseExpressionToAstMain(arena, opt1))
+            if (Ast *recurse = parseExpressionMain(arena, opt1))
             {
               i32 arg_count = 2;
               Ast **args    = pushArray(arena, arg_count, Ast*);
@@ -4676,9 +4718,9 @@ parseExpressionToAstMain(MemoryArena *arena, ParseExpressionOptions opt)
 }
 
 forward_declare inline Ast *
-parseExpressionToAst(MemoryArena *arena)
+parseExpression(MemoryArena *arena)
 {
-  return parseExpressionToAstMain(arena, ParseExpressionOptions{});
+  return parseExpressionMain(arena, ParseExpressionOptions{});
 }
 
 inline void
@@ -4731,7 +4773,8 @@ parseTopLevel(EngineState *state)
   MemoryArena *arena = state->top_level_arena;
   b32 should_fail_active = false;
 
-  Token token = nextToken(); 
+  Token token_ = nextToken(); 
+  Token *token = &token_;
   while (hasMore())
   {
 #define CLEAN_TEMPORARY_MEMORY 1
@@ -4743,7 +4786,7 @@ parseTopLevel(EngineState *state)
     Typer  empty_env_ = {};
     Typer *empty_env  = &empty_env_;
 
-    switch (token.cat)
+    switch (token_.cat)
     {
       case Token_Directive_load:
       {
@@ -4786,7 +4829,7 @@ parseTopLevel(EngineState *state)
         else
         {
           should_fail_active = true;
-          tokenError(&token, "#should_fail activated");
+          tokenError(token, "#should_fail activated");
           setErrorFlag(ErrorTypecheck);
         }
       } break;
@@ -4805,7 +4848,7 @@ parseTopLevel(EngineState *state)
 
       case Token_Keyword_test_eval:
       {
-        if (BuildTerm expr = parseExpressionFull(temp_arena))
+        if (BuildTerm expr = parseExpressionAndBuild(temp_arena))
           normalize(arena, empty_env, expr.term);
       } break;
 
@@ -4814,7 +4857,7 @@ parseTopLevel(EngineState *state)
         u32 flags = PrintFlag_Detailed|PrintFlag_PrintType;
         if (optionalString("lock_detailed"))
           setFlag(&flags, PrintFlag_LockDetailed);
-        if (BuildTerm expr = parseExpressionFull(temp_arena))
+        if (BuildTerm expr = parseExpressionAndBuild(temp_arena))
         {
           Term *norm = normalize(arena, 0, expr.term);
           print(0, norm, {.flags=flags});
@@ -4824,7 +4867,7 @@ parseTopLevel(EngineState *state)
 
       case Token_Keyword_print_raw:
       {
-        if (auto parsing = parseExpressionFull(temp_arena))
+        if (auto parsing = parseExpressionAndBuild(temp_arena))
           print(0, parsing.term, {.flags = (PrintFlag_Detailed     |
                                             PrintFlag_LockDetailed |
                                             PrintFlag_PrintType)});
@@ -4833,7 +4876,7 @@ parseTopLevel(EngineState *state)
 
       case Token_Keyword_print_ast:
       {
-        if (Ast *exp = parseExpressionToAst(temp_arena))
+        if (Ast *exp = parseExpression(temp_arena))
           print(0, exp, {.flags = PrintFlag_Detailed});
         print(0, "\n");
       } break;
@@ -4842,11 +4885,11 @@ parseTopLevel(EngineState *state)
       {
         pushContext("check TERM: TYPE");
         Term *expected_type = holev;
-        if (Ast *ast = parseExpressionToAst(temp_arena))
+        if (Ast *ast = parseExpression(temp_arena))
         {
           if (optionalChar(':'))
           {
-            if (BuildTerm type = parseExpressionFull(temp_arena))
+            if (BuildTerm type = parseExpressionAndBuild(temp_arena))
               expected_type = type.term;
           }
           if (noError())
@@ -4858,7 +4901,7 @@ parseTopLevel(EngineState *state)
       case Token_Keyword_check_truth:
       {
         pushContext("check_truth EQUALITY");
-        if (Term *goal = parseExpressionFull(temp_arena).term)
+        if (Term *goal = parseExpressionAndBuild(temp_arena).term)
         {
           if (Composite *eq = castTerm(goal, Composite))
           {
@@ -4870,7 +4913,7 @@ parseTopLevel(EngineState *state)
               Term *rhs = normalize(temp_arena, empty_env, eq->args[2]);
               if (!equal(lhs, rhs))
               {
-                tokenError(&token, "equality cannot be proven by computation");
+                tokenError(token, "equality cannot be proven by computation");
                 Term *lhs = normalize(temp_arena, empty_env, eq->args[1]);
                 attach("lhs", lhs);
                 attach("rhs", rhs);
@@ -4878,7 +4921,7 @@ parseTopLevel(EngineState *state)
             }
             if (!goal_valid)
             {
-              tokenError(&token, "computation can only prove equality");
+              tokenError(token, "computation can only prove equality");
               attach("got", goal);
             }
           }
@@ -4886,15 +4929,45 @@ parseTopLevel(EngineState *state)
         popContext();
       } break;
 
+      case Token_Keyword_algebra_declare:
+      {
+        if (Term *type = parseExpressionAndBuild(arena).term)
+        {
+          if (Union *uni = castTerm(type, Union))
+          {
+            Algebra algebra = {.type=uni};
+            const i32 function_count = 7;
+            const char *function_names[function_count] = {
+              "+", "addCommutative", "addAssociative",
+              "*", "mulCommutative", "mulAssociative",
+              "mulDistributive",
+            };
+            Term **functions[function_count] = {
+              &algebra.add, &algebra.addCommutative, &algebra.addAssociative,
+              &algebra.mul, &algebra.mulCommutative, &algebra.mulAssociative,
+              &algebra.mulDistributive,
+            };
+
+            for (i32 i=0; i < function_count && noError(); i++)
+            {
+              if (Term *function = getOverloadFromDistinguisher(token, function_names[i], type))
+                *functions[i] = function;
+            }
+          }
+          else
+            parseError(token, "please supply a union");
+        }
+      } break;
+
       default:
       {
-        if (isIdentifier(&token))
+        if (isIdentifier(token))
         {
           Token after_name = nextToken();
           if (isIdentifier(&after_name) &&
-              areSequential(&token, &after_name))
+              areSequential(token, &after_name))
           {// token combination
-            token.string.length += after_name.string.length;
+            token_.string.length += after_name.string.length;
             after_name = nextToken();
           }
 
@@ -4903,9 +4976,9 @@ parseTopLevel(EngineState *state)
             case Token_ColonEqual:
             {
               pushContext("constant definition: CONSTANT := VALUE;");
-              if (BuildTerm rhs = parseExpressionFull(arena))
+              if (BuildTerm rhs = parseExpressionAndBuild(arena))
               {
-                addGlobalBinding(&token, rhs.term);
+                addGlobalBinding(token, rhs.term);
                 requireChar(';');
               }
               popContext();
@@ -4918,7 +4991,7 @@ parseTopLevel(EngineState *state)
               {
                 nextToken();
                 if (UnionAst *ast = parseUnion(arena))
-                  buildUnion(arena, empty_env, ast, &token);
+                  buildUnion(arena, empty_env, ast, token);
               }
               else
               {
@@ -4929,19 +5002,19 @@ parseTopLevel(EngineState *state)
                   nextToken();
                 }
                 else is_theorem = true;
-                if (FunctionDecl *fun = parseGlobalFunction(arena, &token, is_theorem))
+                if (FunctionDecl *fun = parseGlobalFunction(arena, token, is_theorem))
                   buildGlobalFunction(arena, fun);
               }
             } break;
 
             case ':':
             {
-              if (BuildTerm type = parseExpressionFull(arena))
+              if (BuildTerm type = parseExpressionAndBuild(arena))
               {
                 if (requireCategory(Token_ColonEqual, "require :=, syntax: name : type := value"))
                 {
-                  if (BuildTerm rhs = parseExpression(arena, 0, type.term))
-                    addGlobalBinding(&token, rhs.term);
+                  if (BuildTerm rhs = parseExpressionAndBuild(arena, 0, type.term))
+                    addGlobalBinding(token, rhs.term);
                 }
               }
             } break;
@@ -4963,17 +5036,17 @@ parseTopLevel(EngineState *state)
     if (should_fail_active)
     {
       if (noError())
-        tokenError(&token, "#should_fail active but didn't fail");
+        tokenError(token, "#should_fail active but didn't fail");
       else if (checkErrorFlag(ErrorTypecheck))
         wipeError();
     }
 
     if (hasMore())
     {
-      token = nextToken();
-      while (equal(token.string, ";"))
+      token_ = nextToken();
+      while (equal(token_.string, ";"))
       {// todo: should we do "eat all semicolons after the first one?"
-        token = nextToken();
+        token_ = nextToken();
       }
     }
   }
@@ -5055,7 +5128,7 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
       printf("Compile time for file %s: %fs\n", input_path.file, compile_time);
 #endif
       for (i32 i=0; i < 80; i++) printf("-");
-      printf("\n");
+      printf("\n\n");
     }
 
     global_tokenizer = old_tokenizer;
@@ -5101,7 +5174,7 @@ beginInterpreterSession(MemoryArena *arena, char *initial_file)
       Tokenizer builtin_tk = newTokenizer(toString("<builtin>"), 0);
       global_tokenizer = &builtin_tk;
       builtin_tk.at = "(#hidden A: Set, a,b: A) -> Set";
-      BuildTerm equal_type = parseExpressionFull(arena); 
+      BuildTerm equal_type = parseExpressionAndBuild(arena); 
       assert(noError());
       builtins.equal = newTerm(arena, Builtin, equal_type.term);
       addBuiltinGlobalBinding("=", &builtins.equal->t);
@@ -5142,8 +5215,9 @@ int engineMain()
   setvbuf(stdout, NULL, _IONBF, 0);
 #endif
 
-  assert(arrayCount(keywords)       == Token_Keyword_END - Token_Keyword_START);
-  assert(arrayCount(metaDirectives) == Token_Directive_END - Token_Directive_START);
+  assert(arrayCount(language_keywords) == Token_Keyword_END - Token_Keyword_START);
+  assert(arrayCount(meta_directives)   == Token_Directive_END - Token_Directive_START);
+  assert(arrayCount(language_tactics)  == Tactic_COUNT);
 
   void   *permanent_memory_base = (void*)teraBytes(2);
   size_t  permanent_memory_size = megaBytes(256);
@@ -5157,11 +5231,11 @@ int engineMain()
   temp_arena_ = newArena(temp_memory_size, temp_memory_base);
 
   char *files[] = {
-    "../data/z-slider-experiment.rea",
-    "../data/z-normalize-experiment.rea",
+    // "../data/z-normalize-experiment.rea",
+    "../data/test.rea",
     "../data/natp-experiment.rea",
     "../data/z.rea",
-    "../data/test.rea",
+    "../data/z-slider-experiment.rea",
   };
   for (i32 file_id=0; file_id < arrayCount(files); file_id++)
   {

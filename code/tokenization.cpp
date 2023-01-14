@@ -3,6 +3,36 @@
 #include "engine.h"
 #include "tokenization.h"
 
+inline Token
+newToken(String text)
+{
+  Token out;
+  out.string = text;
+  out.line   = 0;
+  out.column = 0;
+  out.cat    = Token_Alphanumeric;
+  return out;
+}
+
+inline Token
+newToken(const char *text)
+{
+  return newToken(toString(text));
+}
+
+inline Tokenizer
+newTokenizer(String directory, char *input)
+{
+  Tokenizer out = {};
+  out.line         = 1;
+  out.column       = 1;
+  out.directory    = directory;
+  out.at           = input;
+  if (input)
+    eatAllSpaces(&out);
+  return out;
+}
+
 inline char
 getMatchingPair(Token *opening)
 {
@@ -392,6 +422,19 @@ eatToken(Tokenizer *tk = global_tokenizer)
       }
     } break;
 
+    case '_':
+    {
+      out.cat = Token_Alphanumeric;
+      b32 advanced = false;
+      while (isAlphaNumeric(*tk->at))
+      {
+        nextChar(tk);
+        advanced = true;
+      }
+      if (!advanced)
+        out.cat = (TokenCategory)'_';
+    } break;
+
     default:
     {
       if (isAlphaNumeric(first_char))
@@ -422,9 +465,9 @@ eatToken(Tokenizer *tk = global_tokenizer)
       case Token_Alphanumeric:
       {
         // todo: lookup keywords with hash table
-        for (int id = 1; id < arrayCount(keywords); id++)
+        for (int id = 1; id < arrayCount(language_keywords); id++)
         {
-          if (equal(out.string, keywords[id]))
+          if (equal(out.string, language_keywords[id]))
           {
             out.cat = (TokenCategory)((int)Token_Keyword_START + id);
             break;
@@ -435,9 +478,9 @@ eatToken(Tokenizer *tk = global_tokenizer)
       case Token_Directive_START:
       {
         b32 found = false;
-        for (int id = 1; id < arrayCount(metaDirectives); id++)
+        for (int id = 1; id < arrayCount(meta_directives); id++)
         {
-          if (equal(out.string, metaDirectives[id]))
+          if (equal(out.string, meta_directives[id]))
           {
             out.cat = (TokenCategory)((int)Token_Directive_START + id);
             found = true;
@@ -595,5 +638,21 @@ parseInt32()
   }
   else
     tokenError("expected a 32-bit integer");
+  return out;
+}
+
+inline TacticEnum
+matchTactic(String string)
+{
+  TacticEnum out = (TacticEnum)0;
+  // todo: lookup with hash table
+  for (int i=1; i < arrayCount(language_tactics); i++)
+  {
+    if (equal(string, language_tactics[i]))
+    {
+      out = (TacticEnum)((int)i);
+      break;
+    }
+  }
   return out;
 }

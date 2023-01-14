@@ -11,13 +11,13 @@ check True: Set;
 ;; print_raw =(_, true, false);
 
 typecheck :: fn (id: (A: Set, a: A) -> a=a, b: Bool) -> b=b
-{id(Bool, b)}
+{return id(Bool, b)}
 
 #should_fail
 typecheck1 :: fn (id: (A: Set, a: A) -> a=a, b: Bool) -> b=b
-{b}
+{return b}
 typecheck2 :: fn (id: (A: Set, a: A) -> a=a, a,b: Bool) -> b=b
-{id(Bool, a)}
+{return id(Bool, a)}
 #should_fail off
 
 check_truth false & true = false;
@@ -25,36 +25,36 @@ check_truth false & true | true = true;
 
 testAbstraction :: fn (a, b: Bool) -> Bool
 {fork a
- {true : b,
-  false: fork b {false: a, true: false}}}
+ {true : return b,
+  false: fork b {false: return a, true: return false}}}
 
 check andAssociative(true, false, true) : ((true & false) & true = true & false & true);
 
 #should_fail
 dependentTypeFailTest :: fn (T: Type, A: T, a: A) -> a=a
-{_}
+{}
 #should_fail off
 
 dependentTypeTest :: fn (A: Set, a: A) -> a=a
-{_}
+{}
 check dependentTypeTest(Bool, true): true=true;
 
 testComplexFork :: fn (a, b: Nat) -> Nat
 {apb := a+b;
  fork apb
- {0 : 0,
-  ++: apb.p}}
+ {0 : return 0,
+  ++: return apb.p}}
 check_truth testComplexFork(0, 0) = 0;
 check_truth testComplexFork(1, 1) = 1;
 
 testLocalVariable :: fn (x: Nat) -> Nat
 {a := 3;
  b := 2;
- a + x + b}
+ return a + x + b}
 check_truth testLocalVariable(1) = 6;
 
 #should_fail
-reproLet :: fn (a: Nat) -> Nat {b : Bool := true; b}
+reproLet :: fn (a: Nat) -> Nat {b : Bool := true; return b}
 #should_fail off
 
 #should_fail 
@@ -63,28 +63,28 @@ testCurryingWeird :: fn (a: Nat) -> (b, c: Nat) -> (a+b)+c = a+(b+c)
  {++:
   ;; NOTE: the "a.p" is the weird part, which depends on rewrite rule to work,
   ;; and we need to support it.
-  out : (b',c': Nat) -> (a.p+b')+c' = a.p+b'+c' := _ => { addAssociative(a.p, b', c') }
-  out,
+  out : (b',c': Nat) -> (a.p+b')+c' = a.p+b'+c' := _ => { return addAssociative(a.p, b', c') }
+  return out,
 
   0:
-  out : (b, c: Nat) -> (a+b)+c = a+b+c := _ => { addAssociative(a, b, c) }
-  out}}
+  out : (b, c: Nat) -> (a+b)+c = a+b+c := _ => { return addAssociative(a, b, c) }
+  return out}}
 #should_fail off
 
 testCurrying2 :: fn (a, b, c: Nat) -> (a+b)+c = a+(b+c)
-{fun : (b',c': Nat) -> (a+b')+c' = a+(b'+c') := _ => { addAssociative(a, b', c') }
- fun(b,c)}
+{fun : (b',c': Nat) -> (a+b')+c' = a+(b'+c') := _ => { return addAssociative(a, b', c') }
+ return fun(b,c)}
 
 #should_fail
 testCurrying2Fail :: fn (a, b, c: Nat) -> (a+b)+c = a+(b+c)
-{fun : (c',b': Nat) -> (a+b')+c' = a+(b'+c') := _ => { addAssociative(a, b', c') }
- fun(b,c)}
+{fun : (c',b': Nat) -> (a+b')+c' = a+(b'+c') := _ => { return addAssociative(a, b', c') }
+ return fun(b,c)}
 #should_fail off
 
 testLocalFunction :: fn (a: Nat) -> Nat
 {b := 3;
- f : (n: Nat) -> Nat := _ => { n*b }
- fork a {0: 4, ++: f(a)}}
+ f : (n: Nat) -> Nat := _ => { return n*b }
+ fork a {0: return 4, ++: return f(a)}}
 check_truth testLocalFunction(2) = 6;
 
 #should_fail
@@ -92,52 +92,51 @@ check_truth ((a,b: Nat) -> a+b = b+a) = ((A,B: Nat) -> A+B = B+A);
 check_truth ((a,b: Nat) -> a+b = b+a) = ((A,B: Nat) -> A+B = B+B);
 #should_fail off
 
-testArrowEvaluation :: fn (A: Type) -> (a: A) -> A {_ => {a}}
-
-testComputationAsExpression :: fn (b: Bool) -> false = false & b {_}
+testArrowEvaluation :: fn (A: Type) -> (a: A) -> A {return _ => {return a}}
 
 testFunctionPointer :: fn (a,b: Bool) -> Bool
-{foo : (x: Bool) -> Bool := _ => {x & b}
+{foo : (x: Bool) -> Bool := _ => {return x & b}
  d := false;
- foo(a);}
+ return foo(a);}
 check_truth testFunctionPointer(true,true) = true;
 
-testFunctionPointerHelper :: fn () -> (a,b,c: Bool) -> Bool {_ => {c}}
+testFunctionPointerHelper :: fn () -> (a,b,c: Bool) -> Bool {return _ => {return c}}
 testFunctionPointerMore :: fn (a: Bool) -> Bool
 {foo := testFunctionPointerHelper();
- foo(true,false,a);}
+ return foo(true,false,a);}
 check_truth testFunctionPointerMore(false) = false;
 
-testConstantInFunctionHelper :: fn () -> Nat {a := 4; a}
-testConstantInFunction :: fn () -> Nat {b := testConstantInFunctionHelper(); b}
+testConstantInFunctionHelper :: fn () -> Nat {a := 4; return a}
+testConstantInFunction :: fn () -> Nat {b := testConstantInFunctionHelper(); return b}
 check_truth testConstantInFunction() = 4;
 
 ;; showing off now that we have arrow type normalization
 mulPosv2 :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
 {norm a_positive; norm b_positive;
  fork a
- {0 : _ => {a_positive(_)},
+ {0 : return _ => {return a_positive(_)},
   ++: ;; goal: (b + a.p * b = 0) -> False
-  _ => {fork b {0: b_positive(_), ++: norm (seek(b + a.p * b = 0)); seek}}
+  return _ => {fork b {0: return b_positive(_),
+                       ++: norm(seek(b + a.p * b = 0)); seek}}
   }}
 
-oneIsNotZero : 1 != 0 := seq {norm; _ => {seek}};
+oneIsNotZero : 1 != 0 := seq {norm; return _ => {seek}};
 test_eval mulPos(1,1,oneIsNotZero,oneIsNotZero);
 ;; print mulPos;
 
-somethingWicked :: fn (a,b,c: Nat) -> Type {(p: a=b) -> (q: b=c) -> a=c}
+somethingWicked :: fn (a,b,c: Nat) -> Type {return (p: a=b) -> (q: b=c) -> a=c}
 somethingWickedUsage :: () -> (x,y,z: Nat) -> (somethingWicked(x,y,z))
 {norm;
- _ => {_ => {_ => {rewrite p; rewrite q}}}}
+ return _ => {return _ => {return _ => {rewrite p; rewrite q}}}}
 
 StructWithFunction :: union {makeStructWithFunction(a: Nat, b: (E: a=0) -> False)}
-oneEqualZeroImpliesFalse : ((E: 1=0) -> False) := seq{norm; _ => {E}};
+oneEqualZeroImpliesFalse : ((E: 1=0) -> False) := seq{norm; return _ => {return E}};
 testFunctionInComposite :: fn (x: StructWithFunction, E: x.a = 0) -> False
-{x.b(E)}
+{return x.b(E)}
 testFunctionInCompositeUsage :: (Wrong: 1=0) -> False
 {
  obj := testFunctionInComposite(makeStructWithFunction(1, oneEqualZeroImpliesFalse), Wrong);
- obj
+ return obj
  }
 ;; print testFunctionInCompositeUsage;
 
@@ -145,14 +144,14 @@ foo :: (a: Bool) -> union {f(p: a=false), t(p: a=true)}
 {
  fork a
  {
-  false ctor[0](_),
-  true  ctor[1](_),
+  false return ctor[0](_),
+  true  return ctor[1](_),
   }
  }
 
-arrowTypeUnification :: (x: True) -> (a: True) -> a=x {_ => {fork a {truth: fork x {truth: }}}}
+arrowTypeUnification :: (x: True) -> (a: True) -> a=x {return _ => {fork a {truth: fork x {truth: }}}}
 test_eval arrowTypeUnification(truth);
-arrowTypeUnificationTest :: (y: True) -> (b: True) -> b=y {arrowTypeUnification(y)}
+arrowTypeUnificationTest :: (y: True) -> (b: True) -> b=y {return arrowTypeUnification(y)}
 
 #should_fail
 check truth: true = false;
@@ -161,13 +160,13 @@ check truth: true = false;
 ;; todo this can be just be a struct
 RatTest :: union {/(n,d: Nat, _dnot0: d != 0)}
 + :: fn (a, b: RatTest) -> RatTest
-{/(a.n * b.d + b.n * a.d,
-   a.d * b.d,
-   mulPos(a.d, b.d, a._dnot0, b._dnot0))}
+{return /(a.n * b.d + b.n * a.d,
+          a.d * b.d,
+          mulPos(a.d, b.d, a._dnot0, b._dnot0))}
 
 BigStruct :: union {bigStruct(r: RatTest)}
-testBigStruct :: (big : BigStruct) -> (big.r.d != 0) {big.r._dnot0}
-testRatArrow :: fn (r: RatTest) -> r.d != 0 { r._dnot0 }
+testBigStruct :: (big : BigStruct) -> (big.r.d != 0) {return big.r._dnot0}
+testRatArrow :: fn (r: RatTest) -> r.d != 0 { return r._dnot0 }
 
 SandwichEnd :: union {sandwichEndBool(b: Bool),
                       sandwichEndNat(n: Nat)}
@@ -181,9 +180,9 @@ useSandwich :: fn (sandwich: Sandwich) -> Nat
 {
  fork sandwich
  {
-  sandwichBool:   0,
-  sandwichMiddle: fork sandwich.m2.e {sandwichEndBool: 0,
-                                      sandwichEndNat:  sandwich.m2.e.n}
+  sandwichBool:   return 0,
+  sandwichMiddle: fork sandwich.m2.e {sandwichEndBool: return 0,
+                                      sandwichEndNat:  return sandwich.m2.e.n}
   }
  }
 check_truth useSandwich(sandwichMiddle(makeSandwichMiddle(sandwichEndBool(true)),
@@ -196,8 +195,8 @@ check 1+2: RatTest;
 testFillingHole :: (xdebug: Nat, x_positive: xdebug!=0, P: xdebug=0) -> False
 {norm x_positive;
  fork (xdebug)
- {0 : norm x_positive; x_positive(_),
-  ++: norm P; P}
+ {0 : norm x_positive; return x_positive(_),
+  ++: norm P; return P}
  }
 
 check id(False) : ((f: False) -> False);
@@ -205,11 +204,11 @@ check id(False) : ((f: False) -> False);
 unionRebasing :: (a: Nat) -> union {eq(a = a)}
 {
  prove(a=a) {}
- ctor[0](seek(a=a))
+ return ctor[0](seek(a=a))
  }
 
 testAnonymousParameter :: fn (A: Set, A) -> A
-{ seek(A) }
+{ seek }
 ;; print testAnonymousParameter;
 
 testFillHole :: (a: Nat) -> a + 0 = a {}

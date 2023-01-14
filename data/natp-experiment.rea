@@ -4,24 +4,24 @@ Natp :: union {+++(p: Nat)}
 
 ;; literal translation
 nat :: fn(a: Natp) -> Nat
-{fork a {+++: ++(a.p)}}
+{fork a {+++: return ++(a.p)}}
 
 1 : Natp := +++(0);
 
 natp :: fn(a: Nat) -> Natp
-{fork a {0  1,  ;; throwaway case
-         ++ +++(a.p)}}
+{fork a {0  return 1,  ;; throwaway case
+         ++ return +++(a.p)}}
 
 ;; todo this is what I'm talking about with the union-with-one-constructor
 ;; monkey business: you can't normalize unless you fork.
 natpNot0 :: (a: Natp) -> nat(a) != 0
-{fork a {+++ id(False)}}
+{fork a {+++ return id(False)}}
 
 + :: fn(a,b: Natp) -> Natp
-{natp(nat(a) + nat(b))}
+{return natp(nat(a) + nat(b))}
 
 * :: fn(a,b: Natp) -> Natp
-{natp(nat(a) * nat(b))}
+{return natp(nat(a) * nat(b))}
 
 addCommutative :: (a,b: Natp) -> (b+a = a+b)
 {
@@ -128,19 +128,19 @@ differentFromTwoSuccessor :: (a: Natp, P: ++(++(a)) = a) -> False
 
 > :: fn(a, b: Natp) -> Bool
 {fork a
- {1 : false,
-  ++: fork b {1: true, ++: a.p > b.p}}}
+ {1 : return false,
+  ++: fork b {1: return true, ++: return a.p > b.p}}}
 
 successorIsLarger :: (a: Natp) -> ++(a) > a = true
 {fork a
  {1 : ,
-  ++: successorIsLarger(a.p)}}
+  ++: return successorIsLarger(a.p)}}
 
 gtAntiReflexive :: (a: Natp, p: a>a = true) -> False
 #norm(p)
 {fork a
- {1:  p,
-  ++: gtAntiReflexive(a.p, p)}}
+ {1:  return p,
+  ++: return gtAntiReflexive(a.p, p)}}
 
 gtTransitive :: (a,b,c: Natp, P: a>b = true, Q: b>c = true) -> a>c = true
 #norm(P,Q)
