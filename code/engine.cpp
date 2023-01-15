@@ -20,6 +20,7 @@
 global_variable Builtin *builtin_Type;
 global_variable Builtin *builtin_Set;
 global_variable Builtin *builtin_equal;
+global_variable Builtin *builtin_type_equal;
 global_variable Union   *builtin_False;
 // global_variable Builtin *builtin_algebraic_norm;
 
@@ -145,34 +146,55 @@ newComposite(MemoryArena *arena, Term *op, i32 arg_count, Term **args)
 }
 
 inline Term *
-newComposite(MemoryArena *arena, Term *op, i32 arg_count, Term **args, Term *type)
+newComposite1(MemoryArena *arena, Term *op, Term *arg0)
 {
-  // todo typecheck the arguments too maybe?
-  Composite *out = newTerm(arena, Composite, type);
-  out->op        = op;
-  out->arg_count = arg_count;
-  out->args      = args;
-  return &out->t;
+  Term **args = pushArray(arena, 1, Term*);
+  args[0] = arg0;
+  return newComposite(arena, op, 1, args);
 }
 
 inline Term *
-newEquality(MemoryArena *arena, Term *type, Term *lhs, Term *rhs)
+newComposite2(MemoryArena *arena, Term *op, Term *arg0, Term *arg1)
 {
-  assert(type);
-  Composite *eq = newTerm(arena, Composite, &builtin_Set->t);
-  allocateArray(arena, 3, eq->args);
-  eq->op        = &builtin_equal->t;
-  eq->arg_count = 3;
-  eq->args[0]   = type;
-  eq->args[1]   = lhs;
-  eq->args[2]   = rhs;
-  return &eq->t;
+  Term **args = pushArray(arena, 2, Term*);
+  args[0] = arg0;
+  args[1] = arg1;
+  return newComposite(arena, op, 2, args);
+}
+
+inline Term *
+newComposite3(MemoryArena *arena, Term *op, Term *arg0, Term *arg1, Term *arg2)
+{
+  Term **args = pushArray(arena, 3, Term*);
+  args[0] = arg0;
+  args[1] = arg1;
+  args[2] = arg2;
+  return newComposite(arena, op, 3, args);
+}
+
+inline Term *
+newEquality(MemoryArena *arena, Term *lhs, Term *rhs)
+{
+  Term *type_of_type = getType(getType(lhs));
+  Term *op = 0;
+  if (type_of_type == &builtin_Set->t)
+  {
+    op = &builtin_equal->t;
+  }
+  else if (type_of_type == &builtin_Type->t)
+  {
+    op = &builtin_type_equal->t;
+  }
+  else
+    invalidCodePath;
+
+  return newComposite3(arena, op, getType(lhs), lhs, rhs);
 }
 
 forward_declare inline Term *
 newComputation(MemoryArena *arena, Term *lhs, Term *rhs)
 {
-  Term *eq = newEquality(arena, getType(lhs), lhs, rhs);
+  Term *eq = newEquality(arena, lhs, rhs);
   Computation *out = newTerm(arena, Computation, eq);
 
   return out;
@@ -195,7 +217,7 @@ getEqualitySides(Term *eq0, b32 must_succeed=true)
   TermPair out = {};
   if (Composite *eq = castTerm(eq0, Composite))
   {
-    if (eq->op == &builtin_equal->t)
+    if (eq->op == &builtin_equal->t || eq->op == &builtin_type_equal->t)
       out = TermPair{eq->args[1], eq->args[2]};
   }
   assert(!must_succeed || out)
@@ -361,16 +383,15 @@ castRecord(Term *term)
 }
 
 internal Term *
-rewriteTerm(MemoryArena *arena, Term *rhs, TreePath *path, Term *in0)
+rewriteTerm(MemoryArena *arena, Term *from, Term *to, TreePath *path, Term *in0)
 {
+  Term *out0 = 0;
   if (path)
   {
     Composite *in  = castTerm(in0, Composite);
     Composite *out = copyStruct(arena, in);
     if (path->first == -1)
-    {
-      out->op = rewriteTerm(arena, rhs, path->next, in->op);
-    }
+      out->op = rewriteTerm(arena, from, to, path->next, in->op);
     else
     {
       assert(path->first >= 0 && path->first < out->arg_count);
@@ -378,27 +399,19 @@ rewriteTerm(MemoryArena *arena, Term *rhs, TreePath *path, Term *in0)
       for (i32 arg_id=0; arg_id < out->arg_count; arg_id++)
       {
         if (arg_id == (i32)path->first)
-        {
-          out->args[arg_id] = rewriteTerm(arena, rhs, path->next, in->args[arg_id]);
-        }
+          out->args[arg_id] = rewriteTerm(arena, from, to, path->next, in->args[arg_id]);
         else
           out->args[arg_id] = in->args[arg_id];
       }
     }
-    return &out->t;
+    out0 = &out->t;
   }
   else
   {
-#if 0
-    if (!equalB32(in0, lhs))
-    {
-      dump("actual:   "); dump(in0); dump();
-      dump("expected: "); dump(lhs); dump();
-      invalidCodePath;
-    }
-#endif
-    return rhs;
+    assert(equal(in0, from));
+    out0 = to;
   }
+  return out0;
 }
 
 inline void
@@ -1541,7 +1554,7 @@ apply(MemoryArena *arena, Term *op, i32 arg_count, Term **args, Term *type)
                 args[2] = rarg;
                 out0 = apply(arena, &builtin_equal->t, 3, args, type);
                 if (!out0)
-                  out0 = newEquality(arena, getType(larg), larg, rarg);
+                  out0 = newEquality(arena, larg, rarg);
               }
               else
                 todoIncomplete;  // need conjunction
@@ -1558,7 +1571,11 @@ apply(MemoryArena *arena, Term *op, i32 arg_count, Term **args, Term *type)
   }
   else if (op->cat == Term_Constructor)
   {
-    out0 = newComposite(arena, op, arg_count, args, type);
+    Composite *out = newTerm(arena, Composite, type);
+    out->op        = op;
+    out->arg_count = arg_count;
+    out->args      = args;
+    out0 = &out->t;
   }
 
 #if DEBUG_LOG_apply
@@ -2720,7 +2737,7 @@ solveGoal(Solver *solver, Term *goal)
             {
               MemoryArena *arena = solver->arena;
               Term **args = copyArray(arena, solution.arg_count, solution.args);
-              out = newComposite(arena, hint, solution.arg_count, args, goal);
+              out = newComposite(arena, hint, solution.arg_count, args);
             }
           }
           else if (equal(getType(hint), goal))
@@ -3231,6 +3248,43 @@ isAlgebraicNorm(Ast *ast)
   return out;
 }
 
+inline b32
+stringLessThan(String a, String b)
+{
+  b32 out = false;
+  if (a.length < b.length)
+    out = true;
+  else if (a.length == b.length)
+  {
+    for (i32 i=0; i < a.length; i++)
+    {
+      if (a.chars[i] < b.chars[i])
+      {
+        out = true;
+        break;
+      }
+    }
+  }
+
+  return out;
+}
+
+inline b32
+algebraicallyLessThan(Term *a0, Term *b0)
+{
+  b32 out = false;
+  switch (a0->cat)
+  {
+    case Term_Variable:
+    {
+      Variable *a = castTerm(a0, Variable);
+      if (Variable *b = castTerm(b0, Variable))
+        out = stringLessThan(a->name, b->name);
+    } break;
+  }
+  return out;
+}
+
 forward_declare internal BuildTerm
 buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
 {
@@ -3343,11 +3397,12 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
                 {
                   if (equal(expression->op, algebra->add))
                   {
-                    todoIncomplete;
-                    // if (algebraicallyLessThan(expression->args[1], expression->args[0]))
-                    // {
-                    //   newComposite(expression->args[0]);
-                    // }
+                    Term *a = expression->args[0];
+                    Term *b = expression->args[1];
+                    if (algebraicallyLessThan(b, a))
+                    {
+                      out0 = newComposite2(arena, algebra->add, b, a);
+                    }
                   }
                 }
               }
@@ -3356,6 +3411,8 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
         }
         else
           parseError("expected 1 argument");
+
+        parseError("bookmark!");
       }
       else
       {
@@ -3658,7 +3715,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
           SearchOutput search = searchExpression(arena, typer, from, goal);
           if (search.found)
           {
-            new_goal = rewriteTerm(arena, to, search.path, goal);
+            new_goal = rewriteTerm(arena, from, to, search.path, goal);
             if (Term *body = buildTerm(arena, typer, in->body, new_goal).term)
               out0 = newRewrite(arena, eq_proof, body, search.path, in->right_to_left);
           }
@@ -3750,9 +3807,8 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
             }
           }
 
-          Term *from_type = getType(from);
-          Term *lr_eq = newEquality(temp_arena, from_type, from, to);
-          Term *rl_eq = newEquality(temp_arena, from_type, to, from);
+          Term *lr_eq = newEquality(temp_arena, from, to);
+          Term *rl_eq = newEquality(temp_arena, to, from);
 
           Solver solver = Solver{.arena=arena, .env=typer, .local_hints=hints, .use_global_hints=true};
           if (!(eq_proof = solveGoal(&solver, lr_eq)))
@@ -4054,8 +4110,9 @@ forward_declare inline Term *
 newRewrite(MemoryArena *arena, Term *eq_proof, Term *body, TreePath *path, b32 right_to_left)
 {
   auto [lhs, rhs] = getEqualitySides(getType(eq_proof));
-  Term *rewrite_to = right_to_left ? rhs : lhs;
-  Term *type = rewriteTerm(arena, rewrite_to, path, getType(body));
+  Term *from = right_to_left ? lhs : rhs;
+  Term *to   = right_to_left ? rhs : lhs;
+  Term *type = rewriteTerm(arena, from, to, path, getType(body));
 
   Rewrite *out = newTerm(arena, Rewrite, type);
   out->eq_proof      = eq_proof;
@@ -5242,10 +5299,15 @@ beginInterpreterSession(MemoryArena *top_level_arena, char *initial_file)
     Tokenizer builtin_tk = newTokenizer(toString("<builtin_not_a_real_dir>"), 0);
     global_tokenizer = &builtin_tk;
     builtin_tk.at = "(#hidden A: Set, a,b: A) -> Set";
-    BuildTerm equal_type = parseExpressionAndBuild(arena); 
+    Term *equal_type = parseExpressionAndBuild(arena).term; 
     assert(noError());
-    builtin_equal = newTerm(arena, Builtin, equal_type.term);
+    builtin_equal = newTerm(arena, Builtin, equal_type);
     addBuiltinGlobalBinding("=", &builtin_equal->t);
+
+    builtin_tk.at = "(#hidden A: Type, a,b: A) -> Set";
+    Term *type_equal_type = parseExpressionAndBuild(arena).term; 
+    assert(noError());
+    builtin_type_equal = newTerm(arena, Builtin, type_equal_type);
 
     EngineState builtin_engine_state = EngineState{.top_level_arena=top_level_arena};
     // todo this could just be an expression now, since we have union expression!
