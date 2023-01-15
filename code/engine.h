@@ -386,7 +386,6 @@ struct AccessorAst
 
   Ast   *record;                // in parse phase we can't tell if the op is a constructor
   Token  field_name;           // parsing info
-  i32    field_id;              // after build phase
 };
 
 struct FileList {
