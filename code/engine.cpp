@@ -201,7 +201,14 @@ newComputation(MemoryArena *arena, Typer *typer, Term *lhs, Term *rhs)
   assert(equal(normalize(arena, typer, lhs), normalize(arena, typer, rhs)));
   Term *eq = newEquality(arena, lhs, rhs);
   Computation *out = newTerm(arena, Computation, eq);
+  return out;
+}
 
+inline Term *
+newIdentity(MemoryArena *arena, Term *term)
+{
+  Term *eq = newEquality(arena, term, term);
+  Computation *out = newTerm(arena, Computation, eq);
   return out;
 }
 
@@ -415,10 +422,9 @@ rewriteTerm(MemoryArena *arena, Term *from, Term *to, TreePath *path, Term *in0)
   {
     if (!equal(in0, from))
     {
-      DUMP("\nin0: ", in0, "\n");
-      DUMP("\nfrom: ", from, "\n");
+      DUMP("\nin0: ", in0, "\n", "from: ", from, "\n");
+      invalidCodePath;
     }
-    assert(equal(in0, from));
     out0 = to;
   }
   return out0;
@@ -1227,7 +1233,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
 
       case Term_Computation:
       {
-        print(buffer, "computation(%d)", in0->serial);
+        print(buffer, "computation");
       } break;
 
       case Term_Accessor:
@@ -3343,10 +3349,31 @@ applyEqChain(MemoryArena *arena, Term *e1, Term *e2)
 }
 
 inline Term *
+rewriteProof(MemoryArena *arena, Term *eq_proof, TreePath *path, Term *in)
+{
+  Term *id = newIdentity(arena, in);
+  return newRewrite(arena, eq_proof, id, treePath(arena, 2, path), true);
+}
+
+inline Term *
 getAlgebraicNorm(MemoryArena *arena, Typer *typer, Algebra *algebra, Term *in0)
 {
   Term *out = 0;
   Term *expression0 = in0;
+
+  if (Composite *expression = castTerm(expression0, Composite))
+  {
+    if (equal(expression->op, algebra->add))
+    {
+      Term *r = expression->args[1];
+      if (Term *norm_r = getAlgebraicNorm(arena, typer, algebra, r))
+      {
+        out = rewriteProof(arena, norm_r, treePath(arena, 1, 0), expression0);
+        expression0 = getTransformationResult(out);
+      }
+    }
+  }
+
   for (b32 stop = false; !stop; )
   {
     stop = true;
@@ -3356,6 +3383,7 @@ getAlgebraicNorm(MemoryArena *arena, Typer *typer, Algebra *algebra, Term *in0)
       {
         Term *l0 = expression->args[0];
         Term *r  = expression->args[1];
+
         if (Composite *l = castTerm(l0, Composite))
         {
           if (equal(l->op, algebra->add))
@@ -3372,6 +3400,7 @@ getAlgebraicNorm(MemoryArena *arena, Typer *typer, Algebra *algebra, Term *in0)
       }
     }
   }
+
   return out;
 }
 
@@ -3394,41 +3423,6 @@ buildAlgebraicNorm(MemoryArena *arena, Typer *typer, CompositeAst *in)
         {
           found_algebra_match = true;
           out = getAlgebraicNorm(arena, typer, algebra, expression0);
-#if 0
-          if (Composite *expression = castTerm(expression0, Composite))
-          {
-            if (equal(expression->op, algebra->add))
-            {
-              b32 normalized = false;
-              while (!normalized)
-              {
-                normalized = true;
-                Term *l0 = expression->args[0];
-                Term *r  = expression->args[1];
-                if (Term *r_norm_proof = getAlgebraicNormTransformations(arena, typer, algebra, r))
-                {
-                  auto [_, r_norm] = getEqualitySides(getType(r_norm_proof));
-                  Term *expression_with_r_norm = newComposite2(arena, algebra->add, l0, r_norm);
-                  expression = castTerm(expression_with_r_norm, Composite);
-                  TreePath *path = treePath(arena, 1);
-                  newRewrite(arena, r_norm, body, path, false);
-                }
-                if (Composite *l = castTerm(l0, Composite))
-                {
-                  if (equal(l->op, algebra->add))
-                  {
-                    normalized = false;
-                    Term *norm = newComposite2(arena, algebra->add, l->args[0],
-                                               newComposite2(arena, algebra->add, l->args[1], r));
-                    Term *eq = newEquality(arena, expression0, norm);
-                    out0 = solveGoal(&solver, eq);
-                    assert(out0);
-                  }
-                }
-              }
-            }
-          }
-#endif
         }
       }
     }

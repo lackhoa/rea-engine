@@ -215,7 +215,10 @@ testAnonymousParameter :: fn (A: Set, A) -> A
 testFillHole :: (a: Nat) -> a + 0 = a {}
 
 #load "natp.rea"
-algebraTest :: (a,b,c,d,e: Natp) -> (a+b)+c+d = a+(c+b)+d
+algebraTest :: (a,b,c,d,e,f: Natp) -> ((a+b)+c)+(d+e)+f = a+b+c+d+e+f
 {
- prove ((a+b)+c)+d+e = a+b+c+d+e {return algebraic_norm(((a+b)+c)+d+e)}
+ ;; prove ((a+b)+c)+d+e = a+b+c+d+e {return algebraic_norm(((a+b)+c)+d+e)}
+ ;; prove a+(b+c)+d = a+b+c+d       {return algebraic_norm(a+((b+c)+d))}
+ return algebraic_norm(((a+b)+c)+(d+e)+f)
  }
+print algebraTest;
