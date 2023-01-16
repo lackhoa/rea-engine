@@ -22,7 +22,7 @@ global_variable Term *builtin_Set;
 global_variable Term *builtin_equal;
 global_variable Term *builtin_type_equal;
 global_variable Term *builtin_False;
-global_variable Term *builtin_eq_chain;
+global_variable Term *builtin_eqChain;
 
 global_variable Term dummy_function_being_built;
 global_variable Term  holev_ = {.cat = Term_Hole};
@@ -174,21 +174,24 @@ newComposite3(MemoryArena *arena, Term *op, Term *arg0, Term *arg1, Term *arg2)
 }
 
 inline Term *
+newCompositeN(MemoryArena *arena, Term *op, i32 arg_count, ...)
+{
+  va_list arg_list;
+  Term **args = pushArray(arena, arg_count, Term*);
+  __crt_va_start(arg_list, arg_count);
+  for (i32 i = 0; i < arg_count; i++)
+  {
+    args[i] = __crt_va_arg(arg_list, Term*);
+  }
+  __crt_va_end(arg_list);
+  return newComposite(arena, op, arg_count, args);
+}
+
+inline Term *
 newEquality(MemoryArena *arena, Term *lhs, Term *rhs)
 {
   Term *type_of_type = getType(getType(lhs));
-  Term *op = 0;
-  if (type_of_type == builtin_Set)
-  {
-    op = builtin_equal;
-  }
-  else if (type_of_type == builtin_Type)
-  {
-    op = builtin_type_equal;
-  }
-  else
-    invalidCodePath;
-
+  Term *op = (type_of_type == builtin_Set) ? builtin_equal : builtin_type_equal;
   return newComposite3(arena, op, getType(lhs), lhs, rhs);
 }
 
@@ -3081,7 +3084,7 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
 
             default:
             {
-              parseError("unexpected token following identifier");
+              parseError("invalid syntax for sequence item (keep in mind that we're in a sequence, so you need to use the \"return\" keyword to return an expression)");
             } break;
           }
         }
@@ -3322,28 +3325,48 @@ addToEnd(MemoryArena *arena, TreePath *prefix, i32 item)
   return out;
 }
 
-inline TreePathList *
-getAlgebraicNormTransformations(MemoryArena *arena, Typer *typer, Algebra *algebra, TreePath *prefix, Term *in0)
+inline Term *
+getTransformationResult(Term *in)
 {
-  // NOTE: The first in the path is the first rewrite path, then the path of the body rewrite, etc.
-  TreePathList *out = 0;
-  if (Composite *in = castTerm(in0, Composite))
+  auto [_, out] = getEqualitySides(getType(in));
+  return out;
+}
+
+inline Term *
+applyEqChain(MemoryArena *arena, Term *e1, Term *e2)
+{
+  auto [a,b] = getEqualitySides(getType(e1));
+  auto [_,c] = getEqualitySides(getType(e2));
+  Term *A = getType(a);
+  Term *out = newCompositeN(arena, builtin_eqChain, 6, A, a,b,c, e1,e2);
+  return out;
+}
+
+inline Term *
+getAlgebraicNorm(MemoryArena *arena, Typer *typer, Algebra *algebra, Term *in0)
+{
+  Term *out = 0;
+  Term *expression0 = in0;
+  for (b32 stop = false; !stop; )
   {
-    if (equal(in->op, algebra->add))
+    stop = true;
+    if (Composite *expression = castTerm(expression0, Composite))
     {
-      Term *l0 = in->args[0];
-      Term *r  = in->args[1];
-      TreePath *r_prefix = addToEnd(arena, prefix, 1);
-      if (TreePathList *r_transforms = getAlgebraicNormTransformations(arena, typer, algebra, r_prefix, r))
+      if (equal(expression->op, algebra->add))
       {
+        Term *l0 = expression->args[0];
+        Term *r  = expression->args[1];
         if (Composite *l = castTerm(l0, Composite))
         {
           if (equal(l->op, algebra->add))
           {
-            TreePathList *new_out = pushStruct(arena, TreePathList);
-            new_out->head = prefix;
-            new_out->tail = out;
-            out = new_out;
+            stop = false;
+            Term *new_proof = newComposite3(arena, algebra->addAssociative, l->args[0], l->args[1], r);
+            if (out)
+              out = applyEqChain(arena, out, new_proof);
+            else
+              out = new_proof;
+            expression0 = getTransformationResult(out);
           }
         }
       }
@@ -3355,8 +3378,7 @@ getAlgebraicNormTransformations(MemoryArena *arena, Typer *typer, Algebra *algeb
 inline Term *
 buildAlgebraicNorm(MemoryArena *arena, Typer *typer, CompositeAst *in)
 {
-  Term *out0 = 0;
-#if 0
+  Term *out = 0;
   Solver solver = Solver{.arena=arena, .typer=typer, .use_global_hints=true};
   if (in->arg_count == 1)
   {
@@ -3371,6 +3393,8 @@ buildAlgebraicNorm(MemoryArena *arena, Typer *typer, CompositeAst *in)
         if (equal(getType(expression0), algebra->type))
         {
           found_algebra_match = true;
+          out = getAlgebraicNorm(arena, typer, algebra, expression0);
+#if 0
           if (Composite *expression = castTerm(expression0, Composite))
           {
             if (equal(expression->op, algebra->add))
@@ -3404,6 +3428,7 @@ buildAlgebraicNorm(MemoryArena *arena, Typer *typer, CompositeAst *in)
               }
             }
           }
+#endif
         }
       }
     }
@@ -3411,11 +3436,10 @@ buildAlgebraicNorm(MemoryArena *arena, Typer *typer, CompositeAst *in)
   else
     parseError("expected 1 argument");
 
-  if (!out0)
+  if (!out)
     parseError(&in->a, "either the expression is already in normal form, or we can't solve the goal");
 
-#endif
-  return out0;
+  return out;
 }
 
 forward_declare internal BuildTerm
@@ -5447,9 +5471,9 @@ beginInterpreterSession(MemoryArena *top_level_arena, char *initial_file)
     builtin_tk.at = R""""(fn (#hidden A: Set, #hidden a, #hidden b, #hidden c: A, a=b, b=c) -> a=c
 {=> b = c {seek(a=b)} seek}
 )"""";
-    builtin_eq_chain = parseExpressionAndBuild(arena).term;
+    builtin_eqChain = parseExpressionAndBuild(arena).term;
     assert(noError());
-    addBuiltinGlobalBinding("eq_chain", builtin_eq_chain);
+    addBuiltinGlobalBinding("eqChain", builtin_eqChain);
 
     resetArena(temp_arena);
   }
