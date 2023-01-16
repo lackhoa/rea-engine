@@ -1,7 +1,7 @@
 void eatToken(Tokenizer * tk);
 Token nextToken(Tokenizer * tk);
 Token peekToken(Tokenizer * tk);
-Term * newComputation(MemoryArena * arena, Term * lhs, Term * rhs);
+Term * newComputation(MemoryArena * arena, Typer * typer, Term * lhs, Term * rhs);
 Term * getType(Term * in0);
 void dump(Trinary trinary);
 void unwindScope(Typer * env);

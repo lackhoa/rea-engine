@@ -501,6 +501,7 @@ eatToken(Tokenizer *tk = global_tokenizer)
   eatAllSpaces(tk);
 }
 
+// todo just return the token pointer!
 forward_declare inline Token
 nextToken(Tokenizer *tk=global_tokenizer)
 {

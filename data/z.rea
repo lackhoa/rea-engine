@@ -88,7 +88,7 @@ addCommutativePositive :: (a: Natp, b: Z) -> +(a) + b = b + +(a)
 {fork a
  {1: fork b {0:, +: rewrite add1(b.v), -:},
   ++: fork b {0:,
-              +: rewrite addCommutative(++(a.p), b.v);
+              +: rewrite addCommutative(b.v, ++(a.p));
               => norm,
               -:}}}
 
@@ -97,7 +97,7 @@ addCommutativeNegative :: (a: Natp, b: Z) -> -(a) + b = b + -(a)
  {1: fork b {0:, +: , -: rewrite add1(b.v)},
   ++: fork b {0:,
               +: ,
-              -: rewrite addCommutative(++(a.p), b.v); => norm}}}
+              -: rewrite addCommutative(b.v, ++(a.p)); => norm}}}
 
 addCommutative :: (a,b: Z) -> a+b = b+a
 {fork(a)
@@ -339,7 +339,7 @@ addPreservesGt :: (a,b,c: Z, p: a>b=true) -> a+c > b+c = true
             + fork a.v {1 fork p {},
                         ++ fork b.v
                         {1 fork c {0,
-                                   + rewrite addCommutative(c.v, a.v.p); return addIncreases(c.v, a.v.p),
+                                   + rewrite addCommutative(a.v.p, c.v); return addIncreases(c.v, a.v.p),
                                    - fork c.v
                                    {1,
                                     ++ rewrite addCommutative(+(a.v.p), -(c.v.p));
@@ -374,9 +374,9 @@ addPreservesGt :: (a,b,c: Z, p: a>b=true) -> a+c > b+c = true
                                  0,
                                  + fork c.v {1, ++ return addNegativeDecreases(+(c.v.p), b.v.p)},
                                  - fork c.v {1
-                                             rewrite addCommutative(1, b.v.p);
+                                             rewrite addCommutative(b.v.p, 1);
                                              return addIncreases(1, b.v.p),
-                                             ++ rewrite addCommutative(++(c.v.p), b.v.p);
+                                             ++ rewrite addCommutative(b.v.p, ++(c.v.p));
                                              return addIncreases(++(c.v.p), b.v.p)}}},
                         ++ fork b.v
                         {

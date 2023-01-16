@@ -101,11 +101,11 @@ newVariable(MemoryArena *arena, Typer *typer, i32 id, i32 delta)
   for (i32 id=0; id < delta; id++)
     scope=scope->outer;
   assert(scope->depth == typer->scope->depth - delta);
-  Term *type = scope->first->param_types[id];
+  Term *type = scope->head->param_types[id];
   type = rebase(arena, type, delta);
 
   Variable *var = newTerm(arena, Variable, type);
-  var->name  = scope->first->param_names[id];
+  var->name  = scope->head->param_names[id];
   var->id    = id;
   var->delta = delta;
 
@@ -130,6 +130,7 @@ newComposite(MemoryArena *arena, Term *op, i32 arg_count, Term **args)
     type = evaluate(arena, args, signature->output_type);
   }
 
+  assert(signature->param_count == arg_count);
   for (i32 i=0; i < arg_count; i++)
   {
     Term *actual_type   = getType(args[i]);
@@ -192,8 +193,9 @@ newEquality(MemoryArena *arena, Term *lhs, Term *rhs)
 }
 
 forward_declare inline Term *
-newComputation(MemoryArena *arena, Term *lhs, Term *rhs)
+newComputation(MemoryArena *arena, Typer *typer, Term *lhs, Term *rhs)
 {
+  assert(equal(normalize(arena, typer, lhs), normalize(arena, typer, rhs)));
   Term *eq = newEquality(arena, lhs, rhs);
   Computation *out = newTerm(arena, Computation, eq);
 
@@ -329,7 +331,7 @@ getVarNameInScope(Typer *env, DataMap *map)
   {
     if (scope->depth == map->depth)
     {
-      out = scope->first->param_names[map->index];
+      out = scope->head->param_names[map->index];
       break;
     }
   }
@@ -361,13 +363,13 @@ print(MemoryArena *buffer, DataTree *tree)
 internal void
 printDataMap(MemoryArena *buffer, Typer *env)
 {
-  for (DataMap *map = env->map; map; map=map->next)
+  for (DataMap *map = env->map; map; map=map->tail)
   {
     String var = getVarNameInScope(env, map);
     print(buffer, var);
     print(buffer, ": ");
     print(buffer, &map->tree);
-    if (map->next)
+    if (map->tail)
       print(buffer, ", ");
   }
 }
@@ -390,16 +392,16 @@ rewriteTerm(MemoryArena *arena, Term *from, Term *to, TreePath *path, Term *in0)
   {
     Composite *in  = castTerm(in0, Composite);
     Composite *out = copyStruct(arena, in);
-    if (path->first == -1)
-      out->op = rewriteTerm(arena, from, to, path->next, in->op);
+    if (path->head == -1)
+      out->op = rewriteTerm(arena, from, to, path->tail, in->op);
     else
     {
-      assert(path->first >= 0 && path->first < out->arg_count);
+      assert((path->head >= 0) && (path->head < out->arg_count));
       allocateArray(arena, out->arg_count, out->args);
       for (i32 arg_id=0; arg_id < out->arg_count; arg_id++)
       {
-        if (arg_id == (i32)path->first)
-          out->args[arg_id] = rewriteTerm(arena, from, to, path->next, in->args[arg_id]);
+        if (arg_id == (i32)path->head)
+          out->args[arg_id] = rewriteTerm(arena, from, to, path->tail, in->args[arg_id]);
         else
           out->args[arg_id] = in->args[arg_id];
       }
@@ -408,6 +410,11 @@ rewriteTerm(MemoryArena *arena, Term *from, Term *to, TreePath *path, Term *in0)
   }
   else
   {
+    if (!equal(in0, from))
+    {
+      DUMP("\nin0: ", in0, "\n");
+      DUMP("\nfrom: ", from, "\n");
+    }
     assert(equal(in0, from));
     out0 = to;
   }
@@ -471,7 +478,7 @@ getOrAddDataTree(MemoryArena *arena, Typer *env, Term *in0, i32 ctor_id)
   }
 
   i32 in_root_depth = scope_depth - in_root->delta;
-  for (DataMap *map = env->map; map; map=map->next)
+  for (DataMap *map = env->map; map; map=map->tail)
   {
     if (map->depth == in_root_depth && map->index == in_root->id)
     {
@@ -490,11 +497,11 @@ getOrAddDataTree(MemoryArena *arena, Typer *env, Term *in0, i32 ctor_id)
         map->index   = in_root->id;
         initDataTree(arena, &map->tree, root_union, ctor_id);
         tree = &map->tree;
-        map->next    = env->map;
+        map->tail    = env->map;
         env->map     = map;
 
         DataMapAddHistory *history = pushStruct(temp_arena, DataMapAddHistory, true);
-        history->previous_map = map->next;
+        history->previous_map = map->tail;
         history->previous     = env->add_history;
         env->add_history = history;
         added = true;
@@ -508,7 +515,7 @@ getOrAddDataTree(MemoryArena *arena, Typer *env, Term *in0, i32 ctor_id)
       map->index   = in_root->id;
       initDataTree(arena, &map->tree, root_union, 0);
       tree = &map->tree;
-      map->next = env->map;
+      map->tail = env->map;
       env->map = map;
     }
   }
@@ -719,7 +726,7 @@ inline LocalBindings *
 extendBindings(MemoryArena *arena, Typer *env)
 {
   LocalBindings *out = pushStruct(arena, LocalBindings, true);
-  out->next     = env->bindings;
+  out->tail     = env->bindings;
   out->arena    = arena;
   env->bindings = out;
   return out;
@@ -740,7 +747,7 @@ forward_declare inline void unwindScope(Typer *env) {env->scope = env->scope->ou
 forward_declare inline void
 unwindBindingsAndScope(Typer *env)
 {
-  env->bindings = env->bindings->next;
+  env->bindings = env->bindings->tail;
   unwindScope(env);
 }
 
@@ -903,10 +910,10 @@ inline void
 print(MemoryArena *buffer, TreePath *tree_path)
 {
   print(buffer, "[");
-  for (TreePath *path=tree_path; path; path=path->next)
+  for (TreePath *path=tree_path; path; path=path->tail)
   {
-    print(buffer, "%d", path->first);
-    if (path->next)
+    print(buffer, "%d", path->head);
+    if (path->tail)
     {
       print(buffer, ", ");
     }
@@ -1023,7 +1030,7 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
 
       case Ast_FunctionDecl: {print(buffer, "function decl");} break;
 
-      case Ast_Lambda: {print(buffer, "lambda");} break;
+      case Ast_FunctionAst: {print(buffer, "lambda");} break;
 
       case Ast_Let:
       {
@@ -1271,7 +1278,7 @@ print(MemoryArena *buffer, Scope *scopes)
   print(buffer, "[");
   while (scopes)
   {
-    auto scope = scopes->first;
+    auto scope = scopes->head;
     print(buffer, "(");
     for (int param_id = 0;
          param_id < scope->param_count;
@@ -1315,7 +1322,7 @@ newScope(Scope *outer, Arrow *signature)
 {
   Scope *scope = pushStruct(temp_arena, Scope, true);
   scope->outer = outer;
-  scope->first = signature;
+  scope->head = signature;
   scope->depth = outer ? outer->depth+1 : 1;
   return scope;
 }
@@ -1905,8 +1912,8 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
           if (out.result == Trinary_Unknown && (mismatch_count == 1) && arena)
           {
             allocate(arena, out.diff_path);
-            out.diff_path->first = unique_diff_id;
-            out.diff_path->next  = unique_diff_path;
+            out.diff_path->head = unique_diff_id;
+            out.diff_path->tail  = unique_diff_path;
           }
         }
       } break;
@@ -1996,14 +2003,14 @@ lookupGlobalNameSlot(String key, b32 add_new)
     {
       if (equal(slot->key, key))
         break;
-      else if (slot->next_hash_slot)
-        slot = slot->next_hash_slot;
+      else if (slot->hash_tail)
+        slot = slot->hash_tail;
       else
       {
         if (add_new)
         {
-          slot->next_hash_slot = pushStruct(global_state.top_level_arena, GlobalBinding, true);
-          slot = slot->next_hash_slot;
+          slot->hash_tail = pushStruct(global_state.top_level_arena, GlobalBinding, true);
+          slot = slot->hash_tail;
           slot->key = key;
         }
         else
@@ -2049,17 +2056,17 @@ lookupCurrentFrame(LocalBindings *bindings, String key, b32 add_if_missing)
         stop = true;
         found = true;
       }
-      else if (slot->next)
-        slot = slot->next;
+      else if (slot->tail)
+        slot = slot->tail;
       else
       {
         stop = true;
         if (add_if_missing)
         {
-          allocate(bindings->arena, slot->next);
-          slot = slot->next;
+          allocate(bindings->arena, slot->tail);
+          slot = slot->tail;
           slot->key  = key;
-          slot->next = 0;
+          slot->tail = 0;
         }
       }
     }
@@ -2173,7 +2180,7 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
         Variable *in = castTerm(in0, Variable);
         i32 var_depth = ctx->depth - in->delta;
         DataTree *tree = 0;
-        for (DataMap *map = ctx->map; map; map=map->next)
+        for (DataMap *map = ctx->map; map; map=map->tail)
         {
           if (map->depth == var_depth && map->index == in->id)
           {
@@ -2319,14 +2326,14 @@ lookupLocalName(Typer *env, Token *token)
       break;
     }
     else
-      bindings = bindings->next;
+      bindings = bindings->tail;
   }
 
   return out;
 }
 
 inline b32
-requireChar(char c, char *reason = 0, Tokenizer *tk=global_tokenizer)
+requireChar(char c, char *reason=0, Tokenizer *tk=global_tokenizer)
 {
   auto out = false;
   if (!reason)
@@ -2337,9 +2344,7 @@ requireChar(char c, char *reason = 0, Tokenizer *tk=global_tokenizer)
     if (token.string.length == 1 && token.string.chars[0] == c)
       out = true;
     else
-    {
       parseError(tk, &token, "expected character '%c' (%s)", c, reason);
-    }
   }
   return out;
 }
@@ -2458,8 +2463,8 @@ subExpressionAtPath(Term *in, TreePath *path)
       case Term_Composite:
       {
         Composite *composite = castTerm(in, Composite);
-        Term *arg = composite->args[path->first];
-        return subExpressionAtPath(arg, path->next); 
+        Term *arg = composite->args[path->head];
+        return subExpressionAtPath(arg, path->tail); 
       } break;
 
       invalidDefaultCase;
@@ -2468,22 +2473,6 @@ subExpressionAtPath(Term *in, TreePath *path)
   else
     return in;
 }
-
-#if 0
-internal TreePath *
-treePathFromAccessor(MemoryArena *arena, Accessor *accessor)
-{
-  TreePath *out = 0;
-  for (Accessor *iter = accessor; iter; iter = castTerm(iter->record, Accessor))
-  {
-    TreePath *new_path = pushStruct(arena, TreePath);
-    new_path->first = accessor->field_id;
-    new_path->next = out;
-    out = new_path;
-  }
-  return out;
-}
-#endif
 
 inline i32
 getExplicitParamCount(ArrowAst *in)
@@ -2704,10 +2693,10 @@ solveGoal(Solver *solver, Term *goal)
 
     if (auto [l,r] = getEqualitySides(goal, false))
     {
-      if (equal(normalize(temp_arena, solver->env, l),
-                normalize(temp_arena, solver->env, r)))
+      if (equal(normalize(temp_arena, solver->typer, l),
+                normalize(temp_arena, solver->typer, r)))
       {
-        out = newComputation(solver->arena, l, r);
+        out = newComputation(solver->arena, solver->typer, l, r);
       }
     }
 
@@ -2716,7 +2705,7 @@ solveGoal(Solver *solver, Term *goal)
       b32 tried_global_hints = false;
       for (HintDatabase *hints = solver->local_hints;
            !out;
-           hints = hints->next)
+           hints = hints->tail)
       {
         if (!hints)
         {
@@ -2729,7 +2718,7 @@ solveGoal(Solver *solver, Term *goal)
 
         if (hints)
         {
-          Term *hint = hints->first;
+          Term *hint = hints->head;
           if (getType(hint)->cat == Term_Arrow)
           {
             SolveArgs solution = solveArgs(solver, hint, goal);
@@ -2761,7 +2750,7 @@ solveGoal(Solver *solver, Term *goal)
 }
 
 internal Term *
-solveForGoal(Solver solver, Term *goal)
+solveGoal(Solver solver, Term *goal)
 {
   return solveGoal(&solver, goal);
 }
@@ -2880,8 +2869,8 @@ searchExpression(MemoryArena *arena, Typer *env, Term *lhs, Term* in0)
         {
           allocate(arena, out.path);
           out.found       = true;
-          out.path->first = -1;
-          out.path->next  = op.path;
+          out.path->head = -1;
+          out.path->tail  = op.path;
         }
         else
         {
@@ -2892,8 +2881,8 @@ searchExpression(MemoryArena *arena, Typer *env, Term *lhs, Term* in0)
             {
               allocate(arena, out.path);
               out.found     = true;
-              out.path->first = arg_id;
-              out.path->next  = arg.path;
+              out.path->head = arg_id;
+              out.path->tail  = arg.path;
             }
           }
         }
@@ -3113,8 +3102,8 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
     {
       count++;
       AstList *new_list = pushStruct(temp_arena, AstList);
-      new_list->first = ast0;
-      new_list->next  = list;
+      new_list->head = ast0;
+      new_list->tail  = list;
       list = new_list;
       // f.ex function definitions doesn't need to end with ';'
       optionalChar(';');
@@ -3130,7 +3119,7 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
     Ast *previous = 0;
     for (i32 id = 0; id < count; id++)
     {
-      Ast *item0 = list->first;
+      Ast *item0 = list->head;
       if (id > 0)
       {
         if (Let *let = castAst(item0, Let))
@@ -3144,9 +3133,9 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
       }
       previous = item0;
       if (id != count-1)
-        list = list->next;
+        list = list->tail;
     }
-    out = list->first;
+    out = list->head;
   }
 
   return out;
@@ -3189,8 +3178,8 @@ inline HintDatabase *
 addHint(MemoryArena *arena, HintDatabase *hint_db, Term *term)
 {
   HintDatabase *new_hints = pushStruct(arena, HintDatabase, true);
-  new_hints->first = term;
-  new_hints->next  = hint_db;
+  new_hints->head = term;
+  new_hints->tail  = hint_db;
   return new_hints;
 }
 
@@ -3285,6 +3274,150 @@ algebraicallyLessThan(Term *a0, Term *b0)
   return out;
 }
 
+inline TreePath *
+treePath(MemoryArena *arena, i32 head, TreePath *tail)
+{
+  TreePath *out = pushStruct(arena, TreePath, true);
+  out->head = head;
+  out->tail = tail;
+  return out;
+}
+
+inline TreePath *
+reverseInPlace(TreePath *in)
+{
+  TreePath *out = 0;
+  for (TreePath *it = in; it; )
+  {
+    TreePath *next_it = it->tail;
+    it->tail = out;
+    out = it;
+    it = next_it;
+  }
+  return out;
+}
+
+inline TreePath *
+reversePath(MemoryArena *arena, TreePath *in)
+{
+  TreePath *out = 0;
+  for (TreePath *it = in; it; it = it->tail)
+  {
+    TreePath *new_out = pushStruct(arena, TreePath, true);
+    new_out->head = it->head;
+    new_out->tail = out;
+    out = new_out;
+  }
+  return out;
+}
+
+inline TreePath *
+addToEnd(MemoryArena *arena, TreePath *prefix, i32 item)
+{
+  TreePath *reverse_prefix = reversePath(arena, prefix);
+  TreePath *out = pushStruct(arena, TreePath, true);
+  out->head = item;
+  out->tail = reverse_prefix;
+  out = reverseInPlace(out);
+  return out;
+}
+
+inline TreePathList *
+getAlgebraicNormTransformations(MemoryArena *arena, Typer *typer, Algebra *algebra, TreePath *prefix, Term *in0)
+{
+  // NOTE: The first in the path is the first rewrite path, then the path of the body rewrite, etc.
+  TreePathList *out = 0;
+  if (Composite *in = castTerm(in0, Composite))
+  {
+    if (equal(in->op, algebra->add))
+    {
+      Term *l0 = in->args[0];
+      Term *r  = in->args[1];
+      TreePath *r_prefix = addToEnd(arena, prefix, 1);
+      if (TreePathList *r_transforms = getAlgebraicNormTransformations(arena, typer, algebra, r_prefix, r))
+      {
+        if (Composite *l = castTerm(l0, Composite))
+        {
+          if (equal(l->op, algebra->add))
+          {
+            TreePathList *new_out = pushStruct(arena, TreePathList);
+            new_out->head = prefix;
+            new_out->tail = out;
+            out = new_out;
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+inline Term *
+buildAlgebraicNorm(MemoryArena *arena, Typer *typer, CompositeAst *in)
+{
+  Term *out0 = 0;
+#if 0
+  Solver solver = Solver{.arena=arena, .typer=typer, .use_global_hints=true};
+  if (in->arg_count == 1)
+  {
+    if (Term *expression0 = buildTerm(arena, typer, in->args[0], holev))
+    {
+      b32 found_algebra_match = false;
+      for (AlgebraDatabase *algebras = global_state.algebras;
+           algebras && !found_algebra_match;
+           algebras = algebras->tail)
+      {
+        Algebra *algebra = &algebras->head;
+        if (equal(getType(expression0), algebra->type))
+        {
+          found_algebra_match = true;
+          if (Composite *expression = castTerm(expression0, Composite))
+          {
+            if (equal(expression->op, algebra->add))
+            {
+              b32 normalized = false;
+              while (!normalized)
+              {
+                normalized = true;
+                Term *l0 = expression->args[0];
+                Term *r  = expression->args[1];
+                if (Term *r_norm_proof = getAlgebraicNormTransformations(arena, typer, algebra, r))
+                {
+                  auto [_, r_norm] = getEqualitySides(getType(r_norm_proof));
+                  Term *expression_with_r_norm = newComposite2(arena, algebra->add, l0, r_norm);
+                  expression = castTerm(expression_with_r_norm, Composite);
+                  TreePath *path = treePath(arena, 1);
+                  newRewrite(arena, r_norm, body, path, false);
+                }
+                if (Composite *l = castTerm(l0, Composite))
+                {
+                  if (equal(l->op, algebra->add))
+                  {
+                    normalized = false;
+                    Term *norm = newComposite2(arena, algebra->add, l->args[0],
+                                               newComposite2(arena, algebra->add, l->args[1], r));
+                    Term *eq = newEquality(arena, expression0, norm);
+                    out0 = solveGoal(&solver, eq);
+                    assert(out0);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  else
+    parseError("expected 1 argument");
+
+  if (!out0)
+    parseError(&in->a, "either the expression is already in normal form, or we can't solve the goal");
+
+#endif
+  return out0;
+}
+
 forward_declare internal BuildTerm
 buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
 {
@@ -3303,7 +3436,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
   {
     case Ast_Hole:
     {
-      if (Term *solution = solveForGoal(Solver{.arena=arena, .env=typer, .use_global_hints=true}, goal))
+      if (Term *solution = solveGoal(Solver{.arena=arena, .typer=typer, .use_global_hints=true}, goal))
         out0 = solution;
       else
         parseError(in0, "please provide an expression here");
@@ -3373,46 +3506,14 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
       {
         // Infer all arguments.
         if (Identifier *op_ident = castAst(in->op, Identifier))
-        {
           out0 = getMatchingFunctionCall(arena, typer, op_ident, goal);
-        }
         else
           parseError(in->args[0], "todo: ellipsis only works with identifier atm");
       }
       else if (isAlgebraicNorm(in->op))
       {
         // macro interception
-        if (in->arg_count == 1)
-        {
-          if (Term *expression0 = buildTerm(arena, typer, in->args[0], holev))
-          {
-            for (AlgebraDatabase *algebras=global_state.algebras;
-                 algebras && !out0;
-                 algebras=algebras->next)
-            {
-              Algebra *algebra = &algebras->first;
-              if (equal(getType(expression0), algebra->type))
-              {
-                if (Composite *expression = castTerm(expression0, Composite))
-                {
-                  if (equal(expression->op, algebra->add))
-                  {
-                    Term *a = expression->args[0];
-                    Term *b = expression->args[1];
-                    if (algebraicallyLessThan(b, a))
-                    {
-                      out0 = newComposite2(arena, algebra->add, b, a);
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-        else
-          parseError("expected 1 argument");
-
-        parseError("bookmark!");
+        out0 = buildAlgebraicNorm(arena, typer, in);
       }
       else
       {
@@ -3499,7 +3600,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
                 // Typecheck & Inference for the arguments.
                 if (expanded_args[arg_id]->cat == Ast_Hole)
                 {
-                  if (Term *fill = solveForGoal(Solver{.arena=arena, .env=typer}, expected_arg_type))
+                  if (Term *fill = solveGoal(Solver{.arena=arena, .typer=typer}, expected_arg_type))
                     args[arg_id] = fill;
                   else
                   {
@@ -3668,15 +3769,15 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
           setErrorFlag(ErrorUnrecoverable);
         }
       }
-      assert(!out0 || getType(out0));
     } break;
 
-    case Ast_Lambda:
+    case Ast_FunctionAst:
     {
-      Lambda *in   = castAst(in0, Lambda);
+      // todo :build-global-function-vs-local-function
+      FunctionAst *in   = castAst(in0, FunctionAst);
       Term   *type = goal;
       if (in->signature)
-        type = buildTerm(arena, typer, in->signature, holev).term;
+        type = buildTerm(arena, typer, &in->signature->a, holev).term;
 
       if (noError())
       {
@@ -3697,7 +3798,6 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
           attach("goal", goal);
         }
       }
-      assert(!out0 || getType(out0));
     } break;
 
     case Ast_RewriteAst:
@@ -3754,7 +3854,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
         else
         {
           new_goal = norm_goal;
-          eq_proof = newComputation(arena, goal, new_goal);
+          eq_proof = newComputation(arena, typer, goal, new_goal);
           rewrite_path = 0;
         }
       }
@@ -3810,7 +3910,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
           Term *lr_eq = newEquality(temp_arena, from, to);
           Term *rl_eq = newEquality(temp_arena, to, from);
 
-          Solver solver = Solver{.arena=arena, .env=typer, .local_hints=hints, .use_global_hints=true};
+          Solver solver = Solver{.arena=arena, .typer=typer, .local_hints=hints, .use_global_hints=true};
           if (!(eq_proof = solveGoal(&solver, lr_eq)))
           {
             if ((eq_proof = solveGoal(&solver, rl_eq)))
@@ -3857,14 +3957,14 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
           if (in->type == AST_NORMALIZE_ME)
           {// type coercion
             Term *norm_rhs_type = normalize(arena, typer, rhs_type);
-            Term *computation = newComputation(arena, norm_rhs_type, rhs_type);
+            Term *computation = newComputation(arena, typer, norm_rhs_type, rhs_type);
             rhs_type = norm_rhs_type;
             rhs = newRewrite(arena, computation, build_rhs, 0, false);
             assert(equal(getType(rhs), rhs_type));
           }
 
           Token *token = &in0->token;
-          Lambda *lambda = newAst(temp_arena, Lambda, token);
+          FunctionAst *lambda = newAst(temp_arena, FunctionAst, token);
           lambda->body = in->body;
           ArrowAst *signature = newAst(temp_arena, ArrowAst, token);
           i32 param_count = 1;
@@ -3877,7 +3977,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
           Term *rhs_type_rebased = rebase(arena, rhs_type, 1);
           signature->param_types[0] = synthesizeAst(temp_arena, rhs_type_rebased, token);
           signature->output_type    = synthesizeAst(temp_arena, rebase(arena, goal, 1), token);
-          lambda->signature = &signature->a;
+          lambda->signature = signature;
 
           Ast *rhs_ast = synthesizeAst(arena, rhs, token);
 
@@ -3926,7 +4026,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
         i32 delta = 0;
         for (Scope *scope = typer->scope; scope; scope=scope->outer)
         {
-          Arrow *arrow = scope->first;
+          Arrow *arrow = scope->head;
           for (i32 param_id=0; param_id < arrow->param_count; param_id++)
           {
             // todo #speed we're having to rebase everything, which sucks but
@@ -4197,10 +4297,10 @@ insertAutoNormalizations(MemoryArena *arena, NormList norm_list, Ast *in0)
   }
 }
 
-internal FunctionDecl *
+internal FunctionAst *
 parseGlobalFunction(MemoryArena *arena, Token *name, b32 is_theorem)
 {
-  FunctionDecl *out = newAst(arena, FunctionDecl, name);
+  FunctionAst *out = newAst(arena, FunctionAst, name);
   assert(isIdentifier(name));
 
   if (Ast *signature0 = parseExpression(arena))
@@ -4617,6 +4717,30 @@ parseOverload(MemoryArena *arena)
 }
 
 internal Ast *
+parseFunctionExpression(MemoryArena *arena)
+{
+  // cutnpaste from "parseGlobalFunction"
+  FunctionAst *out = newAst(arena, FunctionAst, lastToken());
+
+  if (Ast *signature0 = parseExpression(arena))
+  {
+    if (ArrowAst *signature = castAst(signature0, ArrowAst))
+    {
+      if (Ast *body = parseSequence(arena))
+      {
+        out->body      = body;
+        out->signature = signature;
+      }
+    }
+    else
+      parseError(signature0, "function definition requires an arrow type");
+  }
+
+  NULL_WHEN_ERROR(out);
+  return &out->a;
+}
+
+internal Ast *
 parseOperand(MemoryArena *arena)
 {
   Ast *operand = 0;
@@ -4632,6 +4756,11 @@ parseOperand(MemoryArena *arena)
     {
       operand = parseExpression(arena);
       requireChar(')');
+    } break;
+
+    case Token_Keyword_fn:
+    {
+      operand = parseFunctionExpression(arena);
     } break;
 
     case Token_Keyword_seq:
@@ -4746,31 +4875,32 @@ seesArrowExpression()
   b32 out = false;
   Tokenizer tk_ = *global_tokenizer;
   Tokenizer *tk = &tk_;
-  if (requireChar('(', "", tk))
+  if (equal(nextToken(tk), '('))
     if (eatUntilMatchingPair(tk))
-      out = nextToken(tk).cat == Token_Arrow;
+      out = (nextToken(tk).cat == Token_Arrow);
   return out;
 }
 
-inline b32 seesLambda()
+inline b32
+seesLambda()
 {// todo we don't allow naming parameters in here yet
   b32 out = false;
   Tokenizer tk_ = *global_tokenizer;
   Tokenizer *tk = &tk_;
-  if (requireChar('_', 0, tk))
+  if (equal(nextToken(tk), '_'))
   {
-    if (requireCategory(Token_StrongArrow, 0, tk))
+    if (nextToken(tk).cat == Token_StrongArrow)
       out = true;
   }
   return out;
 }
 
-internal Lambda *
+internal FunctionAst *
 parseLambda(MemoryArena *arena)
 {
   pushContext("lambda: _ => {SEQUENCE}");
   nextToken(); nextToken();
-  Lambda *out = newAst(arena, Lambda, &global_tokenizer->last_token);
+  FunctionAst *out = newAst(arena, FunctionAst, &global_tokenizer->last_token);
   out->body = parseSequence(arena);
   popContext();
   return out;
@@ -4853,13 +4983,14 @@ inline void
 addGlobalHint(Function *fun)
 {
   HintDatabase *new_hint = pushStruct(global_state.top_level_arena, HintDatabase);
-  new_hint->first = &fun->t;
-  new_hint->next  = global_state.hints;
+  new_hint->head = &fun->t;
+  new_hint->tail  = global_state.hints;
   global_state.hints = new_hint;
 }
 
+// todo :build-global-function-vs-local-function
 internal Function *
-buildGlobalFunction(MemoryArena *arena, FunctionDecl *in)
+buildGlobalFunction(MemoryArena *arena, FunctionAst *in)
 {
   pushContext(in->token.string, true);
   Function *out = 0;
@@ -4932,9 +5063,9 @@ parseTopLevel(EngineState *state)
           b32 already_loaded = false;
           for (auto file_list = state->file_list;
                file_list && !already_loaded;
-               file_list = file_list->next)
+               file_list = file_list->tail)
           {
-            if (equal(file_list->first_path, load_path))
+            if (equal(file_list->head_path, load_path))
               already_loaded = true;
           }
 
@@ -5060,10 +5191,10 @@ parseTopLevel(EngineState *state)
         if (Term *type = parseExpressionAndBuild(arena).term)
         {
           AlgebraDatabase *new_algebras = pushStruct(global_state.top_level_arena, AlgebraDatabase);
-          new_algebras->next            = global_state.algebras;
+          new_algebras->tail            = global_state.algebras;
           global_state.algebras = new_algebras;
 
-          Algebra *algebra = &new_algebras->first;
+          Algebra *algebra = &new_algebras->head;
           algebra->type = type;
           const i32 function_count = 7;
           const char *function_names[function_count] = {
@@ -5105,7 +5236,6 @@ parseTopLevel(EngineState *state)
               if (BuildTerm rhs = parseExpressionAndBuild(arena))
               {
                 addGlobalBinding(token, rhs.term);
-                requireChar(';');
               }
               popContext();
             } break;
@@ -5128,7 +5258,7 @@ parseTopLevel(EngineState *state)
                   nextToken();
                 }
                 else is_theorem = true;
-                if (FunctionDecl *fun = parseGlobalFunction(arena, token, is_theorem))
+                if (FunctionAst *fun = parseGlobalFunction(arena, token, is_theorem))
                   buildGlobalFunction(arena, fun);
               }
             } break;
@@ -5192,9 +5322,9 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
   if (read.content)
   {
     auto new_file_list           = pushStruct(arena, FileList);
-    new_file_list->first_path    = input_path.path;
-    new_file_list->first_content = read.content;
-    new_file_list->next          = state->file_list;
+    new_file_list->head_path    = input_path.path;
+    new_file_list->head_content = read.content;
+    new_file_list->tail          = state->file_list;
     state->file_list             = new_file_list;
 
     Tokenizer  tk_ = newTokenizer(input_path.directory, read.content);
@@ -5309,14 +5439,10 @@ beginInterpreterSession(MemoryArena *top_level_arena, char *initial_file)
     assert(noError());
     builtin_type_equal = newTerm(arena, Builtin, type_equal_type);
 
-    EngineState builtin_engine_state = EngineState{.top_level_arena=top_level_arena};
-    // todo this could just be an expression now, since we have union expression!
-    builtin_tk.at = "False :: union { }";
-    parseTopLevel(&builtin_engine_state);
-    builtin_False = castTerm(lookupBuiltinGlobalName("False"), Union);
-
-    // builtin_algebraic_norm = newTerm(arena, Builtin, 0);
-    // addBuiltinGlobalBinding("algebraic_norm", &builtin_algebraic_norm->t);
+    builtin_tk.at = "union {}";
+    Term *builtin_False0 = parseExpressionAndBuild(arena).term;
+    builtin_False = castTerm(builtin_False0, Union);
+    addBuiltinGlobalBinding("False", &builtin_False->t);
 
     resetArena(temp_arena);
   }
@@ -5326,9 +5452,9 @@ beginInterpreterSession(MemoryArena *top_level_arena, char *initial_file)
 
   for (FileList *file_list = global_state.file_list;
        file_list;
-       file_list = file_list->next)
+       file_list = file_list->tail)
   {
-    platformFreeFileMemory(file_list->first_content);
+    platformFreeFileMemory(file_list->head_content);
   }
     
   checkArena(arena);
@@ -5360,11 +5486,11 @@ int engineMain()
   temp_arena_ = newArena(temp_arena_size, temp_arena_base);
 
   char *files[] = {
+    "../data/test.rea",
     // "../data/z-normalize-experiment.rea",
     "../data/natp-experiment.rea",
     "../data/z.rea",
     "../data/z-slider-experiment.rea",
-    "../data/test.rea",
   };
   for (i32 file_id=0; file_id < arrayCount(files); file_id++)
   {

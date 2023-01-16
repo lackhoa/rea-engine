@@ -25,45 +25,42 @@ struct LocalBindings;
 struct DataMap;
 
 enum AstCategory {
-  Ast_Hole         = 1,         // hole left in for type-checking
-  Ast_Ellipsis     = 2,
-  Ast_SyntheticAst = 3,
-  Ast_Identifier   = 4,         // result after initial parsing
+  Ast_Hole = 1,                 // hole left in for type-checking
+  Ast_Ellipsis,
+  Ast_SyntheticAst,
+  Ast_Identifier,               // result after initial parsing
 
   // Expressions
-  Ast_CompositeAst          = 5,
-  Ast_ArrowAst              = 6,
-  Ast_AccessorAst           = 7,
-  // Ast_ComputationAst     = 8,
-  Ast_Lambda                = 9,
-  Ast_OverloadAst           = 10,
-  Ast_CtorAst               = 11,
-  Ast_SeekAst               = 12,
-  // Ast_AlgebraicManipulation = 13,
+  Ast_CompositeAst,
+  Ast_ArrowAst,
+  Ast_AccessorAst,
+  Ast_FunctionAst,
+  Ast_OverloadAst,
+  Ast_CtorAst,
+  Ast_SeekAst,
 
   // Sequence
-  Ast_ForkAst       = 14,
-  Ast_RewriteAst    = 15,
-  Ast_FunctionDecl  = 16,
-  Ast_Let           = 17,
-  Ast_UnionAst      = 18,
-  Ast_GoalTransform = 19,
+  Ast_ForkAst,
+  Ast_RewriteAst,
+  Ast_FunctionDecl,
+  Ast_Let,
+  Ast_UnionAst,
+  Ast_GoalTransform,
 };
 
 enum TermCategory {
-  Term_Hole        = 1,
-  Term_Builtin     = 2,
-  /* Term_Constant    = 3, */
-  Term_Union       = 4,
-  Term_Constructor = 5,
-  Term_Function    = 6,
-  Term_Fork        = 7,
-  Term_Variable    = 8,
-  Term_Computation = 9,
-  Term_Accessor    = 10,
-  Term_Composite   = 11,
-  Term_Arrow       = 12,
-  Term_Rewrite     = 13,
+  Term_Hole = 1,
+  Term_Builtin,
+  Term_Union,
+  Term_Constructor,
+  Term_Function,
+  Term_Fork,
+  Term_Variable,
+  Term_Computation,
+  Term_Accessor,
+  Term_Composite,
+  Term_Arrow,
+  Term_Rewrite,
 };
 
 const u32 AstFlag_Generated = 1 << 0;
@@ -168,7 +165,7 @@ struct DataMap {
   i32       depth;
   i32       index;
   DataTree  tree;
-  DataMap  *next;
+  DataMap  *tail;
 };
 
 struct Stack {
@@ -178,7 +175,7 @@ struct Stack {
 };
 
 struct Scope {
-  Arrow *first;
+  Arrow *head;
   Scope *outer;
   i32    depth;
 };
@@ -193,14 +190,14 @@ struct Typer
 
 struct AstList
 {
-  Ast     *first;
-  AstList *next;
+  Ast     *head;
+  AstList *tail;
 };
 
 struct TermList
 {
-  Term     *first;
-  TermList *next;
+  Term     *head;
+  TermList *tail;
 };
 
 embed_struct struct Term {
@@ -244,15 +241,6 @@ struct Union {
   Arrow  **structs;
 };
 
-// NOTE: For now, this FunctionDecl ast only holds global function only so it's
-// redundant. But we might allow local function definitions later.
-struct FunctionDecl {
-  embed_Ast(a);
-  ArrowAst *signature;
-  Ast      *body;
-  b32       add_to_global_hints;
-};
-
 /* struct GlobalId {i32 v;}; */
 struct Function {
   embed_Term(t);
@@ -274,7 +262,7 @@ struct LocalBinding
   i32           hash;
   String        key;
   i32           var_id;
-  LocalBinding *next;
+  LocalBinding *tail;
 };
 
 struct LookupLocalName {
@@ -288,7 +276,7 @@ struct LocalBindings
 {
   MemoryArena   *arena;
   LocalBinding   table[128];
-  LocalBindings *next;
+  LocalBindings *tail;
 };
 
 struct Variable {
@@ -299,8 +287,8 @@ struct Variable {
 };
 
 struct TreePath {
-  i32       first;  // -1 for op
-  TreePath *next;
+  i32       head;  // -1 for op
+  TreePath *tail;
 };
 
 struct Accessor {
@@ -348,7 +336,7 @@ struct GlobalBinding {
   String key;
   i32    count;
   Term *(items[8]);             // todo: #grow
-  GlobalBinding *next_hash_slot;
+  GlobalBinding *hash_tail;
 };
 
 struct GlobalBindings  // :global-bindings-zero-at-startup
@@ -389,17 +377,17 @@ struct AccessorAst
 };
 
 struct FileList {
-  char     *first_path;
-  char     *first_content;
-  FileList *next;
+  char     *head_path;
+  char     *head_content;
+  FileList *tail;
 };
 
 // todo better hint lookup
 struct HintDatabase {
   // wip: we probably only want functions in here, but let's store term to make
   // it play nice with the rest.
-  Term         *first;
-  HintDatabase *next;
+  Term         *head;
+  HintDatabase *tail;
 };
 
 u32 PrintFlag_Detailed     = 1 << 0;
@@ -455,7 +443,7 @@ struct AstArray {
   Term *items;
 };
 
-// NOTE: rewrite is done from "type" to "body", which is arguably backward (todo change it).
+// NOTE: rewrite is done from "type" to "body".
 struct Rewrite {
   embed_Term(t);
   TreePath *path;
@@ -470,10 +458,11 @@ struct SearchOutput {b32 found; TreePath *path;};
 
 struct CompareTerms {Trinary result; TreePath *diff_path;};
 
-struct Lambda {
+struct FunctionAst {
   embed_Ast(a);
-  Ast *signature;
-  Ast *body;
+  ArrowAst *signature;
+  Ast      *body;
+  b32       add_to_global_hints;
 };
 
 struct TermPair
@@ -541,10 +530,10 @@ struct SolveArgs {b32 matches; i32 arg_count; Term **args;};
 #define MAX_SOLVE_DEPTH 3
 struct Solver {
   MemoryArena  *arena;
-  Typer        *env;
+  Typer        *typer;
+  b32           use_global_hints;
   HintDatabase *local_hints;
   i32           depth;
-  b32           use_global_hints;
 };
 
 struct Algebra {
@@ -562,8 +551,8 @@ struct Algebra {
 };
 
 struct AlgebraDatabase {
-  Algebra          first;
-  AlgebraDatabase *next;
+  Algebra          head;
+  AlgebraDatabase *tail;
 };
 
 // :global_state_cleared_at_startup
@@ -573,6 +562,11 @@ struct EngineState {
   GlobalBindings  *bindings;
   HintDatabase    *hints;
   AlgebraDatabase *algebras;
+};
+
+struct TreePathList {
+  TreePath     *head;
+  TreePathList *tail;
 };
 
 #include "generated/engine_forward.h"

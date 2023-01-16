@@ -214,13 +214,27 @@ testAnonymousParameter :: fn (A: Set, A) -> A
 
 testFillHole :: (a: Nat) -> a + 0 = a {}
 
+eq_chain := fn (#hidden A: Set, #hidden a, #hidden b, #hidden c: A, a=b, b=c) -> a=c
+{
+ => b = c {seek(a=b)}
+ seek
+ };
+print eq_chain;
+
 #load "natp.rea"
-algebraTest :: (a,b,c,d: Natp) -> (a+b)+c+d = a+(c+b)+d
+algebraTest :: (a,b,c,d,e: Natp) -> (a+b)+c+d = a+(c+b)+d
 {
  ;; These steps would have solved the goal
  ;; => a+b+c+d = a+(c+b)+d
  ;; => a+(b+c)+d = a+(c+b)+d
  ;; => a+(b+c)+d = a+(b+c)+d
- ordering := algebraic_norm(b+a);
- }
 
+ ;; prove (a+b)+c=a+b+c {algebraic_norm((a+b)+c)}
+
+ prove ((a+b)+c)+d+e=a+b+c+d+e {
+                                ;; return algebraic_norm(((a+b)+c)+d+e)
+                                => (a+b)+c+d+e=a+b+c+d+e;
+                                => a+b+c+d+e=a+b+c+d+e;
+                                }
+
+ }

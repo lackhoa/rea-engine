@@ -2,7 +2,6 @@
 
 #include "utils.h"
 
-// todo: does enum automatically increment???
 enum TokenCategory
 {
   Token_Colon   = ':',

@@ -34,15 +34,11 @@ addS :: (a,b: Natp) -> a + ++(b) = ++(a + b)
   }
  }
 
-addCommutative :: (a,b: Natp) -> (b+a = a+b)
+addCommutative :: (a,b: Natp) -> (a+b = b+a)
 #hint
-{
- fork a
- {
-  1: rewrite add1(b),
-  ++: rewrite addS(b, a.p); rewrite addCommutative(a.p, b)
-  }
- }
+{fork a
+ {1: rewrite add1(b),
+  ++: rewrite addS(b, a.p); rewrite addCommutative(a.p, b)}}
 
 addAssociative :: (a,b,c: Natp) -> (a+b)+c = a+b+c
 #hint
@@ -255,7 +251,7 @@ addPreservesGt :: (a,b,c: Natp, p: a>b=true) -> a+c > b+c = true
  fork a
  {
   1  fork p {},
-  ++ fork b {1 rewrite addCommutative(c, a.p); return addIncreases(c, a.p),
+  ++ fork b {1 rewrite addCommutative(a.p, c); return addIncreases(c, a.p),
              ++ return addPreservesGt(a.p,b.p,c, p)},
   }
  }
