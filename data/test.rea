@@ -214,11 +214,8 @@ testAnonymousParameter :: fn (A: Set, A) -> A
 
 testFillHole :: (a: Nat) -> a + 0 = a {}
 
-eq_chain := fn (#hidden A: Set, #hidden a, #hidden b, #hidden c: A, a=b, b=c) -> a=c
-{
- => b = c {seek(a=b)}
- seek
- };
+;; eq_chain := fn (#hidden A: Set, #hidden a, #hidden b, #hidden c: A, a=b, b=c) -> a=c
+;; {=> b = c {seek(a=b)}; seek };
 print eq_chain;
 
 #load "natp.rea"

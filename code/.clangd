@@ -12,7 +12,7 @@ CompileFlags:
     - -Wno-c++17-extensions
     - -Wno-switch
     - -Wno-writable-strings
-    - -Wunused-parameter
+    # - -Wunused-parameter
     - -Wunused-variable
     - -Wno-unused-const-variable
     - -Wno-unused-function

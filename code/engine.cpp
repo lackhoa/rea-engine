@@ -17,12 +17,12 @@
 #include "tokenization.cpp"
 #include "debug_config.h"
 
-global_variable Builtin *builtin_Type;
-global_variable Builtin *builtin_Set;
-global_variable Builtin *builtin_equal;
-global_variable Builtin *builtin_type_equal;
-global_variable Union   *builtin_False;
-// global_variable Builtin *builtin_algebraic_norm;
+global_variable Term *builtin_Type;
+global_variable Term *builtin_Set;
+global_variable Term *builtin_equal;
+global_variable Term *builtin_type_equal;
+global_variable Term *builtin_False;
+global_variable Term *builtin_eq_chain;
 
 global_variable Term dummy_function_being_built;
 global_variable Term  holev_ = {.cat = Term_Hole};
@@ -178,13 +178,13 @@ newEquality(MemoryArena *arena, Term *lhs, Term *rhs)
 {
   Term *type_of_type = getType(getType(lhs));
   Term *op = 0;
-  if (type_of_type == &builtin_Set->t)
+  if (type_of_type == builtin_Set)
   {
-    op = &builtin_equal->t;
+    op = builtin_equal;
   }
-  else if (type_of_type == &builtin_Type->t)
+  else if (type_of_type == builtin_Type)
   {
-    op = &builtin_type_equal->t;
+    op = builtin_type_equal;
   }
   else
     invalidCodePath;
@@ -207,7 +207,7 @@ isEquality(Term *eq0)
 {
   if (Composite *eq = castTerm(eq0, Composite))
   {
-    if (eq->op == &builtin_equal->t)
+    if (eq->op == builtin_equal)
       return true;
   }
   return false;
@@ -219,7 +219,7 @@ getEqualitySides(Term *eq0, b32 must_succeed=true)
   TermPair out = {};
   if (Composite *eq = castTerm(eq0, Composite))
   {
-    if (eq->op == &builtin_equal->t || eq->op == &builtin_type_equal->t)
+    if (eq->op == builtin_equal || eq->op == builtin_type_equal)
       out = TermPair{eq->args[1], eq->args[2]};
   }
   assert(!must_succeed || out)
@@ -652,7 +652,7 @@ computeType(MemoryArena *arena, Typer *typer, Term *in0)
 
       case Term_Arrow:
       {
-        out0 = &builtin_Type->t;
+        out0 = builtin_Type;
       } break;
 
       case Term_Function:
@@ -1181,11 +1181,11 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
 
       case Term_Builtin:
       {
-        if (in0 == &builtin_equal->t)
+        if (in0 == builtin_equal)
           print(buffer, "=");
-        else if (in0 == &builtin_Set->t)
+        else if (in0 == builtin_Set)
           print(buffer, "Set");
-        else if (in0 == &builtin_Type->t)
+        else if (in0 == builtin_Type)
           print(buffer, "Type");
       } break;
 
@@ -1532,7 +1532,7 @@ apply(MemoryArena *arena, Term *op, i32 arg_count, Term **args, Term *type)
     if (fun->body != &dummy_function_being_built)
       out0 = evaluate(arena, args, fun->body, EvaluationFlag_ApplyMode);
   }
-  else if (op == &builtin_equal->t)
+  else if (op == builtin_equal)
   {// special case for equality
     Term *l0 = args[1];
     Term *r0 = args[2];
@@ -1559,7 +1559,7 @@ apply(MemoryArena *arena, Term *op, i32 arg_count, Term **args, Term *type)
                 args[0] = getType(larg);
                 args[1] = larg;
                 args[2] = rarg;
-                out0 = apply(arena, &builtin_equal->t, 3, args, type);
+                out0 = apply(arena, builtin_equal, 3, args, type);
                 if (!out0)
                   out0 = newEquality(arena, larg, rarg);
               }
@@ -1574,7 +1574,7 @@ apply(MemoryArena *arena, Term *op, i32 arg_count, Term **args, Term *type)
     Trinary compare = equalTrinary(l0, r0);
     // #hack to handle inconsistency
     if (compare == Trinary_False)
-      out0 = &builtin_False->t;
+      out0 = builtin_False;
   }
   else if (op->cat == Term_Constructor)
   {
@@ -2672,7 +2672,7 @@ solveGoal(Solver *solver, Term *goal)
 
   b32 should_attempt_inference = true;
   if (solver->depth > MAX_SOLVE_DEPTH ||
-      goal == &builtin_Set->t ||
+      goal == builtin_Set ||
       goal->cat == Term_Hole)
   {
     should_attempt_inference = false;
@@ -3679,7 +3679,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
     case Ast_ArrowAst:
     {
       ArrowAst *in = castAst(in0, ArrowAst);
-      Arrow *out = newTerm(arena, Arrow, &builtin_Type->t);
+      Arrow *out = newTerm(arena, Arrow, builtin_Type);
       i32 param_count = in->param_count;
       out->param_count   = param_count;
       out->param_names   = copyArray(arena, param_count, in->param_names);  // todo copy festival
@@ -4632,7 +4632,7 @@ parseUnion(MemoryArena *arena)
 forward_declare internal Union *
 buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
 {
-  Union *uni = newTerm(arena, Union, &builtin_Set->t);
+  Union *uni = newTerm(arena, Union, builtin_Set);
   uni->ctor_count = in->ctor_count;
   allocateArray(arena, in->ctor_count, uni->ctor_names);
   allocateArray(arena, in->ctor_count, uni->structs);
@@ -5163,7 +5163,7 @@ parseTopLevel(EngineState *state)
           if (Composite *eq = castTerm(goal, Composite))
           {
             b32 goal_valid = false;
-            if (eq->op == &builtin_equal->t)
+            if (eq->op == builtin_equal)
             {
               goal_valid = true;
               Term *lhs = normalize(temp_arena, empty_env, eq->args[1]);
@@ -5419,30 +5419,37 @@ beginInterpreterSession(MemoryArena *top_level_arena, char *initial_file)
   // parsing depends on the global bindings, which resets every time. Since
   // aren't many sessions, this redundancy is fine, just ugly.
   {
-    builtin_Type       = newTerm(arena, Builtin, 0);
-    builtin_Type->type = &builtin_Type->t; // NOTE: circular types
-    addBuiltinGlobalBinding("Type", &builtin_Type->t);
+    builtin_Type       = &newTerm(arena, Builtin, 0)->t;
+    builtin_Type->type = builtin_Type; // NOTE: circular types
+    addBuiltinGlobalBinding("Type", builtin_Type);
 
-    builtin_Set = newTerm(arena, Builtin, &builtin_Type->t);
-    addBuiltinGlobalBinding("Set", &builtin_Set->t);
+    builtin_Set = &newTerm(arena, Builtin, builtin_Type)->t;
+    addBuiltinGlobalBinding("Set", builtin_Set);
 
     Tokenizer builtin_tk = newTokenizer(toString("<builtin_not_a_real_dir>"), 0);
     global_tokenizer = &builtin_tk;
     builtin_tk.at = "(#hidden A: Set, a,b: A) -> Set";
     Term *equal_type = parseExpressionAndBuild(arena).term; 
     assert(noError());
-    builtin_equal = newTerm(arena, Builtin, equal_type);
-    addBuiltinGlobalBinding("=", &builtin_equal->t);
+    builtin_equal = &newTerm(arena, Builtin, equal_type)->t;
+    addBuiltinGlobalBinding("=", builtin_equal);
 
     builtin_tk.at = "(#hidden A: Type, a,b: A) -> Set";
     Term *type_equal_type = parseExpressionAndBuild(arena).term; 
     assert(noError());
-    builtin_type_equal = newTerm(arena, Builtin, type_equal_type);
+    builtin_type_equal = &newTerm(arena, Builtin, type_equal_type)->t;
 
     builtin_tk.at = "union {}";
     Term *builtin_False0 = parseExpressionAndBuild(arena).term;
-    builtin_False = castTerm(builtin_False0, Union);
-    addBuiltinGlobalBinding("False", &builtin_False->t);
+    builtin_False = &castTerm(builtin_False0, Union)->t;
+    addBuiltinGlobalBinding("False", builtin_False);
+
+    builtin_tk.at = R""""(fn (#hidden A: Set, #hidden a, #hidden b, #hidden c: A, a=b, b=c) -> a=c
+{=> b = c {seek(a=b)} seek}
+)"""";
+    builtin_eq_chain = parseExpressionAndBuild(arena).term;
+    assert(noError());
+    addBuiltinGlobalBinding("eq_chain", builtin_eq_chain);
 
     resetArena(temp_arena);
   }
