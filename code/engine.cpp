@@ -791,23 +791,23 @@ inline i32
 precedenceOf(String op)
 {
   int out = 0;
+  const i32 eq_precedence = 50;
 
   // TODO: implement for real
   if (equal(op, "->"))
-    out = 40;
+    out = eq_precedence - 10;
   else if (equal(op, "=") || equal(op, "!="))
-    out = 50;
+    out = eq_precedence;
   else if (equal(op, "<") || equal(op, ">") || equal(op, "=?") || equal(op, "=="))
-    out = 55;
+    out = eq_precedence + 5;
   else if (equal(op, "+") || equal(op, "-"))
-    out = 60;
+    out = eq_precedence + 10;
   else if (equal(op, "|"))
-    out = 65;
-  else if (equal(op, "&")
-           || equal(op, "*"))
-    out = 70;
+    out = eq_precedence + 15;
+  else if (equal(op, "&") || equal(op, "*"))
+    out = eq_precedence + 20;
   else
-    out = 100;
+    out = eq_precedence + 2;
 
   return out;
 }
@@ -842,12 +842,16 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
       if (Function *fun = castTerm(in->op, Function))
         no_print_as_binop = checkFlag(fun->function_flags, FunctionFlag_no_print_as_binop);
 
-      if (in->op->cat != Term_Variable)
+      // if (in->op->cat != Term_Variable)  not sure why this was here
       {
         op_signature = castTerm((getType(in->op)), Arrow);
         assert(op_signature);
+        String op_name = {};
         if (Token *global_name = in->op->global_name)
-          precedence = precedenceOf(global_name->string);
+          op_name = global_name->string;
+        else if (Variable *var = castTerm(in->op, Variable))
+          op_name = var->name;
+        precedence = precedenceOf(op_name);
       }
     }
   }
@@ -882,6 +886,7 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
       print(buffer, "(");
 
     PrintOptions arg_opt = opt;
+    // #hack to force printing parentheses when the precedence is the same (a+b)+c.
     arg_opt.no_paren_precedence = precedence+1;
     print(buffer, printed_args[0], is_term, arg_opt);
 

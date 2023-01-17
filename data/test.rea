@@ -257,16 +257,21 @@ Permutation :: fn(abc, cab: List) -> Set
   }
  }
 
-foldConcat :: (op: (a,b: Nat) -> Nat, l,m: List) -> fold(op, l + m) = fold(op, l) op fold(op, m)
+foldConcat :: (op: (a,b: Nat) -> Nat,
+               associative: (a,b,c: Nat) -> (a op b) op c = a op b op c,
+               l,m: List) -> fold(op, l + m) = fold(op, l) op fold(op, m)
 #hint
 {fork l
  {single,
   cons
-  rewrite foldConcat(op, l.tail, m);
-  rewrite addAssociative(l.head, fold(op, l.tail), fold(op, m));
+  rewrite foldConcat(op, associative, l.tail, m);
+  ;; (l.head op fold(op, l.tail) op fold(op, m)) = ((l.head op fold(op, l.tail)) op fold(op, m))
+  rewrite associative(l.head, fold(op, l.tail), fold(op, m));
   }}
 
-foldPermutation :: (l,m: List, p: Permutation(l, m)) -> fold(l) = fold(m)
+foldPermutation :: (op: (a,b: Nat) -> Nat,
+                    l,m: List,
+                    p: Permutation(l, m)) -> fold(op, l) = fold(op, m)
 {
  norm unfold(Permutation) p;
  fork p
@@ -278,14 +283,14 @@ foldPermutation :: (l,m: List, p: Permutation(l, m)) -> fold(l) = fold(m)
   rewrite p.abc_destruct;
   rewrite p.cab_destruct;
   norm;
-  => p.a + fold(p.bc) = fold(p.c) + fold(p.a cons p.b)
-  => p.a + fold(p.bc) = fold(p.c) + p.a + fold(p.b)
-  => p.a + fold(p.bc) = (p.a + fold(p.b)) + fold(p.c) 
-  => p.a + fold(p.bc) = p.a + fold(p.b) + fold(p.c) 
-  => p.a + fold(p.bc) = p.a + fold(p.c) + fold(p.b) 
-  => p.a + fold(p.bc) = p.a + fold(p.c + p.b);
-  ;; => p.a + fold(p.c + p.b) = p.a + fold(p.c + p.b) { foldPermutation(p.bc, p.c + p.b, p.recurse) }
-  rewrite foldPermutation(p.bc, p.c + p.b, p.recurse);
+  ;; p.a op fold(op, p.bc) = fold(op, p.c + (p.a cons p.b))
+  => p.a op fold(op, p.bc) = fold(op, p.c) op fold(op, p.a cons p.b)
+  ;; => p.a op fold(op, p.bc) = fold(op, p.c) op p.a op fold(op, p.b)
+  ;; => p.a op fold(op, p.bc) = (p.a + fold(p.b)) op fold(op, p.c) 
+  ;; => p.a op fold(op, p.bc) = p.a op fold(op, p.b) op fold(op, p.c) 
+  ;; => p.a op fold(op, p.bc) = p.a op fold(op, p.c) op fold(op, p.b) 
+  ;; => p.a op fold(op, p.bc) = p.a op fold(op, p.c op p.b);
+  ;; rewrite foldPermutation(p.bc, p.c + p.b, p.recurse);
   ,
   }
  }
