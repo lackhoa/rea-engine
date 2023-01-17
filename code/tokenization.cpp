@@ -586,38 +586,6 @@ eatUntilMatchingPair(Tokenizer *tk)
   return found;
 }
 
-internal i32
-peekListLength(Tokenizer *tk)
-{
-  Token opening = tk->last_token;
-  char closing = getMatchingPair(&opening);
-  assert(closing);
-  char opening_char = opening.string.chars[0];
-  char previous = opening_char;
-  i32 out = 0;
-  for (b32 stop = false; !stop && hasMore(tk);)
-  {
-    Token token = nextToken(tk);
-    if (getMatchingPair(&token))
-    {
-      eatUntilMatchingPair(tk);
-    }
-    else if (equal(&token, closing))
-    {
-      if ((previous != ',') && (previous != opening_char))
-        out++;
-      stop = true;
-    }
-    else if (equal(&token, ','))
-    {
-      out++;
-    }
-    previous = tk->last_token.string.chars[0];
-
-  }
-  return out;
-}
-
 inline i32
 parseInt32()
 {
@@ -657,3 +625,39 @@ matchTactic(String string)
   }
   return out;
 }
+
+#if 0
+// NOTE: I've decided it's not worth it to incur the complexity, since parsing
+// is done in temp arena anyway, we can just allocate massive space on the temp arena.
+internal i32
+todoPeekListLengthRemoveme(Tokenizer *tk)
+{
+  Token opening = tk->last_token;
+  char closing = getMatchingPair(&opening);
+  assert(closing);
+  char opening_char = opening.string.chars[0];
+  char previous = opening_char;
+  i32 out = 0;
+  for (b32 stop = false; !stop && hasMore(tk);)
+  {
+    Token token = nextToken(tk);
+    if (getMatchingPair(&token))
+    {
+      eatUntilMatchingPair(tk);
+    }
+    else if (equal(&token, closing))
+    {
+      if ((previous != ',') && (previous != opening_char))
+        out++;
+      stop = true;
+    }
+    else if (equal(&token, ','))
+    {
+      out++;
+    }
+    previous = tk->last_token.string.chars[0];
+
+  }
+  return out;
+}
+#endif

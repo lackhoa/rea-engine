@@ -581,4 +581,6 @@ struct NormalizeContext {
   String       name_to_unfold;
 };
 
+#define DEFAULT_MAX_LIST_LENGTH 64
+
 #include "generated/engine_forward.h"

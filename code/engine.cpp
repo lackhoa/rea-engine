@@ -4397,28 +4397,23 @@ parseGlobalFunction(MemoryArena *arena, Token *name, b32 is_theorem)
           pushContext("auto normalization: #norm(IDENTIFIER...)");
           if (requireChar('('))
           {
-            Tokenizer tk_copy = *global_tokenizer;
-            i32 norm_count = peekListLength(&tk_copy);
-            if (noError(&tk_copy))
+            norm_list.items = pushArray(temp_arena, DEFAULT_MAX_LIST_LENGTH, Identifier*);
+            for (; noError(); )
             {
-              norm_list.items = pushArray(temp_arena, norm_count, Identifier*);
-              for (; noError(); )
+              if (optionalChar(')'))
+                break;
+              else if (requireIdentifier("expect auto-normalized parameter"))
               {
-                if (optionalChar(')'))
-                  break;
-                else if (requireIdentifier("expect auto-normalized parameter"))
+                // todo handle unbound identifier: all names in the norm list
+                // should be in the function signature.
+                Token *name = &global_tokenizer->last_token;
+                i32 norm_i = norm_list.count++;
+                assert(norm_i < DEFAULT_MAX_LIST_LENGTH);
+                norm_list.items[norm_i] = newAst(arena, Identifier, name);
+                if (!optionalChar(','))
                 {
-                  // todo handle unbound identifier: all names in the norm list
-                  // should be in the function signature.
-                  Token *name = &global_tokenizer->last_token;
-                  i32 norm_i = norm_list.count++;
-                  assert(norm_i < norm_count);
-                  norm_list.items[norm_i] = newAst(arena, Identifier, name);
-                  if (!optionalChar(','))
-                  {
-                    requireChar(')');
-                    break;
-                  }
+                  requireChar(')');
+                  break;
                 }
               }
             }
@@ -4457,53 +4452,47 @@ parseFork(MemoryArena *arena)
   Ast *subject = parseExpression(arena);
   if (requireChar('{', "to open the typedef body"))
   {
-    Tokenizer tk_copy = *global_tokenizer;
-    i32 case_count = peekListLength(&tk_copy);
-    if (noError(&tk_copy))
+    Token *ctors = pushArray(arena, DEFAULT_MAX_LIST_LENGTH, Token);
+    Ast **bodies = pushArray(arena, DEFAULT_MAX_LIST_LENGTH, Ast*);
+
+    i32 actual_case_count = 0;
+    for (b32 stop = false;
+         !stop && hasMore();)
     {
-      Token *ctors = pushArray(temp_arena, case_count, Token);
-      Ast **bodies = pushArray(temp_arena, case_count, Ast*);
-
-      i32 actual_case_count = 0;
-      for (b32 stop = false;
-           !stop && hasMore();)
+      if (optionalChar('}'))
+        stop = true;
+      else
       {
-        if (optionalChar('}'))
-          stop = true;
+        pushContext("fork case: CASE: BODY");
+        i32 input_case_i = actual_case_count++;
+        Token ctor = nextToken();
+        if (isIdentifier(&ctor))
+          ctors[input_case_i] = ctor;
         else
+          tokenError(&ctor, "expected a constructor name");
+
+        optionalChar(':');  // just decoration
+        if (Ast *body = parseSequence(arena, false))
         {
-          pushContext("fork case: CASE: BODY");
-          i32 input_case_id = actual_case_count++;
-          Token ctor = nextToken();
-          if (isIdentifier(&ctor))
-            ctors[input_case_id] = ctor;
-          else
-            tokenError(&ctor, "expected a constructor name");
-
-          optionalChar(':');  // just decoration
-          if (Ast *body = parseSequence(arena, false))
+          bodies[input_case_i] = body;
+          if (!optionalChar(','))
           {
-            bodies[input_case_id] = body;
-            if (!optionalChar(','))
-            {
-              requireChar('}', "to end fork expression; or use ',' to end the fork case");
-              stop = true;
-            }
+            requireChar('}', "to end fork expression; or use ',' to end the fork case");
+            stop = true;
           }
-          popContext();
         }
+        popContext();
       }
+    }
 
-      if (noError())
-      {
-        assert(case_count == actual_case_count);
-        out = newAst(arena, ForkAst, &token);
-        out->a.token    = token;
-        out->subject    = subject;
-        out->case_count = case_count;
-        out->bodies     = bodies;
-        out->ctors      = ctors;
-      }
+    if (noError())
+    {
+      out = newAst(arena, ForkAst, &token);
+      out->a.token    = token;
+      out->subject    = subject;
+      out->case_count = actual_case_count;
+      out->bodies     = bodies;
+      out->ctors      = ctors;
     }
   }
 
@@ -4515,7 +4504,7 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
 {
   ArrowAst *out = 0;
 
-  i32      param_count;
+  i32      param_count = 0;
   String  *param_names;
   Ast    **param_types;
   u32     *param_flags;
@@ -4524,96 +4513,89 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
   char end_arg_char   = ')';
   if (requireChar(begin_arg_char))
   {
-    Tokenizer tk_copy = *global_tokenizer;
-    param_count = peekListLength(&tk_copy);
-    if (noError(&tk_copy))
+    allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, param_names, true);
+    allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, param_types, true);
+    allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, param_flags, true);
+
+    i32 typeless_run = 0;
+    Token typeless_token;
+    for (b32 stop = false;
+         !stop && hasMore();
+         )
     {
-      allocateArray(arena, param_count, param_names, true);
-      allocateArray(arena, param_count, param_types, true);
-      allocateArray(arena, param_count, param_flags, true);
-
-      i32 parsed_param_count = 0;
-      i32 typeless_run = 0;
-      Token typeless_token;
-      for (b32 stop = false;
-           !stop && hasMore();
-           )
+      if (optionalChar(end_arg_char))
+        stop = true;
+      else
       {
-        if (optionalChar(end_arg_char))
-          stop = true;
-        else
+        i32 param_id = param_count++;
+        if (optionalCategory(Token_Directive_hidden))
         {
-          i32 param_id = parsed_param_count++;
-          if (optionalCategory(Token_Directive_hidden))
-          {
-            setFlag(&param_flags[param_id], ParameterFlag_Hidden);
-          }
+          setFlag(&param_flags[param_id], ParameterFlag_Hidden);
+        }
 
-          Tokenizer tk_save = *global_tokenizer;
-          String param_name = {};
-          Token maybe_param_name_token = nextToken();
-          if (isIdentifier(&maybe_param_name_token))
+        Tokenizer tk_save = *global_tokenizer;
+        String param_name = {};
+        Token maybe_param_name_token = nextToken();
+        if (isIdentifier(&maybe_param_name_token))
+        {
+          Token after_name = peekToken();
+          if (equal(&after_name, ':'))
           {
-            Token after_name = peekToken();
-            if (equal(&after_name, ':'))
-            {
-              eatToken();
-              param_name = maybe_param_name_token.string;
-              pushContext("parameter type");
-              if (Ast *param_type = parseExpression(arena))
-              {
-                param_types[param_id] = param_type;
-                if (typeless_run)
-                {
-                  for (i32 offset = 1; offset <= typeless_run; offset++)
-                    param_types[param_id - offset] = param_type;
-                  typeless_run = 0;
-                }
-              }
-              popContext();
-            }
-            else if (equal(&after_name, ','))
-            {
-              param_name = maybe_param_name_token.string;
-              typeless_run++;
-              typeless_token = maybe_param_name_token;
-            }
-          }
-
-          if (param_name.chars)
-            param_names[param_id] = param_name;
-          else
-          {
-            *global_tokenizer = tk_save;
-            pushContext("anonymous parameter");
-            Token anonymous_parameter_token = global_tokenizer->last_token;
+            eatToken();
+            param_name = maybe_param_name_token.string;
+            pushContext("parameter type");
             if (Ast *param_type = parseExpression(arena))
             {
               param_types[param_id] = param_type;
               if (typeless_run)
-                tokenError(&anonymous_parameter_token, "cannot follow a typeless parameter with an anonymous parameter");
+              {
+                for (i32 offset = 1; offset <= typeless_run; offset++)
+                  param_types[param_id - offset] = param_type;
+                typeless_run = 0;
+              }
             }
             popContext();
           }
-
-          if (hasMore())
+          else if (equal(&after_name, ','))
           {
-            Token delimiter = nextToken();
-            if (equal(&delimiter, end_arg_char))
-              stop = true;
-            else if (!equal(&delimiter, ','))
-              tokenError("unexpected token");
+            param_name = maybe_param_name_token.string;
+            typeless_run++;
+            typeless_token = maybe_param_name_token;
           }
         }
-      }
 
-      if (noError())
-      {
-        assert(parsed_param_count == param_count);
-        if (typeless_run)
+        if (param_name.chars)
+          param_names[param_id] = param_name;
+        else
         {
-          tokenError(&typeless_token, "please provide types for all parameters");
+          *global_tokenizer = tk_save;
+          pushContext("anonymous parameter");
+          Token anonymous_parameter_token = global_tokenizer->last_token;
+          if (Ast *param_type = parseExpression(arena))
+          {
+            param_types[param_id] = param_type;
+            if (typeless_run)
+              tokenError(&anonymous_parameter_token, "cannot follow a typeless parameter with an anonymous parameter");
+          }
+          popContext();
         }
+
+        if (hasMore())
+        {
+          Token delimiter = nextToken();
+          if (equal(&delimiter, end_arg_char))
+            stop = true;
+          else if (!equal(&delimiter, ','))
+            tokenError("unexpected token");
+        }
+      }
+    }
+
+    if (noError())
+    {
+      if (typeless_run)
+      {
+        tokenError(&typeless_token, "please provide types for all parameters");
       }
     }
   }
@@ -4682,31 +4664,21 @@ parseUnion(MemoryArena *arena)
   if (requireChar('{'))
   {
     uni = newAst(arena, UnionAst, token);
-
-    Tokenizer tk_copy = *global_tokenizer;
-    i32 ctor_count = peekListLength(&tk_copy);
-    // NOTE: init here for recursive definition
-    if (noError(&tk_copy))
+    allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, uni->ctor_signatures);
+    allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, uni->ctor_names);
+    while (noError())
     {
-      allocateArray(arena, ctor_count, uni->ctor_signatures);
-      allocateArray(arena, ctor_count, uni->ctor_names);
-      while (noError())
+      if (optionalChar('}'))
+        break;
+      else
       {
-        if (optionalChar('}'))
-          break;
-        else
+        parseConstructor(arena, uni, uni->ctor_count++);
+        if (!optionalChar(','))
         {
-          parseConstructor(arena, uni, uni->ctor_count++);
-          if (!optionalChar(','))
-          {
-            requireChar('}');
-            break;
-          }
+          requireChar('}');
+          break;
         }
       }
-
-      if (noError())
-        assert(uni->ctor_count == ctor_count);
     }
   }
   
@@ -4889,51 +4861,40 @@ parseOperand(MemoryArena *arena)
     if (optionalChar('('))
     {// function call syntax, let's keep going
       Ast *op = operand;
-
-      Tokenizer tk_copy = *global_tokenizer;
-      i32 expected_arg_count = peekListLength(&tk_copy);
-      if (noError(&tk_copy))
+      Ast **args = pushArray(arena, DEFAULT_MAX_LIST_LENGTH, Ast*);
+      CompositeAst *new_operand = newAst(arena, CompositeAst, &op->token);
+      new_operand->op        = op;
+      new_operand->arg_count = 0;
+      new_operand->args      = args;
+      operand = &new_operand->a;
+      while (hasMore())
       {
-        Ast **args = pushArray(arena, expected_arg_count, Ast*);
-        CompositeAst *branch = newAst(arena, CompositeAst, &op->token);
-        branch->op        = op;
-        branch->arg_count = expected_arg_count;
-        branch->args      = args;
-        operand = &branch->a;
-        i32 parsed_arg_count = 0;
-        while (hasMore())
+        if (optionalChar(')'))
+          break;
+        else
         {
-          if (optionalChar(')'))
+          i32 arg_id = new_operand->arg_count++;
+          if (optionalCategory(Token_Ellipsis))
+          {
+            if (arg_id == 0)
+              args[0] = newAst(arena, Ellipsis, &global_tokenizer->last_token);
+            else
+              parseError("ellipsis must be the only argument");
+
+            requireChar(')', "ellipsis must be the only argument");
             break;
+          }
           else
           {
-            i32 arg_id = parsed_arg_count++;
-            if (optionalCategory(Token_Ellipsis))
+            if ((args[arg_id] = parseExpression(arena)))
             {
-              if (arg_id == 0)
-                args[0] = newAst(arena, Ellipsis, &global_tokenizer->last_token);
-              else
-                parseError("ellipsis must be the only argument");
-
-              requireChar(')', "ellipsis must be the only argument");
-              break;
-            }
-            else
-            {
-              if ((args[arg_id] = parseExpression(arena)))
+              if (!optionalChar(','))
               {
-                if (!optionalChar(','))
-                {
-                  requireChar(')', "expected ',' or ')'");
-                  break;
-                }
+                requireChar(')', "expected ',' or ')'");
+                break;
               }
             }
           }
-        }
-        if (noError())
-        {
-          assert(parsed_arg_count == expected_arg_count);
         }
       }
     }
@@ -5580,7 +5541,6 @@ int engineMain()
   char *files[] = {
     "../data/test.rea",
     "../data/z-slider.rea",
-    // "../data/z-normalize-experiment.rea",
     "../data/natp-experiment.rea",
     "../data/z.rea",
   };
