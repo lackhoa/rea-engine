@@ -462,8 +462,9 @@ struct SearchOutput {b32 found; TreePath *path;};
 
 struct CompareTerms {Trinary result; TreePath *diff_path;};
 
-const u32 FunctionFlag_is_global_hint = 1 << 0;
-const u32 FunctionFlag_no_apply       = 1 << 1;
+const u32 FunctionFlag_is_global_hint    = 1 << 0;
+const u32 FunctionFlag_no_apply          = 1 << 1;
+const u32 FunctionFlag_no_print_as_binop = 1 << 2;
 
 struct FunctionAst {
   embed_Ast(a);

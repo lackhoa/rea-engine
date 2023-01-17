@@ -825,6 +825,7 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
   Term *value = (Term *)in0;
   Arrow *op_signature = 0;
   b32 op_is_constructor = false;
+  b32 no_print_as_binop = false;
   if (is_term)
   {
     Composite *in = castTerm(value, Composite);
@@ -833,14 +834,21 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
     raw_args     = (void **)in->args;
     arg_count    = in->arg_count;
 
-    if (in->op && in->op->cat != Term_Variable)
+    if (in->op)
     {
-      op_signature = castTerm((getType(in->op)), Arrow);
-      assert(op_signature);
-      if (Token *global_name = in->op->global_name)
-        precedence = precedenceOf(global_name->string);
       if (in->op->cat == Term_Constructor)
         op_is_constructor = true;
+
+      if (Function *fun = castTerm(in->op, Function))
+        no_print_as_binop = checkFlag(fun->function_flags, FunctionFlag_no_print_as_binop);
+
+      if (in->op->cat != Term_Variable)
+      {
+        op_signature = castTerm((getType(in->op)), Arrow);
+        assert(op_signature);
+        if (Token *global_name = in->op->global_name)
+          precedence = precedenceOf(global_name->string);
+      }
     }
   }
   else
@@ -868,8 +876,8 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
   else
     printed_args = raw_args;
 
-  if (arg_count == 2)
-  {// special path for infix operator
+  if (arg_count == 2 && !no_print_as_binop)
+  {// special path for infix binary operator
     if (precedence < opt.no_paren_precedence)
       print(buffer, "(");
 
@@ -3884,7 +3892,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
           }
           else
           {
-            parseError(in0, "rewrite has no effect");
+            parseError(in0, "cannot find a place to apply the rewrite");
             attach("substitution", proof_type);
           }
         }
@@ -4421,9 +4429,17 @@ parseGlobalFunction(MemoryArena *arena, Token *name, b32 is_theorem)
           popContext();
         }
         else if (optionalCategory(Token_Directive_hint))
+        {
           setFlag(&out->function_flags, FunctionFlag_is_global_hint);
+        }
         else if (optionalCategory(Token_Directive_no_apply))
+        {
           setFlag(&out->function_flags, FunctionFlag_no_apply);
+        }
+        else if (optionalCategory(Token_Directive_no_print_as_binop))
+        {
+          setFlag(&out->function_flags, FunctionFlag_no_print_as_binop);
+        }
         else
           break;
       }

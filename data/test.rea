@@ -225,24 +225,24 @@ algebraTest :: (a,b,c,d,e,f: Nat) -> ((a+b)+c)+(d+e)+f = a+b+c+d+e+f
  }
 
 List :: union
-{nil,
+{single(head: Nat),
  cons(head: Nat, tail: List)}
 
-;; todo: need a syntax change so we can write products more easily
-fold_ :: fn(combine: (a: Nat, b: Nat) -> Nat, init: Nat, list: List) -> Nat
+fold :: fn(op: (a,b: Nat) -> Nat, list: List) -> Nat
+#no_print_as_binop
 {fork list
- {nil  return init,
-  cons return combine(list.head, fold_(combine, init, list.tail))}}
+ {single return list.head,
+  cons   return list.head op fold(op, list.tail)}}
 
-fold :: fn(list: List) -> Nat
-{fork list
- {nil  return 0,
-  cons return list.head + fold(list.tail)}}
+;; fold :: fn(list: List) -> Nat
+;; {fork list
+;;  {single return list.head,
+;;   cons   return list.head + fold(list.tail)}}
 
 + :: fn(l,m: List) -> List
 {fork l
- {nil  return m,
-  cons return (l.head cons (l.tail + m))}}
+ {single return (l.head cons m),
+  cons   return (l.head cons (l.tail + m))}}
 
 Permutation :: fn(abc, cab: List) -> Set
 #no_apply
@@ -257,13 +257,13 @@ Permutation :: fn(abc, cab: List) -> Set
   }
  }
 
-foldConcat :: (l,m: List) -> fold(l + m) = fold(l) + fold(m)
+foldConcat :: (op: (a,b: Nat) -> Nat, l,m: List) -> fold(op, l + m) = fold(op, l) op fold(op, m)
 #hint
 {fork l
- {nil,
+ {single,
   cons
-  rewrite foldConcat(l.tail, m);
-  rewrite addAssociative(l.head, fold(l.tail), fold(m));
+  rewrite foldConcat(op, l.tail, m);
+  rewrite addAssociative(l.head, fold(op, l.tail), fold(op, m));
   }}
 
 foldPermutation :: (l,m: List, p: Permutation(l, m)) -> fold(l) = fold(m)
