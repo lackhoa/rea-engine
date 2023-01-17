@@ -587,7 +587,7 @@ eatUntilMatchingPair(Tokenizer *tk)
 }
 
 internal i32
-getCommaSeparatedListLength(Tokenizer *tk)
+peekListLength(Tokenizer *tk)
 {
   Token opening = tk->last_token;
   char closing = getMatchingPair(&opening);

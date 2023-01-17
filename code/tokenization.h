@@ -38,7 +38,6 @@ enum TokenCategory
   Token_Keyword_check,
   Token_Keyword_check_truth,
   Token_Keyword_algebra_declare,
-
   Token_Keyword_END,
 
   // todo #cleanup We don't want token categories for these! Just dispatch when you see "#".
@@ -49,6 +48,7 @@ enum TokenCategory
   Token_Directive_norm,
   Token_Directive_hidden,
   Token_Directive_hint,
+  Token_Directive_no_apply,
   Token_Directive_END,
 };
 
@@ -56,7 +56,7 @@ const char *language_keywords[] = {
   "", "fn", "union", "ctor", "seq", "overload", "seek",
   "test_eval", "print", "print_raw", "print_ast", "check", "check_truth", "algebra_declare",
 };
-const char *meta_directives[] = {"", "load", "should_fail", "debug", "norm", "hidden", "hint"};
+const char *meta_directives[] = {"", "load", "should_fail", "debug", "norm", "hidden", "hint", "no_apply"};
 
 enum TacticEnum {
   Tactic_rewrite = 1,

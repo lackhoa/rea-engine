@@ -1,7 +1,6 @@
 void eatToken(Tokenizer * tk);
 Token nextToken(Tokenizer * tk);
 Token peekToken(Tokenizer * tk);
-Term * newComputation(MemoryArena * arena, Typer * typer, Term * lhs, Term * rhs);
 Term * getType(Term * in0);
 void dump(Trinary trinary);
 void unwindScope(Typer * env);
@@ -22,7 +21,6 @@ Term * evaluate(MemoryArena * arena, Term ** args, Term * in0);
 Term * evaluate(MemoryArena * arena, Term ** args, Term * in0, u32 flags);
 CompareTerms compareTerms(MemoryArena * arena, Term * lhs0, Term * rhs0);
 Trinary equalTrinary(Term * lhs0, Term * rhs0);
-Term * normalize(MemoryArena * arena, DataMap * map, i32 depth, Term * in0);
 Term * normalize(MemoryArena * arena, Typer * env, Term * in0);
 void introduceSignature(Typer * env, Arrow * signature, b32 add_bindings);
 Term * solveGoal(Solver * solver, Term * goal);

@@ -26,6 +26,7 @@ struct DataMap;
 
 enum AstCategory {
   Ast_Hole = 1,                 // hole left in for type-checking
+  Ast_NormalizeMeAst,
   Ast_Ellipsis,
   Ast_SyntheticAst,
   Ast_Identifier,               // result after initial parsing
@@ -109,6 +110,11 @@ struct Identifier {
 typedef Ast Hole;
 typedef Ast Ellipsis;
 typedef Ast AlgebraicManipulation;
+
+struct NormalizeMeAst {
+  embed_Ast(a);
+  String name_to_unfold;
+};
 
 struct ForkAst {
   embed_Ast(a);
@@ -241,14 +247,12 @@ struct Union {
   Arrow  **structs;
 };
 
-/* struct GlobalId {i32 v;}; */
 struct Function {
   embed_Term(t);
-  Term  *body;
+  Term *body;
+  u32   function_flags;
 };
 
-Ast AST_NORMALIZE_ME_;
-Ast *AST_NORMALIZE_ME = &AST_NORMALIZE_ME_;
 struct Let {
   embed_Ast(a);
   String  lhs;
@@ -364,7 +368,7 @@ struct GoalTransform
 {
   embed_Ast(a);
   Ast *hint;
-  Ast *new_goal;  // NOTE: 0 means "the normalized version of the current goal"
+  Ast *new_goal;
   Ast *body;
 };
 
@@ -458,11 +462,14 @@ struct SearchOutput {b32 found; TreePath *path;};
 
 struct CompareTerms {Trinary result; TreePath *diff_path;};
 
+const u32 FunctionFlag_is_global_hint = 1 << 0;
+const u32 FunctionFlag_no_apply       = 1 << 1;
+
 struct FunctionAst {
   embed_Ast(a);
   ArrowAst *signature;
   Ast      *body;
-  b32       add_to_global_hints;
+  u32       function_flags;
 };
 
 struct TermPair
@@ -485,9 +492,7 @@ struct SyntheticAst {
   Term *term;
 };
 
-// todo Doesn't seem like we need both these flags, since "apply" is the only
-// place to sets both of those flags.
-const u32 UNUSED_VAR EvaluationFlag_ApplyMode = 1 << 0;
+const u32 EvaluationFlag_ApplyMode = 1 << 0;
 
 struct EvaluationContext {
   MemoryArena  *arena;
@@ -567,6 +572,13 @@ struct EngineState {
 struct TreePathList {
   TreePath     *head;
   TreePathList *tail;
+};
+
+struct NormalizeContext {
+  MemoryArena *arena;
+  DataMap     *map;
+  i32          depth;
+  String       name_to_unfold;
 };
 
 #include "generated/engine_forward.h"

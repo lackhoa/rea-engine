@@ -217,8 +217,43 @@ testFillHole :: (a: Nat) -> a + 0 = a {}
 #load "natp.rea"
 algebraTest :: (a,b,c,d,e,f: Natp) -> ((a+b)+c)+(d+e)+f = a+b+c+d+e+f
 {
- ;; prove ((a+b)+c)+d+e = a+b+c+d+e {return algebraic_norm(((a+b)+c)+d+e)}
- ;; prove a+(b+c)+d = a+b+c+d       {return algebraic_norm(a+((b+c)+d))}
  return algebraic_norm(((a+b)+c)+(d+e)+f)
  }
-print algebraTest;
+
+List :: union
+{nil,
+ cons(head: Natp, tail: List)}
+
+;; todo: need a syntax change so we can write products more easily
+fold :: fn(combine: (a: Natp, b: Natp) -> Natp, initial: Natp, list: List) -> Natp
+{fork list
+ {nil  return initial,
+  cons return combine(list.head, fold(combine, initial, list.tail))}}
+
++ :: fn(l, m: List) -> List
+{fork l
+ {nil  return m,
+  cons return (l.head cons (l.tail + m))}}
+
+Permutation :: fn(abc, cab: List) -> Set
+#no_apply
+{
+ return union
+ {
+  samePermutation(abc=cab),
+  permutation(a: Natp, bc, c,b: List,
+              abc=(a cons bc),
+              cab=(c + (a cons b)),
+              Permutation(bc, c+b)
+              )
+  }
+ }
+
+foldPermutation :: ((combine: (a: Natp, b: Natp) -> Natp,
+                     init: Natp, l,m: List,
+                     p: Permutation(l, m)) ->
+                    fold(combine, init, l) = fold(combine, init, m))
+#norm(p)
+{
+ norm unfold(Permutation) p;
+ }

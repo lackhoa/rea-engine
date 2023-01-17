@@ -195,15 +195,6 @@ newEquality(MemoryArena *arena, Term *lhs, Term *rhs)
   return newComposite3(arena, op, getType(lhs), lhs, rhs);
 }
 
-forward_declare inline Term *
-newComputation(MemoryArena *arena, Typer *typer, Term *lhs, Term *rhs)
-{
-  assert(equal(normalize(arena, typer, lhs), normalize(arena, typer, rhs)));
-  Term *eq = newEquality(arena, lhs, rhs);
-  Computation *out = newTerm(arena, Computation, eq);
-  return out;
-}
-
 inline Term *
 newIdentity(MemoryArena *arena, Term *term)
 {
@@ -1526,7 +1517,7 @@ rebase(MemoryArena *arena, Term *in0, i32 delta)
 }
 
 internal Term *
-apply(MemoryArena *arena, Term *op, i32 arg_count, Term **args, Term *type)
+apply(MemoryArena *arena, Term *op, i32 arg_count, Term **args, Term *type, String name_to_unfold)
 {
   Term *out0 = 0;
 
@@ -1538,7 +1529,16 @@ apply(MemoryArena *arena, Term *op, i32 arg_count, Term **args, Term *type)
 
   if (Function *fun = castTerm(op, Function))
   {// Function application
-    if (fun->body != &dummy_function_being_built)
+    b32 should_apply_function = true;
+    if (fun->body == &dummy_function_being_built)
+      should_apply_function = false;
+    if (checkFlag(fun->function_flags, FunctionFlag_no_apply))
+    {
+      should_apply_function = (name_to_unfold.chars &&
+                               equal(fun->global_name->string, name_to_unfold));
+    }
+
+    if (should_apply_function)
       out0 = evaluate(arena, args, fun->body, EvaluationFlag_ApplyMode);
   }
   else if (op == builtin_equal)
@@ -1568,7 +1568,7 @@ apply(MemoryArena *arena, Term *op, i32 arg_count, Term **args, Term *type)
                 args[0] = getType(larg);
                 args[1] = larg;
                 args[2] = rarg;
-                out0 = apply(arena, builtin_equal, 3, args, type);
+                out0 = apply(arena, builtin_equal, 3, args, type, {});
                 if (!out0)
                   out0 = newEquality(arena, larg, rarg);
               }
@@ -1654,7 +1654,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
 
         if (checkFlag(ctx->flags, EvaluationFlag_ApplyMode))
         {
-          out0 = apply(arena, op, in->arg_count, args, getType(in0));
+          out0 = apply(arena, op, in->arg_count, args, getType(in0), {});
         }
 
         if (!out0)
@@ -2089,12 +2089,6 @@ lookupCurrentFrame(LocalBindings *bindings, String key, b32 add_if_missing)
   return out;
 }
 
-struct NormalizeContext {
-  MemoryArena *arena;
-  DataMap     *map;
-  i32          depth;
-};
-
 // todo #cleanup #mem don't allocate without progress
 internal Term *
 normalizeMain(NormalizeContext *ctx, Term *in0) 
@@ -2129,7 +2123,7 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
         Term *norm_op = normalizeMain(ctx, in->op);
         progressed = progressed || (norm_op != in->op);
 
-        out0 = apply(arena, norm_op, in->arg_count, norm_args, getType(in0));
+        out0 = apply(arena, norm_op, in->arg_count, norm_args, getType(in0), ctx->name_to_unfold);
 
         if (!out0)
         {
@@ -2237,10 +2231,10 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
   return out0;
 }
 
-forward_declare internal Term *
-normalize(MemoryArena *arena, DataMap *map, i32 depth, Term *in0)
+internal Term *
+normalize(MemoryArena *arena, Typer *env, Term *in0, String name_to_unfold)
 {
-  NormalizeContext ctx = {.arena=arena, .map=map, .depth=depth};
+  NormalizeContext ctx = {.arena=arena, .map=(env ? env->map : 0), .depth=getScopeDepth(env), .name_to_unfold=name_to_unfold};
   return normalizeMain(&ctx, in0);
 }
 
@@ -2673,6 +2667,27 @@ solveArgs(Solver solver, Term *op, Term *goal)
   return solveArgs(&solver, op, goal);
 }
 
+inline Term *
+newComputation_(MemoryArena *arena, Term *lhs, Term *rhs)
+{
+  Term *eq = newEquality(arena, lhs, rhs);
+  Computation *out = newTerm(arena, Computation, eq);
+  return out;
+}
+
+inline Term *
+newComputationIfEqual(MemoryArena *arena, Typer *typer, Term *lhs, Term *rhs)
+{
+  // NOTE: mega_paranoid check.
+  Term *out = 0;
+  if (equal(normalize(arena, typer, lhs),
+            normalize(arena, typer, rhs)))
+  {
+    out = newComputation_(arena, lhs, rhs);
+  }
+  return out;
+}
+
 forward_declare internal Term *
 solveGoal(Solver *solver, Term *goal)
 {
@@ -2702,11 +2717,7 @@ solveGoal(Solver *solver, Term *goal)
 
     if (auto [l,r] = getEqualitySides(goal, false))
     {
-      if (equal(normalize(temp_arena, solver->typer, l),
-                normalize(temp_arena, solver->typer, r)))
-      {
-        out = newComputation(solver->arena, solver->typer, l, r);
-      }
+      out = newComputationIfEqual(solver->arena, solver->typer, l, r);
     }
 
     if (!out)
@@ -2945,24 +2956,50 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
       case Tactic_norm:
       {
         pushContext("norm [EXPRESSION]");
-        if (seesExpressionEndMarker())
-        {// normalize goal
-          GoalTransform *ast = newAst(arena, GoalTransform, &token);
-          ast->new_goal = AST_NORMALIZE_ME;
-          ast0 = &ast->a;
-        }
-        else if (Ast *expression = parseExpression(arena))
-        {// normalize with let.
-          Let *let = newAst(arena, Let, &token);
-          let->rhs  = expression;
-          let->type = AST_NORMALIZE_ME;
-          ast0 = &let->a;
-          if (expression->cat == Ast_Identifier)
+        String name_to_unfold = {};
+
+        if (optionalString("unfold"))
+        {
+          pushContext("unfold(FUNCTION_NAME)");
+          if (requireChar('('))
           {
-            // borrow the name if the expression is an identifier 
-            let->lhs  = expression->token.string;
+            if (requireIdentifier("expect function name"))
+            {
+              name_to_unfold = global_tokenizer->last_token.string;
+              requireChar(')');
+            }
+          }
+          popContext();
+        }
+
+        if (noError())
+        {
+          NormalizeMeAst *ast_goal = newAst(arena, NormalizeMeAst, &token);
+          ast_goal->name_to_unfold = name_to_unfold;
+          if (seesExpressionEndMarker())
+          {// normalize goal
+            GoalTransform *ast = newAst(arena, GoalTransform, &token);
+            ast->new_goal = &ast_goal->a;
+            ast0 = &ast->a;
+          }
+          else if (Ast *expression = parseExpression(arena))
+          {// normalize with let.
+            Let *let = newAst(arena, Let, &token);
+            let->rhs  = expression;
+            let->type = &ast_goal->a;
+            ast0 = &let->a;
+            if (expression->cat == Ast_Identifier)
+            {
+              // borrow the name if the expression is an identifier 
+              let->lhs  = expression->token.string;
+            }
+            else
+            {
+              // NOTE This case can happen if it's a "seek"
+            }
           }
         }
+
         popContext();
       } break;
 
@@ -2989,7 +3026,7 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
         ast0 = &ast->a;
         if (optionalString("norm"))
         {
-          ast->new_goal = AST_NORMALIZE_ME;
+          ast->new_goal = &newAst(arena, NormalizeMeAst, &token)->a;
         }
         else
         {
@@ -3349,7 +3386,7 @@ applyEqChain(MemoryArena *arena, Term *e1, Term *e2)
 }
 
 inline Term *
-rewriteProof(MemoryArena *arena, Term *eq_proof, TreePath *path, Term *in)
+transformPartOfExpression(MemoryArena *arena, Term *eq_proof, TreePath *path, Term *in)
 {
   Term *id = newIdentity(arena, in);
   return newRewrite(arena, eq_proof, id, treePath(arena, 2, path), true);
@@ -3368,7 +3405,7 @@ getAlgebraicNorm(MemoryArena *arena, Typer *typer, Algebra *algebra, Term *in0)
       Term *r = expression->args[1];
       if (Term *norm_r = getAlgebraicNorm(arena, typer, algebra, r))
       {
-        out = rewriteProof(arena, norm_r, treePath(arena, 1, 0), expression0);
+        out = transformPartOfExpression(arena, norm_r, treePath(arena, 1, 0), expression0);
         expression0 = getTransformationResult(out);
       }
     }
@@ -3408,7 +3445,7 @@ inline Term *
 buildAlgebraicNorm(MemoryArena *arena, Typer *typer, CompositeAst *in)
 {
   Term *out = 0;
-  Solver solver = Solver{.arena=arena, .typer=typer, .use_global_hints=true};
+  // Solver solver = Solver{.arena=arena, .typer=typer, .use_global_hints=true};
   if (in->arg_count == 1)
   {
     if (Term *expression0 = buildTerm(arena, typer, in->args[0], holev))
@@ -3805,7 +3842,10 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
 
           introduceSignature(typer, signature, true);
           if (Term *body = buildTerm(arena, typer, in->body, signature->output_type).term)
-            fun->body = body;
+          {
+            fun->body           = body;
+            fun->function_flags = in->function_flags;  // we don't use any flag for local functions atm but let's just keep things the same.
+          }
           unwindBindingsAndScope(typer);
           if (noError())
             out0  = &fun->t;
@@ -3860,9 +3900,9 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
       TreePath *rewrite_path  = 0;
       b32       right_to_left = false;
 
-      if (in->new_goal == AST_NORMALIZE_ME)
+      if (NormalizeMeAst *in_new_goal = castAst(in->new_goal, NormalizeMeAst))
       {// just normalize the goal, no need for tactics (for now).
-        Term *norm_goal = normalize(arena, typer, goal);
+        Term *norm_goal = normalize(arena, typer, goal, in_new_goal->name_to_unfold);
         if (checkFlag(in->flags, AstFlag_Generated) &&
             equal(goal, norm_goal))
         {// superfluous auto-generated transforms.
@@ -3871,8 +3911,8 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
         }
         else
         {
+          eq_proof = newComputation_(arena, goal, norm_goal);
           new_goal = norm_goal;
-          eq_proof = newComputation(arena, typer, goal, new_goal);
           rewrite_path = 0;
         }
       }
@@ -3958,7 +3998,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
     {
       Let  *in = castAst(in0, Let);
       Term *type_hint = holev;
-      if (in->type && in->type != AST_NORMALIZE_ME)
+      if (in->type && in->type->cat != Ast_NormalizeMeAst)
       {
         if (Term *type = buildTerm(arena, typer, in->type, holev).term)
           type_hint = type;
@@ -3972,13 +4012,16 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
           if (type_hint->cat == Term_Hole)
             rhs_type = getType(rhs);
             
-          if (in->type == AST_NORMALIZE_ME)
+          if (in->type)
           {// type coercion
-            Term *norm_rhs_type = normalize(arena, typer, rhs_type);
-            Term *computation = newComputation(arena, typer, norm_rhs_type, rhs_type);
-            rhs_type = norm_rhs_type;
-            rhs = newRewrite(arena, computation, build_rhs, 0, false);
-            assert(equal(getType(rhs), rhs_type));
+            if (NormalizeMeAst *in_type = castAst(in->type, NormalizeMeAst))
+            {
+              Term *norm_rhs_type = normalize(arena, typer, rhs_type, in_type->name_to_unfold);
+              Term *computation = newComputation_(arena, norm_rhs_type, rhs_type);
+              rhs_type = norm_rhs_type;
+              rhs = newRewrite(arena, computation, build_rhs, 0, false);
+              assert(equal(getType(rhs), rhs_type));
+            }
           }
 
           Token *token = &in0->token;
@@ -4284,13 +4327,13 @@ insertAutoNormalizations(MemoryArena *arena, NormList norm_list, Ast *in0)
           Let *new_body = newAst(arena, Let, &item->token);
           new_body->lhs   = item->token.string;
           new_body->rhs   = &item->a;
-          new_body->type  = AST_NORMALIZE_ME;
+          new_body->type  = &newAst(arena, NormalizeMeAst, &item->token)->a;
           new_body->body  = body;
           setFlag(&new_body->flags, AstFlag_Generated);
           body = &new_body->a;
         }
         GoalTransform *new_body = newAst(arena, GoalTransform, &body->token);
-        new_body->new_goal = AST_NORMALIZE_ME;
+        new_body->new_goal = &newAst(arena, NormalizeMeAst, &body->token)->a;
         setFlag(&new_body->flags, AstFlag_Generated);
         new_body->body = body;
         in->bodies[case_id] = &new_body->a;
@@ -4334,7 +4377,7 @@ parseGlobalFunction(MemoryArena *arena, Token *name, b32 is_theorem)
           if (requireChar('('))
           {
             Tokenizer tk_copy = *global_tokenizer;
-            i32 norm_count = getCommaSeparatedListLength(&tk_copy);
+            i32 norm_count = peekListLength(&tk_copy);
             if (noError(&tk_copy))
             {
               norm_list.items = pushArray(temp_arena, norm_count, Identifier*);
@@ -4347,9 +4390,9 @@ parseGlobalFunction(MemoryArena *arena, Token *name, b32 is_theorem)
                   // todo handle unbound identifier: all names in the norm list
                   // should be in the function signature.
                   Token *name = &global_tokenizer->last_token;
-                  i32 norm_id = norm_list.count++;
-                  assert(norm_id < norm_count);
-                  norm_list.items[norm_id] = newAst(arena, Identifier, name);
+                  i32 norm_i = norm_list.count++;
+                  assert(norm_i < norm_count);
+                  norm_list.items[norm_i] = newAst(arena, Identifier, name);
                   if (!optionalChar(','))
                   {
                     requireChar(')');
@@ -4362,7 +4405,9 @@ parseGlobalFunction(MemoryArena *arena, Token *name, b32 is_theorem)
           popContext();
         }
         else if (optionalCategory(Token_Directive_hint))
-          out->add_to_global_hints = true;
+          setFlag(&out->function_flags, FunctionFlag_is_global_hint);
+        else if (optionalCategory(Token_Directive_no_apply))
+          setFlag(&out->function_flags, FunctionFlag_no_apply);
         else
           break;
       }
@@ -4392,7 +4437,7 @@ parseFork(MemoryArena *arena)
   if (requireChar('{', "to open the typedef body"))
   {
     Tokenizer tk_copy = *global_tokenizer;
-    i32 case_count = getCommaSeparatedListLength(&tk_copy);
+    i32 case_count = peekListLength(&tk_copy);
     if (noError(&tk_copy))
     {
       Token *ctors = pushArray(temp_arena, case_count, Token);
@@ -4459,7 +4504,7 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
   if (requireChar(begin_arg_char))
   {
     Tokenizer tk_copy = *global_tokenizer;
-    param_count = getCommaSeparatedListLength(&tk_copy);
+    param_count = peekListLength(&tk_copy);
     if (noError(&tk_copy))
     {
       allocateArray(arena, param_count, param_names, true);
@@ -4618,7 +4663,7 @@ parseUnion(MemoryArena *arena)
     uni = newAst(arena, UnionAst, token);
 
     Tokenizer tk_copy = *global_tokenizer;
-    i32 ctor_count = getCommaSeparatedListLength(&tk_copy);
+    i32 ctor_count = peekListLength(&tk_copy);
     // NOTE: init here for recursive definition
     if (noError(&tk_copy))
     {
@@ -4825,7 +4870,7 @@ parseOperand(MemoryArena *arena)
       Ast *op = operand;
 
       Tokenizer tk_copy = *global_tokenizer;
-      i32 expected_arg_count = getCommaSeparatedListLength(&tk_copy);
+      i32 expected_arg_count = peekListLength(&tk_copy);
       if (noError(&tk_copy))
       {
         Ast **args = pushArray(arena, expected_arg_count, Ast*);
@@ -5019,7 +5064,8 @@ buildGlobalFunction(MemoryArena *arena, FunctionAst *in)
   {
     Arrow *signature = castTerm(build_signature.term, Arrow);
     out = newTerm(arena, Function, build_signature.term);
-    out->body = &dummy_function_being_built;
+    out->body           = &dummy_function_being_built;
+    out->function_flags = in->function_flags;
 
     // NOTE: add binding first to support recursion
     addGlobalBinding(&in->a.token, &out->t);
@@ -5030,7 +5076,7 @@ buildGlobalFunction(MemoryArena *arena, FunctionAst *in)
       if (BuildTerm body = buildTerm(arena, typer, in->body, signature->output_type))
       {
         out->body = body.term;
-        if (in->add_to_global_hints)
+        if (checkFlag(in->function_flags, FunctionFlag_is_global_hint))
           addGlobalHint(out);
       }
       unwindBindingsAndScope(typer);
