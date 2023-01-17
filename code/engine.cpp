@@ -3772,6 +3772,8 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
       AccessorAst *in = castAst(in0, AccessorAst);
       if (Term *record0 = buildTerm(arena, typer, in->record, holev).term)
       {
+        if (serial == 10323)
+          breakhere;
         Constructor ctor = getConstructor(typer, record0);
         if (ctor.uni)
         {
@@ -3906,8 +3908,8 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
         if (checkFlag(in->flags, AstFlag_Generated) &&
             equal(goal, norm_goal))
         {// superfluous auto-generated transforms.
-          recursed = true;
           out0 = buildTerm(arena, typer, in->body, goal);
+          recursed = true;
         }
         else
         {
@@ -4017,39 +4019,51 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
             if (NormalizeMeAst *in_type = castAst(in->type, NormalizeMeAst))
             {
               Term *norm_rhs_type = normalize(arena, typer, rhs_type, in_type->name_to_unfold);
-              Term *computation = newComputation_(arena, norm_rhs_type, rhs_type);
-              rhs_type = norm_rhs_type;
-              rhs = newRewrite(arena, computation, build_rhs, 0, false);
-              assert(equal(getType(rhs), rhs_type));
+              if (checkFlag(in->flags, AstFlag_Generated) &&
+                  equal(rhs_type, norm_rhs_type))
+              {// superfluous auto-generated transforms.
+                out0 = buildTerm(arena, typer, in->body, goal);
+                recursed = true;
+              }
+              else
+              {
+                Term *computation = newComputation_(arena, norm_rhs_type, rhs_type);
+                rhs_type = norm_rhs_type;
+                rhs = newRewrite(arena, computation, build_rhs, 0, false);
+                assert(equal(getType(rhs), rhs_type));
+              }
             }
           }
 
-          Token *token = &in0->token;
-          FunctionAst *lambda = newAst(temp_arena, FunctionAst, token);
-          lambda->body = in->body;
-          ArrowAst *signature = newAst(temp_arena, ArrowAst, token);
-          i32 param_count = 1;
-          allocateArray(temp_arena, param_count, signature->param_names);
-          allocateArray(temp_arena, param_count, signature->param_types);
-          allocateArray(temp_arena, param_count, signature->param_flags, true);
-          signature->param_count    = param_count;
-          signature->param_names[0] = in->lhs;
+          if (!recursed)
+          {
+            Token *token = &in0->token;
+            FunctionAst *lambda = newAst(temp_arena, FunctionAst, token);
+            lambda->body = in->body;
+            ArrowAst *signature = newAst(temp_arena, ArrowAst, token);
+            i32 param_count = 1;
+            allocateArray(temp_arena, param_count, signature->param_names);
+            allocateArray(temp_arena, param_count, signature->param_types);
+            allocateArray(temp_arena, param_count, signature->param_flags, true);
+            signature->param_count    = param_count;
+            signature->param_names[0] = in->lhs;
 
-          Term *rhs_type_rebased = rebase(arena, rhs_type, 1);
-          signature->param_types[0] = synthesizeAst(temp_arena, rhs_type_rebased, token);
-          signature->output_type    = synthesizeAst(temp_arena, rebase(arena, goal, 1), token);
-          lambda->signature = signature;
+            Term *rhs_type_rebased = rebase(arena, rhs_type, 1);
+            signature->param_types[0] = synthesizeAst(temp_arena, rhs_type_rebased, token);
+            signature->output_type    = synthesizeAst(temp_arena, rebase(arena, goal, 1), token);
+            lambda->signature = signature;
 
-          Ast *rhs_ast = synthesizeAst(arena, rhs, token);
+            Ast *rhs_ast = synthesizeAst(arena, rhs, token);
 
-          CompositeAst *com = newAst(arena, CompositeAst, token);
-          allocateArray(temp_arena, param_count, com->args);
-          com->op        = &lambda->a;
-          com->arg_count = param_count;
-          com->args[0]   = rhs_ast;
+            CompositeAst *com = newAst(arena, CompositeAst, token);
+            allocateArray(temp_arena, param_count, com->args);
+            com->op        = &lambda->a;
+            com->arg_count = param_count;
+            com->args[0]   = rhs_ast;
 
-          recursed = true;
-          out0 = buildTerm(arena, typer, &com->a, goal);
+            out0 = buildTerm(arena, typer, &com->a, goal);
+            recursed = true;
+          }
         }
       }
       assert(!out0 || getType(out0));

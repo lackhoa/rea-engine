@@ -240,7 +240,7 @@ Permutation :: fn(abc, cab: List) -> Set
 {
  return union
  {
-  samePermutation(abc=cab),
+  samePermutation(same: abc=cab),
   permutation(a: Natp, bc, c,b: List,
               abc=(a cons bc),
               cab=(c + (a cons b)),
@@ -249,11 +249,18 @@ Permutation :: fn(abc, cab: List) -> Set
   }
  }
 
+#debug
 foldPermutation :: ((combine: (a: Natp, b: Natp) -> Natp,
                      init: Natp, l,m: List,
-                     p: Permutation(l, m)) ->
-                    fold(combine, init, l) = fold(combine, init, m))
-#norm(p)
+                     p: Permutation(l, m))
+                    -> fold(combine, init, l) = fold(combine, init, m))
+#norm(p)  ;; this is the culprit!
 {
  norm unfold(Permutation) p;
+ fork p
+ {
+  samePermutation rewrite p.same,
+  permutation,
+  }
  }
+#debug off
