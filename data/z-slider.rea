@@ -1,6 +1,6 @@
-#load "natp.rea"
+#load "nat.rea"
 
-Z :: union {|(l,r: Natp)}
+Z :: union {|(l,r: Nat)}
 
 == :: fn(a,b: Z) -> Set
 {return a.l+b.r = a.r+b.l}
@@ -15,10 +15,10 @@ addCommutative :: (a,b: Z) -> a+b == b+a
 #hint
 {
  norm;
- ;; (a.l + b.l) + b.r + a.r = (a.r + b.r) + b.l + a.l;
- => (b.r + a.r) + a.l + b.l = (a.r + b.r) + b.l + a.l;
- => (a.r + b.r) + a.l + b.l = (a.r + b.r) + b.l + a.l;
- => (a.r + b.r) + b.l + a.l = (a.r + b.r) + b.l + a.l;
+ ;; (a.l + b.l) + b.r + a.r = (a.r + b.r) + b.l + a.l
+ => (b.r + a.r) + a.l + b.l = (a.r + b.r) + b.l + a.l
+ => (a.r + b.r) + a.l + b.l = (a.r + b.r) + b.l + a.l
+ => (a.r + b.r) + b.l + a.l = (a.r + b.r) + b.l + a.l
  }
 
 addAssociative :: (a,b,c: Z) -> (a+b)+c == a+b+c
@@ -26,9 +26,9 @@ addAssociative :: (a,b,c: Z) -> (a+b)+c == a+b+c
 {
  norm;
  ;; ((a.l + b.l) + c.l) + a.r + b.r + c.r = ((a.r + b.r) + c.r) + a.l + b.l + c.l
- => (a.r + b.r + c.r) + (a.l + b.l) + c.l = ((a.r + b.r) + c.r) + a.l + b.l + c.l;
- => ((a.r + b.r) + c.r) + (a.l + b.l) + c.l = ((a.r + b.r) + c.r) + a.l + b.l + c.l;
- => ((a.r + b.r) + c.r) + a.l + b.l + c.l = ((a.r + b.r) + c.r) + a.l + b.l + c.l;
+ => (a.r + b.r + c.r) + (a.l + b.l) + c.l = ((a.r + b.r) + c.r) + a.l + b.l + c.l
+ => ((a.r + b.r) + c.r) + (a.l + b.l) + c.l = ((a.r + b.r) + c.r) + a.l + b.l + c.l
+ => ((a.r + b.r) + c.r) + a.l + b.l + c.l = ((a.r + b.r) + c.r) + a.l + b.l + c.l
  }
 
 mulCommutative :: (a,b: Z) -> b*a == a*b

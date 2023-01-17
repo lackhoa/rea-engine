@@ -59,6 +59,7 @@ addSRight :: (n, m: Nat) -> n + ++(m) = ++(n+m)
   ++: => ++(n.p + m) = ++(n.p + m) {addSRight}}}
 
 addCommutative :: (a,b: Nat) -> (a+b = b+a)
+#hint
 {fork a
  {0 : => b = b {add0},
   ++ ;; ++(a.p + b) = b + ++(a.p)
@@ -66,12 +67,14 @@ addCommutative :: (a,b: Nat) -> (a+b = b+a)
   }}
 
 addAssociative :: (a,b,c: Nat) -> (a+b)+c = a+b+c
+#hint
 {fork a
  {0 : ,
   ++:
   rewrite addAssociative(a.p,b,c)}}
 
 mulDistributive :: (a,b,c: Nat) -> a*c+b*c = (a+b)*c
+#hint
 {fork a
  {0:,
   ++: ;; (c + a.p * c) + b * c = c + (a.p + b) * c
@@ -106,13 +109,9 @@ mulPos :: (a,b: Nat, apos: a!=0, bpos: b!=0) -> a*b != 0
                                   return seek(False)}}}}
 
 mul0 :: (a: Nat) -> a * 0 = 0
-{
- fork a
- {
-  0: ,
-  ++: rewrite mul0(a.p),
-  }
- }
+{fork a
+ {0: ,
+  ++: rewrite mul0(a.p),}}
 
 
 mulSRight :: (a,b: Nat) -> a * ++(b) = a + a*b
@@ -126,12 +125,12 @@ mulSRight :: (a,b: Nat) -> a * ++(b) = a + a*b
   => ++(a.p + a.p*b + b)   = ++(a.p + a.p*b + b) { addCommutative }}}
 
 mulCommutative :: (a,b: Nat) -> a*b = b*a
+#hint
 {fork a
  {0 : rewrite mul0(b),
   ++: ;; b + a.p*b = b * ++(a.p)
   => b + a.p*b = b + b*a.p { mulSRight(b, a.p) }
-  => b + a.p*b = b + a.p*b { mulCommutative(a.p, b) }
-  }}
+  => b + a.p*b = b + a.p*b { mulCommutative(a.p, b) }}}
 
 == :: fn(a,b: Nat) -> Bool
 {fork a {0  fork b {0 return true,  ++ return false},
@@ -140,3 +139,4 @@ mulCommutative :: (a,b: Nat) -> a*b = b*a
 eqReflexive :: (a: Nat) -> a==a = true
 {fork a {0, ++ return eqReflexive(a.p)}}
 
+algebra_declare Nat;

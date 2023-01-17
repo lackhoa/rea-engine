@@ -1827,6 +1827,9 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
   }
 #endif
 
+  if (serial == 13293)
+    breakhere;
+
   if (lhs0 == rhs0)
     out.result = {Trinary_True};
   else if (lhs0->cat == rhs0->cat)
@@ -1986,7 +1989,7 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
 
 #if DEBUG_LOG_compare
   if (DEBUG_MODE)
-  {DEBUG_DEDENT(); dump("=> "); dump(out.result); dump();}
+  {DEBUG_DEDENT(); DUMP("=>(", serial, ") ", out.result, "\n");}
 #endif
 
   return out;
@@ -3956,6 +3959,10 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
             }
           }
 
+          if (serial == 13005)
+          {
+            DEBUG_ON;
+          }
           if (!is_global_identifier)
           {
             if (in->hint)
@@ -5572,10 +5579,10 @@ int engineMain()
 
   char *files[] = {
     "../data/test.rea",
+    "../data/z-slider.rea",
     // "../data/z-normalize-experiment.rea",
     "../data/natp-experiment.rea",
     "../data/z.rea",
-    "../data/z-slider-experiment.rea",
   };
   for (i32 file_id=0; file_id < arrayCount(files); file_id++)
   {

@@ -214,23 +214,32 @@ testAnonymousParameter :: fn (A: Set, A) -> A
 
 testFillHole :: (a: Nat) -> a + 0 = a {}
 
-#load "natp.rea"
-algebraTest :: (a,b,c,d,e,f: Natp) -> ((a+b)+c)+(d+e)+f = a+b+c+d+e+f
+
+;; The Manhattan algebra test!
+;; The Manhattan algebra test!
+;; The Manhattan algebra test!
+
+algebraTest :: (a,b,c,d,e,f: Nat) -> ((a+b)+c)+(d+e)+f = a+b+c+d+e+f
 {
  return algebraic_norm(((a+b)+c)+(d+e)+f)
  }
 
 List :: union
 {nil,
- cons(head: Natp, tail: List)}
+ cons(head: Nat, tail: List)}
 
 ;; todo: need a syntax change so we can write products more easily
-fold :: fn(combine: (a: Natp, b: Natp) -> Natp, initial: Natp, list: List) -> Natp
+fold_ :: fn(combine: (a: Nat, b: Nat) -> Nat, init: Nat, list: List) -> Nat
 {fork list
- {nil  return initial,
-  cons return combine(list.head, fold(combine, initial, list.tail))}}
+ {nil  return init,
+  cons return combine(list.head, fold_(combine, init, list.tail))}}
 
-+ :: fn(l, m: List) -> List
+fold :: fn(list: List) -> Nat
+{fork list
+ {nil  return 0,
+  cons return list.head + fold(list.tail)}}
+
++ :: fn(l,m: List) -> List
 {fork l
  {nil  return m,
   cons return (l.head cons (l.tail + m))}}
@@ -241,26 +250,42 @@ Permutation :: fn(abc, cab: List) -> Set
  return union
  {
   samePermutation(same: abc=cab),
-  permutation(a: Natp, bc, c,b: List,
-              abc=(a cons bc),
-              cab=(c + (a cons b)),
-              Permutation(bc, c+b)
-              )
+  permutation(a: Nat, bc, c,b: List,
+              abc_destruct: abc=(a cons bc),
+              cab_destruct: cab=(c + (a cons b)),
+              recurse: Permutation(bc, c+b))
   }
  }
 
-#debug
-foldPermutation :: ((combine: (a: Natp, b: Natp) -> Natp,
-                     init: Natp, l,m: List,
-                     p: Permutation(l, m))
-                    -> fold(combine, init, l) = fold(combine, init, m))
-#norm(p)  ;; this is the culprit!
+foldConcat :: (l,m: List) -> fold(l + m) = fold(l) + fold(m)
+#hint
+{fork l
+ {nil,
+  cons
+  rewrite foldConcat(l.tail, m);
+  rewrite addAssociative(l.head, fold(l.tail), fold(m));
+  }}
+
+foldPermutation :: (l,m: List, p: Permutation(l, m)) -> fold(l) = fold(m)
 {
  norm unfold(Permutation) p;
  fork p
  {
-  samePermutation rewrite p.same,
-  permutation,
+  samePermutation
+  rewrite p.same,
+
+  permutation
+  rewrite p.abc_destruct;
+  rewrite p.cab_destruct;
+  norm;
+  => p.a + fold(p.bc) = fold(p.c) + fold(p.a cons p.b)
+  => p.a + fold(p.bc) = fold(p.c) + p.a + fold(p.b)
+  => p.a + fold(p.bc) = (p.a + fold(p.b)) + fold(p.c) 
+  => p.a + fold(p.bc) = p.a + fold(p.b) + fold(p.c) 
+  => p.a + fold(p.bc) = p.a + fold(p.c) + fold(p.b) 
+  => p.a + fold(p.bc) = p.a + fold(p.c + p.b);
+  ;; => p.a + fold(p.c + p.b) = p.a + fold(p.c + p.b) { foldPermutation(p.bc, p.c + p.b, p.recurse) }
+  rewrite foldPermutation(p.bc, p.c + p.b, p.recurse);
+  ,
   }
  }
-#debug off
