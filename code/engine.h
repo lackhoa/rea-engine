@@ -370,6 +370,7 @@ struct GoalTransform
   Ast *hint;
   Ast *new_goal;
   Ast *body;
+  b32  print_proof;
 };
 
 struct AccessorAst

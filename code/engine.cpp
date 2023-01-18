@@ -1195,10 +1195,14 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
       {
         if (in0 == builtin_equal)
           print(buffer, "=");
+        else if (in0 == builtin_type_equal)
+          print(buffer, "=");
         else if (in0 == builtin_Set)
           print(buffer, "Set");
         else if (in0 == builtin_Type)
           print(buffer, "Type");
+        else
+          todoIncomplete;
       } break;
 
       case Term_Constructor:
@@ -3073,6 +3077,10 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
         pushContext("Goal transform: => NEW_GOAL [{ EQ_PROOF_HINT }]; ...");
         GoalTransform *ast = newAst(arena, GoalTransform, &token);
         ast0 = &ast->a;
+        if (optionalCategory(Token_Directive_print_proof))
+        {
+          ast->print_proof = true;
+        }
         if (optionalString("norm"))
         {
           ast->new_goal = &newAst(arena, NormalizeMeAst, &token)->a;
@@ -4036,7 +4044,12 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
           out0 = newRewrite(arena, eq_proof, body, rewrite_path, right_to_left);
         }
       }
-      assert(!out0 || getType(out0));
+
+      if (in->print_proof && eq_proof)
+      {
+        print(0, eq_proof);
+        print(0, "\n");
+      }
     } break;
 
     case Ast_Let:
