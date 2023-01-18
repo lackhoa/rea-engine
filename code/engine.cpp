@@ -121,7 +121,7 @@ newComposite(MemoryArena *arena, Term *op, i32 arg_count, Term **args)
   {
     assert(ctor->uni);
     type = &ctor->uni->t;  // todo this makes me nervous!
-    signature = ctor->uni->structs[ctor->id];
+    signature = ctor->uni->structs[ctor->index];
   }
   else
   {
@@ -255,27 +255,13 @@ isSequenced(Term *term)
   return out;
 }
 
-inline Arrow *
-getConstructorType(Constructor *ctor)
-{
-  // NOTE: We can play fast-and-loose with constructor type, since only the union matters.
-  if (ctor->type)
-    return castTerm(ctor->type, Arrow);
-  else
-  {
-    Arrow *signature = ctor->uni->structs[ctor->id];
-    ctor->type = &signature->t;
-    return signature;
-  }
-}
-
 inline Constructor *
 newConstructor(MemoryArena *arena, Union *uni, i32 id)
 {
   Constructor *ctor = newTerm(arena, Constructor, 0);
-  ctor->uni = uni;
-  ctor->id  = id;
-  getConstructorType(ctor);
+  ctor->uni   = uni;
+  ctor->index = id;
+  ctor->type  = &ctor->uni->structs[ctor->index]->t;
   return ctor;
 }
 
@@ -304,14 +290,14 @@ synthesizeTree(MemoryArena *arena, Term *parent, DataTree *tree)
 {
   Composite *record = 0;
   Union *uni   = castTerm(parent->type, Union);
-  Arrow *struc = uni->structs[tree->ctor_id];
-  Constructor *ctor = newConstructor(arena, tree->uni, tree->ctor_id);
+  Arrow *struc = uni->structs[tree->ctor_i];
+  Constructor *ctor = newConstructor(arena, uni, tree->ctor_i);
   i32 param_count = struc->param_count;
   record = newTerm(arena, Composite, parent->type);
   record->op        = &ctor->t;
   record->arg_count = param_count;
   record->args      = pushArray(arena, param_count, Term *);
-  Term **members = synthesizeMembers(arena, parent, tree->ctor_id);
+  Term **members = synthesizeMembers(arena, parent, tree->ctor_i);
   for (i32 field_id=0; field_id < param_count; field_id++)
   {
     DataTree *member_tree = tree->members[field_id];
@@ -343,7 +329,7 @@ print(MemoryArena *buffer, DataTree *tree)
 {
   if (tree)
   {
-    print(buffer, tree->uni->ctor_names[tree->ctor_id]);
+    print(buffer, tree->ctor_names[tree->ctor_i]);
     if (tree->member_count)
     {
       print(buffer, "(");
@@ -424,8 +410,8 @@ inline void
 initDataTree(MemoryArena *arena, DataTree *tree, Union *uni, i32 ctor_id)
 {
   i32 ctor_arg_count = uni->structs[ctor_id]->param_count;
-  tree->uni          = uni;
-  tree->ctor_id      = ctor_id;
+  tree->ctor_names   = uni->ctor_names;
+  tree->ctor_i      = ctor_id;
   tree->member_count = ctor_arg_count;
   tree->members      = pushArray(arena, ctor_arg_count, DataTree*, true);
 }
@@ -577,18 +563,17 @@ undoDataMap(Typer *env)
   env->add_history = history->previous;
 }
 
-internal Constructor
-getConstructor(Typer *env, Term *in0)
+internal i32
+getConstructorIndex(Typer *typer, Term *in0)
 {
-  // todo cleanup
-  Constructor out = {};
+  i32 out = -1;
   b32 is_record = false;
   if (Composite *in = castTerm(in0, Composite))
   {
     if (Constructor *ctor = castTerm(in->op, Constructor))
     {
       is_record = true;
-      out = *ctor;
+      out = ctor->index;
     }
   }
   if (!is_record)
@@ -596,11 +581,11 @@ getConstructor(Typer *env, Term *in0)
     if (Union *uni = castTerm(getType(in0), Union))
     {
       if (uni->ctor_count == 1)
-        out = *newConstructor(temp_arena, uni, 0);
+        out = 0;
       else
       {
-        if (DataTree *tree = getDataTree(env, in0))
-          out = *newConstructor(temp_arena, tree->uni, tree->ctor_id);
+        if (DataTree *tree = getDataTree(typer, in0))
+          out = tree->ctor_i;
       }
     }
   }
@@ -714,8 +699,6 @@ forward_declare inline Term *
 getType(Term *in0)
 {
   Term *out = in0->type;
-  if (Constructor *ctor = castTerm(in0, Constructor))
-    out = &getConstructorType(ctor)->t;
   return out;
 }
 
@@ -1208,7 +1191,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
       case Term_Constructor:
       {
         Constructor *in = castTerm(in0, Constructor);
-        print(buffer, in->uni->ctor_names[in->id]);
+        print(buffer, in->uni->ctor_names[in->index]);
       } break;
 
       case Term_Rewrite:
@@ -1570,7 +1553,7 @@ apply(MemoryArena *arena, Term *op, i32 arg_count, Term **args, Term *type, Stri
         {
           if (Constructor *rctor = castTerm(r->op, Constructor))
           {
-            if (lctor->id == rctor->id)
+            if (lctor->index == rctor->index)
             {
               if (l->arg_count == 0)
               {
@@ -1771,7 +1754,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
           if (Composite *subject = castTerm(subject0, Composite))
           {
             if (Constructor *ctor = castTerm(subject->op, Constructor))
-              out0 = evaluateMain(ctx, in->bodies[ctor->id]);
+              out0 = evaluateMain(ctx, in->bodies[ctor->index]);
           }
         }
         else
@@ -1948,7 +1931,7 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
         Constructor *lhs = castTerm(lhs0, Constructor);
         Constructor *rhs = castTerm(rhs0, Constructor);
         out.result = toTrinary(equal(&lhs->uni->t, &rhs->uni->t) &&
-                               (lhs->id == rhs->id));
+                               (lhs->index == rhs->index));
       } break;
 
       case Term_Accessor:
@@ -2722,15 +2705,28 @@ seekGoal(MemoryArena *arena, Typer *typer, Term *goal)
     for (Scope *scope = typer->scope; scope; scope=scope->outer)
     {
       Arrow *arrow = scope->head;
-      for (i32 param_id=0; param_id < arrow->param_count; param_id++)
+      for (i32 param_i=0; param_i < arrow->param_count; param_i++)
       {
         // todo #speed we're having to rebase everything, which sucks but
         // unless we store position-independent types, that's what we gotta do.
-        Term *type = rebase(temp_arena, arrow->param_types[param_id], delta);
-        if (equal(type, goal))
+        Term *var = newVariable(temp_arena, typer, param_i, delta);
+        if (equal(getType(var), goal))
         {
-          out = newVariable(arena, typer, param_id, delta);
+          out = copyStruct(arena, var);
         }
+#if 0
+        else if (Union *uni = castTerm(getType(var), Union))
+        {
+          if (uni->ctor_count == 1)
+          {
+            synthesizeMembers(arena, var, ctor_id);
+            if (equal(uni->structs[0], goal))
+            {
+              newAccessor();
+            }
+          }
+        }
+#endif
       }
       delta++;
     }
@@ -3829,10 +3825,11 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
       AccessorAst *in = castAst(in0, AccessorAst);
       if (Term *record0 = buildTerm(arena, typer, in->record, holev).term)
       {
-        Constructor ctor = getConstructor(typer, record0);
-        if (ctor.uni)
+        i32 ctor_i = getConstructorIndex(typer, record0);
+        if (ctor_i >= 0)
         {
-          Arrow *op_type = getConstructorType(&ctor);
+          Union *uni = castTerm(getType(record0), Union);
+          Arrow *op_type = uni->structs[ctor_i];
           i32 param_count = op_type->param_count;
           b32 valid_param_name = false;
           i32 field_id = -1;
@@ -3856,8 +3853,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
             }
             if (!args)
             {
-              Constructor ctor = getConstructor(typer, record0);
-              args = synthesizeMembers(arena, record0, ctor.id);
+              args = synthesizeMembers(arena, record0, ctor_i);
             }
             Term *type = args[field_id]->type;
 
@@ -3870,7 +3866,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
           else
           {
             tokenError(&in->field_name, "accessor has invalid member");
-            attach("expected a member of constructor", ctor.uni->ctor_names[ctor.id]);
+            attach("expected a member of constructor", uni->ctor_names[ctor_i]);
             setErrorFlag(ErrorUnrecoverable);
           }
           assert(!out0 || getType(out0));
@@ -4737,13 +4733,11 @@ buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
   // note: bind the type first to support recursive data structure.
   if (global_name)
     addGlobalBinding(global_name, &uni->t);
-  Constructor **constructors = pushArray(temp_arena, in->ctor_count, Constructor *);
   for (i32 ctor_id=0; noError() && (ctor_id < in->ctor_count); ctor_id++)
   {
     Constructor *ctor = newTerm(arena, Constructor, 0);
-    ctor->uni = uni;
-    ctor->id  = ctor_id;
-    constructors[ctor_id] = ctor;
+    ctor->uni   = uni;
+    ctor->index = ctor_id;
 
     Token *ctor_name = in->ctor_names + ctor_id;
     uni->ctor_names[ctor_id] = ctor_name->string;

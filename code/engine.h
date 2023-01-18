@@ -151,10 +151,10 @@ b32 operator!=(Trinary a, Trinary b)
 }
 
 struct DataTree {
-  Union     *uni;
-  i32        ctor_id;
+  i32        ctor_i;
   i32        member_count;
   DataTree **members;
+  String    *ctor_names;  // debug only
 };
 
 struct DataMapAddHistory {
@@ -237,7 +237,7 @@ _newTerm(MemoryArena *arena, TermCategory cat, Term *type, size_t size)
 struct Constructor {
   embed_Term(t);
   Union  *uni;
-  i32     id;
+  i32     index;
 };
 
 struct Union {

@@ -214,6 +214,10 @@ testAnonymousParameter :: fn (A: Set, A) -> A
 
 testFillHole :: (a: Nat) -> a + 0 = a {}
 
+testStructAsHint :: (u: union {c(v: true=false)}) -> true=false
+{
+ ;; return u.v
+ }
 
 ;; The Manhattan algebra test!
 ;; The Manhattan algebra test!
