@@ -56,7 +56,8 @@ inline void attach(char *key, Token *token, Tokenizer *tk=global_tokenizer)
   attach(key, token->string, tk);
 }
 
-inline void attach(char *key, Ast *ast, Tokenizer *tk=global_tokenizer)
+inline void
+attach(char *key, Ast *ast, Tokenizer *tk=global_tokenizer)
 {
   StartString start = startString(error_buffer);
   print(error_buffer, ast);
@@ -71,7 +72,8 @@ attach(char *key, Term *value, Tokenizer *tk=global_tokenizer)
   attach(key, endString(start), tk);
 }
 
-inline void attach(char *key, i32 n, Tokenizer *tk=global_tokenizer)
+inline void
+attach(char *key, i32 n, Tokenizer *tk=global_tokenizer)
 {
   StartString start = startString(error_buffer);
   print(error_buffer, "%d", n);
@@ -2088,7 +2090,7 @@ lookupCurrentFrame(LocalBindings *bindings, String key, b32 add_if_missing)
   return out;
 }
 
-// todo #cleanup #mem don't allocate without progress
+// todo #cleanup #leak don't allocate without progress
 internal Term *
 normalizeMain(NormalizeContext *ctx, Term *in0) 
 {
@@ -2631,7 +2633,7 @@ unify(Stack *stack, Term *in0, Term *goal0)
 }
 
 inline SolveArgs
-solveArgs(Solver *solver, Term *op, Term *goal)
+solveArgs(Solver *solver, Term *op, Term *goal, Token *blame_token)
 {
   b32    matches   = false;
   i32    arg_count = 0;
@@ -2649,15 +2651,19 @@ solveArgs(Solver *solver, Term *op, Term *goal)
       matches   = true;
       arg_count = signature->param_count;
       args      = stack->items;
-      for (i32 i=0; i < signature->param_count; i++)
+      for (i32 arg_i=0; arg_i < signature->param_count; arg_i++)
       {
         // solving loop
-        if (!args[i])
+        if (!args[arg_i])
         {
           // todo #leak the type could be referenced
-          Term *type = evaluate(solver->arena, args, signature->param_types[i]);
-          if (!(args[i] = solveGoal(solver, type)))
+          Term *type = evaluate(solver->arena, args, signature->param_types[arg_i]);
+          if (!(args[arg_i] = solveGoal(solver, type)))
           {
+            if (blame_token)
+            {
+              parseError(blame_token, "failed to solve arg %d", arg_i);
+            }
             args = 0;
             break;
           }
@@ -2669,9 +2675,9 @@ solveArgs(Solver *solver, Term *op, Term *goal)
 }
 
 inline SolveArgs
-solveArgs(Solver solver, Term *op, Term *goal)
+solveArgs(Solver solver, Term *op, Term *goal, Token *blame_token)
 {
-  return solveArgs(&solver, op, goal);
+  return solveArgs(&solver, op, goal, blame_token);
 }
 
 inline Term *
@@ -2699,6 +2705,7 @@ inline Term *
 seekGoal(MemoryArena *arena, Typer *typer, Term *goal)
 {
   Term *out = 0;
+  auto temp = beginTemporaryMemory(arena);
   if (typer)
   {
     i32 delta = 0;
@@ -2709,28 +2716,34 @@ seekGoal(MemoryArena *arena, Typer *typer, Term *goal)
       {
         // todo #speed we're having to rebase everything, which sucks but
         // unless we store position-independent types, that's what we gotta do.
-        Term *var = newVariable(temp_arena, typer, param_i, delta);
+        Term *var = newVariable(arena, typer, param_i, delta);
         if (equal(getType(var), goal))
         {
-          out = copyStruct(arena, var);
+          out = var;
         }
-#if 0
         else if (Union *uni = castTerm(getType(var), Union))
         {
-          if (uni->ctor_count == 1)
+          i32 ctor_i = getConstructorIndex(typer, var);
+          if (ctor_i >= 0)
           {
-            synthesizeMembers(arena, var, ctor_id);
-            if (equal(uni->structs[0], goal))
+            Arrow *struc = uni->structs[ctor_i];
+            Term **members = synthesizeMembers(arena, var, ctor_i);
+            for (i32 member_i = 0; member_i < struc->param_count && !out; member_i++)
             {
-              newAccessor();
+              Term *member = members[member_i];
+              if (equal(getType(member), goal))
+                out = member;
             }
           }
         }
-#endif
       }
       delta++;
     }
   }
+  if (out)
+    commitTemporaryMemory(temp);
+  else
+    endTemporaryMemory(temp);
   return out;
 }
 
@@ -2787,7 +2800,7 @@ solveGoal(Solver *solver, Term *goal)
           Term *hint = hints->head;
           if (getType(hint)->cat == Term_Arrow)
           {
-            SolveArgs solution = solveArgs(solver, hint, goal);
+            SolveArgs solution = solveArgs(solver, hint, goal, 0);
             if (solution.args)
             {
               MemoryArena *arena = solver->arena;
@@ -2827,6 +2840,7 @@ solveGoal(Solver solver, Term *goal)
 inline TermArray
 getFunctionOverloads(Identifier *ident, Term *output_type_goal)
 {
+  i32 UNUSED_VAR serial = DEBUG_SERIAL;
   TermArray out = {};
   if (GlobalBinding *slot = lookupGlobalNameSlot(ident, false))
   {
@@ -2842,12 +2856,13 @@ getFunctionOverloads(Identifier *ident, Term *output_type_goal)
       for (int slot_id=0; slot_id < slot->count; slot_id++)
       {
         Term *item = slot->items[slot_id];
-        if (solveArgs(Solver{.arena=temp_arena}, item, output_type_goal).matches)
+        if (solveArgs(Solver{.arena=temp_arena}, item, output_type_goal, 0).matches)
           out.items[out.count++] = slot->items[slot_id];
       }
       if (out.count == 0)
       {
         parseError(&ident->a, "found no matching overload");
+        attach("serial", serial);
         attach("function", ident->token.string);
         attach("output_type_goal", output_type_goal);
         attach("available_overloads", slot->count, slot->items, printOptionPrintType());
@@ -2863,7 +2878,7 @@ getFunctionOverloads(Identifier *ident, Term *output_type_goal)
 }
 
 inline Term *
-getMatchingFunctionCall(MemoryArena *arena, Typer *env, Identifier *ident, Term *goal)
+fillInEllipsis(MemoryArena *arena, Typer *typer, Identifier *op_ident, Term *goal)
 {
   // NOTE: This routine is different from "solveForGoal" in that the top-level
   // operator is fixed.
@@ -2872,48 +2887,39 @@ getMatchingFunctionCall(MemoryArena *arena, Typer *env, Identifier *ident, Term 
 
   if (goal->cat == Term_Hole)
   {
-    parseError(&ident->a, "cannot infer arguments since we do know what the output type of this function should be");
+    parseError(&op_ident->a, "cannot infer arguments since we do know what the output type of this function should be");
   }
-  else if (lookupLocalName(env, &ident->token))
+  else if (lookupLocalName(typer, &op_ident->token))
   {
     todoIncomplete;
   }
-  else if (GlobalBinding *slot = lookupGlobalNameSlot(ident, false))
+  else if (GlobalBinding *slot = lookupGlobalNameSlot(op_ident, false))
   {
     for (int slot_i=0;
          slot_i < slot->count && noError() && !out;
          slot_i++)
     {
       Term *item = slot->items[slot_i];
-      SolveArgs solution = solveArgs(Solver{.arena=temp_arena}, item, goal);
-      if (solution.matches)
+      SolveArgs solution = solveArgs(Solver{.arena=temp_arena, .typer=typer}, item, goal, &op_ident->token);
+      if (solution.matches && solution.args)
       {
-        if (solution.args)
-        {
-          Term **args = copyArray(arena, solution.arg_count, solution.args);
-          out = newComposite(arena, slot->items[slot_i], solution.arg_count, args);
-          assert(equal(getType(out), goal));
-          // NOTE: we don't care which function matches, just grab whichever
-          // matches first.
-        }
-        else
-        {
-          parseError(&ident->token, "cannot automatically fill in some arguments");
-          attach("function", item);
-          attach("goal", goal);
-        }
+        // NOTE: we don't care which function matches, just grab whichever
+        // matches first.
+        Term **args = copyArray(arena, solution.arg_count, solution.args);
+        out = newComposite(arena, slot->items[slot_i], solution.arg_count, args);
+        assert(equal(getType(out), goal));
       }
     }
     if (!out && noError())
     {
-      parseError(&ident->a, "found no matching overload");
+      parseError(&op_ident->a, "found no matching overload");
       attach("available_overloads", slot->count, slot->items, printOptionPrintType());
     }
   }
   else
   {
-    parseError(&ident->a, "identifier not found");
-    attach("identifier", ident->token.string);
+    parseError(&op_ident->a, "identifier not found");
+    attach("identifier", op_ident->token.string);
   }
   
   popContext();
@@ -3014,7 +3020,7 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
           {
             if (requireIdentifier("expect function name"))
             {
-              name_to_unfold = global_tokenizer->last_token.string;
+              name_to_unfold = lastToken()->string;
               requireChar(')');
             }
           }
@@ -3102,16 +3108,24 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
 
       case Tactic_prove:
       {
-        pushContext("prove PROPOSITION {SEQUENCE}");
+        pushContext("prove PROPOSITION {SEQUENCE} as IDENTIFIER");
         if (Ast *proposition = parseExpression(arena))
         {
           if (Ast *proof = parseSequence(arena, true))
           {
-            Let *let = newAst(arena, Let, &token);
-            let->lhs  = toString("anon");
-            let->rhs  = proof;
-            let->type = proposition;
-            ast0 = &let->a;
+            String name = toString("anon");
+            if (optionalString("as") && requireIdentifier("expected name for the proof"))
+            {
+              name = lastToken()->string;
+            }
+            if (noError())
+            {
+              Let *let = newAst(arena, Let, &token);
+              let->lhs  = name;
+              let->rhs  = proof;
+              let->type = proposition;
+              ast0 = &let->a;
+            }
           }
         }
         popContext();
@@ -3529,7 +3543,7 @@ buildAlgebraicNorm(MemoryArena *arena, Typer *typer, CompositeAst *in)
 forward_declare internal BuildTerm
 buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
 {
-  // todo #cleanup #mem: sort out what we need and what we don't need to persist
+  // todo #cleanup #leak: sort out what we need and what we don't need to persist
   // todo #cleanup #speed: returning the value is just a waste of time most of the time. Just call evaluate whenever you need the value.
   // todo return the type, since we typecheck it anyway.
   // todo print out the goal whenever we fail
@@ -3614,7 +3628,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
       {
         // Infer all arguments.
         if (Identifier *op_ident = castAst(in->op, Identifier))
-          out0 = getMatchingFunctionCall(arena, typer, op_ident, goal);
+          out0 = fillInEllipsis(arena, typer, op_ident, goal);
         else
           parseError(in->args[0], "todo: ellipsis only works with identifier atm");
       }
@@ -4436,7 +4450,7 @@ parseGlobalFunction(MemoryArena *arena, Token *name, b32 is_theorem)
               {
                 // todo handle unbound identifier: all names in the norm list
                 // should be in the function signature.
-                Token *name = &global_tokenizer->last_token;
+                Token *name = lastToken();
                 i32 norm_i = norm_list.count++;
                 assert(norm_i < DEFAULT_MAX_LIST_LENGTH);
                 norm_list.items[norm_i] = newAst(arena, Identifier, name);
@@ -4940,7 +4954,7 @@ parseOperand(MemoryArena *arena)
       accessor->record      = operand;
       if (requireIdentifier("expected identifier as field name"))
       {
-        accessor->field_name = global_tokenizer->last_token;
+        accessor->field_name = *lastToken();
         operand              = &accessor->a;
       }
     }
@@ -5119,7 +5133,7 @@ parseTopLevel(EngineState *state)
 #define CLEAN_TEMPORARY_MEMORY 1
 #if CLEAN_TEMPORARY_MEMORY
     TemporaryMemory top_level_temp = beginTemporaryMemory(temp_arena);
-    error_buffer_ = subArena(temp_arena, 1024);
+    error_buffer_ = subArena(temp_arena, 2048);
 #endif
 
     Typer  empty_env_ = {};

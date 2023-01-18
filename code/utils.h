@@ -139,19 +139,25 @@ struct TemporaryMemory
 inline TemporaryMemory
 beginTemporaryMemory(MemoryArena *arena)
 {
-    TemporaryMemory out = {};
-    out.arena         = arena;
-    out.original_used = arena->used;
-    arena->temp_count++;
-    return out;
+  TemporaryMemory out = {};
+  out.arena         = arena;
+  out.original_used = arena->used;
+  arena->temp_count++;
+  return out;
 }
 
 inline void
 endTemporaryMemory(TemporaryMemory temp)
 {
-    temp.arena->temp_count--;
-    assert(temp.arena->used >= temp.original_used);
-    temp.arena->used = temp.original_used;
+  temp.arena->temp_count--;
+  assert(temp.arena->used >= temp.original_used);
+  temp.arena->used = temp.original_used;
+}
+
+inline void
+commitTemporaryMemory(TemporaryMemory temp)
+{
+  temp.arena->temp_count--;
 }
 
 inline void

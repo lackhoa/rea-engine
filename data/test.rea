@@ -296,8 +296,7 @@ foldPermutation :: (op: (a,b: Nat) -> Nat,
   => p.a op fold(op, p.bc) = p.a op fold(op, p.b) op fold(op, p.c) {op_associative}
   => p.a op fold(op, p.bc) = p.a op fold(op, p.c) op fold(op, p.b) {op_commutative}
   => p.a op fold(op, p.bc) = p.a op fold(op, p.c + p.b);
-  ;; return p.recurse
-  ;; return foldPermutation(op, op_associative, op_commutative, p.bc, p.c + p.b, p.recurse);
-  ,
+  prove fold(op, p.bc) = fold(op, p.c + p.b) {return foldPermutation(...)} as e
+  rewrite e;
   }
  }
