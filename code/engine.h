@@ -316,7 +316,7 @@ struct Composite {
   Term **args;
 };
 
-u32 ParameterFlag_Hidden = 1 << 0;
+u32 ParameterFlag_Inferred = 1 << 0;
 
 struct ArrowAst {
   embed_Ast(a);

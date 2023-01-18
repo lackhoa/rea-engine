@@ -219,84 +219,90 @@ testStructAsHint :: (u: union {c(v: true=false)}) -> true=false
  ;; return u.v
  }
 
+twiceApplier :: fn($A: Set, op: (x,y: A) -> A, a: A) -> A
+{return op(a,a)}
+
+testPolymorphSolver :: fn(n: Nat) -> Nat
+{return twiceApplier(+, n)}
+
+check_truth testPolymorphSolver(3) = 6;
+
 ;; The Manhattan algebra test!
 ;; The Manhattan algebra test!
 ;; The Manhattan algebra test!
 
-algebraTest :: (a,b,c,d,e,f: Nat) -> ((a+b)+c)+(d+e)+f = a+b+c+d+e+f
-{
- return algebraic_norm(((a+b)+c)+(d+e)+f)
- }
+;; algebraTest :: (a,b,c,d,e,f: Nat) -> ((a+b)+c)+(d+e)+f = a+b+c+d+e+f
+;; {
+;;  return algebraic_norm(((a+b)+c)+(d+e)+f)
+;;  }
 
-List :: union
-{single(head: Nat),
- cons(head: Nat, tail: List)}
+;; List :: fn(A: Set) -> Set
+;; {
+;;  return union {single(head: A),
+;;                cons  (head: A, tail: List)}
+;;  }
 
-fold :: fn(op: (a,b: Nat) -> Nat, list: List) -> Nat
-#no_print_as_binop
-{fork list
- {single return list.head,
-  cons   return list.head op fold(op, list.tail)}}
-
-;; fold :: fn(list: List) -> Nat
-;; {fork list
+;; fold :: fn($A: Set, op: (a,b: A) -> A, list: List(A)) -> A
+;; #no_print_as_binop
+;; {norm list;
+;;  fork list
 ;;  {single return list.head,
-;;   cons   return list.head + fold(list.tail)}}
+;;   cons   return list.head op fold(op, list.tail)}}
 
-+ :: fn(l,m: List) -> List
-{fork l
- {single return (l.head cons m),
-  cons   return (l.head cons (l.tail + m))}}
+;; + :: fn(l,m: List) -> List
+;; {fork l
+;;  {single return (l.head cons m),
+;;   cons   return (l.head cons (l.tail + m))}}
 
-Permutation :: fn(abc, cab: List) -> Set
-#no_apply
-{
- return union
- {
-  samePermutation(same: abc=cab),
-  permutation(a: Nat, bc, c,b: List,
-              abc_destruct: abc=(a cons bc),
-              cab_destruct: cab=(c + (a cons b)),
-              recurse: Permutation(bc, c+b))
-  }
- }
+;; Permutation :: fn(abc, cab: List) -> Set
+;; #no_apply
+;; {
+;;  return union
+;;  {
+;;   samePermutation(same: abc=cab),
+;;   permutation(a: Nat, bc, c,b: List,
+;;               abc_destruct: abc=(a cons bc),
+;;               cab_destruct: cab=(c + (a cons b)),
+;;               recurse: Permutation(bc, c+b))
+;;   }
+;;  }
 
-foldConcat :: (op: (a,b: Nat) -> Nat,
-               associative: (a,b,c: Nat) -> (a op b) op c = a op b op c,
-               l,m: List) -> fold(op, l + m) = fold(op, l) op fold(op, m)
-#hint
-{fork l
- {single,
-  cons
-  rewrite foldConcat(op, associative, l.tail, m);
-  ;; (l.head op fold(op, l.tail) op fold(op, m)) = ((l.head op fold(op, l.tail)) op fold(op, m))
-  rewrite associative(l.head, fold(op, l.tail), fold(op, m));
-  }}
+;; foldConcat :: (op: (a,b: Nat) -> Nat,
+;;                associative: (a,b,c: Nat) -> (a op b) op c = a op b op c,
+;;                l,m: List) -> fold(op, l + m) = fold(op, l) op fold(op, m)
+;; #hint
+;; {fork l
+;;  {single,
+;;   cons
+;;   rewrite foldConcat(op, associative, l.tail, m);
+;;   ;; (l.head op fold(op, l.tail) op fold(op, m)) = ((l.head op fold(op, l.tail)) op fold(op, m))
+;;   rewrite associative(l.head, fold(op, l.tail), fold(op, m));
+;;   }}
 
-foldPermutation :: (op: (a,b: Nat) -> Nat,
-                    op_associative: (a,b,c: Nat) -> (a op b) op c = a op b op c,
-                    op_commutative: (a,b: Nat) -> a op b = b op a,
-                    l,m: List,
-                    p: Permutation(l, m)) -> fold(op, l) = fold(op, m)
-{
- norm unfold(Permutation) p;
- fork p
- {
-  samePermutation
-  rewrite p.same,
+;; foldPermutation :: (op: (a,b: Nat) -> Nat,
+;;                     op_associative: (a,b,c: Nat) -> (a op b) op c = a op b op c,
+;;                     op_commutative: (a,b: Nat) -> a op b = b op a,
+;;                     l,m: List,
+;;                     p: Permutation(l, m)) -> fold(op, l) = fold(op, m)
+;; {
+;;  norm unfold(Permutation) p;
+;;  fork p
+;;  {
+;;   samePermutation
+;;   rewrite p.same,
 
-  permutation
-  rewrite p.abc_destruct;
-  rewrite p.cab_destruct;
-  norm;
-  ;; p.a op fold(op, p.bc) = fold(op, p.c + (p.a cons p.b))
-  => p.a op fold(op, p.bc) = fold(op, p.c) op fold(op, p.a cons p.b)
-  => p.a op fold(op, p.bc) = fold(op, p.c) op p.a op fold(op, p.b)
-  => p.a op fold(op, p.bc) = (p.a op fold(op, p.b)) op fold(op, p.c) {op_commutative}
-  => p.a op fold(op, p.bc) = p.a op fold(op, p.b) op fold(op, p.c) {op_associative}
-  => p.a op fold(op, p.bc) = p.a op fold(op, p.c) op fold(op, p.b) {op_commutative}
-  => p.a op fold(op, p.bc) = p.a op fold(op, p.c + p.b);
-  prove fold(op, p.bc) = fold(op, p.c + p.b) {return foldPermutation(...)} as e
-  rewrite e;
-  }
- }
+;;   permutation
+;;   rewrite p.abc_destruct;
+;;   rewrite p.cab_destruct;
+;;   norm;
+;;   ;; p.a op fold(op, p.bc) = fold(op, p.c + (p.a cons p.b))
+;;   => p.a op fold(op, p.bc) = fold(op, p.c) op fold(op, p.a cons p.b)
+;;   => p.a op fold(op, p.bc) = fold(op, p.c) op p.a op fold(op, p.b)
+;;   => p.a op fold(op, p.bc) = (p.a op fold(op, p.b)) op fold(op, p.c) {op_commutative}
+;;   => p.a op fold(op, p.bc) = p.a op fold(op, p.b) op fold(op, p.c) {op_associative}
+;;   => p.a op fold(op, p.bc) = p.a op fold(op, p.c) op fold(op, p.b) {op_commutative}
+;;   => p.a op fold(op, p.bc) = p.a op fold(op, p.c + p.b);
+;;   prove fold(op, p.bc) = fold(op, p.c + p.b) {return foldPermutation(...)} as e
+;;   rewrite e;
+;;   }
+;;  }

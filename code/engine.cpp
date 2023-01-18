@@ -756,18 +756,18 @@ forward_declare inline void DEBUG_DEDENT()
 #define NULL_WHEN_ERROR(name) if (noError()) {assert(name);} else {name = {};}
 
 inline b32
-isHiddenParameter(ArrowAst *arrow, i32 param_id)
+isInferredParameter(ArrowAst *arrow, i32 param_id)
 {
   if (arrow->param_flags)
-    return checkFlag(arrow->param_flags[param_id], ParameterFlag_Hidden);
+    return checkFlag(arrow->param_flags[param_id], ParameterFlag_Inferred);
   return false;
 }
 
 inline b32
-isHiddenParameter(Arrow *arrow, i32 param_id)
+isInferredParameter(Arrow *arrow, i32 param_id)
 {
   if (arrow->param_flags)
-    return checkFlag(arrow->param_flags[param_id], ParameterFlag_Hidden);
+    return checkFlag(arrow->param_flags[param_id], ParameterFlag_Inferred);
   return false;
 }
 
@@ -857,7 +857,7 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
     for (i32 param_id = 0; param_id < op_signature->param_count; param_id++)
     {
       b32 print_all_arguments = DEBUG_MODE && DEBUG_print_all_arguments;
-      if (print_all_arguments || !isHiddenParameter(op_signature, param_id))
+      if (print_all_arguments || !isInferredParameter(op_signature, param_id))
         printed_args[arg_count++] = raw_args[param_id];
     }
   }
@@ -2484,7 +2484,7 @@ getExplicitParamCount(ArrowAst *in)
   i32 out = 0;
   for (i32 param_id = 0; param_id < in->param_count; param_id++)
   {
-    if (!isHiddenParameter(in, param_id))
+    if (!isInferredParameter(in, param_id))
       out++;
   }
   return out;
@@ -2496,7 +2496,7 @@ getExplicitParamCount(Arrow *in)
   i32 out = 0;
   for (i32 param_id = 0; param_id < in->param_count; param_id++)
   {
-    if (!isHiddenParameter(in, param_id))
+    if (!isInferredParameter(in, param_id))
       out++;
   }
   return out;
@@ -2562,7 +2562,7 @@ unify(Stack *stack, Term *in0, Term *goal0)
       else if (Variable *goal = castTerm(goal0, Variable))
       {
         // local variable from a local hint, we would remove one abstraction
-        // layer if the unification success, hence this...
+        // layer if the unification success, hence we deduct one stack delta.
         success = ((in->delta-1 == goal->delta) && (in->id == goal->id));
       }
     } break;
@@ -2663,6 +2663,7 @@ solveArgs(Solver *solver, Term *op, Term *goal, Token *blame_token)
             if (blame_token)
             {
               parseError(blame_token, "failed to solve arg %d", arg_i);
+              attach("arg_type", type);
             }
             args = 0;
             break;
@@ -2887,7 +2888,7 @@ fillInEllipsis(MemoryArena *arena, Typer *typer, Identifier *op_ident, Term *goa
 
   if (goal->cat == Term_Hole)
   {
-    parseError(&op_ident->a, "cannot infer arguments since we do know what the output type of this function should be");
+    parseError(&op_ident->a, "cannot solve for arguments since we do know what the output type of this function should be");
   }
   else if (lookupLocalName(typer, &op_ident->token))
   {
@@ -3626,7 +3627,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
       if (in->arg_count == 1 &&
           in->args[0]->cat == Ast_Ellipsis)
       {
-        // Infer all arguments.
+        // Solve all arguments.
         if (Identifier *op_ident = castAst(in->op, Identifier))
           out0 = fillInEllipsis(arena, typer, op_ident, goal);
         else
@@ -3689,11 +3690,11 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
                      param_id < param_count;
                      param_id++)
                 {
-                  if (isHiddenParameter(signature, param_id))
+                  if (isInferredParameter(signature, param_id))
                   {
                     // NOTE: We fill the missing argument with synthetic holes,
                     // because the user input might also have actual holes, so
-                    // we want the code to be more uniform.
+                    // this makes the code more uniform.
                     expanded_args[param_id] = newAst(arena, Hole, &in->op->token);
                   }
                   else
@@ -3711,57 +3712,82 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
 
             if (noError())
             {
-              Term **args = pushArray(temp_arena, param_count, Term *);
-              for (int arg_id = 0;
-                   (arg_id < param_count) && noError();
-                   arg_id++)
+              Term **args = pushArray(temp_arena, param_count, Term *, true);
+              b32 stack_has_hole = false;  // This var is an optimization: in case we can just solve all the args in one pass.
+              for (int arg_i = 0;
+                   (arg_i < param_count) && noError();
+                   arg_i++)
               {
-                Term *param_type0 = signature->param_types[arg_id];
-                Term *expected_arg_type = evaluate(arena, args, param_type0);
-
-                // Typecheck & Inference for the arguments.
-                if (expanded_args[arg_id]->cat == Ast_Hole)
+                // First round: Build and Infer arguments.
+                Term *param_type0 = signature->param_types[arg_i];
+                Ast *in_arg = expanded_args[arg_i];
+                b32 arg_was_filled = false;
+                if (in_arg->cat != Ast_Hole)
                 {
-                  if (Term *fill = solveGoal(Solver{.arena=arena, .typer=typer}, expected_arg_type))
-                    args[arg_id] = fill;
-                  else
+                  if (stack_has_hole)
                   {
-                    Term *placeholder_arg = copyStruct(temp_arena, holev);
-                    setType(placeholder_arg, expected_arg_type);
-                    args[arg_id] = placeholder_arg;
-                  }
-                }
-                else if (Term *arg = buildTerm(arena, typer, expanded_args[arg_id], expected_arg_type).term)
-                {
-                  args[arg_id] = arg;
-                  if (expected_arg_type->cat == Term_Hole)
-                  {
-                    Variable *param_type = castTerm(param_type0, Variable);
-                    assert(param_type->delta == 0);
-                    Term *placeholder_arg = args[param_type->id];
-                    assert(placeholder_arg->cat == Term_Hole);
-                    Term *arg_type = getType(arg);
-                    Term *arg_type_type = getType(arg_type);
-                    if (equal(placeholder_arg->type, arg_type_type))
-                      args[param_type->id] = arg_type;
+                    if (Term *arg = buildTerm(arena, typer, in_arg, holev).term)
+                    {
+                      args[arg_i] = arg;
+                      arg_was_filled = true;
+                      Stack stack = {.count=param_count, .items=args};
+                      if (serial == 138)
+                        breakhere;
+                      if (!unify(&stack, param_type0, getType(arg)))
+                      {
+                        parseError(in_arg, "cannot unify parameter type with argument %d's type", arg_i);
+                        attach("parameter_type", param_type0);
+                        attach("argument_type", getType(arg));
+                      }
+                    }
                     else
                     {
-                      parseError(expanded_args[arg_id], "type of argument has wrong type");
-                      attach("expected", placeholder_arg->type);
-                      attach("got", arg_type_type);
+                      // todo recover from ambiguity only
+                      if (!checkErrorFlag(ErrorUnrecoverable))
+                        wipeError();
+                    }
+                  }
+                  else
+                  {
+                    Term *expected_arg_type = evaluate(arena, args, param_type0);
+                    if (Term *arg = buildTerm(arena, typer, in_arg, expected_arg_type).term)
+                    {
+                      args[arg_i] = arg;
+                      arg_was_filled = true;
                     }
                   }
                 }
+                stack_has_hole = stack_has_hole || !arg_was_filled;
               }
 
-              if (noError())
+              if (noError() && stack_has_hole)
               {
-                for (i32 arg_id = 0; (arg_id < param_count); arg_id++)
+                // Second round, Build and Solve the remaining args.
+                for (int arg_i = 0;
+                     (arg_i < param_count) && noError();
+                     arg_i++)
                 {
-                  if (args[arg_id]->cat == Term_Hole)
+                  if (!args[arg_i])
                   {
-                    parseError(in0, "cannot fill hole for argument %d", arg_id);
-                    break;
+                    Ast *in_arg = expanded_args[arg_i];
+                    Term *param_type0 = signature->param_types[arg_i];
+                    Term *expected_arg_type = evaluate(arena, args, param_type0);
+                    if (in_arg->cat == Ast_Hole)
+                    {
+                      if (Term *fill = solveGoal(Solver{.arena=arena, .typer=typer}, expected_arg_type))
+                      {
+                        args[arg_i] = fill;
+                      }
+                      else
+                      {
+                        parseError(in_arg, "cannot fill in argument %d", arg_i);
+                        attach("expected_arg_type", expected_arg_type);
+                      }
+                    }
+                    else if (Term *arg = buildTerm(arena, typer, in_arg, expected_arg_type).term)
+                    {
+                      args[arg_i] = arg;
+                    }
                   }
                 }
               }
@@ -4580,9 +4606,9 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
       else
       {
         i32 param_id = param_count++;
-        if (optionalCategory(Token_Directive_hidden))
+        if (optionalChar('$'))
         {
-          setFlag(&param_flags[param_id], ParameterFlag_Hidden);
+          setFlag(&param_flags[param_id], ParameterFlag_Inferred);
         }
 
         Tokenizer tk_save = *global_tokenizer;
@@ -5524,13 +5550,13 @@ beginInterpreterSession(MemoryArena *top_level_arena, char *initial_file)
 
     Tokenizer builtin_tk = newTokenizer(toString("<builtin_not_a_real_dir>"), 0);
     global_tokenizer = &builtin_tk;
-    builtin_tk.at = "(#hidden A: Set, a,b: A) -> Set";
+    builtin_tk.at = "($A: Set, a,b: A) -> Set";
     Term *equal_type = parseExpressionAndBuild(arena).term; 
     assert(noError());
     builtin_equal = &newTerm(arena, Builtin, equal_type)->t;
     addBuiltinGlobalBinding("=", builtin_equal);
 
-    builtin_tk.at = "(#hidden A: Type, a,b: A) -> Set";
+    builtin_tk.at = "($A: Type, a,b: A) -> Set";
     Term *type_equal_type = parseExpressionAndBuild(arena).term; 
     assert(noError());
     builtin_type_equal = &newTerm(arena, Builtin, type_equal_type)->t;
@@ -5540,7 +5566,7 @@ beginInterpreterSession(MemoryArena *top_level_arena, char *initial_file)
     builtin_False = &castTerm(builtin_False0, Union)->t;
     addBuiltinGlobalBinding("False", builtin_False);
 
-    builtin_tk.at = R""""(fn (#hidden A: Set, #hidden a, #hidden b, #hidden c: A, a=b, b=c) -> a=c
+    builtin_tk.at = R""""(fn ($A: Set, $a, $b, $c: A, a=b, b=c) -> a=c
 {=> b = c {seek(a=b)} seek}
 )"""";
     builtin_eqChain = parseExpressionAndBuild(arena).term;

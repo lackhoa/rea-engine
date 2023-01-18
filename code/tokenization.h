@@ -46,7 +46,6 @@ enum TokenCategory
   Token_Directive_should_fail,
   Token_Directive_debug,
   Token_Directive_norm,
-  Token_Directive_hidden,
   Token_Directive_hint,
   Token_Directive_no_apply,
   Token_Directive_no_print_as_binop,
@@ -58,7 +57,7 @@ const char *language_keywords[] = {
   "", "fn", "union", "ctor", "seq", "overload", "seek",
   "test_eval", "print", "print_raw", "print_ast", "check", "check_truth", "algebra_declare",
 };
-const char *meta_directives[] = {"", "load", "should_fail", "debug", "norm", "hidden", "hint", "no_apply", "no_print_as_binop", "print_proof"};
+const char *meta_directives[] = {"", "load", "should_fail", "debug", "norm", "hint", "no_apply", "no_print_as_binop", "print_proof"};
 
 enum TacticEnum {
   Tactic_rewrite = 1,
