@@ -2,7 +2,6 @@
   General Todos: 
   - #cleanup Replace all token <-> string comparison with keyword checks.
   - #tool something that cleans up when it goes out of scope
-  - Try to remove recursion, we pass a bunch of things in the signature and it's annoying to change.
   - #speed evaluating functions by substituting the body is really bad in case of "let"
   - make "computation" be a builtin
   - debug serial situation
@@ -1537,7 +1536,7 @@ apply(MemoryArena *arena, Term *op, i32 arg_count, Term **args, Term *type, Stri
 #if DEBUG_LOG_apply
   i32 serial = DEBUG_SERIAL++;
   if (DEBUG_MODE)
-  {debugIndent(); DUMP("apply(", serial, "): ", op, "(...)\n");}
+  {DEBUG_INDENT(); DUMP("apply(", serial, "): ", op, "(...)\n");}
 #endif
 
   if (Function *fun = castTerm(op, Function))
@@ -1608,7 +1607,7 @@ apply(MemoryArena *arena, Term *op, i32 arg_count, Term **args, Term *type, Stri
   }
 
 #if DEBUG_LOG_apply
-  if (DEBUG_MODE) {debugDedent(); DUMP("=> ", out0, "\n");}
+  if (DEBUG_MODE) {DEBUG_DEDENT(); DUMP("=> ", out0, "\n");}
 #endif
   return out0;
 }
@@ -1839,9 +1838,6 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
     DEBUG_INDENT(); DUMP("comparing(", serial, "): ", lhs0, " and ", rhs0, "\n");
   }
 #endif
-
-  if (serial == 13293)
-    breakhere;
 
   if (lhs0 == rhs0)
     out.result = {Trinary_True};
@@ -2540,51 +2536,59 @@ newStack(MemoryArena *arena, Stack *outer, i32 count)
   return stack;
 }
 
-// todo we don't even need the scope, since type is in term now.
 internal b32
-unify(Stack *stack, Term *l0, Term *goal0)
+unify(Stack *stack, Term *in0, Term *goal0)
 {
   b32 success = false;
 
   i32 UNUSED_VAR serial = DEBUG_SERIAL++;
 #if DEBUG_LOG_unify
   if (DEBUG_MODE)
-  {debugIndent(); DUMP("unify(", serial, ") ", lhs0, " with ", goal0, "\n");}
+  {DEBUG_INDENT(); DUMP("unify(", serial, ") ", in0, " with ", goal0, "\n");}
 #endif
 
-  switch (l0->cat)
+  switch (in0->cat)
   {
     case Term_Variable:
     {
-      Variable *lhs = castTerm(l0, Variable);
+      Variable *in = castTerm(in0, Variable);
       Stack *lookup_stack = stack;
-      for (i32 delta=0; delta < lhs->delta; delta++)
+      for (i32 delta=0;  delta < in->delta && lookup_stack;  delta++)
       {
         lookup_stack = lookup_stack->outer;
       }
-      if (Term *lookup = lookup_stack->items[lhs->id])
+      if (lookup_stack)
       {
-        if (equal(lookup, goal0))
+        // unification variable
+        if (Term *lookup = lookup_stack->items[in->id])
+        {
+          success = equal(lookup, goal0);
+        }
+        else if (unify(stack, getType(in0), getType(goal0)))
+        {
+          stack->items[in->id] = goal0;
           success = true;
+        }
       }
-      else if (unify(stack, getType(l0), getType(goal0)))
+      else if (Variable *goal = castTerm(goal0, Variable))
       {
-        stack->items[lhs->id] = goal0;
-        success = true;
+        // local variable from a local hint, we would remove one abstraction
+        // layer if the unification success, hence this...
+        success = ((in->delta-1 == goal->delta) && (in->id == goal->id));
       }
     } break;
 
     case Term_Composite:
     {
-      Composite *lhs = castTerm(l0, Composite);
+      Composite *in = castTerm(in0, Composite);
       if (Composite *goal = castTerm(goal0, Composite))
       {
-        if (unify(stack, lhs->op, goal->op))
+        if (unify(stack, in->op, goal->op))
         {
           success = true;
-          for (int id=0; id < lhs->arg_count; id++)
+          for (int id=0; id < in->arg_count; id++)
           {
-            if (!unify(stack, lhs->args[id], goal->args[id]))
+            if (!unify(stack, in->args[id], goal->args[id]))
             {
               success = false;
               break;
@@ -2596,16 +2600,16 @@ unify(Stack *stack, Term *l0, Term *goal0)
 
     case Term_Arrow:
     {
-      Arrow *lhs = castTerm(l0, Arrow);
+      Arrow *in = castTerm(in0, Arrow);
       if (Arrow *goal = castTerm(goal0, Arrow))
       {
-        if (lhs->param_count == goal->param_count)
+        if (in->param_count == goal->param_count)
         {
           b32 failed = false;
-          Stack *new_stack = newStack(temp_arena, stack, lhs->param_count);
-          for (i32 id=0; id < lhs->param_count; id++)
+          Stack *new_stack = newStack(temp_arena, stack, in->param_count);
+          for (i32 id=0; id < in->param_count; id++)
           {
-            if (!unify(new_stack, lhs->param_types[id], goal->param_types[id]))
+            if (!unify(new_stack, in->param_types[id], goal->param_types[id]))
             {
               failed = true;
               break;
@@ -2622,7 +2626,7 @@ unify(Stack *stack, Term *l0, Term *goal0)
     case Term_Constructor:
     case Term_Builtin:
     {
-      success = equal(l0, goal0);
+      success = equal(in0, goal0);
     } break;
 
     default:
@@ -2633,7 +2637,7 @@ unify(Stack *stack, Term *l0, Term *goal0)
 
 #if DEBUG_LOG_unify
   if (DEBUG_MODE)
-  {debugDedent(); DUMP("=>(", serial, ") ", ((char *)(success ? "true\n" : "false\n")));}
+  {DEBUG_DEDENT(); DUMP("=>(", serial, ") ", ((char *)(success ? "true\n" : "false\n")));}
 #endif
 
   return success;
@@ -2700,6 +2704,32 @@ newComputationIfEqual(MemoryArena *arena, Typer *typer, Term *lhs, Term *rhs)
             normalize(arena, typer, rhs)))
   {
     out = newComputation_(arena, lhs, rhs);
+  }
+  return out;
+}
+
+inline Term *
+seekGoal(MemoryArena *arena, Typer *typer, Term *goal)
+{
+  Term *out = 0;
+  if (typer)
+  {
+    i32 delta = 0;
+    for (Scope *scope = typer->scope; scope; scope=scope->outer)
+    {
+      Arrow *arrow = scope->head;
+      for (i32 param_id=0; param_id < arrow->param_count; param_id++)
+      {
+        // todo #speed we're having to rebase everything, which sucks but
+        // unless we store position-independent types, that's what we gotta do.
+        Term *type = rebase(temp_arena, arrow->param_types[param_id], delta);
+        if (equal(type, goal))
+        {
+          out = newVariable(arena, typer, param_id, delta);
+        }
+      }
+      delta++;
+    }
   }
   return out;
 }
@@ -2771,6 +2801,9 @@ solveGoal(Solver *solver, Term *goal)
         else
           break;
       }
+
+      if (!out)
+        out = seekGoal(solver->arena, solver->typer, goal);
     }
 
     if (out)
@@ -3788,8 +3821,6 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
       AccessorAst *in = castAst(in0, AccessorAst);
       if (Term *record0 = buildTerm(arena, typer, in->record, holev).term)
       {
-        if (serial == 10323)
-          breakhere;
         Constructor ctor = getConstructor(typer, record0);
         if (ctor.uni)
         {
@@ -3945,14 +3976,12 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
           Term *from = subExpressionAtPath(goal, compare.diff_path);
           Term *to   = subExpressionAtPath(new_goal, compare.diff_path);
 
-          b32 is_global_identifier = false;
           HintDatabase *hints = 0;
           if (in->hint)
           {
+            b32 is_global_identifier = false;
             if (Identifier *ident = castAst(in->hint, Identifier))
             {
-              // NOTE: If the identifier is global, we treat it as an operator, if
-              // it's local then treat it as the entire proof -> pretty janky.
               if (!lookupLocalName(typer, &ident->token))
               {
                 if (GlobalBinding *slot = lookupGlobalNameSlot(ident, false))
@@ -3970,15 +3999,8 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
                 }
               }
             }
-          }
 
-          if (serial == 13005)
-          {
-            DEBUG_ON;
-          }
-          if (!is_global_identifier)
-          {
-            if (in->hint)
+            if (!is_global_identifier)
             {
               if ((eq_proof = buildTerm(arena, typer, in->hint, holev).term))
               {
@@ -3987,6 +4009,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
             }
           }
 
+          // TODO: using "temp_arena" here might be dangerous, what can we do?
           Term *lr_eq = newEquality(temp_arena, from, to);
           Term *rl_eq = newEquality(temp_arena, to, from);
 
@@ -4118,24 +4141,9 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
 
       if (noError())
       {
-        i32 delta = 0;
-        for (Scope *scope = typer->scope; scope; scope=scope->outer)
-        {
-          Arrow *arrow = scope->head;
-          for (i32 param_id=0; param_id < arrow->param_count; param_id++)
-          {
-            // todo #speed we're having to rebase everything, which sucks but
-            // unless we store position-independent types, that's what we gotta do.
-            Term *type = rebase(temp_arena, arrow->param_types[param_id], delta);
-            if (equal(type, proposition))
-            {
-              out0 = newVariable(arena, typer, param_id, delta);
-            }
-          }
-          delta++;
-        }
+        out0 = seekGoal(arena, typer, proposition);
         if (!out0)
-          parseError(in0, "cannot find a matching proof on the stack");
+          parseError(in0, "cannot find a matching proof in scope");
       }
       assert(!out0 || getType(out0));
     } break;
