@@ -7,6 +7,7 @@
   - debug serial situation
   - clean up the data tree containing constructors
   - we're printing terms every time we encounter an error, but the error might be recoverable so it's just wasted work. Either pass the intention down, or abandon the recoveriy route.
+  - #speed Clean up the "pointer everywhere" approach
  */
 
 #include "utils.h"
@@ -32,7 +33,8 @@ global_variable EngineState global_state;
 #define DEBUG_ON  {DEBUG_MODE = true; setvbuf(stdout, NULL, _IONBF, 0);}
 #define DEBUG_OFF {DEBUG_MODE = false; setvbuf(stdout, NULL, _IONBF, BUFSIZ);}
 
-inline void attach(char *key, String value, Tokenizer *tk=global_tokenizer)
+inline void
+attach(char *key, String value, Tokenizer *tk=global_tokenizer)
 {
   ParseError *error = tk->error;
   assert(error->attachment_count < arrayCount(error->attachments));
@@ -118,7 +120,6 @@ newComposite(MemoryArena *arena, Term *op, i32 arg_count, Term **args)
 {
   Term *type = 0;
   Arrow *signature = 0;
-  // todo cutnpaste
   if (Constructor *ctor = castTerm(op, Constructor))
   {
     assert(ctor->uni);
@@ -257,14 +258,14 @@ isSequenced(Term *term)
   return out;
 }
 
-inline Constructor *
-newConstructor(MemoryArena *arena, Union *uni, i32 id)
+inline Term *
+newConstructor(MemoryArena *arena, Union *uni, i32 index)
 {
   Constructor *ctor = newTerm(arena, Constructor, 0);
   ctor->uni   = uni;
-  ctor->index = id;
-  ctor->type  = &ctor->uni->structs[ctor->index]->t;
-  return ctor;
+  ctor->index = index;
+  ctor->type  = &ctor->uni->structs[ctor->index]->t;  // todo the output type is missing.
+  return &ctor->t;
 }
 
 inline Term **
@@ -293,10 +294,10 @@ synthesizeTree(MemoryArena *arena, Term *parent, DataTree *tree)
   Composite *record = 0;
   Union *uni   = castTerm(parent->type, Union);
   Arrow *struc = uni->structs[tree->ctor_i];
-  Constructor *ctor = newConstructor(arena, uni, tree->ctor_i);
+  Term *ctor = newConstructor(arena, uni, tree->ctor_i);
   i32 param_count = struc->param_count;
   record = newTerm(arena, Composite, parent->type);
-  record->op        = &ctor->t;
+  record->op        = ctor;
   record->arg_count = param_count;
   record->args      = pushArray(arena, param_count, Term *);
   Term **members = synthesizeMembers(arena, parent, tree->ctor_i);
@@ -413,7 +414,7 @@ initDataTree(MemoryArena *arena, DataTree *tree, Union *uni, i32 ctor_id)
 {
   i32 ctor_arg_count = uni->structs[ctor_id]->param_count;
   tree->ctor_names   = uni->ctor_names;
-  tree->ctor_i      = ctor_id;
+  tree->ctor_i       = ctor_id;
   tree->member_count = ctor_arg_count;
   tree->members      = pushArray(arena, ctor_arg_count, DataTree*, true);
 }
@@ -593,109 +594,6 @@ getConstructorIndex(Typer *typer, Term *in0)
   }
   return out;
 }
-
-#if 0
-forward_declare inline Term *
-computeType(MemoryArena *arena, Typer *typer, Term *in0)
-{
-  i32 UNUSED_VAR serial = DEBUG_SERIAL++;
-  Term *out0 = 0;
-  if (in0->type)
-    out0 = in0->type;
-  else
-  {
-    switch (in0->cat)
-    {
-      case Term_Variable:
-      {
-        Variable *in = castTerm(in0, Variable);
-        Scope *scope = typer->scope;
-        for (i32 id=0; id < in->delta; id++)
-          scope=scope->outer;
-        
-        assert(scope->depth == typer->scope->depth - in->delta);
-        out0 = scope->first->param_types[in->id];
-        out0 = rebase(arena, out0, in->delta);
-
-        assert(out0);
-      } break;
-
-      case Term_Composite:
-      {
-        Composite *in = castTerm(in0, Composite);
-        if (Constructor *ctor = castTerm(in->op, Constructor))
-        {
-          assert(ctor->uni);
-          out0 = &ctor->uni->t;  // todo this makes me nervous!
-        }
-        else
-        {
-          Term *op_type0 = getType(in->op);
-          Arrow *op_type = castTerm(op_type0, Arrow);
-          out0 = evaluate(arena, in->args, op_type->output_type);
-        }
-      } break;
-
-      case Term_Arrow:
-      {
-        out0 = builtin_Type;
-      } break;
-
-      case Term_Function:
-      {
-        invalidCodePath;
-      } break;
-
-      case Term_Computation:
-      {
-        invalidCodePath;
-      } break;
-
-      case Term_Accessor:
-      {
-        Accessor *in = castTerm(in0, Accessor);
-        Term **args = 0;
-        if (Composite *record = castTerm(in->record, Composite))
-        {
-          if (Constructor *ctor = castTerm(record->op, Constructor))
-            args = record->args;
-        }
-        if (!args)
-        {
-          Constructor ctor = getConstructor(typer, in->record);
-          args = synthesizeMembers(arena, in->record, ctor.id);
-        }
-
-        out0 = args[in->field_id]->type;
-      } break;
-
-      case Term_Rewrite:
-      {
-        Rewrite *in = castTerm(in0, Rewrite);
-        auto [lhs, rhs] = getEqualitySides(getType(in->eq_proof));
-        Term *rewrite_to = in->right_to_left ? rhs : lhs;
-        out0 = rewriteTerm(arena, rewrite_to, in->path, getType(in->body));
-      } break;
-
-      case Term_Constructor:
-      {
-        Constructor *ctor = castTerm(in0, Constructor);
-        out0 = &getConstructorType(ctor)->t;
-      } break;
-
-      default:
-      {
-        DUMP("The term is: ", in0);
-        todoIncomplete;
-      }
-    }
-
-    in0->type = out0;
-  }
-  assert(out0);
-  return out0;
-}
-#endif
 
 forward_declare inline Term *
 getType(Term *in0)
@@ -1372,6 +1270,7 @@ isGround(Term *in0)
       return true;
     } break;
 
+    case Term_ParameterizedConstructor:
     case Term_Builtin:
     {return true;} break;
 
@@ -1396,9 +1295,8 @@ isGround(Term *in0)
 internal Term *
 rebaseMain(MemoryArena *arena, Term *in0, i32 delta, i32 offset)
 {
-  assert(delta >= 0);
   Term *out0 = 0;
-  if (!isGround(in0) && (delta > 0))
+  if (!isGround(in0) && (delta != 0))
   {
     switch (in0->cat)
     {
@@ -2254,17 +2152,17 @@ addLocalBinding(Typer *env, String key, i32 var_id)
 }
 
 forward_declare inline void
-introduceSignature(Typer *env, Arrow *signature, b32 add_bindings)
+introduceSignature(Typer *typer, Arrow *signature, b32 add_bindings)
 {
   i32 param_count = signature->param_count;
-  env->scope = newScope(env->scope, signature);
+  typer->scope = newScope(typer->scope, signature);
   if (add_bindings)
   {
-    extendBindings(temp_arena, env);
+    extendBindings(temp_arena, typer);
     for (i32 index=0; index < param_count; index++)
     {
       String name = signature->param_names[index];
-      addLocalBinding(env, name, index);
+      addLocalBinding(typer, name, index);
     }
   }
   assert(noError());
@@ -2521,6 +2419,7 @@ newStack(MemoryArena *arena, Stack *outer, i32 count)
 {
   Stack *stack = pushStruct(arena, Stack);
   stack->outer = outer;
+  stack->count = count;
   allocateArray(arena, count, stack->items, true);
   return stack;
 }
@@ -2551,18 +2450,24 @@ unify(Stack *stack, Term *in0, Term *goal0)
         // unification variable
         if (Term *lookup = lookup_stack->items[in->id])
         {
-          success = equal(lookup, goal0);
+          Term *rebased = rebase(temp_arena, lookup, in->delta);
+          success = equal(rebased, goal0);
         }
         else if (unify(stack, getType(in0), getType(goal0)))
         {
-          stack->items[in->id] = goal0;
+          // NOTE: if rebase happens -> the new term will be on the correct arena.
+          // if rebase does nothing -> we put "goal0" on there, which is by definition on the correct arena.
+          lookup_stack->items[in->id] = rebase(lookup_stack->unification_arena, goal0, -in->delta);
+          if (lookup_stack->unification_arena != temp_arena)
+            assert(inArena(lookup_stack->unification_arena, lookup_stack->items[in->id]));
           success = true;
         }
       }
       else if (Variable *goal = castTerm(goal0, Variable))
       {
-        // local variable from a local hint, we would remove one abstraction
-        // layer if the unification success, hence we deduct one stack delta.
+        // NOTE: local variable from a local hint, we would remove one
+        // abstraction layer if unification succeeds, hence we deduct one stack
+        // delta.
         success = ((in->delta-1 == goal->delta) && (in->id == goal->id));
       }
     } break;
@@ -2594,18 +2499,20 @@ unify(Stack *stack, Term *in0, Term *goal0)
       {
         if (in->param_count == goal->param_count)
         {
-          b32 failed = false;
+          success = true;
           Stack *new_stack = newStack(temp_arena, stack, in->param_count);
-          for (i32 id=0; id < in->param_count; id++)
+          new_stack->unification_arena = temp_arena;
+          for (i32 id=0; id < in->param_count && success; id++)
           {
             if (!unify(new_stack, in->param_types[id], goal->param_types[id]))
             {
-              failed = true;
-              break;
+              success = false;
             }
           }
-          if (!failed)
-            success = true;
+          if (success)
+          {
+            success = unify(new_stack, in->output_type, goal->output_type);
+          }
         }
       }
     } break;
@@ -2646,6 +2553,7 @@ solveArgs(Solver *solver, Term *op, Term *goal, Token *blame_token)
   else if (Arrow *signature = castTerm(getType(op), Arrow))
   {
     Stack *stack = newStack(solver->arena, 0, signature->param_count);
+    stack->unification_arena = solver->arena;
     if (unify(stack, signature->output_type, goal))
     {
       matches   = true;
@@ -2742,7 +2650,7 @@ seekGoal(MemoryArena *arena, Typer *typer, Term *goal)
     }
   }
   if (out)
-    commitTemporaryMemory(temp);
+    commitTemporaryMemory(temp);  // todo This still #leaks because there are members we don't use.
   else
     endTemporaryMemory(temp);
   return out;
@@ -2881,7 +2789,7 @@ getFunctionOverloads(Identifier *ident, Term *output_type_goal)
 inline Term *
 fillInEllipsis(MemoryArena *arena, Typer *typer, Identifier *op_ident, Term *goal)
 {
-  // NOTE: This routine is different from "solveForGoal" in that the top-level
+  // NOTE: This routine is different from "solveGoal" in that the top-level
   // operator is fixed.
   Term *out = 0;
   pushContext(__func__);
@@ -3270,10 +3178,10 @@ copyArrow(MemoryArena *arena, Arrow *in)
   return out;
 }
 
-inline Constructor *
+inline Term *
 buildCtorAst(MemoryArena *arena, CtorAst *in, Term *output_type)
 {
-  Constructor *out = 0;
+  Term *out = 0;
   if (Union *uni = castTerm(output_type, Union))
   {
     if (in->ctor_id < uni->ctor_count)
@@ -3282,9 +3190,7 @@ buildCtorAst(MemoryArena *arena, CtorAst *in, Term *output_type)
       parseError(&in->a, "union only has %d constructors", uni->ctor_count);
   }
   else
-  {
     parseError(&in->a, "cannot guess union");
-  }
   return out;
 }
 
@@ -3557,6 +3463,226 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
 
   switch (in0->cat)
   {
+    case Ast_CompositeAst:
+    {
+      CompositeAst *in  = castAst(in0, CompositeAst);
+
+      if (in->arg_count == 1 &&
+          in->args[0]->cat == Ast_Ellipsis)
+      {
+        // Solve all arguments.
+        if (Identifier *op_ident = castAst(in->op, Identifier))
+          out0 = fillInEllipsis(arena, typer, op_ident, goal);
+        else
+          parseError(in->args[0], "todo: ellipsis only works with identifier atm");
+      }
+      else if (isAlgebraicNorm(in->op))
+      {
+        // macro interception
+        out0 = buildAlgebraicNorm(arena, typer, in);
+      }
+      else
+      {
+        TermArray op_list = {};
+        b32 should_build_op = true;
+        if (Identifier *op_ident = castAst(in->op, Identifier))
+        {
+          if (!lookupLocalName(typer, &in->op->token))
+          {
+            should_build_op = false;
+            op_list = getFunctionOverloads(op_ident, goal);
+          }
+        }
+        else if (CtorAst *op_ctor = castAst(in->op, CtorAst))
+        {
+          if (Term *ctor = buildCtorAst(arena, op_ctor, goal))
+          {
+            should_build_op = false;
+            allocateArray(temp_arena, 1, op_list.items);
+            op_list.count    = 1;
+            op_list.items[0] = ctor;
+          }
+        }
+
+        if (noError() && should_build_op)
+        {
+          if (Term *op0 = buildTerm(arena, typer, in->op, holev).term)
+          {
+            op_list.count = 1;
+            allocateArray(temp_arena, 1, op_list.items);
+            op_list.items[0] = op0;
+          }
+        }
+
+        for (i32 attempt=0;
+             (attempt < op_list.count) && (!out0) && noError();
+             attempt++)
+        {
+          Term *op = op_list.items[attempt];
+          if (Arrow *signature = castTerm(getType(op), Arrow))
+          {
+            i32 param_count = signature->param_count;
+            Ast **expanded_args = in->args;
+            if (param_count != in->arg_count)
+            {
+              i32 explicit_param_count = getExplicitParamCount(signature);
+              if (in->arg_count == explicit_param_count)
+              {
+                allocateArray(arena, param_count, expanded_args);
+                for (i32 param_id = 0, arg_id = 0;
+                     param_id < param_count;
+                     param_id++)
+                {
+                  if (isInferredParameter(signature, param_id))
+                  {
+                    // NOTE: We fill the missing argument with synthetic holes,
+                    // because the user input might also have actual holes, so
+                    // this makes the code more uniform.
+                    expanded_args[param_id] = newAst(arena, Hole, &in->op->token);
+                  }
+                  else
+                  {
+                    assert(arg_id < explicit_param_count);
+                    expanded_args[param_id] = in->args[arg_id++];
+                  }
+                }
+              }
+              else
+              {
+                parseError(&in0->token, "argument count does not match the number of explicit parameters (expected: %d, got: %d)", explicit_param_count, in->arg_count);
+              }
+            }
+
+            if (noError())
+            {
+              Term **args = pushArray(temp_arena, param_count, Term *, true);
+              b32 stack_has_hole = false;  // This var is an optimization: in case we can just solve all the args in one pass.
+              for (int arg_i = 0;
+                   (arg_i < param_count) && noError();
+                   arg_i++)
+              {
+                // First round: Build and Infer arguments.
+                Term *param_type0 = signature->param_types[arg_i];
+                Ast *in_arg = expanded_args[arg_i];
+                b32 arg_was_filled = false;
+                if (in_arg->cat != Ast_Hole)
+                {
+                  if (stack_has_hole)
+                  {
+                    if (Term *arg = buildTerm(arena, typer, in_arg, holev).term)
+                    {
+                      args[arg_i] = arg;
+                      arg_was_filled = true;
+                      Stack stack = {.count=param_count, .items=args, .unification_arena=arena};
+                      b32 unify_result = unify(&stack, param_type0, getType(arg));
+                      if (!unify_result)
+                      {
+                        parseError(in_arg, "cannot unify parameter type with argument %d's type", arg_i);
+                        attach("serial", serial);
+                        attach("parameter_type", param_type0);
+                        attach("argument_type", getType(arg));
+                      }
+                    }
+                    else
+                    {
+                      // todo recover from ambiguity only
+                      if (!checkErrorFlag(ErrorUnrecoverable))
+                        wipeError();
+                    }
+                  }
+                  else
+                  {
+                    Term *expected_arg_type = evaluate(arena, args, param_type0);
+                    if (Term *arg = buildTerm(arena, typer, in_arg, expected_arg_type).term)
+                    {
+                      args[arg_i] = arg;
+                      arg_was_filled = true;
+                    }
+                  }
+                }
+                stack_has_hole = stack_has_hole || !arg_was_filled;
+              }
+
+              if (noError() && stack_has_hole)
+              {
+                // Second round, Build and Solve the remaining args.
+                for (int arg_i = 0;
+                     (arg_i < param_count) && noError();
+                     arg_i++)
+                {
+                  if (!args[arg_i])
+                  {
+                    Ast *in_arg = expanded_args[arg_i];
+                    Term *param_type0 = signature->param_types[arg_i];
+                    Term *expected_arg_type = evaluate(arena, args, param_type0);
+                    if (in_arg->cat == Ast_Hole)
+                    {
+                      if (Term *fill = solveGoal(Solver{.arena=arena, .typer=typer}, expected_arg_type))
+                      {
+                        args[arg_i] = fill;
+                      }
+                      else
+                      {
+                        parseError(in_arg, "cannot fill in argument %d", arg_i);
+                        attach("expected_arg_type", expected_arg_type);
+                      }
+                    }
+                    else if (Term *arg = buildTerm(arena, typer, in_arg, expected_arg_type).term)
+                    {
+                      args[arg_i] = arg;
+                    }
+                  }
+                }
+              }
+
+              if (noError())
+              {
+                Term **final_args        = 0;
+                Term  *final_op          = op;
+                i32    final_param_count = param_count;
+                if (ParameterizedConstructor *pctor = castTerm(op, ParameterizedConstructor))
+                {
+                  // some monkey business to convert the op to ctor.
+                  Function *puni = pctor->parameterized_union;
+                  Term *uni = apply(arena, &puni->t, pctor->param_count, args, builtin_Set, puni->global_name->string);
+                  final_op = newConstructor(arena, castTerm(uni, Union), pctor->index);
+                  assert(param_count >= pctor->param_count);
+                  final_param_count = param_count - pctor->param_count;
+                  final_args        = copyArray(arena, final_param_count, args+pctor->param_count);
+                }
+                else
+                {
+                  final_args = copyArray(arena, param_count, args);
+                }
+                out0 = newComposite(arena, final_op, final_param_count, final_args);
+              }
+            }
+          }
+          else
+          {
+            parseError(in->op, "operator must have an arrow type");
+            attach("operator type", getType(op));
+          }
+
+          if (op_list.count > 1)
+          {
+            if (hasError() && !checkErrorFlag(ErrorUnrecoverable))
+            {
+              wipeError();
+              if (attempt == op_list.count-1)
+              {
+                parseError(in->op, "found no suitable overload");
+                attach("available_overloads", op_list.count, op_list.items, printOptionPrintType());
+              }
+            }
+            else
+              break;
+          }
+        }
+      }
+      assert(!out0 || getType(out0));
+    } break;
+
     case Ast_Hole:
     {
       if (Term *solution = solveGoal(Solver{.arena=arena, .typer=typer, .use_global_hints=true}, goal))
@@ -3620,222 +3746,18 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
       assert(!out0 || getType(out0));
     } break;
 
-    case Ast_CompositeAst:
-    {
-      CompositeAst *in  = castAst(in0, CompositeAst);
-
-      if (in->arg_count == 1 &&
-          in->args[0]->cat == Ast_Ellipsis)
-      {
-        // Solve all arguments.
-        if (Identifier *op_ident = castAst(in->op, Identifier))
-          out0 = fillInEllipsis(arena, typer, op_ident, goal);
-        else
-          parseError(in->args[0], "todo: ellipsis only works with identifier atm");
-      }
-      else if (isAlgebraicNorm(in->op))
-      {
-        // macro interception
-        out0 = buildAlgebraicNorm(arena, typer, in);
-      }
-      else
-      {
-        TermArray op_list = {};
-        b32 should_build_op = true;
-        if (Identifier *op_ident = castAst(in->op, Identifier))
-        {
-          if (!lookupLocalName(typer, &in->op->token))
-          {
-            should_build_op = false;
-            op_list = getFunctionOverloads(op_ident, goal);
-          }
-        }
-        else if (CtorAst *op_ctor = castAst(in->op, CtorAst))
-        {
-          if (Constructor *ctor = buildCtorAst(arena, op_ctor, goal))
-          {
-            should_build_op = false;
-            allocateArray(temp_arena, 1, op_list.items);
-            op_list.count    = 1;
-            op_list.items[0] = &ctor->t;
-          }
-        }
-
-        if (noError() && should_build_op)
-        {
-          if (Term *op = buildTerm(arena, typer, in->op, holev).term)
-          {
-            op_list.count = 1;
-            allocateArray(temp_arena, 1, op_list.items);
-            op_list.items[0] = op;
-          }
-        }
-
-        for (i32 attempt=0;
-             (attempt < op_list.count) && (!out0) && noError();
-             attempt++)
-        {
-          Term *op = op_list.items[attempt];
-          if (Arrow *signature = castTerm(getType(op), Arrow))
-          {
-            i32 param_count = signature->param_count;
-            Ast **expanded_args = in->args;
-            if (param_count != in->arg_count)
-            {
-              i32 explicit_param_count = getExplicitParamCount(signature);
-              if (in->arg_count == explicit_param_count)
-              {
-                allocateArray(arena, param_count, expanded_args);
-                for (i32 param_id = 0, arg_id = 0;
-                     param_id < param_count;
-                     param_id++)
-                {
-                  if (isInferredParameter(signature, param_id))
-                  {
-                    // NOTE: We fill the missing argument with synthetic holes,
-                    // because the user input might also have actual holes, so
-                    // this makes the code more uniform.
-                    expanded_args[param_id] = newAst(arena, Hole, &in->op->token);
-                  }
-                  else
-                  {
-                    assert(arg_id < explicit_param_count);
-                    expanded_args[param_id] = in->args[arg_id++];
-                  }
-                }
-              }
-              else
-              {
-                parseError(&in0->token, "argument count does not match the number of explicit parameters (expected: %d, got: %d)", explicit_param_count, in->arg_count);
-              }
-            }
-
-            if (noError())
-            {
-              Term **args = pushArray(temp_arena, param_count, Term *, true);
-              b32 stack_has_hole = false;  // This var is an optimization: in case we can just solve all the args in one pass.
-              for (int arg_i = 0;
-                   (arg_i < param_count) && noError();
-                   arg_i++)
-              {
-                // First round: Build and Infer arguments.
-                Term *param_type0 = signature->param_types[arg_i];
-                Ast *in_arg = expanded_args[arg_i];
-                b32 arg_was_filled = false;
-                if (in_arg->cat != Ast_Hole)
-                {
-                  if (stack_has_hole)
-                  {
-                    if (Term *arg = buildTerm(arena, typer, in_arg, holev).term)
-                    {
-                      args[arg_i] = arg;
-                      arg_was_filled = true;
-                      Stack stack = {.count=param_count, .items=args};
-                      if (serial == 138)
-                        breakhere;
-                      if (!unify(&stack, param_type0, getType(arg)))
-                      {
-                        parseError(in_arg, "cannot unify parameter type with argument %d's type", arg_i);
-                        attach("parameter_type", param_type0);
-                        attach("argument_type", getType(arg));
-                      }
-                    }
-                    else
-                    {
-                      // todo recover from ambiguity only
-                      if (!checkErrorFlag(ErrorUnrecoverable))
-                        wipeError();
-                    }
-                  }
-                  else
-                  {
-                    Term *expected_arg_type = evaluate(arena, args, param_type0);
-                    if (Term *arg = buildTerm(arena, typer, in_arg, expected_arg_type).term)
-                    {
-                      args[arg_i] = arg;
-                      arg_was_filled = true;
-                    }
-                  }
-                }
-                stack_has_hole = stack_has_hole || !arg_was_filled;
-              }
-
-              if (noError() && stack_has_hole)
-              {
-                // Second round, Build and Solve the remaining args.
-                for (int arg_i = 0;
-                     (arg_i < param_count) && noError();
-                     arg_i++)
-                {
-                  if (!args[arg_i])
-                  {
-                    Ast *in_arg = expanded_args[arg_i];
-                    Term *param_type0 = signature->param_types[arg_i];
-                    Term *expected_arg_type = evaluate(arena, args, param_type0);
-                    if (in_arg->cat == Ast_Hole)
-                    {
-                      if (Term *fill = solveGoal(Solver{.arena=arena, .typer=typer}, expected_arg_type))
-                      {
-                        args[arg_i] = fill;
-                      }
-                      else
-                      {
-                        parseError(in_arg, "cannot fill in argument %d", arg_i);
-                        attach("expected_arg_type", expected_arg_type);
-                      }
-                    }
-                    else if (Term *arg = buildTerm(arena, typer, in_arg, expected_arg_type).term)
-                    {
-                      args[arg_i] = arg;
-                    }
-                  }
-                }
-              }
-
-              if (noError())
-              {
-                Term **copied_args = copyArray(arena, param_count, args);
-                out0 = newComposite(arena, op, param_count, copied_args);
-              }
-            }
-          }
-          else
-          {
-            parseError(in->op, "operator must have an arrow type");
-            attach("operator type", getType(op));
-          }
-
-          if (op_list.count > 1)
-          {
-            if (hasError() && !checkErrorFlag(ErrorUnrecoverable))
-            {
-              wipeError();
-              if (attempt == op_list.count-1)
-              {
-                parseError(in->op, "found no suitable overload");
-                attach("available_overloads", op_list.count, op_list.items, printOptionPrintType());
-              }
-            }
-            else
-              break;
-          }
-        }
-      }
-      assert(!out0 || getType(out0));
-    } break;
-
     case Ast_ArrowAst:
     {
       ArrowAst *in = castAst(in0, ArrowAst);
       Arrow *out = newTerm(arena, Arrow, builtin_Type);
       i32 param_count = in->param_count;
-      out->param_count   = param_count;
-      out->param_names   = copyArray(arena, param_count, in->param_names);  // todo copy festival
-      out->param_flags   = copyArray(arena, param_count, in->param_flags);
+      out->param_count = param_count;
+      out->param_names = copyArray(arena, param_count, in->param_names); // todo copy festival
+      out->param_flags = copyArray(arena, param_count, in->param_flags);
+      allocateArray(arena, param_count, out->param_types);
       {
         typer->scope = newScope(typer->scope, out);
         extendBindings(temp_arena, typer);
-        allocateArray(arena, param_count, out->param_types);
         for (i32 index=0; index < param_count && noError(); index++)
         {
           if (Term *param_type = buildTerm(arena, typer, in->param_types[index], holev))
@@ -4496,6 +4418,7 @@ parseGlobalFunction(MemoryArena *arena, Token *name, b32 is_theorem)
         }
         else if (optionalCategory(Token_Directive_no_apply))
         {
+          // todo: we can automatically infer this!
           setFlag(&out->function_flags, FunctionFlag_no_apply);
         }
         else if (optionalCategory(Token_Directive_no_print_as_binop))
@@ -4581,7 +4504,6 @@ internal ArrowAst *
 parseArrowType(MemoryArena *arena, b32 is_struct)
 {
   ArrowAst *out = 0;
-
   i32      param_count = 0;
   String  *param_names;
   Ast    **param_types;
@@ -4605,10 +4527,11 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
         stop = true;
       else
       {
-        i32 param_id = param_count++;
+        i32 param_i = param_count++;
+        assert(param_i < DEFAULT_MAX_LIST_LENGTH);
         if (optionalChar('$'))
         {
-          setFlag(&param_flags[param_id], ParameterFlag_Inferred);
+          setFlag(&param_flags[param_i], ParameterFlag_Inferred);
         }
 
         Tokenizer tk_save = *global_tokenizer;
@@ -4624,11 +4547,11 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
             pushContext("parameter type");
             if (Ast *param_type = parseExpression(arena))
             {
-              param_types[param_id] = param_type;
+              param_types[param_i] = param_type;
               if (typeless_run)
               {
                 for (i32 offset = 1; offset <= typeless_run; offset++)
-                  param_types[param_id - offset] = param_type;
+                  param_types[param_i - offset] = param_type;
                 typeless_run = 0;
               }
             }
@@ -4643,7 +4566,7 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
         }
 
         if (param_name.chars)
-          param_names[param_id] = param_name;
+          param_names[param_i] = param_name;
         else
         {
           *global_tokenizer = tk_save;
@@ -4651,7 +4574,7 @@ parseArrowType(MemoryArena *arena, b32 is_struct)
           Token anonymous_parameter_token = global_tokenizer->last_token;
           if (Ast *param_type = parseExpression(arena))
           {
-            param_types[param_id] = param_type;
+            param_types[param_i] = param_type;
             if (typeless_run)
               tokenError(&anonymous_parameter_token, "cannot follow a typeless parameter with an anonymous parameter");
           }
@@ -4705,44 +4628,19 @@ areSequential(Token *first, Token *next)
   return next->string.chars == first->string.chars + first->string.length;
 }
 
-internal void
-parseConstructor(MemoryArena *arena, UnionAst *uni, i32 ctor_id)
-{
-  Token ctor_name = nextToken();
-  uni->ctor_names[ctor_id] = ctor_name;
-
-  if (isIdentifier(&ctor_name))
-  {
-    Token maybe_paren = peekToken();
-    if (equal(maybe_paren.string, "("))
-    {// subtype
-      pushContext("constructor(FIELD: TYPE ...)");
-      {
-        if (ArrowAst *arrow_ast = parseArrowType(arena, true))
-          uni->ctor_signatures[ctor_id] = arrow_ast;
-      }
-      popContext();
-    }
-    else
-    {// atomic constructor
-      ArrowAst *signature = newAst(arena, ArrowAst, &ctor_name);
-      uni->ctor_signatures[ctor_id] = signature;  // empty arrow: no parameter, no output.
-    }
-  }
-  else
-    tokenError("expected an identifier as constructor name");
-}
-
 internal UnionAst *
 parseUnion(MemoryArena *arena)
 {
-  UnionAst *uni = 0;
-  Token *token = &global_tokenizer->last_token;
+  UnionAst *uni = newAst(arena, UnionAst, lastToken());
+
+  if (peekNextChar() == ('('))
+  {
+    uni->params = parseArrowType(arena, true);
+  }
 
   if (requireChar('{'))
   {
-    uni = newAst(arena, UnionAst, token);
-    allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, uni->ctor_signatures);
+    allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, uni->structs);
     allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, uni->ctor_names);
     while (noError())
     {
@@ -4750,7 +4648,32 @@ parseUnion(MemoryArena *arena)
         break;
       else
       {
-        parseConstructor(arena, uni, uni->ctor_count++);
+        i32 ctor_i = uni->ctor_count++;
+        Token ctor_name = nextToken();
+        uni->ctor_names[ctor_i] = ctor_name;
+        if (isIdentifier(&ctor_name))
+        {
+          Token maybe_paren = peekToken();
+          if (equal(maybe_paren.string, "("))
+          {// subtype
+            pushContext("constructor(FIELD: TYPE ...)");
+            {
+              if (ArrowAst *struc = parseArrowType(arena, true))
+              {
+                uni->structs[ctor_i] = struc;
+              }
+            }
+            popContext();
+          }
+          else
+          {// atomic constructor
+            ArrowAst *signature = newAst(arena, ArrowAst, &ctor_name);
+            uni->structs[ctor_i] = signature;  // empty arrow: no parameter, no output.
+          }
+        }
+        else
+          tokenError("expected an identifier as constructor name");
+
         if (!optionalChar(','))
         {
           requireChar('}');
@@ -4764,41 +4687,95 @@ parseUnion(MemoryArena *arena)
 }
 
 forward_declare internal Union *
-buildUnion(MemoryArena *arena, Typer *env, UnionAst *in, Token *global_name)
+buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
 {
-  Union *uni = newTerm(arena, Union, builtin_Set);
-  uni->ctor_count = in->ctor_count;
-  allocateArray(arena, in->ctor_count, uni->ctor_names);
-  allocateArray(arena, in->ctor_count, uni->structs);
-  // note: bind the type first to support recursive data structure.
-  if (global_name)
-    addGlobalBinding(global_name, &uni->t);
-  for (i32 ctor_id=0; noError() && (ctor_id < in->ctor_count); ctor_id++)
+  Union    *uni                 = newTerm(arena, Union, builtin_Set);
+  Function *parameterized_union = 0;
+  i32 ctor_count = in->ctor_count;
+  uni->ctor_count = ctor_count;
+  uni->ctor_names = copyArray(arena, ctor_count, in->ctor_names);
+  allocateArray(arena, ctor_count, uni->structs);
+
+  Arrow *uni_params = 0;
+  if (in->params)
   {
-    Constructor *ctor = newTerm(arena, Constructor, 0);
-    ctor->uni   = uni;
-    ctor->index = ctor_id;
+    Term *uni_params0 = buildTerm(arena, typer, &in->params->a, holev);
+    uni_params = castTerm(uni_params0, Arrow);
+  }
 
-    Token *ctor_name = in->ctor_names + ctor_id;
-    uni->ctor_names[ctor_id] = ctor_name->string;
-    if (BuildTerm build_type = buildTerm(arena, env, &in->ctor_signatures[ctor_id]->a, holev))
+  if (noError())
+  {
+    if (global_name)
     {
-      Arrow *signature = castTerm(build_type.term, Arrow);
-      uni->structs[ctor_id] = signature;
-      ctor->type            = &signature->t;
-
-      if (global_name)
+      // note: bind the type first to support recursive data structure.
+      Term *term_to_bind = &uni->t;
+      if (uni_params)
       {
-        if (signature->param_count > 0)
+        Arrow *signature       = copyStruct(arena, uni_params);
+        signature->output_type = builtin_Set;
+        parameterized_union                 = newTerm(arena, Function, &signature->t);
+        parameterized_union->body           = &uni->t;
+        parameterized_union->function_flags = FunctionFlag_no_apply;
+        term_to_bind = &parameterized_union->t;
+      }
+      addGlobalBinding(global_name, term_to_bind);
+    }
+
+    if (uni_params)
+      introduceSignature(typer, uni_params, true);
+    for (i32 ctor_i=0; noError() && (ctor_i < ctor_count); ctor_i++)
+    {
+      if (Term *struc0 = buildTerm(arena, typer, &in->structs[ctor_i]->a, holev).term)
+      {
+        Arrow *struc = castTerm(struc0, Arrow);
+        uni->structs[ctor_i] = struc;
+
+        if (global_name)
         {
-          addGlobalBinding(ctor_name, &ctor->t);
-        }
-        else
-        {
-          addGlobalBinding(ctor_name, newComposite(arena, &ctor->t, 0, 0));
+          Term *term_to_bind = 0;
+          if (uni_params)
+          {
+            i32 added_count = uni_params->param_count;
+            Arrow *augmented        = copyStruct(arena, struc);
+            augmented->param_count += added_count;
+            allocateArray(arena, augmented->param_count, augmented->param_names);
+            allocateArray(arena, augmented->param_count, augmented->param_types);
+            allocateArray(arena, augmented->param_count, augmented->param_flags);
+            for (i32 param_i=0; param_i < added_count; param_i++)
+            {
+              augmented->param_names[param_i] = uni_params->param_names[param_i];
+              augmented->param_types[param_i] = uni_params->param_types[param_i];
+              augmented->param_flags[param_i] = uni_params->param_flags[param_i];
+            }
+            for (i32 param_i=0; param_i < struc->param_count; param_i++)
+            {
+              augmented->param_names[added_count+param_i] = struc->param_names[param_i];
+              augmented->param_types[added_count+param_i] = struc->param_types[param_i];
+              augmented->param_flags[added_count+param_i] = struc->param_flags[param_i];
+            }
+
+            ParameterizedConstructor *pctor = newTerm(arena, ParameterizedConstructor, &augmented->t);
+            pctor->parameterized_union      = parameterized_union;
+            pctor->index                    = ctor_i;
+            pctor->param_count              = added_count;
+            term_to_bind = &pctor->t;
+          }
+          else
+          {
+            Constructor *ctor = newTerm(arena, Constructor, struc0);
+            ctor->uni   = uni;
+            ctor->index = ctor_i;
+            term_to_bind = &ctor->t;
+            if (struc->param_count == 0)
+              term_to_bind = newComposite(arena, &ctor->t, 0, 0);
+          }
+
+          addGlobalBinding(&uni->ctor_names[ctor_i], term_to_bind);
         }
       }
     }
+    if (uni_params)
+      unwindBindingsAndScope(typer);
   }
 
   NULL_WHEN_ERROR(uni);
@@ -5279,12 +5256,11 @@ parseTopLevel(EngineState *state)
 
       case Token_Keyword_check_truth:
       {
-        pushContext("check_truth EQUALITY");
         if (Term *goal = parseExpressionAndBuild(temp_arena).term)
         {
+          b32 goal_valid = false;
           if (Composite *eq = castTerm(goal, Composite))
           {
-            b32 goal_valid = false;
             if (eq->op == builtin_equal)
             {
               goal_valid = true;
@@ -5298,14 +5274,13 @@ parseTopLevel(EngineState *state)
                 attach("rhs", rhs);
               }
             }
-            if (!goal_valid)
-            {
-              tokenError(token, "computation can only prove equality");
-              attach("got", goal);
-            }
+          }
+          if (!goal_valid)
+          {
+            tokenError(token, "computation can only prove equality");
+            attach("got", goal);
           }
         }
-        popContext();
       } break;
 
       case Token_Keyword_algebra_declare:

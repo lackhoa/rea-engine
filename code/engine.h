@@ -15,6 +15,7 @@ global_variable StringBuffer *error_buffer = &error_buffer_;
 global_variable b32 DEBUG_MODE;
 global_variable i32 DEBUG_SERIAL;
 
+struct Function;
 struct Union;
 struct Arrow;
 struct Composite;
@@ -51,6 +52,8 @@ enum AstCategory {
 
 enum TermCategory {
   Term_Hole = 1,
+  Term_ParameterizedConstructor,
+
   Term_Builtin,
   Term_Union,
   Term_Constructor,
@@ -154,7 +157,7 @@ struct DataTree {
   i32        ctor_i;
   i32        member_count;
   DataTree **members;
-  String    *ctor_names;  // debug only
+  Token     *ctor_names;        // debug only
 };
 
 struct DataMapAddHistory {
@@ -178,6 +181,7 @@ struct Stack {
   i32     count;
   Term  **items;
   Stack  *outer;
+  MemoryArena *unification_arena;
 };
 
 struct Scope {
@@ -234,17 +238,24 @@ _newTerm(MemoryArena *arena, TermCategory cat, Term *type, size_t size)
 #define newTerm(arena, cat, type)              \
   ((cat *) _newTerm(arena, Term_##cat, type, sizeof(cat)))
 
+struct ParameterizedConstructor {
+  embed_Term(t);
+  Function *parameterized_union;
+  i32       index;
+  i32       param_count;
+};
+
 struct Constructor {
   embed_Term(t);
-  Union  *uni;
-  i32     index;
+  Union *uni;
+  i32    index;
 };
 
 struct Union {
   embed_Term(t);
-  i32      ctor_count;
-  String  *ctor_names;
-  Arrow  **structs;
+  i32     ctor_count;
+  Token  *ctor_names;
+  Arrow **structs;
 };
 
 struct Function {
@@ -507,7 +518,8 @@ struct UnionAst {
   embed_Ast(a);
   i32        ctor_count;
   Token     *ctor_names;
-  ArrowAst **ctor_signatures;
+  ArrowAst **structs;
+  ArrowAst  *params;
 };
 
 struct OverloadAst {

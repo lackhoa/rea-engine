@@ -496,8 +496,8 @@ eatToken(Tokenizer *tk = global_tokenizer)
   }
 
   tk->last_token = out;
-  // note: we eat spaces afterward, so that we can always check *tk->at to see
-  // if there's anything left to parse.
+  // NOTE: :always-eat-spaces We eat spaces afterward, so that we can always
+  // check *tk->at to see if there's anything left to parse.
   eatAllSpaces(tk);
 }
 
@@ -514,6 +514,13 @@ peekToken(Tokenizer *tk = global_tokenizer)
 {
     auto tk_copy = *tk;
     return nextToken(&tk_copy);
+}
+
+
+inline char
+peekNextChar(Tokenizer *tk = global_tokenizer)
+{
+  return *tk->at;  // :always-eat-spaces
 }
 
 inline b32

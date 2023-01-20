@@ -188,9 +188,9 @@ copySize(MemoryArena *arena, void *src, size_t size)
 #    define mytypeof __typeof__
 #endif
 
-#define copyStruct(arena, src) (mytypeof(src)) copySize(arena, src, sizeof(*(src)))
+#define copyStruct(arena, src) (mytypeof(src)) copySize(arena, (src), sizeof(*(src)))
 /* #define copyStructNoCast(arena, src) copySize(arena, src, sizeof(*(src))) */
-#define copyArray(arena, count, src) (mytypeof(src)) copySize(arena, src, count*sizeof(*(src)))
+#define copyArray(arena, count, src) (mytypeof(src)) copySize(arena, (src), count*sizeof(*(src)))
 
 inline b32
 inRange(i32 min, i32 val, i32 max)

@@ -231,26 +231,34 @@ check_truth testPolymorphSolver(3) = 6;
 ;; The Manhattan algebra test!
 ;; The Manhattan algebra test!
 
-;; algebraTest :: (a,b,c,d,e,f: Nat) -> ((a+b)+c)+(d+e)+f = a+b+c+d+e+f
-;; {
-;;  return algebraic_norm(((a+b)+c)+(d+e)+f)
-;;  }
+algebraTest :: (a,b,c,d,e,f: Nat) -> ((a+b)+c)+(d+e)+f = a+b+c+d+e+f
+{return algebraic_norm(((a+b)+c)+(d+e)+f)}
 
-;; List :: fn(A: Set) -> Set
-;; {
-;;  return union {single(head: A),
-;;                cons  (head: A, tail: List)}
-;;  }
+List :: union(A: Set)
+{single(head: A),
+ cons  (head: A, tail: List(A))}
 
-;; fold :: fn($A: Set, op: (a,b: A) -> A, list: List(A)) -> A
-;; #no_print_as_binop
-;; {norm list;
-;;  fork list
-;;  {single return list.head,
-;;   cons   return list.head op fold(op, list.tail)}}
+#debug
+fold :: fn($A: Set, op: (a,b: A) -> A, list: List(A)) -> A
+#no_print_as_binop
+{
+ norm unfold(List) list;
+ fork list
+ {
+  single
+  return list.head,
 
-;; + :: fn(l,m: List) -> List
-;; {fork l
+  cons
+  ;; return op;
+  return list.head op fold(op, list.tail)
+  }
+ }
+
+;; check_truth fold(overload(+, Nat), 1 cons single(2));
+
+;; + :: fn($A: Set, l,m: List(A)) -> List(A)
+;; {norm unfold(List) l;
+;;  fork l
 ;;  {single return (l.head cons m),
 ;;   cons   return (l.head cons (l.tail + m))}}
 
