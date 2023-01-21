@@ -52,14 +52,15 @@ enum AstCategory {
 
 enum TermCategory {
   Term_Hole = 1,
-  Term_ParameterizedConstructor,
+  Term_PolyConstructor,
 
   Term_Builtin,
   Term_Union,
   Term_Constructor,
-  Term_ParameterizedUnion,
+  Term_PolyUnion,
   Term_Function,
   Term_Fork,
+  Term_PolyVariable,
   Term_Variable,
   Term_Computation,
   Term_Accessor,
@@ -195,7 +196,8 @@ struct Typer
 {
   LocalBindings *bindings;
   Scope         *scope;
-  DataMap       *map;
+  Arrow         *poly_params;
+  DataMap           *map;
   DataMapAddHistory *add_history;
 };
 
@@ -245,16 +247,17 @@ struct Constructor {
   i32    index;
 };
 
-struct ParameterizedUnion {
+// NOTE: does not appear in expression.
+struct PolyUnion {
   embed_Term(t);
   Union *body;
 };
 
-struct ParameterizedConstructor {
+// NOTE: does not appear in expression.
+struct PolyConstructor {
   embed_Term(t);
-  ParameterizedUnion *punion;
-  i32                 index;
-  i32                 param_count;
+  PolyUnion *poly_union;
+  i32        index;
 };
 
 struct Union {
@@ -263,8 +266,8 @@ struct Union {
   Token  *ctor_names;
   Arrow **structs;
 
-  ParameterizedUnion  *punion;
-  Term               **punion_args;
+  PolyUnion  *poly_union;
+  Term      **poly_args;
 };
 
 struct Function {
@@ -292,7 +295,7 @@ struct LocalBinding
 struct LookupLocalName {
   b32   found;
   i32   stack_delta;
-  i32   var_id;
+  i32   var_index;
   operator bool() {return found;}
 };
 
@@ -305,9 +308,15 @@ struct LocalBindings
 
 struct Variable {
   embed_Term(t);
-  String name;
   i32    delta;
   i32    index;
+  String name;
+};
+
+struct PolyVariable {
+  embed_Term(t);
+  i32    index;
+  String name;
 };
 
 struct TreePath {
@@ -606,6 +615,12 @@ struct NormalizeContext {
   DataMap     *map;
   i32          depth;
   String       name_to_unfold;
+};
+
+struct LookupPolyParameter {
+  b32 found;
+  i32 index;
+  operator bool() { return found; }
 };
 
 #define DEFAULT_MAX_LIST_LENGTH 64
