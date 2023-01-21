@@ -109,7 +109,7 @@ newVariable(MemoryArena *arena, Typer *typer, i32 id, i32 delta)
 
   Variable *var = newTerm(arena, Variable, type);
   var->name  = scope->head->param_names[id];
-  var->index    = id;
+  var->index = id;
   var->delta = delta;
 
   return &var->t;
@@ -118,6 +118,8 @@ newVariable(MemoryArena *arena, Typer *typer, i32 id, i32 delta)
 inline Arrow *
 getParameterTypes(Term *op)
 {
+  // NOTE: we split the signature retrieval out to avoid having to build the
+  // constructor type, which might be premature.
   Arrow *out = 0;
   if (Constructor *ctor = castTerm(op, Constructor))
     out = ctor->uni->structs[ctor->index];
@@ -269,13 +271,24 @@ isSequenced(Term *term)
   return out;
 }
 
-inline Term *
-newConstructor(MemoryArena *arena, Union *uni, i32 index)
+inline void
+computeConstructorType(MemoryArena *arena, Constructor *ctor)
 {
-  // Yes, you don't want type in the constructor (see note #why_constructors_dont_have_types)
+  Arrow *signature       = copyStruct(arena, ctor->uni->structs[ctor->index]);
+  signature->output_type = rebase(arena, &ctor->uni->t, 1);
+  ctor->type = &signature->t;
+}
+
+inline Term *
+newConstructor(MemoryArena *arena, Union *uni, i32 index, b32 make_type=false)
+{
+  // It's annoying to type constructor so we wanna delay doing it (see note
+  // #why_constructors_dont_have_types)
   Constructor *ctor = newTerm(arena, Constructor, 0);
   ctor->uni   = uni;
   ctor->index = index;
+  if (make_type)
+    computeConstructorType(arena, ctor);
   return &ctor->t;
 }
 
@@ -662,6 +675,26 @@ forward_declare inline Term *
 getType(Term *in0)
 {
   Term *out = in0->type;
+  if (!in0->type)
+  {
+    if (Constructor *ctor = castTerm(in0, Constructor))
+    {
+      todoIncomplete;
+#if 0  // untested code
+      MemoryArena *arena = 0;
+      if (inArena(global_state.top_level_arena, ctor))
+        arena = global_state.top_level_arena;
+      else if (inArena(temp_arena, ctor))
+        arena = temp_arena;
+      else
+        invalidCodePath;
+      computeConstructorType(arena, ctor);
+#endif
+    }
+    else
+      invalidCodePath;
+  }
+  assert(out);
   return out;
 }
 
@@ -3811,7 +3844,6 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
           }
         }
       }
-      assert(!out0 || getType(out0));
     } break;
 
     case Ast_Hole:
@@ -3820,14 +3852,12 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
         out0 = solution;
       else
         parseError(in0, "please provide an expression here");
-      assert(!out0 || getType(out0));
     } break;
 
     case Ast_SyntheticAst:
     {
       SyntheticAst *in = castAst(in0, SyntheticAst);
       out0 = in->term;
-      assert(!out0 || getType(out0));
     } break;
 
     case Ast_Identifier:
@@ -3874,7 +3904,6 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
           out0 = value;
         }
       }
-      assert(!out0 || getType(out0));
     } break;
 
     case Ast_ArrowAst:
@@ -3910,7 +3939,6 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
         }
         unwindBindingsAndScope(typer);
       }
-      assert(!out0 || getType(out0));
     } break;
 
     case Ast_AccessorAst:
@@ -3962,7 +3990,6 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
             attach("expected a member of constructor", uni->ctor_names[ctor_i]);
             setErrorFlag(ErrorUnrecoverable);
           }
-          assert(!out0 || getType(out0));
         }
         else
         {
@@ -4035,7 +4062,6 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
           attach("got", proof_type);
         }
       }
-      assert(!out0 || getType(out0));
     } break;
 
     case Ast_GoalTransform:
@@ -4211,7 +4237,6 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
           }
         }
       }
-      assert(!out0 || getType(out0));
     } break;
 
     case Ast_ForkAst:
@@ -4219,14 +4244,12 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
       ForkAst *fork = castAst(in0, ForkAst);
       out0 = buildFork(arena, typer, fork, goal);
       recursed = true;
-      assert(!out0 || getType(out0));
     } break;
 
     case Ast_UnionAst:
     {
       UnionAst *uni = castAst(in0, UnionAst);
       out0 = buildUnion(arena, typer, uni, 0);
-      assert(!out0 || getType(out0));
     } break;
 
     case Ast_CtorAst:
@@ -4247,7 +4270,6 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
         if (!out0)
           parseError(in0, "cannot find a matching proof in scope");
       }
-      assert(!out0 || getType(out0));
     } break;
 
     case Ast_OverloadAst:
@@ -4262,7 +4284,6 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
             parseError(in0, "found no overload corresponding to distinguisher");
         }
       }
-      assert(!out0 || getType(out0));
     } break;
 
     invalidDefaultCase;
@@ -4895,7 +4916,7 @@ buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
           }
           else
           {
-            Term *ctor = newConstructor(arena, uni, ctor_i);
+            Term *ctor = newConstructor(arena, uni, ctor_i, true);
             term_to_bind = ctor;
             if (struc->param_count == 0)
               term_to_bind = newComposite(arena, ctor, 0, 0);
