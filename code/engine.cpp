@@ -109,28 +109,39 @@ newVariable(MemoryArena *arena, Typer *typer, i32 id, i32 delta)
 
   Variable *var = newTerm(arena, Variable, type);
   var->name  = scope->head->param_names[id];
-  var->id    = id;
+  var->index    = id;
   var->delta = delta;
 
   return &var->t;
 }
 
+inline Arrow *
+getParameterTypes(Term *op)
+{
+  Arrow *out = 0;
+  if (Constructor *ctor = castTerm(op, Constructor))
+    out = ctor->uni->structs[ctor->index];
+  else
+    out = castTerm(getType(op), Arrow);
+  return out;
+}
+
+inline Term *
+getOutputType(MemoryArena *arena, Term *op, Term **args)
+{
+  Term *out = 0;
+  if (Constructor *ctor = castTerm(op, Constructor))
+    out = &ctor->uni->t;
+  else
+    out = evaluate(arena, args, castTerm(getType(op), Arrow)->output_type);
+  return out;
+}
+
 inline Term *
 newComposite(MemoryArena *arena, Term *op, i32 arg_count, Term **args)
 {
-  Term *type = 0;
-  Arrow *signature = 0;
-  if (Constructor *ctor = castTerm(op, Constructor))
-  {
-    assert(ctor->uni);
-    type = &ctor->uni->t;  // todo this makes me nervous!
-    signature = ctor->uni->structs[ctor->index];
-  }
-  else
-  {
-    signature = castTerm(getType(op), Arrow);
-    type = evaluate(arena, args, signature->output_type);
-  }
+  Term *type = getOutputType(arena, op, args);
+  Arrow *signature = getParameterTypes(op);
 
   assert(signature->param_count == arg_count);
   for (i32 i=0; i < arg_count; i++)
@@ -261,11 +272,57 @@ isSequenced(Term *term)
 inline Term *
 newConstructor(MemoryArena *arena, Union *uni, i32 index)
 {
+  // Yes, you don't want type in the constructor (see note #why_constructors_dont_have_types)
   Constructor *ctor = newTerm(arena, Constructor, 0);
   ctor->uni   = uni;
   ctor->index = index;
-  ctor->type  = &ctor->uni->structs[ctor->index]->t;  // todo the output type is missing.
   return &ctor->t;
+}
+
+inline Stack *
+newStack(MemoryArena *arena, Stack *outer, i32 count)
+{
+  Stack *stack = pushStruct(arena, Stack);
+  stack->outer = outer;
+  stack->count = count;
+  allocateArray(arena, count, stack->items, true);
+  return stack;
+}
+
+// todo hack hack hack
+inline Term *
+replaceUnionParameters(MemoryArena *arena, Term **args, Term *in0, i32 offset)
+{
+  Term *out0 = in0;
+  if (!in0->global_name)
+  {
+    switch (in0->cat)
+    {
+      case Term_Variable:
+      {
+        Variable *in = castTerm(in0, Variable);
+        if (in->delta == offset+1)
+          out0 = args[in->index];
+      } break;
+
+      case Term_Union:
+      {
+        Union *in = castTerm(in0, Union);
+        if (in->punion)
+        {
+          Union *out = copyStruct(arena, in);
+          out->punion_args = args;
+          out0 = &out->t;
+        }
+        else
+          todoIncomplete;
+      } break;
+
+      default:
+        todoIncomplete;
+    }
+  }
+  return out0;
 }
 
 inline Term **
@@ -274,18 +331,24 @@ synthesizeMembers(MemoryArena *arena, Term *parent, i32 ctor_id)
   Union *uni = castTerm(parent->type, Union);
   Arrow *struc = uni->structs[ctor_id];
   i32 param_count = struc->param_count;
-  Term **args = pushArray(temp_arena, param_count, Term *);
+  Term **members = pushArray(temp_arena, param_count, Term *);
   for (i32 field_id=0; field_id < param_count; field_id++)
   {
     String field_name = struc->param_names[field_id];
-    Term *type = evaluate(arena, args, struc->param_types[field_id]);
+    Term *type = struc->param_types[field_id];
+    if (uni->punion)
+    {
+      // :replaceUnionParameters_is_called_beforehand
+      type = replaceUnionParameters(arena, uni->punion_args, type, 0);
+    }
+    type = evaluate(arena, members, type);
     Accessor *accessor = newTerm(arena, Accessor, type);
     accessor->record     = parent;
     accessor->field_id   = field_id;
     accessor->field_name = field_name;
-    args[field_id] = &accessor->t;
+    members[field_id] = &accessor->t;
   }
-  return args;
+  return members;
 }
 
 inline Term *
@@ -468,7 +531,7 @@ getOrAddDataTree(MemoryArena *arena, Typer *env, Term *in0, i32 ctor_id)
   i32 in_root_depth = scope_depth - in_root->delta;
   for (DataMap *map = env->map; map; map=map->tail)
   {
-    if (map->depth == in_root_depth && map->index == in_root->id)
+    if (map->depth == in_root_depth && map->index == in_root->index)
     {
       tree = &map->tree;
       break;
@@ -482,7 +545,7 @@ getOrAddDataTree(MemoryArena *arena, Typer *env, Term *in0, i32 ctor_id)
       {
         DataMap *map = pushStruct(arena, DataMap, true);
         map->depth   = in_root_depth;
-        map->index   = in_root->id;
+        map->index   = in_root->index;
         initDataTree(arena, &map->tree, root_union, ctor_id);
         tree = &map->tree;
         map->tail    = env->map;
@@ -500,7 +563,7 @@ getOrAddDataTree(MemoryArena *arena, Typer *env, Term *in0, i32 ctor_id)
       assert(root_union->ctor_count == 1);
       DataMap *map = pushStruct(arena, DataMap, true);
       map->depth   = in_root_depth;
-      map->index   = in_root->id;
+      map->index   = in_root->index;
       initDataTree(arena, &map->tree, root_union, 0);
       tree = &map->tree;
       map->tail = env->map;
@@ -724,18 +787,18 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
       if (Function *fun = castTerm(in->op, Function))
         no_print_as_binop = checkFlag(fun->function_flags, FunctionFlag_no_print_as_binop);
 
-      // if (in->op->cat != Term_Variable)  not sure why this was here
-      {
-        op_signature = castTerm((getType(in->op)), Arrow);
-        assert(op_signature);
-        String op_name = {};
-        if (Token *global_name = in->op->global_name)
-          op_name = global_name->string;
-        else if (Variable *var = castTerm(in->op, Variable))
-          op_name = var->name;
-        precedence = precedenceOf(op_name);
-      }
+      op_signature = getParameterTypes(in->op);
+      assert(op_signature);
+
+      String op_name = {};
+      if (Token *global_name = in->op->global_name)
+        op_name = global_name->string;
+      else if (Variable *var = castTerm(in->op, Variable))
+        op_name = var->name;
+      precedence = precedenceOf(op_name);
     }
+    else
+      breakhere; // nocheckin what's this case?
   }
   else
   {
@@ -991,7 +1054,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
           print(buffer, "anon");
 
         if (!in->name.chars || DEBUG_MODE)
-          print(buffer, "[%d:%d]", in->delta, in->id);
+          print(buffer, "[%d:%d]", in->delta, in->index);
       } break;
 
       case Term_Hole:
@@ -1003,23 +1066,39 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
       case Term_Union:
       {
         Union *in = castTerm(in0, Union);
-        if (in0->global_name)
+        if (in->punion)
         {
-          print(buffer, in0->global_name->string);
+          print(buffer, in->punion->global_name->string);
+          Arrow *signature = castTerm(getType(&in->punion->t), Arrow);
+          print(buffer, "(");
+          for (i32 arg_i=0; arg_i < signature->param_count; arg_i++)
+          {
+            print(buffer, in->punion_args[arg_i]);
+            if (arg_i != signature->param_count-1)
+              print(buffer, ", ");
+          }
+          print(buffer, ")");
         }
-        if (!in->global_name || checkFlag(opt.flags, PrintFlag_Detailed))
+        else
         {
-          if (in->ctor_count)
+          if (in0->global_name && !checkFlag(opt.flags, PrintFlag_Detailed))
+          {
+            print(buffer, in0->global_name->string);
+          }
+          else
           {
             print(buffer, "union {");
-            unsetFlag(&new_opt.flags, PrintFlag_Detailed);
-            for (i32 ctor_id = 0; ctor_id < in->ctor_count; ctor_id++)
+            if (in->ctor_count)
             {
-              print(buffer, in->ctor_names[ctor_id]);
-              print(buffer, ": ");
-              print(buffer, &in->structs[ctor_id]->t, new_opt);
-              if (ctor_id != in->ctor_count-1)
-                print(buffer, ", ");
+              unsetFlag(&new_opt.flags, PrintFlag_Detailed);
+              for (i32 ctor_id = 0; ctor_id < in->ctor_count; ctor_id++)
+              {
+                print(buffer, in->ctor_names[ctor_id]);
+                print(buffer, ": ");
+                print(buffer, &in->structs[ctor_id]->t, new_opt);
+                if (ctor_id != in->ctor_count-1)
+                  print(buffer, ", ");
+              }
             }
             print(buffer, "}");
           }
@@ -1285,6 +1364,9 @@ isGround(Term *in0)
     case Term_Union:
     case Term_Constructor:
     {return false;} break;
+
+    case Term_ParameterizedUnion:
+      invalidCodePath;
   }
 }
 
@@ -1438,7 +1520,8 @@ apply(MemoryArena *arena, Term *op, i32 arg_count, Term **args, Term *type, Stri
     }
 
     if (should_apply_function)
-      out0 = evaluate(arena, args, fun->body, EvaluationFlag_ApplyMode);
+      out0 = evaluate(EvaluationContext{.arena=arena, .args=args, .flags=EvaluationFlag_ApplyMode},
+                      fun->body);
   }
   else if (op == builtin_equal)
   {// special case for equality
@@ -1526,7 +1609,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
         Variable *in = castTerm(in0, Variable);
         if (in->delta == ctx->offset)
         {
-          out0 = ctx->args[in->id];
+          out0 = ctx->args[in->index];
           out0 = rebase(arena, out0, ctx->offset);
         }
         else if (in->delta > ctx->offset)
@@ -1553,7 +1636,24 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
 
         if (checkFlag(ctx->flags, EvaluationFlag_ApplyMode))
         {
-          out0 = apply(arena, op, in->arg_count, args, getType(in0), {});
+          // bookmark
+          b32 recursion_match = false;
+          if (ctx->punion_op && equal(ctx->punion_op, op))
+          {
+            recursion_match = true;
+            assert(ctx->punion_arg_count == in->arg_count);
+            for (i32 arg_i=0; arg_i < in->arg_count && recursion_match; arg_i++)
+            {
+              if (!equal(ctx->punion_args[arg_i], args[arg_i]))
+              {
+                recursion_match = false;
+              }
+            }
+            if (recursion_match)
+              out0 = ctx->punion_result;
+          }
+          if (!recursion_match)
+            out0 = apply(arena, op, in->arg_count, args, getType(in0), {});
         }
 
         if (!out0)
@@ -1671,14 +1771,27 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
       case Term_Union:
       {
         Union *in  = castTerm(in0, Union);
-        Union *out = copyStruct(arena, in);
-        allocateArray(arena, in->ctor_count, out->structs);
-        for (i32 id=0; id < in->ctor_count; id++)
+        if (in->punion)
         {
-          Term *struc = evaluateMain(ctx, &in->structs[id]->t);
-          out->structs[id] = castTerm(struc, Arrow);
+          // todo: I don't have the slightest idea what to do here
+          out0 = in0;  // :replaceUnionParameters_is_called_beforehand
         }
-        out0 = &out->t;
+        else
+        {
+          Union *out = copyStruct(arena, in);
+          // :recursion_result_set_later
+          if (ctx->punion_op && !ctx->punion_result)
+          {
+            ctx->punion_result = &out->t;
+          }
+          allocateArray(arena, in->ctor_count, out->structs);
+          for (i32 id=0; id < in->ctor_count; id++)
+          {
+            Term *struc = evaluateMain(ctx, &in->structs[id]->t);
+            out->structs[id] = castTerm(struc, Arrow);
+          }
+          out0 = &out->t;
+        }
       } break;
 
       case Term_Builtin:
@@ -1704,9 +1817,8 @@ evaluate(MemoryArena *arena, Term **args, Term *in0)
 }
 
 forward_declare inline Term *
-evaluate(MemoryArena *arena, Term **args, Term *in0, u32 flags)
+evaluate(EvaluationContext ctx, Term *in0)
 {
-  EvaluationContext ctx = {.arena=arena, .args=args, .flags=flags};
   return evaluateMain(&ctx, in0);
 }
 
@@ -1736,7 +1848,7 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
       {
         Variable *lhs = castTerm(lhs0, Variable);
         Variable *rhs = castTerm(rhs0, Variable);
-        if ((lhs->delta == rhs->delta) && (lhs->id == rhs->id))
+        if ((lhs->delta == rhs->delta) && (lhs->index == rhs->index))
           out.result = Trinary_True;
       } break;
 
@@ -2084,7 +2196,7 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
         DataTree *tree = 0;
         for (DataMap *map = ctx->map; map; map=map->tail)
         {
-          if (map->depth == var_depth && map->index == in->id)
+          if (map->depth == var_depth && map->index == in->index)
           {
             tree = &map->tree;
             break;
@@ -2414,16 +2526,6 @@ matchType(Term *actual, Term *goal)
   return out;
 }
 
-inline Stack *
-newStack(MemoryArena *arena, Stack *outer, i32 count)
-{
-  Stack *stack = pushStruct(arena, Stack);
-  stack->outer = outer;
-  stack->count = count;
-  allocateArray(arena, count, stack->items, true);
-  return stack;
-}
-
 internal b32
 unify(Stack *stack, Term *in0, Term *goal0)
 {
@@ -2448,7 +2550,7 @@ unify(Stack *stack, Term *in0, Term *goal0)
       if (lookup_stack)
       {
         // unification variable
-        if (Term *lookup = lookup_stack->items[in->id])
+        if (Term *lookup = lookup_stack->items[in->index])
         {
           Term *rebased = rebase(temp_arena, lookup, in->delta);
           success = equal(rebased, goal0);
@@ -2457,9 +2559,9 @@ unify(Stack *stack, Term *in0, Term *goal0)
         {
           // NOTE: if rebase happens -> the new term will be on the correct arena.
           // if rebase does nothing -> we put "goal0" on there, which is by definition on the correct arena.
-          lookup_stack->items[in->id] = rebase(lookup_stack->unification_arena, goal0, -in->delta);
+          lookup_stack->items[in->index] = rebase(lookup_stack->unification_arena, goal0, -in->delta);
           if (lookup_stack->unification_arena != temp_arena)
-            assert(inArena(lookup_stack->unification_arena, lookup_stack->items[in->id]));
+            assert(inArena(lookup_stack->unification_arena, lookup_stack->items[in->index]));
           success = true;
         }
       }
@@ -2468,7 +2570,7 @@ unify(Stack *stack, Term *in0, Term *goal0)
         // NOTE: local variable from a local hint, we would remove one
         // abstraction layer if unification succeeds, hence we deduct one stack
         // delta.
-        success = ((in->delta-1 == goal->delta) && (in->id == goal->id));
+        success = ((in->delta-1 == goal->delta) && (in->index == goal->index));
       }
     } break;
 
@@ -2539,6 +2641,18 @@ unify(Stack *stack, Term *in0, Term *goal0)
   return success;
 }
 
+inline Union *
+castUnionWithArgs(Term *in0)
+{
+  Union *out = 0;
+  if (Union *in = castTerm(in0, Union))
+  {
+    if (in->punion)
+      out = in;
+  }
+  return out;
+}
+
 inline SolveArgs
 solveArgs(Solver *solver, Term *op, Term *goal, Token *blame_token)
 {
@@ -2547,8 +2661,16 @@ solveArgs(Solver *solver, Term *op, Term *goal, Token *blame_token)
   Term **args      = 0;
   if (Constructor *ctor = castTerm(op, Constructor))
   {
-    if (equal(&ctor->uni->t, goal))
-      matches = true;  // we don't know what the members are in the constructor case.
+    matches = equal(&ctor->uni->t, goal);
+    // don't attempt to solve args since it's a constructor.
+  }
+  else if (ParameterizedConstructor *ctor = castTerm(op, ParameterizedConstructor))
+  {
+    if (Union *uni = castUnionWithArgs(goal))
+    {
+      matches = (ctor->punion == uni->punion);
+    }
+    // don't attempt to solve args since it's a constructor.
   }
   else if (Arrow *signature = castTerm(getType(op), Arrow))
   {
@@ -3184,13 +3306,13 @@ buildCtorAst(MemoryArena *arena, CtorAst *in, Term *output_type)
   Term *out = 0;
   if (Union *uni = castTerm(output_type, Union))
   {
-    if (in->ctor_id < uni->ctor_count)
-      out = newConstructor(arena, uni, in->ctor_id);
+    if (in->ctor_i < uni->ctor_count)
+      out = newConstructor(arena, uni, in->ctor_i);
     else
       parseError(&in->a, "union only has %d constructors", uni->ctor_count);
   }
   else
-    parseError(&in->a, "cannot guess union");
+    parseError(&in->a, "cannot guess union of constructor");
   return out;
 }
 
@@ -3450,10 +3572,6 @@ buildAlgebraicNorm(MemoryArena *arena, Typer *typer, CompositeAst *in)
 forward_declare internal BuildTerm
 buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
 {
-  // todo #cleanup #leak: sort out what we need and what we don't need to persist
-  // todo #cleanup #speed: returning the value is just a waste of time most of the time. Just call evaluate whenever you need the value.
-  // todo return the type, since we typecheck it anyway.
-  // todo print out the goal whenever we fail
   // beware: Usually we mutate in-place, but we may also allocate anew.
   i32 UNUSED_VAR serial = DEBUG_SERIAL++;
   Term *out0 = {};
@@ -3519,7 +3637,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
              attempt++)
         {
           Term *op = op_list.items[attempt];
-          if (Arrow *signature = castTerm(getType(op), Arrow))
+          if (Arrow *signature = getParameterTypes(op))
           {
             i32 param_count = signature->param_count;
             Ast **expanded_args = in->args;
@@ -3557,6 +3675,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
             {
               Term **args = pushArray(temp_arena, param_count, Term *, true);
               b32 stack_has_hole = false;  // This var is an optimization: in case we can just solve all the args in one pass.
+              // bookmark: it should not be arg_i = 0!!! We messed up the infer mechanism somehow.
               for (int arg_i = 0;
                    (arg_i < param_count) && noError();
                    arg_i++)
@@ -3637,24 +3756,36 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
 
               if (noError())
               {
-                Term **final_args        = 0;
-                Term  *final_op          = op;
-                i32    final_param_count = param_count;
-                if (ParameterizedConstructor *pctor = castTerm(op, ParameterizedConstructor))
+                if (ParameterizedUnion *puni = castTerm(op, ParameterizedUnion))
                 {
-                  // some monkey business to convert the op to ctor.
-                  Function *puni = pctor->parameterized_union;
-                  Term *uni = apply(arena, &puni->t, pctor->param_count, args, builtin_Set, puni->global_name->string);
-                  final_op = newConstructor(arena, castTerm(uni, Union), pctor->index);
-                  assert(param_count >= pctor->param_count);
-                  final_param_count = param_count - pctor->param_count;
-                  final_args        = copyArray(arena, final_param_count, args+pctor->param_count);
+                  // bookmark
+                  Union *out       = copyStruct(arena, puni->body);
+                  out->punion_args = args;
+                  out0 = &out->t;
                 }
                 else
                 {
-                  final_args = copyArray(arena, param_count, args);
+                  Term **final_args        = 0;
+                  Term  *final_op          = op;
+                  i32    final_param_count = param_count;
+                  if (ParameterizedConstructor *pctor = castTerm(op, ParameterizedConstructor))
+                  {
+                    // some monkey business to convert the op to ctor.
+                    ParameterizedUnion *puni = pctor->punion;
+                    // bookmark
+                    Union *uni       = copyStruct(arena, puni->body);
+                    uni->punion_args = args;
+                    final_op = newConstructor(arena, castTerm(uni, Union), pctor->index);
+                    assert(param_count >= pctor->param_count);
+                    final_param_count = param_count - pctor->param_count;
+                    final_args        = copyArray(arena, final_param_count, args+pctor->param_count);
+                  }
+                  else
+                  {
+                    final_args = copyArray(arena, param_count, args);
+                  }
+                  out0 = newComposite(arena, final_op, final_param_count, final_args);
                 }
-                out0 = newComposite(arena, final_op, final_param_count, final_args);
               }
             }
           }
@@ -4094,7 +4225,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
     case Ast_UnionAst:
     {
       UnionAst *uni = castAst(in0, UnionAst);
-      out0 = &buildUnion(arena, typer, uni, 0)->t;
+      out0 = buildUnion(arena, typer, uni, 0);
       assert(!out0 || getType(out0));
     } break;
 
@@ -4686,11 +4817,11 @@ parseUnion(MemoryArena *arena)
   return uni;
 }
 
-forward_declare internal Union *
+forward_declare internal Term *
 buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
 {
-  Union    *uni                 = newTerm(arena, Union, builtin_Set);
-  Function *parameterized_union = 0;
+  Union *uni = newTerm(arena, Union, builtin_Set);
+  ParameterizedUnion *puni = 0;
   i32 ctor_count = in->ctor_count;
   uni->ctor_count = ctor_count;
   uni->ctor_names = copyArray(arena, ctor_count, in->ctor_names);
@@ -4699,6 +4830,7 @@ buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
   Arrow *uni_params = 0;
   if (in->params)
   {
+    assert(global_name);
     Term *uni_params0 = buildTerm(arena, typer, &in->params->a, holev);
     uni_params = castTerm(uni_params0, Arrow);
   }
@@ -4713,16 +4845,17 @@ buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
       {
         Arrow *signature       = copyStruct(arena, uni_params);
         signature->output_type = builtin_Set;
-        parameterized_union                 = newTerm(arena, Function, &signature->t);
-        parameterized_union->body           = &uni->t;
-        parameterized_union->function_flags = FunctionFlag_no_apply;
-        term_to_bind = &parameterized_union->t;
+        puni       = newTerm(arena, ParameterizedUnion, &signature->t);
+        puni->body = uni;
+        uni->punion = puni;
+        term_to_bind = &puni->t;
       }
       addGlobalBinding(global_name, term_to_bind);
     }
 
     if (uni_params)
       introduceSignature(typer, uni_params, true);
+
     for (i32 ctor_i=0; noError() && (ctor_i < ctor_count); ctor_i++)
     {
       if (Term *struc0 = buildTerm(arena, typer, &in->structs[ctor_i]->a, holev).term)
@@ -4745,7 +4878,7 @@ buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
             {
               augmented->param_names[param_i] = uni_params->param_names[param_i];
               augmented->param_types[param_i] = uni_params->param_types[param_i];
-              augmented->param_flags[param_i] = uni_params->param_flags[param_i];
+              augmented->param_flags[param_i] = uni_params->param_flags[param_i] | ParameterFlag_Inferred;  // todo actually you can't infer the union parameter in case there's no arg (f.ex nil Nat), so we need to automatically do get the flag
             }
             for (i32 param_i=0; param_i < struc->param_count; param_i++)
             {
@@ -4755,19 +4888,17 @@ buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
             }
 
             ParameterizedConstructor *pctor = newTerm(arena, ParameterizedConstructor, &augmented->t);
-            pctor->parameterized_union      = parameterized_union;
+            pctor->punion                   = puni;
             pctor->index                    = ctor_i;
             pctor->param_count              = added_count;
             term_to_bind = &pctor->t;
           }
           else
           {
-            Constructor *ctor = newTerm(arena, Constructor, struc0);
-            ctor->uni   = uni;
-            ctor->index = ctor_i;
-            term_to_bind = &ctor->t;
+            Term *ctor = newConstructor(arena, uni, ctor_i);
+            term_to_bind = ctor;
             if (struc->param_count == 0)
-              term_to_bind = newComposite(arena, &ctor->t, 0, 0);
+              term_to_bind = newComposite(arena, ctor, 0, 0);
           }
 
           addGlobalBinding(&uni->ctor_names[ctor_i], term_to_bind);
@@ -4778,8 +4909,17 @@ buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
       unwindBindingsAndScope(typer);
   }
 
-  NULL_WHEN_ERROR(uni);
-  return uni;
+  if (noError())
+  {
+    assert(uni || puni);
+  }
+  else
+  {
+    uni  = 0;
+    puni = 0;
+  }
+  if (puni) return &puni->t;
+  else      return &uni->t;
 }
 
 inline CtorAst *
@@ -4788,7 +4928,7 @@ parseCtor(MemoryArena *arena)
   CtorAst *out = newAst(arena, CtorAst, &global_tokenizer->last_token);
   if (requireChar('['))
   {
-    out->ctor_id = parseInt32();
+    out->ctor_i = parseInt32();
     requireChar(']');
   }
   return out;

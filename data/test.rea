@@ -234,25 +234,31 @@ check_truth testPolymorphSolver(3) = 6;
 algebraTest :: (a,b,c,d,e,f: Nat) -> ((a+b)+c)+(d+e)+f = a+b+c+d+e+f
 {return algebraic_norm(((a+b)+c)+(d+e)+f)}
 
-List :: union(A: Set)
-{single(head: A),
- cons  (head: A, tail: List(A))}
+List :: union(ListType: Set)
+{single(head: ListType),
+ cons  (head: ListType, tail: List(ListType))}
 
 #debug
-fold :: fn($A: Set, op: (a,b: A) -> A, list: List(A)) -> A
-#no_print_as_binop
-{
- norm unfold(List) list;
- fork list
- {
-  single
-  return list.head,
+testList :: fn(l: List(Nat)) -> List(Nat)
+{fork l
+ {single
+  ;; return single(Nat, l.head),  ;; todo: this also breaks
+  return single(l.head),
+  cons   return l.tail}}
 
-  cons
-  ;; return op;
-  return list.head op fold(op, list.tail)
-  }
- }
+;; fold :: fn($A: Set, op: (a,b: A) -> A, list: List(A)) -> A
+;; #no_print_as_binop
+;; {
+;;  fork list
+;;  {
+;;   single
+;;   return list.head,
+
+;;   cons
+;;   return list.head
+;;   ;; return list.head op fold(op, list.tail)
+;;   }
+;;  }
 
 ;; check_truth fold(overload(+, Nat), 1 cons single(2));
 

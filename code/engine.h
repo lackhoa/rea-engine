@@ -57,6 +57,7 @@ enum TermCategory {
   Term_Builtin,
   Term_Union,
   Term_Constructor,
+  Term_ParameterizedUnion,
   Term_Function,
   Term_Fork,
   Term_Variable,
@@ -238,17 +239,22 @@ _newTerm(MemoryArena *arena, TermCategory cat, Term *type, size_t size)
 #define newTerm(arena, cat, type)              \
   ((cat *) _newTerm(arena, Term_##cat, type, sizeof(cat)))
 
-struct ParameterizedConstructor {
-  embed_Term(t);
-  Function *parameterized_union;
-  i32       index;
-  i32       param_count;
-};
-
 struct Constructor {
   embed_Term(t);
   Union *uni;
   i32    index;
+};
+
+struct ParameterizedUnion {
+  embed_Term(t);
+  Union *body;
+};
+
+struct ParameterizedConstructor {
+  embed_Term(t);
+  ParameterizedUnion *punion;
+  i32                 index;
+  i32                 param_count;
 };
 
 struct Union {
@@ -256,6 +262,9 @@ struct Union {
   i32     ctor_count;
   Token  *ctor_names;
   Arrow **structs;
+
+  ParameterizedUnion  *punion;
+  Term               **punion_args;
 };
 
 struct Function {
@@ -298,7 +307,7 @@ struct Variable {
   embed_Term(t);
   String name;
   i32    delta;
-  i32    id;
+  i32    index;
 };
 
 struct TreePath {
@@ -474,9 +483,9 @@ struct SearchOutput {b32 found; TreePath *path;};
 
 struct CompareTerms {Trinary result; TreePath *diff_path;};
 
-const u32 FunctionFlag_is_global_hint    = 1 << 0;
-const u32 FunctionFlag_no_apply          = 1 << 1;
-const u32 FunctionFlag_no_print_as_binop = 1 << 2;
+const u32 FunctionFlag_is_global_hint         = 1 << 0;
+const u32 FunctionFlag_no_apply               = 1 << 1;
+const u32 FunctionFlag_no_print_as_binop      = 1 << 2;
 
 struct FunctionAst {
   embed_Ast(a);
@@ -512,6 +521,11 @@ struct EvaluationContext {
   Term        **args;
   i32           offset;
   u32           flags;
+
+  Term  *punion_op;
+  i32    punion_arg_count;
+  Term **punion_args;
+  Term  *punion_result;
 };
 
 struct UnionAst {
@@ -530,8 +544,7 @@ struct OverloadAst {
 
 struct CtorAst {
   embed_Ast(a);
-  i32  ctor_id;
-  Ast *uni;  // todo implement
+  i32  ctor_i;
 };
 
 struct AddDataTree {
