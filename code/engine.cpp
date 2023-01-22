@@ -45,6 +45,14 @@ isPolyTemplate(Union *in)
   return in->poly_union && !in->poly_args;
 }
 
+inline Union *
+specializeUnion(MemoryArena *arena, PolyUnion *puni, Term **args)
+{
+  Union *instance     = copyStruct(arena, puni->union_template);
+  instance->poly_args = args;
+  return instance;
+}
+
 inline void
 attach(char *key, String value, Tokenizer *tk=global_tokenizer)
 {
@@ -788,26 +796,21 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
     raw_args     = (void **)in->args;
     arg_count    = in->arg_count;
 
-    if (in->op)
-    {
-      if (in->op->cat == Term_Constructor)
-        op_is_constructor = true;
+    if (in->op->cat == Term_Constructor)
+      op_is_constructor = true;
 
-      if (Function *fun = castTerm(in->op, Function))
-        no_print_as_binop = checkFlag(fun->function_flags, FunctionFlag_no_print_as_binop);
+    if (Function *fun = castTerm(in->op, Function))
+      no_print_as_binop = checkFlag(fun->function_flags, FunctionFlag_no_print_as_binop);
 
-      op_signature = getParameterTypes(in->op);
-      assert(op_signature);
+    op_signature = getParameterTypes(in->op);
+    assert(op_signature);
 
-      String op_name = {};
-      if (Token *global_name = in->op->global_name)
-        op_name = global_name->string;
-      else if (Variable *var = castTerm(in->op, Variable))
-        op_name = var->name;
-      precedence = precedenceOf(op_name);
-    }
-    else
-      breakhere; // nocheckin what's this case?
+    String op_name = {};
+    if (Token *global_name = in->op->global_name)
+      op_name = global_name->string;
+    else if (Variable *var = castTerm(in->op, Variable))
+      op_name = var->name;
+    precedence = precedenceOf(op_name);
   }
   else
   {
@@ -1822,7 +1825,13 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
           // NOTE: assuming that if it's a poly instance, the "abstract" part it
           // must be global. All we have to do is replace the poly variable.
           Union *out = copyStruct(arena, in);
-          out->poly_args = ctx->poly_args;
+          // out->poly_args = ctx->poly_args;  // wrong
+          i32 poly_param_count = getParameterCount(&in->poly_union->t);
+          allocateArray(arena, poly_param_count, out->poly_args);
+          for (i32 i=0; i < poly_param_count; i++)
+          {
+            out->poly_args[i] = evaluateMain(ctx, in->poly_args[i]);
+          }
           out0 = &out->t;
         }
         else
@@ -1877,7 +1886,7 @@ evaluate(EvaluationContext ctx, Term *in0)
 // NOTE: we can't guarantee that compare would be of the same type, because the
 // tree search needs it.
 forward_declare internal CompareTerms
-compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
+compareTerms(MemoryArena *arena, Term *l0, Term *r0)
 {
   CompareTerms out = {};
   out.result = Trinary_Unknown;
@@ -1890,24 +1899,24 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
   }
 #endif
 
-  if (lhs0 == rhs0)
+  if (l0 == r0)
     out.result = {Trinary_True};
-  else if (lhs0->cat == rhs0->cat)
+  else if (l0->cat == r0->cat)
   {
-    switch (lhs0->cat)
+    switch (l0->cat)
     {
       case Term_Variable:
       {
-        Variable *lhs = castTerm(lhs0, Variable);
-        Variable *rhs = castTerm(rhs0, Variable);
+        Variable *lhs = castTerm(l0, Variable);
+        Variable *rhs = castTerm(r0, Variable);
         if ((lhs->delta == rhs->delta) && (lhs->index == rhs->index))
           out.result = Trinary_True;
       } break;
 
       case Term_Arrow:
       {
-        Arrow* lhs = castTerm(lhs0, Arrow);
-        Arrow* rhs = castTerm(rhs0, Arrow);
+        Arrow* lhs = castTerm(l0, Arrow);
+        Arrow* rhs = castTerm(r0, Arrow);
         i32 param_count = lhs->param_count;
         if (rhs->param_count == param_count)
         {
@@ -1936,8 +1945,8 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
 
       case Term_Composite:
       {
-        Composite *lhs = castTerm(lhs0, Composite);
-        Composite *rhs = castTerm(rhs0, Composite);
+        Composite *lhs = castTerm(l0, Composite);
+        Composite *rhs = castTerm(r0, Composite);
 
         Trinary op_compare = equalTrinary(lhs->op, rhs->op);
         if ((op_compare == Trinary_False) &&
@@ -1992,16 +2001,16 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
 
       case Term_Constructor:
       {
-        Constructor *lhs = castTerm(lhs0, Constructor);
-        Constructor *rhs = castTerm(rhs0, Constructor);
+        Constructor *lhs = castTerm(l0, Constructor);
+        Constructor *rhs = castTerm(r0, Constructor);
         out.result = toTrinary(equal(&lhs->uni->t, &rhs->uni->t) &&
                                (lhs->index == rhs->index));
       } break;
 
       case Term_Accessor:
       {
-        Accessor *lhs = castTerm(lhs0, Accessor);
-        Accessor *rhs = castTerm(rhs0, Accessor);
+        Accessor *lhs = castTerm(l0, Accessor);
+        Accessor *rhs = castTerm(r0, Accessor);
         if (equal(lhs->record, rhs->record) &&
             lhs->field_id == rhs->field_id)
         {
@@ -2011,31 +2020,61 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
 
       case Term_Builtin:
       {
-        out.result = toTrinary(lhs0 == rhs0);
+        out.result = toTrinary(l0 == r0);
       } break;
 
       case Term_Union:
       {
-        if (!isGlobalValue(lhs0) && !isGlobalValue(rhs0))  // only support anonymous union compare rn, to avoid dealing with recursive structs
+        if (!isGlobalValue(l0) && !isGlobalValue(r0))  // just assume that global unions are unequal.
         {
-          Union *lhs = castTerm(lhs0, Union);
-          Union *rhs = castTerm(rhs0, Union);
-          i32 ctor_count = lhs->ctor_count;
-          if (rhs->ctor_count == ctor_count)
+          Union *lhs = castTerm(l0, Union);
+          Union *rhs = castTerm(r0, Union);
+          if (isPolyInstance(lhs))
           {
-            b32 found_mismatch = false;
-            for (i32 id=0; id < ctor_count; id++)
+            if (isPolyInstance(rhs)
+                && equal(&lhs->poly_union->t, &rhs->poly_union->t))
             {
-              if (!equal(&lhs->structs[id]->t,
-                         &rhs->structs[id]->t))
+              b32 found_mismatch = false;
+              i32 poly_param_count = getParameterCount(&lhs->poly_union->t);
+              for (i32 i=0; i < poly_param_count && !found_mismatch; i++)
               {
-                found_mismatch = true;
+                if (!equal(lhs->poly_args[i],
+                           rhs->poly_args[i]))
+                {
+                  found_mismatch = true;
+                }
               }
+              if (!found_mismatch)
+                out.result = Trinary_True;
             }
-            if (!found_mismatch)
-              out.result = Trinary_True;
+          }
+          else
+          {
+            i32 ctor_count = lhs->ctor_count;
+            if (rhs->ctor_count == ctor_count)
+            {
+              b32 found_mismatch = false;
+              for (i32 id=0; id < ctor_count && !found_mismatch; id++)
+              {
+                if (!equal(&lhs->structs[id]->t,
+                           &rhs->structs[id]->t))
+                {
+                  found_mismatch = true;
+                }
+              }
+              if (!found_mismatch)
+                out.result = Trinary_True;
+            }
           }
         }
+      } break;
+
+      case Term_PolyVariable:
+      {
+        PolyVariable *l = castTerm(l0, PolyVariable);
+        PolyVariable *r = castTerm(r0, PolyVariable);
+        if (l->index == r->index)
+          out.result = Trinary_True;
       } break;
 
       case Term_Function:
@@ -2044,6 +2083,8 @@ compareTerms(MemoryArena *arena, Term *lhs0, Term *rhs0)
       case Term_Computation:
       case Term_Fork:
       {} break;
+
+      invalidDefaultCase;
     }
   }
 
@@ -2671,8 +2712,35 @@ unify(Stack *stack, Term *in0, Term *goal0)
       }
     } break;
 
-    case Term_Function:
     case Term_Union:
+    {
+      Union *in = castTerm(in0, Union);
+      if (isPolyInstance(in))
+      {
+        if (Union *goal = castTerm(goal0, Union))
+        {
+          if (isPolyInstance(goal) &&
+              equal(&in->poly_union->t, &goal->poly_union->t))
+          {
+            i32 poly_param_count = getParameterCount(&in->poly_union->t);
+            b32 mismatch = false;
+            for (i32 i=0; i < poly_param_count && !mismatch; i++)
+            {
+              if (!unify(stack, in->poly_args[i], goal->poly_args[i]))
+                mismatch = true;
+            }
+            if (!mismatch)
+              success = true;
+          }
+        }
+      }
+      else
+      {
+        success = equal(in0, goal0);
+      }
+    } break;
+
+    case Term_Function:
     case Term_Constructor:
     case Term_Builtin:
     {
@@ -3657,6 +3725,7 @@ inline Term *
 newPolyVariable(MemoryArena *arena, Typer *typer, i32 index)
 {
   Term *type = typer->poly_params->param_types[index];
+  assert(type);
   PolyVariable *out = newTerm(arena, PolyVariable, type);
   out->index = index;
   out->name  = typer->poly_params->param_names[index];
@@ -3786,6 +3855,8 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
                       args[arg_i] = arg;
                       arg_was_filled = true;
                       Stack stack = {.count=param_count, .items=args, .unification_arena=arena};
+                      if (serial == 4947 && arg_i == 2)
+                        breakhere;
                       b32 unify_result = unify(&stack, param_type0, getType(arg));
                       if (!unify_result)
                       {
@@ -3849,6 +3920,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
 
               if (noError())
               {
+                args = copyArray(arena, param_count, args);
                 if (PolyUnion *puni = castTerm(op, PolyUnion))
                 {
                   Union *out     = copyStruct(arena, puni->union_template);
@@ -3857,26 +3929,22 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
                 }
                 else
                 {
-                  Term **final_args        = 0;
-                  Term  *final_op          = op;
-                  i32    final_param_count = param_count;
                   if (PolyConstructor *pctor = castTerm(op, PolyConstructor))
                   {
-                    // some monkey business to convert the op to ctor.
-                    PolyUnion *puni = pctor->poly_union;
-                    Union *instance     = copyStruct(arena, puni->union_template);
-                    instance->poly_args = args;
-                    i32 poly_param_count = getParameterCount(&puni->t);
+                    // bookmark some monkey business to convert the op to ctor.
+                    i32 poly_param_count = getParameterCount(&pctor->poly_union->t);
                     assert(param_count >= poly_param_count);
-                    final_op          = newConstructor(arena, instance, pctor->index);
-                    final_param_count = param_count - poly_param_count;
-                    final_args        = copyArray(arena, final_param_count, args+poly_param_count);
+                    Union *instance = specializeUnion(arena, pctor->poly_union, args);
+                    Composite *out = newTerm(arena, Composite, &instance->t);
+                    out->op        = newConstructor(arena, instance, pctor->index);
+                    out->arg_count = param_count - poly_param_count;
+                    out->args      = args+poly_param_count;
+                    out0 = &out->t;
                   }
                   else
                   {
-                    final_args = copyArray(arena, param_count, args);
+                    out0 = newComposite(arena, op, param_count, args);
                   }
-                  out0 = newComposite(arena, final_op, final_param_count, final_args);
                 }
               }
             }
@@ -4908,12 +4976,6 @@ transformPolyConstructorParamType(MemoryArena *arena, Term *in0)
   {
     switch (in0->cat)
     {
-      case Term_Variable:
-      {
-        // todo: you'll have to add however many poly parameters there are.
-        todoIncomplete;
-      } break;
-
       case Term_PolyVariable:
       {
         PolyVariable *in = castTerm(in0, PolyVariable);
@@ -4923,6 +4985,12 @@ transformPolyConstructorParamType(MemoryArena *arena, Term *in0)
         out->index = in->index;
         out->name  = in->name;
         out0 = &out->t;
+      } break;
+
+      case Term_Variable:
+      {
+        // todo: you'll have to add however many poly parameters there are.
+        todoIncomplete;
       } break;
 
       case Term_Union:
@@ -4951,6 +5019,54 @@ transformPolyConstructorParamType(MemoryArena *arena, Term *in0)
   return out0;
 }
 
+internal Term *
+transformVariablesToPoly(MemoryArena *arena, Term *in0)
+{
+  Term *out0 = 0;
+  if (isGlobalValue(in0))
+  {
+    out0 = in0;
+  }
+  else
+  {
+    switch (in0->cat)
+    {
+      case Term_Variable:
+      {
+        Variable *in = castTerm(in0, Variable);
+        Term *type = transformVariablesToPoly(arena, in0->type);
+        PolyVariable *out = newTerm(arena, PolyVariable, type);
+        out->name  = in->name;
+        out->index = in->index;
+        out0 = &out->t;
+      } break;
+
+      case Term_Union:
+      {
+        Union *in = castTerm(in0, Union);
+        if (isPolyInstance(in))
+        {
+          Union *out = copyStruct(arena, in);
+          i32 poly_param_count = getParameterCount(&out->poly_union->t);
+          allocateArray(arena, poly_param_count, out->poly_args);
+          for (i32 i=0; i < poly_param_count; i++)
+          {
+            out->poly_args[i] = transformVariablesToPoly(arena, in->poly_args[i]);
+          }
+          out0 = &out->t;
+        }
+        else
+          todoIncomplete;
+      } break;
+
+      default:
+        todoIncomplete;
+    }
+  }
+  assert(out0);
+  return out0;
+}
+
 forward_declare internal Term *
 buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
 {
@@ -4963,11 +5079,18 @@ buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
   allocateArray(arena, ctor_count, uni->structs);
 
   Arrow *poly_params = 0;
+  Arrow *poly_params_with_poly_vars = 0;
   if (in->params)
   {
     assert(global_name);
     Term *poly_params0 = buildTerm(arena, typer, &in->params->a, holev);
     poly_params = castTerm(poly_params0, Arrow);
+    poly_params_with_poly_vars = copyStruct(arena, poly_params);
+    allocateArray(arena, poly_params->param_count, poly_params_with_poly_vars->param_types);
+    for (i32 i=0; i < poly_params->param_count; i++)
+    {
+      poly_params_with_poly_vars->param_types[i] = transformVariablesToPoly(arena, poly_params->param_types[i]);
+    }
   }
 
   if (noError())
@@ -4990,7 +5113,7 @@ buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
 
     if (poly_params)
     {
-      introducePolyParameters(typer, poly_params);
+      introducePolyParameters(typer, poly_params_with_poly_vars);
     }
     for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
     {

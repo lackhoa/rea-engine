@@ -315,8 +315,8 @@ struct Variable {
 
 struct PolyVariable {
   embed_Term(t);
-  i32    index;
   String name;
+  i32    index;
 };
 
 struct TreePath {
