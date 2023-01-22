@@ -36,7 +36,13 @@ global_variable EngineState global_state;
 inline b32
 isPolyInstance(Union *in)
 {
-  return (b32)in->poly_union;
+  return (b32)in->poly_union && in->poly_args;
+}
+
+inline b32
+isPolyTemplate(Union *in)
+{
+  return in->poly_union && !in->poly_args;
 }
 
 inline void
@@ -315,42 +321,6 @@ newStack(MemoryArena *arena, Stack *outer, i32 count)
   return stack;
 }
 
-// todo hack hack hack
-inline Term *
-replaceUnionParameters(MemoryArena *arena, Term **args, Term *in0, i32 offset)
-{
-  Term *out0 = in0;
-  if (!in0->global_name)
-  {
-    switch (in0->cat)
-    {
-      case Term_Variable:
-      {
-        Variable *in = castTerm(in0, Variable);
-        if (in->delta == offset+1)
-          out0 = args[in->index];
-      } break;
-
-      case Term_Union:
-      {
-        Union *in = castTerm(in0, Union);
-        if (in->poly_union)
-        {
-          Union *out = copyStruct(arena, in);
-          out->poly_args = args;
-          out0 = &out->t;
-        }
-        else
-          todoIncomplete;
-      } break;
-
-      default:
-        todoIncomplete;
-    }
-  }
-  return out0;
-}
-
 inline Term **
 synthesizeMembers(MemoryArena *arena, Term *parent, i32 ctor_id)
 {
@@ -361,13 +331,8 @@ synthesizeMembers(MemoryArena *arena, Term *parent, i32 ctor_id)
   for (i32 field_id=0; field_id < param_count; field_id++)
   {
     String field_name = struc->param_names[field_id];
-    Term *type = struc->param_types[field_id];
-    if (uni->poly_union)
-    {
-      // :replaceUnionParameters_is_called_beforehand
-      type = replaceUnionParameters(arena, uni->poly_args, type, 0);
-    }
-    type = evaluate(arena, members, type);
+    Term *type = evaluate(EvaluationContext{.arena=arena, .args=members, .poly_args=uni->poly_args},
+                          struc->param_types[field_id]);
     Accessor *accessor = newTerm(arena, Accessor, type);
     accessor->record     = parent;
     accessor->field_id   = field_id;
@@ -1118,7 +1083,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
       case Term_Union:
       {
         Union *in = castTerm(in0, Union);
-        if (in->poly_union)
+        if (isPolyInstance(in))
         {
           print(buffer, in->poly_union->global_name->string);
           Arrow *signature = castTerm(getType(&in->poly_union->t), Arrow);
@@ -1139,7 +1104,9 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
           }
           else
           {
-            print(buffer, "union {");
+            if (!isPolyTemplate(in))
+              print(buffer, "union ");
+            print(buffer, "{");
             if (in->ctor_count)
             {
               unsetFlag(&new_opt.flags, PrintFlag_Detailed);
@@ -1287,6 +1254,27 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
           }
         }
         print(buffer, "}");
+      } break;
+
+      case Term_PolyUnion:
+      {
+        PolyUnion *in = castTerm(in0, PolyUnion);
+        print(buffer, "union ");
+        print(buffer, getType(in0), new_opt);
+        skip_print_type = true;
+        print(buffer, " ");
+        print(buffer, &in->union_template->t, new_opt);
+      } break;
+
+      case Term_PolyConstructor:
+      {
+        PolyConstructor *in = castTerm(in0, PolyConstructor);
+        print(buffer, in->poly_union->union_template->ctor_names[in->index]);
+      } break;
+
+      default:
+      {
+        todoIncomplete;
       } break;
     }
 
@@ -1675,6 +1663,12 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
           out0 = in0;
       } break;
 
+      case Term_PolyVariable:
+      {
+        PolyVariable *in = castTerm(in0, PolyVariable);
+        out0 = ctx->poly_args[in->index];
+      } break;
+
       case Term_Composite:
       {
         Composite *in = castTerm(in0, Composite);
@@ -1689,7 +1683,6 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
 
         if (checkFlag(ctx->flags, EvaluationFlag_ApplyMode))
         {
-          // bookmark
           b32 recursion_match = false;
           if (ctx->punion_op && equal(ctx->punion_op, op))
           {
@@ -1824,15 +1817,18 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
       case Term_Union:
       {
         Union *in  = castTerm(in0, Union);
-        if (in->poly_union)
+        if (isPolyInstance(in))
         {
-          // todo: I don't have the slightest idea what to do here
-          out0 = in0;  // :replaceUnionParameters_is_called_beforehand
+          // NOTE: assuming that if it's a poly instance, the "abstract" part it
+          // must be global. All we have to do is replace the poly variable.
+          Union *out = copyStruct(arena, in);
+          out->poly_args = ctx->poly_args;
+          out0 = &out->t;
         }
         else
         {
           Union *out = copyStruct(arena, in);
-          // :recursion_result_set_later
+          // :recursion_result_set_later todo #cleanup Don't need this anymore
           if (ctx->punion_op && !ctx->punion_result)
           {
             ctx->punion_result = &out->t;
@@ -1851,6 +1847,9 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
       case Term_Constructor:
       case Term_Hole:
       {out0=in0;} break;
+
+      default:
+        invalidCodePath;
     }
   }
 
@@ -3770,7 +3769,6 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
             {
               Term **args = pushArray(temp_arena, param_count, Term *, true);
               b32 stack_has_hole = false;  // This var is an optimization: in case we can just solve all the args in one pass.
-              // bookmark: it should not be arg_i = 0!!! We messed up the infer mechanism somehow.
               for (int arg_i = 0;
                    (arg_i < param_count) && noError();
                    arg_i++)
@@ -3853,7 +3851,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
               {
                 if (PolyUnion *puni = castTerm(op, PolyUnion))
                 {
-                  Union *out     = copyStruct(arena, puni->body);
+                  Union *out     = copyStruct(arena, puni->union_template);
                   out->poly_args = args;
                   out0 = &out->t;
                 }
@@ -3866,7 +3864,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
                   {
                     // some monkey business to convert the op to ctor.
                     PolyUnion *puni = pctor->poly_union;
-                    Union *instance     = copyStruct(arena, puni->body);
+                    Union *instance     = copyStruct(arena, puni->union_template);
                     instance->poly_args = args;
                     i32 poly_param_count = getParameterCount(&puni->t);
                     assert(param_count >= poly_param_count);
@@ -4899,7 +4897,7 @@ parseUnion(MemoryArena *arena)
 }
 
 internal Term *
-polyConstructorTypeTransform(MemoryArena *arena, Term *in0)
+transformPolyConstructorParamType(MemoryArena *arena, Term *in0)
 {
   Term *out0 = 0;
   if (isGlobalValue(in0))
@@ -4910,10 +4908,16 @@ polyConstructorTypeTransform(MemoryArena *arena, Term *in0)
   {
     switch (in0->cat)
     {
+      case Term_Variable:
+      {
+        // todo: you'll have to add however many poly parameters there are.
+        todoIncomplete;
+      } break;
+
       case Term_PolyVariable:
       {
         PolyVariable *in = castTerm(in0, PolyVariable);
-        Term *type = polyConstructorTypeTransform(arena, in0->type);
+        Term *type = transformPolyConstructorParamType(arena, in0->type);
         Variable *out = newTerm(arena, Variable, type);
         out->delta = 0;
         out->index = in->index;
@@ -4931,7 +4935,7 @@ polyConstructorTypeTransform(MemoryArena *arena, Term *in0)
           allocateArray(arena, poly_param_count, out->poly_args);
           for (i32 i=0; i < poly_param_count; i++)
           {
-            out->poly_args[i] = polyConstructorTypeTransform(arena, in->poly_args[i]);
+            out->poly_args[i] = transformPolyConstructorParamType(arena, in->poly_args[i]);
           }
           out0 = &out->t;
         }
@@ -4952,6 +4956,7 @@ buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
 {
   Union *uni = newTerm(arena, Union, builtin_Set);
   PolyUnion *poly_union = 0;
+  
   i32 ctor_count = in->ctor_count;
   uni->ctor_count = ctor_count;
   uni->ctor_names = copyArray(arena, ctor_count, in->ctor_names);
@@ -4969,14 +4974,14 @@ buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
   {
     if (global_name)
     {
-      // note: bind the type first to support recursive data structure.
+      // note: bind the name first to support recursive data structure.
       Term *term_to_bind = &uni->t;
       if (poly_params)
       {
         Arrow *signature       = copyStruct(arena, poly_params);
         signature->output_type = builtin_Set;
         poly_union       = newTerm(arena, PolyUnion, &signature->t);
-        poly_union->body = uni;
+        poly_union->union_template = uni;
         uni->poly_union = poly_union;
         term_to_bind = &poly_union->t;
       }
@@ -4987,58 +4992,78 @@ buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
     {
       introducePolyParameters(typer, poly_params);
     }
-    for (i32 ctor_i=0; noError() && (ctor_i < ctor_count); ctor_i++)
+    for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
     {
       if (Term *struc0 = buildTerm(arena, typer, &in->structs[ctor_i]->a, holev).term)
       {
         Arrow *struc = castTerm(struc0, Arrow);
         assert(struc);
         uni->structs[ctor_i] = struc;
-
-        if (global_name)
-        {
-          Term *term_to_bind = 0;
-          if (poly_params)
-          {
-            i32    poly_count = poly_params->param_count;
-            Arrow *signature   = copyStruct(arena, struc);
-            signature->param_count += poly_count;
-            // BOOKMARK
-            allocateArray(arena, signature->param_count, signature->param_names);
-            allocateArray(arena, signature->param_count, signature->param_types);
-            allocateArray(arena, signature->param_count, signature->param_flags);
-            for (i32 param_i=0; param_i < poly_count; param_i++)
-            {
-              signature->param_names[param_i] = poly_params->param_names[param_i];
-              signature->param_types[param_i] = poly_params->param_types[param_i];
-              signature->param_flags[param_i] = poly_params->param_flags[param_i] | ParameterFlag_Inferred;  // todo actually you can't infer the union parameter in case there's no arg (f.ex nil Nat), so in future we can improve this by automatically recognizing which params are inferred.
-            }
-            for (i32 param_i=0; param_i < struc->param_count; param_i++)
-            {
-              signature->param_names[poly_count+param_i] = struc->param_names[param_i];
-              signature->param_types[poly_count+param_i] = polyConstructorTypeTransform(arena, struc->param_types[param_i]);
-              signature->param_flags[poly_count+param_i] = struc->param_flags[param_i];
-            }
-
-            PolyConstructor *pctor = newTerm(arena, PolyConstructor, &signature->t);
-            pctor->poly_union  = poly_union;
-            pctor->index       = ctor_i;
-
-            term_to_bind = &pctor->t;
-          }
-          else
-          {
-            Term *ctor = newConstructor(arena, uni, ctor_i, true);
-            term_to_bind = ctor;
-            if (struc->param_count == 0)
-              term_to_bind = newComposite(arena, ctor, 0, 0);
-          }
-          addGlobalBinding(&uni->ctor_names[ctor_i], term_to_bind);
-        }
       }
     }
     if (poly_params)
       removePolyParameters(typer);
+  }
+
+  if (noError() && global_name)
+  {
+    if (poly_params)
+    {
+      // NOTE: synthesize output_type just for type consistency and printing's sake.
+      i32 poly_count = poly_params->param_count;
+      Union *synthetic_output_type = copyStruct(arena, uni);
+      allocateArray(arena, poly_count, synthetic_output_type->poly_args);
+      for (i32 i=0; i < poly_count; i++)
+      {
+        Variable *var = newTerm(arena, Variable, poly_params->param_types[i]);
+        var->name  = poly_params->param_names[i];
+        var->delta = 0;
+        var->index = i;
+        synthetic_output_type->poly_args[i] = &var->t;
+      }
+
+      for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
+      {
+        Arrow *struc = uni->structs[ctor_i];
+        Arrow *signature        = copyStruct(arena, struc);
+        signature->param_count += poly_count;
+        // BOOKMARK
+        allocateArray(arena, signature->param_count, signature->param_names);
+        allocateArray(arena, signature->param_count, signature->param_types);
+        allocateArray(arena, signature->param_count, signature->param_flags);
+        for (i32 param_i=0; param_i < poly_count; param_i++)
+        {
+          signature->param_names[param_i] = poly_params->param_names[param_i];
+          signature->param_types[param_i] = poly_params->param_types[param_i];
+          signature->param_flags[param_i] = poly_params->param_flags[param_i] | ParameterFlag_Inferred;  // todo actually you can't infer the union parameter in case there's no arg (f.ex nil Nat), so in future we can improve this by automatically recognizing which params are inferred.
+        }
+        for (i32 param_i=0; param_i < struc->param_count; param_i++)
+        {
+          signature->param_names[poly_count+param_i] = struc->param_names[param_i];
+          signature->param_types[poly_count+param_i] = transformPolyConstructorParamType(arena, struc->param_types[param_i]);
+          signature->param_flags[poly_count+param_i] = struc->param_flags[param_i];
+        }
+        signature->output_type = &synthetic_output_type->t;
+
+        PolyConstructor *pctor = newTerm(arena, PolyConstructor, &signature->t);
+        pctor->poly_union  = poly_union;
+        pctor->index       = ctor_i;
+
+        addGlobalBinding(&uni->ctor_names[ctor_i], &pctor->t);
+      }
+    }
+    else
+    {
+      for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
+      {
+        Arrow *struc = uni->structs[ctor_i];
+        Term *ctor = newConstructor(arena, uni, ctor_i, true);
+        Term *term_to_bind = ctor;
+        if (struc->param_count == 0)
+          term_to_bind = newComposite(arena, ctor, 0, 0);
+        addGlobalBinding(&uni->ctor_names[ctor_i], term_to_bind);
+      }
+    }
   }
 
   if (noError())
@@ -5047,11 +5072,11 @@ buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
   }
   else
   {
-    uni  = 0;
+    uni = 0;
     poly_union = 0;
   }
   if (poly_union) return &poly_union->t;
-  else      return &uni->t;
+  else return &uni->t;
 }
 
 inline CtorAst *

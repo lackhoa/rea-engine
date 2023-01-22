@@ -171,4 +171,3 @@ computeType(MemoryArena *arena, Typer *typer, Term *in0)
   return out0;
 }
 #endif
-

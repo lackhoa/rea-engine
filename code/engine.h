@@ -250,7 +250,7 @@ struct Constructor {
 // NOTE: does not appear in expression.
 struct PolyUnion {
   embed_Term(t);
-  Union *body;
+  Union *union_template;
 };
 
 // NOTE: does not appear in expression.
@@ -308,9 +308,9 @@ struct LocalBindings
 
 struct Variable {
   embed_Term(t);
+  String name;
   i32    delta;
   i32    index;
-  String name;
 };
 
 struct PolyVariable {
@@ -528,6 +528,7 @@ const u32 EvaluationFlag_ApplyMode = 1 << 0;
 struct EvaluationContext {
   MemoryArena  *arena;
   Term        **args;
+  Term        **poly_args;
   i32           offset;
   u32           flags;
 
