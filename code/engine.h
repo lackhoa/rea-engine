@@ -60,7 +60,6 @@ enum TermCategory {
   Term_PolyUnion,
   Term_Function,
   Term_Fork,
-  Term_PolyVariable,
   Term_Variable,
   Term_Computation,
   Term_Accessor,
@@ -310,12 +309,6 @@ struct Variable {
   embed_Term(t);
   String name;
   i32    delta;
-  i32    index;
-};
-
-struct PolyVariable {
-  embed_Term(t);
-  String name;
   i32    index;
 };
 

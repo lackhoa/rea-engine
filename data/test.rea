@@ -240,8 +240,7 @@ List :: union(ListType: Set)
 
 testList :: fn(l: List(Nat)) -> List(Nat)
 {fork l
- {single
-  return single(l.head),
+ {single return single(l.head),
   cons   return l.tail}}
 
 fold :: fn($A: Set, op: (a,b: A) -> A, list: List(A)) -> A
@@ -257,10 +256,14 @@ fold :: fn($A: Set, op: (a,b: A) -> A, list: List(A)) -> A
 
 check_truth fold(overload(+, Nat), 1 cons single(2)) = 3;
 
-+ :: fn($A: Set, l,m: List(A)) -> List(A)
++ :: fn($T: Set, l,m: List(T)) -> List(T)
 {fork l
  {single return l.head cons m,
   cons   return l.head cons (l.tail + m)}}
+
+#debug
+print (single(1) + single(2))
+;; check_truth ((1 cons single(2)) + single(3)) = (1 cons (2 cons single(3)));
 
 ;; #debug
 ;; Permutation :: union($A: Set, abc,cab: List(A))

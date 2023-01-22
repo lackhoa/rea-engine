@@ -166,6 +166,12 @@ getParameterCount(Term *in)
   return signature->param_count;
 }
 
+inline i32
+getPolyArgCount(Union *in)
+{
+  return getParameterCount(&in->poly_union->t);
+}
+
 inline Term *
 newComposite(MemoryArena *arena, Term *op, i32 arg_count, Term **args)
 {
@@ -1043,67 +1049,71 @@ print(MemoryArena *buffer, Ast *in0)
   return print(buffer, in0, {});
 }
 
+inline b32
+isGlobalValue(Term *in0)
+{
+  return (b32)in0->global_name;
+}
+
+internal void
+printTermsInParentheses(MemoryArena *buffer, i32 count, Term **terms, PrintOptions opt={})
+{
+  print(buffer, "(");
+  for (i32 i=0; i < count; i++)
+  {
+    print(buffer, terms[i]);
+    if (i != count-1)
+      print(buffer, ", ");
+  }
+  print(buffer, ")");
+}
+
 forward_declare internal void
 print(MemoryArena *buffer, Term *in0, PrintOptions opt)
 {// mark: printTerm
   if (in0)
   {
-    PrintOptions new_opt = opt;
-    if (!checkFlag(opt.flags, PrintFlag_LockDetailed))
-      unsetFlag(&new_opt.flags, PrintFlag_Detailed);
-    unsetFlag(&new_opt.flags, PrintFlag_PrintType);
-    new_opt.indentation = opt.indentation + 1;
-    b32 skip_print_type = false;
-
-    switch (in0->cat)
+    if (isGlobalValue(in0) && !checkFlag(opt.flags, PrintFlag_Detailed))
     {
-      case Term_Variable:
+      print(buffer, in0->global_name->string);
+    }
+    else
+    {
+      PrintOptions new_opt = opt;
+      if (!checkFlag(opt.flags, PrintFlag_LockDetailed))
+        unsetFlag(&new_opt.flags, PrintFlag_Detailed);
+      unsetFlag(&new_opt.flags, PrintFlag_PrintType);
+      new_opt.indentation = opt.indentation + 1;
+      b32 skip_print_type = false;
+
+      switch (in0->cat)
       {
-        Variable *in = castTerm(in0, Variable);
-        if (in->name.chars)
-          print(buffer, in->name);
-        else
-          print(buffer, "anon");
-
-        if (!in->name.chars || DEBUG_MODE)
-          print(buffer, "[%d:%d]", in->delta, in->index);
-      } break;
-
-      case Term_PolyVariable:
-      {
-        PolyVariable *in = castTerm(in0, PolyVariable);
-        print(buffer, in->name);
-        if (DEBUG_MODE)
-          print(buffer, "[P:%d]", in->index);
-      } break;
-
-      case Term_Hole:
-      {print(buffer, "_");} break;
-
-      case Term_Composite:
-      {printComposite(buffer, in0, true, new_opt);} break;
-
-      case Term_Union:
-      {
-        Union *in = castTerm(in0, Union);
-        if (isPolyInstance(in))
+        case Term_Variable:
         {
-          print(buffer, in->poly_union->global_name->string);
-          Arrow *signature = castTerm(getType(&in->poly_union->t), Arrow);
-          print(buffer, "(");
-          for (i32 arg_i=0; arg_i < signature->param_count; arg_i++)
-          {
-            print(buffer, in->poly_args[arg_i]);
-            if (arg_i != signature->param_count-1)
-              print(buffer, ", ");
-          }
-          print(buffer, ")");
-        }
-        else
+          Variable *in = castTerm(in0, Variable);
+          if (in->name.chars)
+            print(buffer, in->name);
+          else
+            print(buffer, "anon");
+
+          if (!in->name.chars || DEBUG_MODE)
+            print(buffer, "[%d:%d]", in->delta, in->index);
+        } break;
+
+        case Term_Hole:
+        {print(buffer, "_");} break;
+
+        case Term_Composite:
+        {printComposite(buffer, in0, true, new_opt);} break;
+
+        case Term_Union:
         {
-          if (in0->global_name && !checkFlag(opt.flags, PrintFlag_Detailed))
+          Union *in = castTerm(in0, Union);
+          if (isPolyInstance(in))
           {
-            print(buffer, in0->global_name->string);
+            print(buffer, in->poly_union->global_name->string);
+            Arrow *signature = castTerm(getType(&in->poly_union->t), Arrow);
+            printTermsInParentheses(buffer, signature->param_count, in->poly_args);
           }
           else
           {
@@ -1124,169 +1134,166 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
             }
             print(buffer, "}");
           }
-        }
-      } break;
+        } break;
 
-      case Term_Function:
-      {
-        Function *in = castTerm(in0, Function);
-        b32 is_anonymous = false;
-        String name = globalNameOf(in0);
-        if (name.chars)
-          print(buffer, name);
-        else
-          is_anonymous = true;
-
-        if (checkFlag(opt.flags, PrintFlag_Detailed) || is_anonymous)
+        case Term_Function:
         {
-          skip_print_type = true;
-          if (in->type) print(buffer, in->type, new_opt);
-
+          Function *in = castTerm(in0, Function);
+          if (in->type)
+          {
+            print(buffer, in->type, new_opt);
+            skip_print_type = true;
+          }
           newlineAndIndent(buffer, opt.indentation);
           print(buffer, "{");
           print(buffer, in->body, new_opt);
           print(buffer, "}");
-        }
-      } break;
+        } break;
 
-      case Term_Arrow:
-      {
-        Arrow *in = castTerm(in0, Arrow);
-        print(buffer, "(");
-        for (int param_id = 0;
-             param_id < in->param_count;
-             param_id++)
+        case Term_Arrow:
         {
-          String param_name = in->param_names[param_id];
-          if (param_name.chars)
+          Arrow *in = castTerm(in0, Arrow);
+          print(buffer, "(");
+          for (int param_id = 0;
+               param_id < in->param_count;
+               param_id++)
           {
-            print(buffer, param_name);
-            print(buffer, ": ");
+            String param_name = in->param_names[param_id];
+            if (param_name.chars)
+            {
+              print(buffer, param_name);
+              print(buffer, ": ");
+            }
+            print(buffer, in->param_types[param_id], new_opt);
+            if (param_id < in->param_count-1)
+              print(buffer, ", ");
           }
-          print(buffer, in->param_types[param_id], new_opt);
-          if (param_id < in->param_count-1)
-            print(buffer, ", ");
-        }
-        print(buffer, ")");
-        if (in->output_type)
+          print(buffer, ")");
+          if (in->output_type)
+          {
+            print(buffer, " -> ");
+            print(buffer, in->output_type, new_opt);
+          }
+        } break;
+
+        case Term_Builtin:
         {
-          print(buffer, " -> ");
-          print(buffer, in->output_type, new_opt);
-        }
-      } break;
+          // todo cleanup probably don't need these anymore
+          if (in0 == builtin_equal)
+            print(buffer, "=");
+          else if (in0 == builtin_type_equal)
+            print(buffer, "=");
+          else if (in0 == builtin_Set)
+            print(buffer, "Set");
+          else if (in0 == builtin_Type)
+            print(buffer, "Type");
+          else
+            todoIncomplete;
+        } break;
 
-      case Term_Builtin:
-      {
-        if (in0 == builtin_equal)
-          print(buffer, "=");
-        else if (in0 == builtin_type_equal)
-          print(buffer, "=");
-        else if (in0 == builtin_Set)
-          print(buffer, "Set");
-        else if (in0 == builtin_Type)
-          print(buffer, "Type");
-        else
-          todoIncomplete;
-      } break;
-
-      case Term_Constructor:
-      {
-        Constructor *in = castTerm(in0, Constructor);
-        print(buffer, in->uni->ctor_names[in->index]);
-      } break;
-
-      case Term_Rewrite:
-      {
-        Rewrite *rewrite = castTerm(in0, Rewrite);
-        print(buffer, getType(&rewrite->t), new_opt);
-        skip_print_type = true;
-        print(buffer, " <=>");
-        newlineAndIndent(buffer, opt.indentation);
-        print(buffer, getType(rewrite->body), new_opt);
-        newlineAndIndent(buffer, opt.indentation);
-
-        print(buffer, "rewrite");
-        if (rewrite->right_to_left) print(buffer, "<-");
-        print(buffer, rewrite->path);
-        if (rewrite->eq_proof->cat != Term_Computation)
+        case Term_Constructor:
         {
-          print(buffer, " justification: ");
+          Constructor *in = castTerm(in0, Constructor);
+          print(buffer, in->uni->ctor_names[in->index]);
+          if (isPolyInstance(in->uni))
+          {
+            printTermsInParentheses(buffer, getPolyArgCount(in->uni), in->uni->poly_args);
+          }
+        } break;
+
+        case Term_Rewrite:
+        {
+          Rewrite *rewrite = castTerm(in0, Rewrite);
+          print(buffer, getType(&rewrite->t), new_opt);
+          skip_print_type = true;
+          print(buffer, " <=>");
+          newlineAndIndent(buffer, opt.indentation);
+          print(buffer, getType(rewrite->body), new_opt);
+          newlineAndIndent(buffer, opt.indentation);
+
+          print(buffer, "rewrite");
+          if (rewrite->right_to_left) print(buffer, "<-");
+          print(buffer, rewrite->path);
+          if (rewrite->eq_proof->cat != Term_Computation)
+          {
+            print(buffer, " justification: ");
+            newlineAndIndent(buffer, new_opt.indentation);
+            print(buffer, rewrite->eq_proof, new_opt);
+          }
+          newlineAndIndent(buffer, opt.indentation);
+
+          print(buffer, "body: ");
+          // print(buffer, getTypeNoEnv(temp_arena, rewrite->body), new_opt);
           newlineAndIndent(buffer, new_opt.indentation);
-          print(buffer, rewrite->eq_proof, new_opt);
-        }
-        newlineAndIndent(buffer, opt.indentation);
+          print(buffer, rewrite->body, new_opt);
+        } break;
 
-        print(buffer, "body: ");
-        // print(buffer, getTypeNoEnv(temp_arena, rewrite->body), new_opt);
-        newlineAndIndent(buffer, new_opt.indentation);
-        print(buffer, rewrite->body, new_opt);
-      } break;
-
-      case Term_Computation:
-      {
-        print(buffer, "computation");
-      } break;
-
-      case Term_Accessor:
-      {
-        Accessor *in = castTerm(in0, Accessor);
-        print(buffer, in->record, new_opt);
-        print(buffer, ".");
-        print(buffer, in->field_name);
-      } break;
-
-      case Term_Fork:
-      {
-        Fork *in = castTerm(in0, Fork);
-        print(buffer, "fork ");
-        print(buffer, in->subject, new_opt);
-        newlineAndIndent(buffer, opt.indentation);
-        print(buffer, "{");
-        Union *uni = in->uni;
-        for (i32 ctor_id = 0;
-             ctor_id < uni->ctor_count;
-             ctor_id++)
+        case Term_Computation:
         {
-          print(buffer, uni->ctor_names[ctor_id]);
-          print(buffer, ": ");
-          print(buffer, in->bodies[ctor_id], new_opt);
-          if (ctor_id != uni->ctor_count-1)
+          print(buffer, "computation");
+        } break;
+
+        case Term_Accessor:
+        {
+          Accessor *in = castTerm(in0, Accessor);
+          print(buffer, in->record, new_opt);
+          print(buffer, ".");
+          print(buffer, in->field_name);
+        } break;
+
+        case Term_Fork:
+        {
+          Fork *in = castTerm(in0, Fork);
+          print(buffer, "fork ");
+          print(buffer, in->subject, new_opt);
+          newlineAndIndent(buffer, opt.indentation);
+          print(buffer, "{");
+          Union *uni = in->uni;
+          for (i32 ctor_id = 0;
+               ctor_id < uni->ctor_count;
+               ctor_id++)
           {
-            print(buffer, ", ");
-            newlineAndIndent(buffer, opt.indentation+1);
+            print(buffer, uni->ctor_names[ctor_id]);
+            print(buffer, ": ");
+            print(buffer, in->bodies[ctor_id], new_opt);
+            if (ctor_id != uni->ctor_count-1)
+            {
+              print(buffer, ", ");
+              newlineAndIndent(buffer, opt.indentation+1);
+            }
           }
-        }
-        print(buffer, "}");
-      } break;
+          print(buffer, "}");
+        } break;
 
-      case Term_PolyUnion:
+        case Term_PolyUnion:
+        {
+          PolyUnion *in = castTerm(in0, PolyUnion);
+          print(buffer, "union ");
+          print(buffer, getType(in0), new_opt);
+          skip_print_type = true;
+          print(buffer, " ");
+          print(buffer, &in->union_template->t, new_opt);
+        } break;
+
+        case Term_PolyConstructor:
+        {
+          PolyConstructor *in = castTerm(in0, PolyConstructor);
+          print(buffer, in->poly_union->union_template->ctor_names[in->index]);
+        } break;
+
+        default:
+        {
+          todoIncomplete;
+        } break;
+      }
+
+      if ((checkFlag(opt.flags, PrintFlag_PrintType) ||
+           in0->cat == Term_Computation) &&
+          !skip_print_type)
       {
-        PolyUnion *in = castTerm(in0, PolyUnion);
-        print(buffer, "union ");
+        print(buffer, ": ");
         print(buffer, getType(in0), new_opt);
-        skip_print_type = true;
-        print(buffer, " ");
-        print(buffer, &in->union_template->t, new_opt);
-      } break;
-
-      case Term_PolyConstructor:
-      {
-        PolyConstructor *in = castTerm(in0, PolyConstructor);
-        print(buffer, in->poly_union->union_template->ctor_names[in->index]);
-      } break;
-
-      default:
-      {
-        todoIncomplete;
-      } break;
-    }
-
-    if ((checkFlag(opt.flags, PrintFlag_PrintType) ||
-         in0->cat == Term_Computation) &&
-        !skip_print_type)
-    {
-      print(buffer, ": ");
-      print(buffer, getType(in0), new_opt);
+      }
     }
   }
   else
@@ -1364,12 +1371,6 @@ isCompositeConstructor(Term *in0)
 }
 
 inline b32
-isGlobalValue(Term *in0)
-{
-  return (b32)in0->global_name;
-}
-
-inline b32
 isGround(Term *in0)
 {
   if (isGlobalValue(in0))
@@ -1406,7 +1407,6 @@ isGround(Term *in0)
     case Term_Computation:
     case Term_Union:
     case Term_Constructor:
-    case Term_PolyVariable:
     {return false;} break;
 
     case Term_PolyUnion:
@@ -1500,11 +1500,24 @@ rebaseMain(MemoryArena *arena, Term *in0, i32 delta, i32 offset)
       {
         Union *in  = castTerm(in0, Union);
         Union *out = copyStruct(arena, in);
-        allocateArray(arena, in->ctor_count, out->structs);
-        for (i32 id=0; id < in->ctor_count; id++)
+        if (isPolyInstance(in))
         {
-          Term *rebased = rebaseMain(arena, &in->structs[id]->t, delta, offset);
-          out->structs[id] = castTerm(rebased, Arrow);
+          // #poly_unions_are_global
+          i32 poly_param_count = getPolyArgCount(in);
+          allocateArray(arena, poly_param_count, out->poly_args);
+          for (i32 i=0; i < poly_param_count; i++)
+          {
+            out->poly_args[i] = rebaseMain(arena, in->poly_args[i], delta, offset);
+          }
+        }
+        else
+        {
+          allocateArray(arena, in->ctor_count, out->structs);
+          for (i32 i=0; i < in->ctor_count; i++)
+          {
+            Term *rebased = rebaseMain(arena, &in->structs[i]->t, delta, offset);
+            out->structs[i] = castTerm(rebased, Arrow);
+          }
         }
         out0 = &out->t;
       } break;
@@ -1513,10 +1526,12 @@ rebaseMain(MemoryArena *arena, Term *in0, i32 delta, i32 offset)
       {
         Constructor *in  = castTerm(in0, Constructor);
         // todo kinda nasty that we have to rebase the whole union. But what can
-        // we really do? Since direct mutation is out of question atm.
+        // we really do?
         Union *uni = castTerm(rebaseMain(arena, &in->uni->t, delta, offset), Union);
         if (uni == in->uni)
+        {
           out0 = in0;
+        }
         else
         {
           Constructor *out = copyStruct(arena, in);
@@ -1658,18 +1673,28 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
         }
         else if (in->delta > ctx->offset)
         {
-          Variable *out = copyStruct(arena, in);
-          out->delta--;  // TODO this is rocket science in here...
-          out0 = &out->t;
+          if (ctx->poly_args)
+          {
+            // NOTE: assert the poly union is in global context.
+            assert(in->delta == ctx->offset+1);
+            if (ctx->offset)
+            {
+              todoIncomplete;
+            }
+            else
+            {
+              out0 = rebase(arena, ctx->poly_args[in->index], ctx->offset);
+            }
+          }
+          else
+          {
+            Variable *out = copyStruct(arena, in);
+            out->delta--;  // NOTE: we'll remove one abstraction layer, hence the delta decrement.
+            out0 = &out->t;
+          }
         }
         else
           out0 = in0;
-      } break;
-
-      case Term_PolyVariable:
-      {
-        PolyVariable *in = castTerm(in0, PolyVariable);
-        out0 = ctx->poly_args[in->index];
       } break;
 
       case Term_Composite:
@@ -1826,7 +1851,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
           // must be global. All we have to do is replace the poly variable.
           Union *out = copyStruct(arena, in);
           // out->poly_args = ctx->poly_args;  // wrong
-          i32 poly_param_count = getParameterCount(&in->poly_union->t);
+          i32 poly_param_count = getPolyArgCount(in);
           allocateArray(arena, poly_param_count, out->poly_args);
           for (i32 i=0; i < poly_param_count; i++)
           {
@@ -1895,7 +1920,7 @@ compareTerms(MemoryArena *arena, Term *l0, Term *r0)
   i32 serial = DEBUG_SERIAL++;
   if (DEBUG_MODE)
   {
-    DEBUG_INDENT(); DUMP("comparing(", serial, "): ", lhs0, " and ", rhs0, "\n");
+    DEBUG_INDENT(); DUMP("comparing(", serial, "): ", l0, " and ", r0, "\n");
   }
 #endif
 
@@ -2025,7 +2050,7 @@ compareTerms(MemoryArena *arena, Term *l0, Term *r0)
 
       case Term_Union:
       {
-        if (!isGlobalValue(l0) && !isGlobalValue(r0))  // just assume that global unions are unequal.
+        if (!isGlobalValue(l0) && !isGlobalValue(r0))  // #poly_unions_are_global
         {
           Union *lhs = castTerm(l0, Union);
           Union *rhs = castTerm(r0, Union);
@@ -2035,7 +2060,7 @@ compareTerms(MemoryArena *arena, Term *l0, Term *r0)
                 && equal(&lhs->poly_union->t, &rhs->poly_union->t))
             {
               b32 found_mismatch = false;
-              i32 poly_param_count = getParameterCount(&lhs->poly_union->t);
+              i32 poly_param_count = getPolyArgCount(lhs);
               for (i32 i=0; i < poly_param_count && !found_mismatch; i++)
               {
                 if (!equal(lhs->poly_args[i],
@@ -2067,14 +2092,6 @@ compareTerms(MemoryArena *arena, Term *l0, Term *r0)
             }
           }
         }
-      } break;
-
-      case Term_PolyVariable:
-      {
-        PolyVariable *l = castTerm(l0, PolyVariable);
-        PolyVariable *r = castTerm(r0, PolyVariable);
-        if (l->index == r->index)
-          out.result = Trinary_True;
       } break;
 
       case Term_Function:
@@ -2722,7 +2739,7 @@ unify(Stack *stack, Term *in0, Term *goal0)
           if (isPolyInstance(goal) &&
               equal(&in->poly_union->t, &goal->poly_union->t))
           {
-            i32 poly_param_count = getParameterCount(&in->poly_union->t);
+            i32 poly_param_count = getPolyArgCount(in);
             b32 mismatch = false;
             for (i32 i=0; i < poly_param_count && !mismatch; i++)
             {
@@ -3689,49 +3706,6 @@ buildAlgebraicNorm(MemoryArena *arena, Typer *typer, CompositeAst *in)
   return out;
 }
 
-internal void
-introducePolyParameters(Typer *typer, Arrow *poly_params)
-{
-  typer->poly_params = poly_params;
-}
-
-internal void
-removePolyParameters(Typer *typer)
-{
-  assert(typer->poly_params);
-  typer->poly_params = 0;
-}
-
-internal LookupPolyParameter
-lookupPolyParameter(Typer *typer, Token *token)
-{
-  b32 found = false;
-  i32 index = 0;
-  if (typer->poly_params)
-  {
-    for (i32 i=0; !found && i < typer->poly_params->param_count; i++)
-    {
-      if (equal(typer->poly_params->param_names[i], token->string))
-      {
-        index = i;
-        found = true;
-      }
-    }
-  }
-  return LookupPolyParameter{.found=found, .index=index};
-}
-
-inline Term *
-newPolyVariable(MemoryArena *arena, Typer *typer, i32 index)
-{
-  Term *type = typer->poly_params->param_types[index];
-  assert(type);
-  PolyVariable *out = newTerm(arena, PolyVariable, type);
-  out->index = index;
-  out->name  = typer->poly_params->param_names[index];
-  return &out->t;
-}
-
 forward_declare internal BuildTerm
 buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
 {
@@ -3991,11 +3965,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
     {
       // Identifier *in = castAst(in0, Identifier);
       Token *name = &in0->token;
-      if (auto poly = lookupPolyParameter(typer, name))
-      {
-        out0 = newPolyVariable(arena, typer, poly.index);
-      }
-      else if (LookupLocalName local = lookupLocalName(typer, name))
+      if (LookupLocalName local = lookupLocalName(typer, name))
       {
         out0 = newVariable(arena, typer, local.var_index, local.stack_delta);
       }
@@ -4965,62 +4935,7 @@ parseUnion(MemoryArena *arena)
 }
 
 internal Term *
-transformPolyConstructorParamType(MemoryArena *arena, Term *in0)
-{
-  Term *out0 = 0;
-  if (isGlobalValue(in0))
-  {
-    out0 = in0;
-  }
-  else
-  {
-    switch (in0->cat)
-    {
-      case Term_PolyVariable:
-      {
-        PolyVariable *in = castTerm(in0, PolyVariable);
-        Term *type = transformPolyConstructorParamType(arena, in0->type);
-        Variable *out = newTerm(arena, Variable, type);
-        out->delta = 0;
-        out->index = in->index;
-        out->name  = in->name;
-        out0 = &out->t;
-      } break;
-
-      case Term_Variable:
-      {
-        // todo: you'll have to add however many poly parameters there are.
-        todoIncomplete;
-      } break;
-
-      case Term_Union:
-      {
-        Union *in = castTerm(in0, Union);
-        if (isPolyInstance(in))
-        {
-          Union *out = copyStruct(arena, in);
-          i32 poly_param_count = getParameterCount(&out->poly_union->t);
-          allocateArray(arena, poly_param_count, out->poly_args);
-          for (i32 i=0; i < poly_param_count; i++)
-          {
-            out->poly_args[i] = transformPolyConstructorParamType(arena, in->poly_args[i]);
-          }
-          out0 = &out->t;
-        }
-        else
-          todoIncomplete;
-      } break;
-
-      default:
-        todoIncomplete;
-    }
-  }
-  assert(out0);
-  return out0;
-}
-
-internal Term *
-transformVariablesToPoly(MemoryArena *arena, Term *in0)
+processPolyConstructorType(MemoryArena *arena, Term *in0)
 {
   Term *out0 = 0;
   if (isGlobalValue(in0))
@@ -5034,11 +4949,21 @@ transformVariablesToPoly(MemoryArena *arena, Term *in0)
       case Term_Variable:
       {
         Variable *in = castTerm(in0, Variable);
-        Term *type = transformVariablesToPoly(arena, in0->type);
-        PolyVariable *out = newTerm(arena, PolyVariable, type);
-        out->name  = in->name;
-        out->index = in->index;
-        out0 = &out->t;
+        if (in->delta == 0)
+        {
+          // todo: you'll have to add however many poly parameters there are.
+          todoIncomplete;
+        }
+        else if (in->delta == 1)
+        {
+          Variable *out = copyStruct(arena, in);
+          out->delta = 0;
+          out0 = &out->t;
+        }
+        else
+        {
+          todoIncomplete;
+        }
       } break;
 
       case Term_Union:
@@ -5047,11 +4972,11 @@ transformVariablesToPoly(MemoryArena *arena, Term *in0)
         if (isPolyInstance(in))
         {
           Union *out = copyStruct(arena, in);
-          i32 poly_param_count = getParameterCount(&out->poly_union->t);
+          i32 poly_param_count = getPolyArgCount(out);
           allocateArray(arena, poly_param_count, out->poly_args);
           for (i32 i=0; i < poly_param_count; i++)
           {
-            out->poly_args[i] = transformVariablesToPoly(arena, in->poly_args[i]);
+            out->poly_args[i] = processPolyConstructorType(arena, in->poly_args[i]);
           }
           out0 = &out->t;
         }
@@ -5079,18 +5004,11 @@ buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
   allocateArray(arena, ctor_count, uni->structs);
 
   Arrow *poly_params = 0;
-  Arrow *poly_params_with_poly_vars = 0;
   if (in->params)
   {
     assert(global_name);
     Term *poly_params0 = buildTerm(arena, typer, &in->params->a, holev);
     poly_params = castTerm(poly_params0, Arrow);
-    poly_params_with_poly_vars = copyStruct(arena, poly_params);
-    allocateArray(arena, poly_params->param_count, poly_params_with_poly_vars->param_types);
-    for (i32 i=0; i < poly_params->param_count; i++)
-    {
-      poly_params_with_poly_vars->param_types[i] = transformVariablesToPoly(arena, poly_params->param_types[i]);
-    }
   }
 
   if (noError())
@@ -5113,7 +5031,7 @@ buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
 
     if (poly_params)
     {
-      introducePolyParameters(typer, poly_params_with_poly_vars);
+      introduceSignature(typer, poly_params, true);
     }
     for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
     {
@@ -5125,7 +5043,7 @@ buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
       }
     }
     if (poly_params)
-      removePolyParameters(typer);
+      unwindBindingsAndScope(typer);
   }
 
   if (noError() && global_name)
@@ -5163,7 +5081,7 @@ buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
         for (i32 param_i=0; param_i < struc->param_count; param_i++)
         {
           signature->param_names[poly_count+param_i] = struc->param_names[param_i];
-          signature->param_types[poly_count+param_i] = transformPolyConstructorParamType(arena, struc->param_types[param_i]);
+          signature->param_types[poly_count+param_i] = processPolyConstructorType(arena, struc->param_types[param_i]);
           signature->param_flags[poly_count+param_i] = struc->param_flags[param_i];
         }
         signature->output_type = &synthetic_output_type->t;
