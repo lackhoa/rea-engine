@@ -19,7 +19,6 @@ b32 equal(Term * lhs, Term * rhs);
 Term * rebase(MemoryArena * arena, Term * in0, i32 delta);
 Term * evaluate(MemoryArena * arena, Term ** args, Term * in0);
 Term * evaluate(EvaluationContext ctx, Term * in0);
-CompareTerms compareTerms(MemoryArena * arena, Term * lhs0, Term * rhs0);
 Trinary equalTrinary(Term * lhs0, Term * rhs0);
 Term * normalize(MemoryArena * arena, Typer * env, Term * in0);
 void introduceSignature(Typer * typer, Arrow * signature, b32 add_bindings);

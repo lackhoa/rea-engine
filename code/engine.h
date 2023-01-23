@@ -524,11 +524,6 @@ struct EvaluationContext {
   Term        **poly_args;
   i32           offset;
   u32           flags;
-
-  Term  *punion_op;
-  i32    punion_arg_count;
-  Term **punion_args;
-  Term  *punion_result;
 };
 
 struct UnionAst {

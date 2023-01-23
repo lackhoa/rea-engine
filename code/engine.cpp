@@ -1195,10 +1195,6 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
         {
           Constructor *in = castTerm(in0, Constructor);
           print(buffer, in->uni->ctor_names[in->index]);
-          if (isPolyInstance(in->uni))
-          {
-            printTermsInParentheses(buffer, getPolyArgCount(in->uni), in->uni->poly_args);
-          }
         } break;
 
         case Term_Rewrite:
@@ -1683,7 +1679,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
             }
             else
             {
-              out0 = rebase(arena, ctx->poly_args[in->index], ctx->offset);
+              out0 = ctx->poly_args[in->index];
             }
           }
           else
@@ -1711,23 +1707,8 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
 
         if (checkFlag(ctx->flags, EvaluationFlag_ApplyMode))
         {
-          b32 recursion_match = false;
-          if (ctx->punion_op && equal(ctx->punion_op, op))
-          {
-            recursion_match = true;
-            assert(ctx->punion_arg_count == in->arg_count);
-            for (i32 arg_i=0; arg_i < in->arg_count && recursion_match; arg_i++)
-            {
-              if (!equal(ctx->punion_args[arg_i], args[arg_i]))
-              {
-                recursion_match = false;
-              }
-            }
-            if (recursion_match)
-              out0 = ctx->punion_result;
-          }
-          if (!recursion_match)
-            out0 = apply(arena, op, in->arg_count, args, getType(in0), {});
+          Term *type = evaluateMain(ctx, getType(in0));
+          out0 = apply(arena, op, in->arg_count, args, type, {});
         }
 
         if (!out0)
@@ -1862,11 +1843,6 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
         else
         {
           Union *out = copyStruct(arena, in);
-          // :recursion_result_set_later todo #cleanup Don't need this anymore
-          if (ctx->punion_op && !ctx->punion_result)
-          {
-            ctx->punion_result = &out->t;
-          }
           allocateArray(arena, in->ctor_count, out->structs);
           for (i32 id=0; id < in->ctor_count; id++)
           {
@@ -1908,13 +1884,11 @@ evaluate(EvaluationContext ctx, Term *in0)
   return evaluateMain(&ctx, in0);
 }
 
-// NOTE: we can't guarantee that compare would be of the same type, because the
-// tree search needs it.
-forward_declare internal CompareTerms
-compareTerms(MemoryArena *arena, Term *l0, Term *r0)
+// todo #cleanup "same_type" doesn't need to be passed down
+internal CompareTerms
+compareTerms(MemoryArena *arena, b32 same_type, Term *l0, Term *r0)
 {
-  CompareTerms out = {};
-  out.result = Trinary_Unknown;
+  CompareTerms out = {.result = Trinary_Unknown};
 
 #if DEBUG_LOG_compare
   i32 serial = DEBUG_SERIAL++;
@@ -1925,7 +1899,9 @@ compareTerms(MemoryArena *arena, Term *l0, Term *r0)
 #endif
 
   if (l0 == r0)
+  {
     out.result = {Trinary_True};
+  }
   else if (l0->cat == r0->cat)
   {
     switch (l0->cat)
@@ -1957,11 +1933,17 @@ compareTerms(MemoryArena *arena, Term *l0, Term *r0)
           if (!type_mismatch)
           {
             if (lhs->output_type && rhs->output_type)
+            {
               out.result = equalTrinary(lhs->output_type, rhs->output_type);
+            }
             else if (!rhs->output_type && !rhs->output_type)
+            {
               out.result = Trinary_True;
+            }
             else
+            {
               out.result = Trinary_False;
+            }
           }
         }
         else
@@ -1970,20 +1952,38 @@ compareTerms(MemoryArena *arena, Term *l0, Term *r0)
 
       case Term_Composite:
       {
-        Composite *lhs = castTerm(l0, Composite);
-        Composite *rhs = castTerm(r0, Composite);
+        Composite *l = castTerm(l0, Composite);
+        Composite *r = castTerm(r0, Composite);
 
-        Trinary op_compare = equalTrinary(lhs->op, rhs->op);
-        if ((op_compare == Trinary_False) &&
-            (lhs->op->cat == Term_Constructor) &&
-            (rhs->op->cat == Term_Constructor))
+        b32 op_equal = false;
+
+        // :compare_constructor_handling
+        if (Constructor *lctor = castTerm(l->op, Constructor))
         {
-          out.result = Trinary_False;
+          if (Constructor *rctor = castTerm(r->op, Constructor))
+          {
+            if (!same_type)
+            {
+              // NOTE: we could return false if the types are different, need more thoughts.
+              same_type = equal(getType(l0), getType(r0));
+            }
+            if (same_type)
+            {
+              op_equal = (lctor->index == rctor->index);
+              if (!op_equal)
+                out.result = Trinary_False;
+            }
+          }
         }
-        else if (op_compare == Trinary_True)
+        else
         {
-          i32 count = lhs->arg_count;
-          assert(lhs->arg_count == rhs->arg_count);
+          op_equal = equal(l->op, r->op);
+        }
+
+        if (op_equal)
+        {
+          i32 count = l->arg_count;
+          assert(l->arg_count == r->arg_count);
 
           i32 mismatch_count = 0;
           i32 false_count = 0;
@@ -1992,7 +1992,7 @@ compareTerms(MemoryArena *arena, Term *l0, Term *r0)
           out.result = Trinary_True;
           for (i32 id=0; id < count; id++)
           {
-            CompareTerms recurse = compareTerms(arena,lhs->args[id], rhs->args[id]);
+            CompareTerms recurse = compareTerms(arena, true, l->args[id], r->args[id]);
             if (recurse.result != Trinary_True)
             {
               mismatch_count++;
@@ -2008,28 +2008,25 @@ compareTerms(MemoryArena *arena, Term *l0, Term *r0)
           if (mismatch_count > 0)
           {
             out.result = Trinary_Unknown;
-            if ((lhs->op->cat == Term_Constructor) &&
-                (rhs->op->cat == Term_Constructor) &&
+            if ((l->op->cat == Term_Constructor) &&
+                (r->op->cat == Term_Constructor) &&
                 (false_count > 0))
             {
               out.result = Trinary_False;
             }
           }
-          if (out.result == Trinary_Unknown && (mismatch_count == 1) && arena)
+          if ((out.result == Trinary_Unknown) && (mismatch_count == 1) && arena)
           {
             allocate(arena, out.diff_path);
             out.diff_path->head = unique_diff_id;
-            out.diff_path->tail  = unique_diff_path;
+            out.diff_path->tail = unique_diff_path;
           }
         }
       } break;
 
       case Term_Constructor:
       {
-        Constructor *lhs = castTerm(l0, Constructor);
-        Constructor *rhs = castTerm(r0, Constructor);
-        out.result = toTrinary(equal(&lhs->uni->t, &rhs->uni->t) &&
-                               (lhs->index == rhs->index));
+        invalidCodePath;  // :compare_constructor_handling
       } break;
 
       case Term_Accessor:
@@ -2050,7 +2047,7 @@ compareTerms(MemoryArena *arena, Term *l0, Term *r0)
 
       case Term_Union:
       {
-        if (!isGlobalValue(l0) && !isGlobalValue(r0))  // #poly_unions_are_global
+        if (!isGlobalValue(l0) && !isGlobalValue(r0))
         {
           Union *lhs = castTerm(l0, Union);
           Union *rhs = castTerm(r0, Union);
@@ -2059,6 +2056,7 @@ compareTerms(MemoryArena *arena, Term *l0, Term *r0)
             if (isPolyInstance(rhs)
                 && equal(&lhs->poly_union->t, &rhs->poly_union->t))
             {
+              // #poly_unions_are_global
               b32 found_mismatch = false;
               i32 poly_param_count = getPolyArgCount(lhs);
               for (i32 i=0; i < poly_param_count && !found_mismatch; i++)
@@ -2116,7 +2114,7 @@ compareTerms(MemoryArena *arena, Term *l0, Term *r0)
 forward_declare internal Trinary
 equalTrinary(Term *lhs0, Term *rhs0)
 {
-  return compareTerms(0, lhs0, rhs0).result;
+  return compareTerms(0, false, lhs0, rhs0).result;
 }
 
 internal GlobalBinding *
@@ -2637,7 +2635,7 @@ matchType(Term *actual, Term *goal)
 }
 
 internal b32
-unify(Stack *stack, Term *in0, Term *goal0)
+unify(Stack *stack, b32 same_type, Term *in0, Term *goal0)
 {
   b32 success = false;
 
@@ -2665,14 +2663,21 @@ unify(Stack *stack, Term *in0, Term *goal0)
           Term *rebased = rebase(temp_arena, lookup, in->delta);
           success = equal(rebased, goal0);
         }
-        else if (unify(stack, getType(in0), getType(goal0)))
+        else
         {
-          // NOTE: if rebase happens -> the new term will be on the correct arena.
-          // if rebase does nothing -> we put "goal0" on there, which is by definition on the correct arena.
-          lookup_stack->items[in->index] = rebase(lookup_stack->unification_arena, goal0, -in->delta);
-          if (lookup_stack->unification_arena != temp_arena)
-            assert(inArena(lookup_stack->unification_arena, lookup_stack->items[in->index]));
-          success = true;
+          if (!same_type)
+          {
+            same_type = unify(stack, false, getType(in0), getType(goal0));
+          }
+          if (same_type)
+          {
+            // NOTE: if rebase happens -> the new term will be on the correct arena.
+            // if rebase does nothing -> we put "goal0" on there, which is by definition on the correct arena.
+            lookup_stack->items[in->index] = rebase(lookup_stack->unification_arena, goal0, -in->delta);
+            if (lookup_stack->unification_arena != temp_arena)
+              assert(inArena(lookup_stack->unification_arena, lookup_stack->items[in->index]));
+            success = true;
+          }
         }
       }
       else if (Variable *goal = castTerm(goal0, Variable))
@@ -2689,15 +2694,34 @@ unify(Stack *stack, Term *in0, Term *goal0)
       Composite *in = castTerm(in0, Composite);
       if (Composite *goal = castTerm(goal0, Composite))
       {
-        if (unify(stack, in->op, goal->op))
+        b32 op_equal = false;
+        if (Constructor *in_ctor = castTerm(in->op, Constructor))
+        {
+          if (Constructor *goal_ctor = castTerm(goal->op, Constructor))
+          {
+            if (!same_type)
+            {
+              same_type = unify(stack, false, getType(in0), getType(goal0));
+            }
+            if (same_type)
+            {
+              op_equal = (in_ctor->index == goal_ctor->index);
+            }
+          }
+        }
+        else
+        {
+          op_equal = unify(stack, same_type, in->op, goal->op);
+        }
+
+        if (op_equal)
         {
           success = true;
-          for (int id=0; id < in->arg_count; id++)
+          for (int id=0; id < in->arg_count && success; id++)
           {
-            if (!unify(stack, in->args[id], goal->args[id]))
+            if (!unify(stack, true, in->args[id], goal->args[id]))
             {
               success = false;
-              break;
             }
           }
         }
@@ -2716,14 +2740,14 @@ unify(Stack *stack, Term *in0, Term *goal0)
           new_stack->unification_arena = temp_arena;
           for (i32 id=0; id < in->param_count && success; id++)
           {
-            if (!unify(new_stack, in->param_types[id], goal->param_types[id]))
+            if (!unify(new_stack, same_type, in->param_types[id], goal->param_types[id]))
             {
               success = false;
             }
           }
           if (success)
           {
-            success = unify(new_stack, in->output_type, goal->output_type);
+            success = unify(new_stack, same_type, in->output_type, goal->output_type);
           }
         }
       }
@@ -2743,7 +2767,7 @@ unify(Stack *stack, Term *in0, Term *goal0)
             b32 mismatch = false;
             for (i32 i=0; i < poly_param_count && !mismatch; i++)
             {
-              if (!unify(stack, in->poly_args[i], goal->poly_args[i]))
+              if (!unify(stack, true, in->poly_args[i], goal->poly_args[i]))
                 mismatch = true;
             }
             if (!mismatch)
@@ -2757,8 +2781,11 @@ unify(Stack *stack, Term *in0, Term *goal0)
       }
     } break;
 
-    case Term_Function:
     case Term_Constructor:
+      invalidCodePath;
+      break;
+
+    case Term_Function:
     case Term_Builtin:
     {
       success = equal(in0, goal0);
@@ -2813,7 +2840,7 @@ solveArgs(Solver *solver, Term *op, Term *goal, Token *blame_token)
   {
     Stack *stack = newStack(solver->arena, 0, signature->param_count);
     stack->unification_arena = solver->arena;
-    if (unify(stack, signature->output_type, goal))
+    if (unify(stack, false, signature->output_type, goal))
     {
       matches   = true;
       arg_count = signature->param_count;
@@ -3829,9 +3856,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
                       args[arg_i] = arg;
                       arg_was_filled = true;
                       Stack stack = {.count=param_count, .items=args, .unification_arena=arena};
-                      if (serial == 4947 && arg_i == 2)
-                        breakhere;
-                      b32 unify_result = unify(&stack, param_type0, getType(arg));
+                      b32 unify_result = unify(&stack, false, param_type0, getType(arg));
                       if (!unify_result)
                       {
                         parseError(in_arg, "cannot unify parameter type with argument %d's type", arg_i);
@@ -4186,9 +4211,15 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
       }
       else if ((new_goal = buildTerm(arena, typer, in->new_goal, holev)))
       {
-        CompareTerms compare = compareTerms(arena, goal, new_goal);
+        CompareTerms compare = compareTerms(arena, false, goal, new_goal);
         if (compare.result == Trinary_True)
+        {
           parseError(in0, "new goal is exactly the same as current goal");
+        }
+        else if (compare.result == Trinary_False)
+        {
+          parseError(in0, "new goal is totally different from current goal");
+        }
         else
         {
           rewrite_path = compare.diff_path;
