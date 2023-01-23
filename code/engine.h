@@ -214,9 +214,9 @@ struct TermList
 
 embed_struct struct Term {
   TermCategory  cat;
+  i32           serial;
   Term         *type;
   Token        *global_name;
-  i32           serial;
 };
 
 struct Builtin {embed_Term(t);};

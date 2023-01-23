@@ -140,13 +140,9 @@ testFunctionInCompositeUsage :: (Wrong: 1=0) -> False
 ;; print testFunctionInCompositeUsage;
 
 foo :: (a: Bool) -> union {f(p: a=false), t(p: a=true)}
-{
- fork a
- {
-  false return ctor[0](_),
-  true  return ctor[1](_),
-  }
- }
+{fork a
+ {false return ctor[0](_),
+  true  return ctor[1](_),}}
 
 True :: union {truth}
 
@@ -158,7 +154,6 @@ arrowTypeUnificationTest :: (y: True) -> (b: True) -> b=y {return arrowTypeUnifi
 check truth: true = false;
 #should_fail off
 
-;; todo this can be just be a struct
 RatTest :: union {/(n,d: Nat, _dnot0: d != 0)}
 + :: fn (a, b: RatTest) -> RatTest
 {return /(a.n * b.d + b.n * a.d,
@@ -203,10 +198,8 @@ testFillingHole :: (xdebug: Nat, x_positive: xdebug!=0, P: xdebug=0) -> False
 check id(False) : ((f: False) -> False);
 
 unionRebasing :: (a: Nat) -> union {eq(a = a)}
-{
- prove(a=a) {}
- return ctor[0](seek(a=a))
- }
+{prove(a=a) {}
+ return ctor[0](seek(a=a))}
 
 testAnonymousParameter :: fn (A: Set, A) -> A
 { seek }
@@ -261,9 +254,8 @@ check_truth fold(overload(+, Nat), 1 cons single(2)) = 3;
  {single return l.head cons m,
   cons   return l.head cons (l.tail + m)}}
 
-#debug
-print (single(1) + single(2))
-;; check_truth ((1 cons single(2)) + single(3)) = (1 cons (2 cons single(3)));
+;; print(single(1) + single(2));
+check_truth (1 cons single(2)) + single(3) = 1 cons (2 cons single(3));
 
 ;; #debug
 ;; Permutation :: union($A: Set, abc,cab: List(A))

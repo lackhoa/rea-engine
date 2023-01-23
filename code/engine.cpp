@@ -34,6 +34,12 @@ global_variable EngineState global_state;
 #define DEBUG_OFF {DEBUG_MODE = false; setvbuf(stdout, NULL, _IONBF, BUFSIZ);}
 
 inline b32
+isGlobalValue(Term *in0)
+{
+  return (b32)in0->global_name;
+}
+
+inline b32
 isPolyInstance(Union *in)
 {
   return (b32)in->poly_union && in->poly_args;
@@ -304,24 +310,13 @@ isSequenced(Term *term)
   return out;
 }
 
-inline void
-computeConstructorType(MemoryArena *arena, Constructor *ctor)
-{
-  Arrow *signature       = copyStruct(arena, ctor->uni->structs[ctor->index]);
-  signature->output_type = rebase(arena, &ctor->uni->t, 1);
-  ctor->type = &signature->t;
-}
-
 inline Term *
-newConstructor(MemoryArena *arena, Union *uni, i32 index, b32 make_type=false)
+newConstructor(MemoryArena *arena, Union *uni, i32 index)
 {
-  // It's annoying to type constructor so we wanna delay doing it (see note
-  // #why_constructors_dont_have_types)
+  // #why_constructors_dont_have_types
   Constructor *ctor = newTerm(arena, Constructor, 0);
-  ctor->uni   = uni;
   ctor->index = index;
-  if (make_type)
-    computeConstructorType(arena, ctor);
+  ctor->uni   = uni;
   return &ctor->t;
 }
 
@@ -1049,12 +1044,6 @@ print(MemoryArena *buffer, Ast *in0)
   return print(buffer, in0, {});
 }
 
-inline b32
-isGlobalValue(Term *in0)
-{
-  return (b32)in0->global_name;
-}
-
 internal void
 printTermsInParentheses(MemoryArena *buffer, i32 count, Term **terms, PrintOptions opt={})
 {
@@ -1520,20 +1509,7 @@ rebaseMain(MemoryArena *arena, Term *in0, i32 delta, i32 offset)
 
       case Term_Constructor:
       {
-        Constructor *in  = castTerm(in0, Constructor);
-        // todo kinda nasty that we have to rebase the whole union. But what can
-        // we really do?
-        Union *uni = castTerm(rebaseMain(arena, &in->uni->t, delta, offset), Union);
-        if (uni == in->uni)
-        {
-          out0 = in0;
-        }
-        else
-        {
-          Constructor *out = copyStruct(arena, in);
-          out->uni = uni;
-          out0 = &out->t;
-        }
+        out0 = in0;
       } break;
 
       default:
@@ -2671,8 +2647,6 @@ unify(Stack *stack, b32 same_type, Term *in0, Term *goal0)
           }
           if (same_type)
           {
-            // NOTE: if rebase happens -> the new term will be on the correct arena.
-            // if rebase does nothing -> we put "goal0" on there, which is by definition on the correct arena.
             lookup_stack->items[in->index] = rebase(lookup_stack->unification_arena, goal0, -in->delta);
             if (lookup_stack->unification_arena != temp_arena)
               assert(inArena(lookup_stack->unification_arena, lookup_stack->items[in->index]));
@@ -5129,10 +5103,14 @@ buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
       for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
       {
         Arrow *struc = uni->structs[ctor_i];
-        Term *ctor = newConstructor(arena, uni, ctor_i, true);
-        Term *term_to_bind = ctor;
+        Arrow *signature = copyStruct(arena, struc);
+        signature->output_type = &uni->t;
+        Constructor *ctor = newTerm(arena, Constructor, &signature->t);
+        ctor->uni   = uni;
+        ctor->index = ctor_i;
+        Term *term_to_bind = &ctor->t;
         if (struc->param_count == 0)
-          term_to_bind = newComposite(arena, ctor, 0, 0);
+          term_to_bind = newComposite(arena, &ctor->t, 0, 0);
         addGlobalBinding(&uni->ctor_names[ctor_i], term_to_bind);
       }
     }

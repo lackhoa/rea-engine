@@ -97,8 +97,7 @@ addPos :: (a,b: Nat, apos: a!=0) -> a+b != 0
  return _ => {fork a {0 norm apos; return apos(_),
                       ++
                       norm(seek(a+b = 0));
-                      return seek(False)
-                      }}}
+                      return seek(False)}}}
 
 mulPos :: (a,b: Nat, apos: a!=0, bpos: b!=0) -> a*b != 0
 {norm apos; norm bpos; norm;
