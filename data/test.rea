@@ -62,39 +62,39 @@ testCurryingWeird :: fn (a: Nat) -> (b, c: Nat) -> (a+b)+c = a+(b+c)
  {++:
   ;; NOTE: the "a.p" is the weird part, which depends on rewrite rule to work,
   ;; and we need to support it.
-  out : (b',c': Nat) -> (a.p+b')+c' = a.p+b'+c' := _ => { return addAssociative(a.p, b', c') }
+  out : (b',c': Nat) -> (a.p+b')+c' = a.p+b'+c' := fn { return addAssociative(a.p, b', c') }
   return out,
 
   0:
-  out : (b, c: Nat) -> (a+b)+c = a+b+c := _ => { return addAssociative(a, b, c) }
+  out : (b, c: Nat) -> (a+b)+c = a+b+c := fn { return addAssociative(a, b, c) }
   return out}}
 #should_fail off
 
 testCurrying2 :: fn (a, b, c: Nat) -> (a+b)+c = a+(b+c)
-{fun : (b',c': Nat) -> (a+b')+c' = a+(b'+c') := _ => { return addAssociative(a, b', c') }
+{fun : (b',c': Nat) -> (a+b')+c' = a+(b'+c') := fn { return addAssociative(a, b', c') };
  return fun(b,c)}
 
 #should_fail
 testCurrying2Fail :: fn (a, b, c: Nat) -> (a+b)+c = a+(b+c)
-{fun : (c',b': Nat) -> (a+b')+c' = a+(b'+c') := _ => { return addAssociative(a, b', c') }
+{fun : (c',b': Nat) -> (a+b')+c' = a+(b'+c') := fn { return addAssociative(a, b', c') }
  return fun(b,c)}
 #should_fail off
 
 testLocalFunction :: fn (a: Nat) -> Nat
 {b := 3;
- f : (n: Nat) -> Nat := _ => { return n*b }
+ f : (n: Nat) -> Nat := fn { return n*b };
  fork a {0: return 4, ++: return f(a)}}
 check_truth testLocalFunction(2) = 6;
 
-testArrowEvaluation :: fn (A: Type) -> (a: A) -> A {return _ => {return a}}
+testArrowEvaluation :: fn (A: Type) -> (a: A) -> A {return fn {return a}}
 
 testFunctionPointer :: fn (a,b: Bool) -> Bool
-{foo : (x: Bool) -> Bool := _ => {return x & b}
+{foo : (x: Bool) -> Bool := fn {return x & b};
  d := false;
  return foo(a);}
 check_truth testFunctionPointer(true,true) = true;
 
-testFunctionPointerHelper :: fn () -> (a,b,c: Bool) -> Bool {return _ => {return c}}
+testFunctionPointerHelper :: fn () -> (a,b,c: Bool) -> Bool {return fn {return c}}
 testFunctionPointerMore :: fn (a: Bool) -> Bool
 {foo := testFunctionPointerHelper();
  return foo(true,false,a);}
@@ -108,9 +108,9 @@ check_truth testConstantInFunction() = 4;
 mulPosv2 :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
 {norm a_positive; norm b_positive;
  fork a
- {0 : return _ => {return a_positive(_)},
+ {0 : return fn {return a_positive(_)},
   ++: ;; goal: (b + a.p * b = 0) -> False
-  return _ => {fork b {0: return b_positive(_),
+  return fn {fork b {0: return b_positive(_),
                        ++: norm(seek(b + a.p * b = 0)); seek}}}}
 
 testExecutionModel :: (a,b: Nat) -> (x: Nat) -> Nat
@@ -120,17 +120,17 @@ testExecutionModel :: (a,b: Nat) -> (x: Nat) -> Nat
  }
 check_truth testExecutionModel(1,2)(1) = 5;
 
-oneIsNotZero : 1 != 0 := seq {norm; return _ => {seek}};
+oneIsNotZero : 1 != 0 := seq {norm; return fn {seek}};
 test_eval mulPos(1,1,oneIsNotZero,oneIsNotZero);
 ;; print mulPos;
 
 somethingWicked :: fn (a,b,c: Nat) -> Type {return (p: a=b) -> (q: b=c) -> a=c}
 somethingWickedUsage :: () -> (x,y,z: Nat) -> (somethingWicked(x,y,z))
 {norm;
- return _ => {return _ => {return _ => {rewrite p; rewrite q}}}}
+ return fn {return fn {return fn {rewrite p; rewrite q}}}}
 
 StructWithFunction :: union {makeStructWithFunction(a: Nat, b: (E: a=0) -> False)}
-oneEqualZeroImpliesFalse : ((E: 1=0) -> False) := seq{norm; return _ => {return E}};
+oneEqualZeroImpliesFalse : ((E: 1=0) -> False) := seq{norm; return fn {return E}};
 testFunctionInComposite :: fn (x: StructWithFunction, E: x.a = 0) -> False
 {return x.b(E)}
 testFunctionInCompositeUsage :: (Wrong: 1=0) -> False
@@ -147,7 +147,7 @@ foo :: (a: Bool) -> union {f(p: a=false), t(p: a=true)}
 
 True :: union {truth}
 
-arrowTypeUnification :: (x: True) -> (a: True) -> a=x {return _ => {fork a {truth: fork x {truth: }}}}
+arrowTypeUnification :: (x: True) -> (a: True) -> a=x {return fn {fork a {truth: fork x {truth: }}}}
 test_eval arrowTypeUnification(truth);
 arrowTypeUnificationTest :: (y: True) -> (b: True) -> b=y {return arrowTypeUnification(y)}
 

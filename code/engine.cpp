@@ -5209,7 +5209,17 @@ parseFunctionExpression(MemoryArena *arena)
   // cutnpaste from "parseGlobalFunction"
   FunctionAst *out = newAst(arena, FunctionAst, lastToken());
 
-  if (ArrowAst *signature = parseArrowType(arena, false))
+  ArrowAst *signature = 0;
+  if (peekNextChar() == '{')
+  {
+    // inferred signature.
+  }
+  else
+  {
+    signature = parseArrowType(arena, false);
+  }
+
+  if (noError())
   {
     if (Ast *body = parseSequence(arena))
     {
@@ -5228,6 +5238,7 @@ parseOperand(MemoryArena *arena)
   Ast *operand = 0;
   Token token = nextToken();
   switch (token.cat)
+
   {
     case '_':
     {
@@ -5352,20 +5363,7 @@ seesArrowExpression()
   return out;
 }
 
-inline b32
-seesLambda()
-{// todo we don't allow naming parameters in here yet
-  b32 out = false;
-  Tokenizer tk_ = *global_tokenizer;
-  Tokenizer *tk = &tk_;
-  if (equal(nextToken(tk), '_'))
-  {
-    if (nextToken(tk).cat == Token_StrongArrow)
-      out = true;
-  }
-  return out;
-}
-
+#if 0
 internal FunctionAst *
 parseLambda(MemoryArena *arena)
 {
@@ -5376,6 +5374,7 @@ parseLambda(MemoryArena *arena)
   popContext();
   return out;
 }
+#endif
 
 internal Ast *
 parseExpressionMain(MemoryArena *arena, ParseExpressionOptions opt)
@@ -5383,11 +5382,8 @@ parseExpressionMain(MemoryArena *arena, ParseExpressionOptions opt)
   Ast *out = 0;
   if (seesArrowExpression())
   {
+    // todo Arrow could just be an operand maybe?
     out = &parseArrowType(arena, false)->a;
-  }
-  else if (seesLambda())
-  {
-    out = &parseLambda(arena)->a;
   }
   else if (Ast *operand = parseOperand(arena))
   {

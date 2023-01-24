@@ -2,4 +2,4 @@
 { return (a=b) -> False }
 
 id :: fn(A: Type) -> (A) -> A
-{return _ => {return seek(A)}}
+{return fn {return seek(A)}}
