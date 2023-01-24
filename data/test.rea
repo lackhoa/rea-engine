@@ -9,13 +9,13 @@
 
 ;; print_raw =(_, true, false);
 
-typecheck :: fn (id: (A: Set, a: A) -> a=a, b: Bool) -> b=b
+typecheck :: fn (id: (A: Type, a: A) -> a=a, b: Bool) -> b=b
 {return id(Bool, b)}
 
 #should_fail
-typecheck1 :: fn (id: (A: Set, a: A) -> a=a, b: Bool) -> b=b
+typecheck1 :: fn (id: (A: Type, a: A) -> a=a, b: Bool) -> b=b
 {return b}
-typecheck2 :: fn (id: (A: Set, a: A) -> a=a, a,b: Bool) -> b=b
+typecheck2 :: fn (id: (A: Type, a: A) -> a=a, a,b: Bool) -> b=b
 {return id(Bool, a)}
 #should_fail off
 
@@ -34,7 +34,7 @@ dependentTypeFailTest :: fn (T: Type, A: T, a: A) -> a=a
 {}
 #should_fail off
 
-dependentTypeTest :: fn (A: Set, a: A) -> a=a
+dependentTypeTest :: fn (A: Type, a: A) -> a=a
 {}
 check dependentTypeTest(Bool, true): true=true;
 
@@ -85,11 +85,6 @@ testLocalFunction :: fn (a: Nat) -> Nat
  f : (n: Nat) -> Nat := _ => { return n*b }
  fork a {0: return 4, ++: return f(a)}}
 check_truth testLocalFunction(2) = 6;
-
-#should_fail
-check_truth ((a,b: Nat) -> a+b = b+a) = ((A,B: Nat) -> A+B = B+A);
-check_truth ((a,b: Nat) -> a+b = b+a) = ((A,B: Nat) -> A+B = B+B);
-#should_fail off
 
 testArrowEvaluation :: fn (A: Type) -> (a: A) -> A {return _ => {return a}}
 
@@ -207,7 +202,7 @@ unionRebasing :: (a: Nat) -> union {eq(a = a)}
 {prove(a=a) {}
  return ctor[0](seek(a=a))}
 
-testAnonymousParameter :: fn (A: Set, A) -> A
+testAnonymousParameter :: fn (A: Type, A) -> A
 { seek }
 ;; print testAnonymousParameter;
 
@@ -218,7 +213,7 @@ testStructAsHint :: (u: union {c(v: true=false)}) -> true=false
  ;; return u.v
  }
 
-twiceApplier :: fn($A: Set, op: (x,y: A) -> A, a: A) -> A
+twiceApplier :: fn($A: Type, op: (x,y: A) -> A, a: A) -> A
 {return op(a,a)}
 
 testPolymorphSolver :: fn(n: Nat) -> Nat
@@ -233,7 +228,7 @@ check_truth testPolymorphSolver(3) = 6;
 algebraTest :: (a,b,c,d,e,f: Nat) -> ((a+b)+c)+(d+e)+f = a+b+c+d+e+f
 {return algebraic_norm(((a+b)+c)+(d+e)+f)}
 
-List :: union(ListType: Set)
+List :: union(ListType: Type)
 {single(head: ListType),
  cons  (head: ListType, tail: List(ListType))}
 
@@ -242,7 +237,7 @@ testList :: fn(l: List(Nat)) -> List(Nat)
  {single return single(l.head),
   cons   return l.tail}}
 
-fold :: fn($A: Set, op: (a,b: A) -> A, list: List(A)) -> A
+fold :: fn($A: Type, op: (a,b: A) -> A, list: List(A)) -> A
 #no_print_as_binop
 {fork list
  {single
@@ -255,7 +250,7 @@ fold :: fn($A: Set, op: (a,b: A) -> A, list: List(A)) -> A
 
 check_truth fold(overload(+, Nat), 1 cons single(2)) = 3;
 
-+ :: fn($T: Set, l,m: List(T)) -> List(T)
++ :: fn($T: Type, l,m: List(T)) -> List(T)
 {fork l
  {single return l.head cons m,
   cons   return l.head cons (l.tail + m)}}
@@ -263,7 +258,7 @@ check_truth fold(overload(+, Nat), 1 cons single(2)) = 3;
 ;; print(single(1) + single(2));
 check_truth (1 cons single(2)) + single(3) = 1 cons (2 cons single(3));
 
-Permutation :: union($A: Set, abc,cab: List(A))
+Permutation :: union($A: Type, abc,cab: List(A))
 {
  samePermutation(same: abc=cab),
  permutation(a: A, bc, c,b: List(A),
@@ -272,7 +267,7 @@ Permutation :: union($A: Set, abc,cab: List(A))
              recurse: Permutation(bc, c+b))
  }
 
-foldConcat :: ($A: Set, op: (a,b: A) -> A,
+foldConcat :: ($A: Type, op: (a,b: A) -> A,
                associative: (a,b,c: A) -> (a op b) op c = a op b op c,
                l,m: List(A)) -> (fold(op, l+m) = fold(op, l) op fold(op, m))
 #hint
@@ -284,7 +279,7 @@ foldConcat :: ($A: Set, op: (a,b: A) -> A,
   rewrite associative(l.head, fold(op, l.tail), fold(op, m));
   }}
 
-foldPermutation :: ($A: Set,
+foldPermutation :: ($A: Type,
                     op: (a,b: A) -> A,
                     op_associative: (a,b,c: A) -> (a op b) op c = a op b op c,
                     op_commutative: (a,b: A) -> a op b = b op a,

@@ -16,9 +16,7 @@
 #include "debug_config.h"
 
 global_variable Term *builtin_Type;
-global_variable Term *builtin_Set;
 global_variable Term *builtin_equal;
-global_variable Term *builtin_type_equal;
 global_variable Term *builtin_False;
 global_variable Term *builtin_eqChain;
 
@@ -242,8 +240,7 @@ newCompositeN(MemoryArena *arena, Term *op, i32 arg_count, ...)
 inline Term *
 newEquality(MemoryArena *arena, Term *lhs, Term *rhs)
 {
-  Term *type_of_type = getType(getType(lhs));
-  Term *op = (type_of_type == builtin_Set) ? builtin_equal : builtin_type_equal;
+  Term *op = builtin_equal;
   return newComposite3(arena, op, getType(lhs), lhs, rhs);
 }
 
@@ -272,7 +269,7 @@ getEqualitySides(Term *eq0, b32 must_succeed=true)
   TermPair out = {};
   if (Composite *eq = castTerm(eq0, Composite))
   {
-    if (eq->op == builtin_equal || eq->op == builtin_type_equal)
+    if (eq->op == builtin_equal)
       out = TermPair{eq->args[1], eq->args[2]};
   }
   assert(!must_succeed || out)
@@ -1153,10 +1150,6 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
           // todo cleanup probably don't need these anymore
           if (in0 == builtin_equal)
             print(buffer, "=");
-          else if (in0 == builtin_type_equal)
-            print(buffer, "=");
-          else if (in0 == builtin_Set)
-            print(buffer, "Set");
           else if (in0 == builtin_Type)
             print(buffer, "Type");
           else
@@ -2929,7 +2922,7 @@ solveGoal(Solver *solver, Term *goal)
 
   b32 should_attempt_inference = true;
   if (solver->depth > MAX_SOLVE_DEPTH ||
-      goal == builtin_Set ||
+      goal == builtin_Type ||
       goal->cat == Term_Hole)
   {
     should_attempt_inference = false;
@@ -5037,7 +5030,7 @@ processPolyConstructorType(ProcessPolyConstructorTypeContext *ctx, Term *in0)
 forward_declare internal Term *
 buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
 {
-  Union *uni = newTerm(arena, Union, builtin_Set);
+  Union *uni = newTerm(arena, Union, builtin_Type);
   PolyUnion *poly_union = 0;
   
   i32 ctor_count = in->ctor_count;
@@ -5062,7 +5055,7 @@ buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
       if (poly_params)
       {
         Arrow *signature       = copyStruct(arena, poly_params);
-        signature->output_type = builtin_Set;
+        signature->output_type = builtin_Type;
         poly_union       = newTerm(arena, PolyUnion, &signature->t);
         poly_union->union_template = uni;
         uni->poly_union = poly_union;
@@ -5897,32 +5890,25 @@ beginInterpreterSession(MemoryArena *top_level_arena, char *initial_file)
   // parsing depends on the global bindings, which resets every time. Since
   // aren't many sessions, this redundancy is fine, just ugly.
   {
+    error_buffer_      = subArena(temp_arena, 2048);
     builtin_Type       = &newTerm(arena, Builtin, 0)->t;
     builtin_Type->type = builtin_Type; // NOTE: circular types
     addBuiltinGlobalBinding("Type", builtin_Type);
 
-    builtin_Set = &newTerm(arena, Builtin, builtin_Type)->t;
-    addBuiltinGlobalBinding("Set", builtin_Set);
-
     Tokenizer builtin_tk = newTokenizer(toString("<builtin_not_a_real_dir>"), 0);
     global_tokenizer = &builtin_tk;
-    builtin_tk.at = "($A: Set, a,b: A) -> Set";
+    builtin_tk.at = "($A: Type, a,b: A) -> Type";
     Term *equal_type = parseExpressionAndBuild(arena).term; 
     assert(noError());
     builtin_equal = &newTerm(arena, Builtin, equal_type)->t;
     addBuiltinGlobalBinding("=", builtin_equal);
-
-    builtin_tk.at = "($A: Type, a,b: A) -> Set";
-    Term *type_equal_type = parseExpressionAndBuild(arena).term; 
-    assert(noError());
-    builtin_type_equal = &newTerm(arena, Builtin, type_equal_type)->t;
 
     builtin_tk.at = "union {}";
     Term *builtin_False0 = parseExpressionAndBuild(arena).term;
     builtin_False = &castTerm(builtin_False0, Union)->t;
     addBuiltinGlobalBinding("False", builtin_False);
 
-    builtin_tk.at = R""""(fn ($A: Set, $a, $b, $c: A, a=b, b=c) -> a=c
+    builtin_tk.at = R""""(fn ($A: Type, $a, $b, $c: A, a=b, b=c) -> a=c
 {=> b = c {seek(a=b)} seek}
 )"""";
     builtin_eqChain = parseExpressionAndBuild(arena).term;

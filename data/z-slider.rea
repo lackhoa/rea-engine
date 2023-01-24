@@ -2,7 +2,7 @@
 
 Z :: union {|(l,r: Nat)}
 
-== :: fn(a,b: Z) -> Set
+== :: fn(a,b: Z) -> Type
 {return a.l+b.r = a.r+b.l}
 
 + :: fn(a,b: Z) -> Z
