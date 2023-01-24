@@ -116,8 +116,14 @@ mulPosv2 :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
  {0 : return _ => {return a_positive(_)},
   ++: ;; goal: (b + a.p * b = 0) -> False
   return _ => {fork b {0: return b_positive(_),
-                       ++: norm(seek(b + a.p * b = 0)); seek}}
-  }}
+                       ++: norm(seek(b + a.p * b = 0)); seek}}}}
+
+testExecutionModel :: (a,b: Nat) -> (x: Nat) -> Nat
+{
+ return(fn(x: Nat) -> Nat {fy := fn(y: Nat) -> Nat {return a+b+x+y;};
+                           return fy(a)})
+ }
+check_truth testExecutionModel(1,2)(1) = 5;
 
 oneIsNotZero : 1 != 0 := seq {norm; return _ => {seek}};
 test_eval mulPos(1,1,oneIsNotZero,oneIsNotZero);

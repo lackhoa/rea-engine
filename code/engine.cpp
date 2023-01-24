@@ -661,28 +661,7 @@ getConstructorIndex(Typer *typer, Term *in0)
 forward_declare inline Term *
 getType(Term *in0)
 {
-  Term *out = in0->type;
-  if (!in0->type)
-  {
-    if (Constructor *ctor = castTerm(in0, Constructor))
-    {
-      todoIncomplete;
-#if 0  // untested code
-      MemoryArena *arena = 0;
-      if (inArena(global_state.top_level_arena, ctor))
-        arena = global_state.top_level_arena;
-      else if (inArena(temp_arena, ctor))
-        arena = temp_arena;
-      else
-        invalidCodePath;
-      computeConstructorType(arena, ctor);
-#endif
-    }
-    else
-      invalidCodePath;
-  }
-  assert(out);
-  return out;
+  return in0->type;
 }
 
 inline LocalBindings *
@@ -784,14 +763,14 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
   i32    arg_count  = 0;
   void **raw_args   = 0;
 
-  Ast  *ast   = (Ast *)in0;
-  Term *value = (Term *)in0;
+  Ast  *ast  = (Ast *)in0;
+  Term *term = (Term *)in0;
   Arrow *op_signature = 0;
   b32 op_is_constructor = false;
   b32 no_print_as_binop = false;
   if (is_term)
   {
-    Composite *in = castTerm(value, Composite);
+    Composite *in = castTerm(term, Composite);
     op           = in->op;
     op_signature = 0;
     raw_args     = (void **)in->args;
@@ -803,7 +782,13 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
     if (Function *fun = castTerm(in->op, Function))
       no_print_as_binop = checkFlag(fun->function_flags, FunctionFlag_no_print_as_binop);
 
-    op_signature = getParameterTypes(in->op);
+    if (op_is_constructor)
+    {
+      i32 ctor_i = castTerm(in->op, Constructor)->index;
+      op_signature = castTerm(getType(term), Union)->structs[ctor_i];
+    }
+    else
+      op_signature = getParameterTypes(in->op);
     assert(op_signature);
 
     String op_name = {};
@@ -1400,9 +1385,6 @@ isGround(Term *in0)
 }
 
 // todo make this an inline mutation
-// TODO handle type!
-// TODO handle type!
-// TODO handle type!
 internal Term *
 rebaseMain(MemoryArena *arena, Term *in0, i32 delta, i32 offset)
 {
@@ -1428,10 +1410,19 @@ rebaseMain(MemoryArena *arena, Term *in0, i32 delta, i32 offset)
       {
         Composite *in  = castTerm(in0, Composite);
         Composite *out = copyStruct(arena, in);
+        if (in->op->cat == Term_Constructor)
+        {
+          // we copied the constructor index, and that's enough.
+        }
+        else
+        {
+          out->op = rebaseMain(arena, out->op, delta, offset);
+        }
         allocateArray(arena, out->arg_count, out->args);
-        out->op = rebaseMain(arena, out->op, delta, offset);
         for (i32 id = 0; id < out->arg_count; id++)
+        {
           out->args[id] = rebaseMain(arena, in->args[id], delta, offset);
+        }
         out0 = &out->t;
       } break;
 
@@ -1509,11 +1500,15 @@ rebaseMain(MemoryArena *arena, Term *in0, i32 delta, i32 offset)
 
       case Term_Constructor:
       {
-        out0 = in0;
+        invalidCodePath;
       } break;
 
       default:
         todoIncomplete;
+    }
+    if (out0 != in0)
+    {
+      out0->type = rebaseMain(arena, getType(in0), delta, offset);
     }
   }
   else
@@ -1640,8 +1635,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
         Variable *in = castTerm(in0, Variable);
         if (in->delta == ctx->offset)
         {
-          out0 = ctx->args[in->index];
-          out0 = rebase(arena, out0, ctx->offset);
+          out0 = rebase(arena, ctx->args[in->index], ctx->offset);
         }
         else if (in->delta > ctx->offset)
         {
@@ -1660,13 +1654,13 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
           }
           else
           {
-            Variable *out = copyStruct(arena, in);
-            out->delta--;  // NOTE: we'll remove one abstraction layer, hence the delta decrement.
-            out0 = &out->t;
+            out0 = rebase(arena, in0, -1);
           }
         }
         else
+        {
           out0 = in0;
+        }
       } break;
 
       case Term_Composite:
@@ -1681,9 +1675,9 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
           assert(args[id]);
         }
 
+        Term *type = evaluateMain(ctx, getType(in0));
         if (checkFlag(ctx->flags, EvaluationFlag_ApplyMode))
         {
-          Term *type = evaluateMain(ctx, getType(in0));
           out0 = apply(arena, op, in->arg_count, args, type, {});
         }
 
@@ -1692,6 +1686,12 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
           Composite *out = copyStruct(arena, in);
           out->op   = op;
           out->args = args;
+          out->type = type;
+          if (type != in->type)
+          {
+            DUMP("\n", "type: ", type, " vs in->type: ", in->type, "\n");
+            breakhere;
+          }
           out0 = &out->t;
         }
       } break;
@@ -5178,18 +5178,13 @@ parseFunctionExpression(MemoryArena *arena)
   // cutnpaste from "parseGlobalFunction"
   FunctionAst *out = newAst(arena, FunctionAst, lastToken());
 
-  if (Ast *signature0 = parseExpression(arena))
+  if (ArrowAst *signature = parseArrowType(arena, false))
   {
-    if (ArrowAst *signature = castAst(signature0, ArrowAst))
+    if (Ast *body = parseSequence(arena))
     {
-      if (Ast *body = parseSequence(arena))
-      {
-        out->body      = body;
-        out->signature = signature;
-      }
+      out->body      = body;
+      out->signature = signature;
     }
-    else
-      parseError(signature0, "function definition requires an arrow type");
   }
 
   NULL_WHEN_ERROR(out);
@@ -5356,62 +5351,63 @@ parseExpressionMain(MemoryArena *arena, ParseExpressionOptions opt)
 {
   Ast *out = 0;
   if (seesArrowExpression())
-    out = &parseArrowType(arena, false)->a;
-  else if (seesLambda())
-    out = &parseLambda(arena)->a;
-  else
   {
-    if (Ast *operand = parseOperand(arena))
+    out = &parseArrowType(arena, false)->a;
+  }
+  else if (seesLambda())
+  {
+    out = &parseLambda(arena)->a;
+  }
+  else if (Ast *operand = parseOperand(arena))
+  {
+    // (a+b) * c
+    //     ^
+    for (b32 stop = false; !stop && hasMore();)
     {
-      // (a+b) * c
-      //     ^
-      for (b32 stop = false; !stop && hasMore();)
-      {
-        Token op_token = peekToken();
-        if (isIdentifier(&op_token))
-        {// infix operator syntax
-          // (a+b) * c
-          //        ^
-          Identifier *op = newAst(arena, Identifier, &op_token);
-          i32 precedence = precedenceOf(op_token.string);
-          if (precedence >= opt.min_precedence)
+      Token op_token = peekToken();
+      if (isIdentifier(&op_token))
+      {// infix operator syntax
+        // (a+b) * c
+        //        ^
+        Identifier *op = newAst(arena, Identifier, &op_token);
+        i32 precedence = precedenceOf(op_token.string);
+        if (precedence >= opt.min_precedence)
+        {
+          // recurse
+          nextToken();
+          // a + b * c
+          //      ^
+          ParseExpressionOptions opt1 = opt;
+          opt1.min_precedence = precedence;
+          if (Ast *recurse = parseExpressionMain(arena, opt1))
           {
-            // recurse
-            nextToken();
-            // a + b * c
-            //      ^
-            ParseExpressionOptions opt1 = opt;
-            opt1.min_precedence = precedence;
-            if (Ast *recurse = parseExpressionMain(arena, opt1))
-            {
-              i32 arg_count = 2;
-              Ast **args    = pushArray(arena, arg_count, Ast*);
-              args[0] = operand;
-              args[1] = recurse;
+            i32 arg_count = 2;
+            Ast **args    = pushArray(arena, arg_count, Ast*);
+            args[0] = operand;
+            args[1] = recurse;
 
-              CompositeAst *new_operand = newAst(arena, CompositeAst, &op_token);
-              new_operand->op        = &op->a;
-              new_operand->arg_count = arg_count;
-              new_operand->args      = args;
-              operand = &new_operand->a;
-            }
-          }
-          else
-          {
-            // we are pulled to the left
-            // a * b + c
-            //      ^
-            stop = true;
+            CompositeAst *new_operand = newAst(arena, CompositeAst, &op_token);
+            new_operand->op        = &op->a;
+            new_operand->arg_count = arg_count;
+            new_operand->args      = args;
+            operand = &new_operand->a;
           }
         }
-        else if (isExpressionEndMarker(&op_token))
-          stop = true;
         else
-          tokenError(&op_token, "expected operator token");
+        {
+          // we are pulled to the left
+          // a * b + c
+          //      ^
+          stop = true;
+        }
       }
-      if (noError())
-        out = operand;
+      else if (isExpressionEndMarker(&op_token))
+        stop = true;
+      else
+        tokenError(&op_token, "expected operator token");
     }
+    if (noError())
+      out = operand;
   }
 
   NULL_WHEN_ERROR(out);
