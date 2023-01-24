@@ -3,11 +3,9 @@
   - #cleanup Replace all token <-> string comparison with keyword checks.
   - #tool something that cleans up when it goes out of scope
   - #speed evaluating functions by substituting the body is really bad in case of "let"
-  - make "computation" be a builtin
-  - debug serial situation
   - clean up the data tree containing constructors
   - we're printing terms every time we encounter an error, but the error might be recoverable so it's just wasted work. Either pass the intention down, or abandon the recoveriy route.
-  - #speed Clean up the "pointer everywhere" approach
+  - The #type-everywhere approach is just plain wrong, we have to manipulate the type every single time we do anything at all!
  */
 
 #include "utils.h"
@@ -1047,18 +1045,18 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
 {// mark: printTerm
   if (in0)
   {
+    b32 skip_print_type = false;
+    PrintOptions new_opt = opt;
     if (isGlobalValue(in0) && !checkFlag(opt.flags, PrintFlag_Detailed))
     {
       print(buffer, in0->global_name->string);
     }
     else
     {
-      PrintOptions new_opt = opt;
       if (!checkFlag(opt.flags, PrintFlag_LockDetailed))
         unsetFlag(&new_opt.flags, PrintFlag_Detailed);
       unsetFlag(&new_opt.flags, PrintFlag_PrintType);
       new_opt.indentation = opt.indentation + 1;
-      b32 skip_print_type = false;
 
       switch (in0->cat)
       {
@@ -1256,14 +1254,14 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
           todoIncomplete;
         } break;
       }
+    }
 
-      if ((checkFlag(opt.flags, PrintFlag_PrintType) ||
-           in0->cat == Term_Computation) &&
-          !skip_print_type)
-      {
-        print(buffer, ": ");
-        print(buffer, getType(in0), new_opt);
-      }
+    if ((checkFlag(opt.flags, PrintFlag_PrintType) ||
+         in0->cat == Term_Computation) &&
+        !skip_print_type)
+    {
+      print(buffer, ": ");
+      print(buffer, getType(in0), new_opt);
     }
   }
   else
@@ -2067,6 +2065,7 @@ compareTerms(MemoryArena *arena, b32 same_type, Term *l0, Term *r0)
         }
       } break;
 
+      case Term_PolyUnion:
       case Term_Function:
       case Term_Hole:
       case Term_Rewrite:
@@ -2292,15 +2291,22 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
       case Term_Union:
       {
         Union *in  = castTerm(in0, Union);
-        Union *out = copyStruct(arena, in);
-        allocateArray(arena, in->ctor_count, out->structs);
-        for (i32 id=0; id < in->ctor_count; id++)
+        if (isPolyInstance(in))
         {
-          Term *signature = &in->structs[id]->t;
-          signature = normalizeMain(ctx, signature);
-          out->structs[id] = castTerm(signature, Arrow);
+          // NOTE: we could normalize the poly args here, but who cares.
         }
-        out0 = &out->t;
+        else
+        {
+          Union *out = copyStruct(arena, in);
+          allocateArray(arena, in->ctor_count, out->structs);
+          for (i32 id=0; id < in->ctor_count; id++)
+          {
+            Term *signature = &in->structs[id]->t;
+            signature = normalizeMain(ctx, signature);
+            out->structs[id] = castTerm(signature, Arrow);
+          }
+          out0 = &out->t;
+        }
       } break;
 
       case Term_Fork:
@@ -3841,7 +3847,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
                     else
                     {
                       // todo recover from ambiguity only
-                      if (!checkErrorFlag(ErrorUnrecoverable))
+                      if (checkErrorFlag(ErrorAmbiguousName))
                         wipeError();
                     }
                   }
@@ -4938,36 +4944,41 @@ parseUnion(MemoryArena *arena)
   return uni;
 }
 
+struct ProcessPolyConstructorTypeContext {
+  MemoryArena *arena;
+  i32          poly_param_count;
+};
+
+// TODO: Handle type?
+// TODO: Handle type?
+// TODO: Handle type?
 internal Term *
-processPolyConstructorType(MemoryArena *arena, Term *in0)
+processPolyConstructorType(ProcessPolyConstructorTypeContext *ctx, Term *in0)
 {
-  Term *out0 = 0;
-  if (isGlobalValue(in0))
-  {
-    out0 = in0;
-  }
-  else
+  Term *out0 = in0;
+  MemoryArena *arena = ctx->arena;
+  if (!isGlobalValue(in0))
   {
     switch (in0->cat)
     {
       case Term_Variable:
       {
+        // NOTE: this is hacky, doesn't handle arrow types
         Variable *in = castTerm(in0, Variable);
+        Variable *out = copyStruct(arena, in);
         if (in->delta == 0)
         {
-          // todo: you'll have to add however many poly parameters there are.
-          todoIncomplete;
+          out->index = in->index + ctx->poly_param_count;
         }
         else if (in->delta == 1)
         {
-          Variable *out = copyStruct(arena, in);
           out->delta = 0;
-          out0 = &out->t;
         }
         else
         {
-          todoIncomplete;
+          invalidCodePath;
         }
+        out0 = &out->t;
       } break;
 
       case Term_Union:
@@ -4980,12 +4991,39 @@ processPolyConstructorType(MemoryArena *arena, Term *in0)
           allocateArray(arena, poly_param_count, out->poly_args);
           for (i32 i=0; i < poly_param_count; i++)
           {
-            out->poly_args[i] = processPolyConstructorType(arena, in->poly_args[i]);
+            out->poly_args[i] = processPolyConstructorType(ctx, in->poly_args[i]);
           }
           out0 = &out->t;
         }
         else
           todoIncomplete;
+      } break;
+
+      case Term_Composite:
+      {
+        Composite *in = castTerm(in0, Composite);
+        b32 progress = false;
+
+        Term *op = in->op;
+        if (op->cat != Term_Constructor)
+        {
+          op = processPolyConstructorType(ctx, in->op);
+          progress = progress || (op != in->op);
+        }
+
+        Term **args = pushArray(temp_arena, in->arg_count, Term *);
+        for (i32 i=0; i < in->arg_count; i++)
+        {
+          args[i] = processPolyConstructorType(ctx, in->args[i]);
+          progress = progress || (args[i] != in->args[i]);
+        }
+        if (progress)
+        {
+          Composite *out = copyStruct(arena, in);
+          out->op   = op;
+          out->args = copyArray(arena, in->arg_count, args);
+          out0 = &out->t;
+        }
       } break;
 
       default:
@@ -5085,7 +5123,8 @@ buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
         for (i32 param_i=0; param_i < struc->param_count; param_i++)
         {
           signature->param_names[poly_count+param_i] = struc->param_names[param_i];
-          signature->param_types[poly_count+param_i] = processPolyConstructorType(arena, struc->param_types[param_i]);
+          ProcessPolyConstructorTypeContext ctx = {.arena=arena, .poly_param_count=poly_count};
+          signature->param_types[poly_count+param_i] = processPolyConstructorType(&ctx, struc->param_types[param_i]);
           signature->param_flags[poly_count+param_i] = struc->param_flags[param_i];
         }
         signature->output_type = &synthetic_output_type->t;
