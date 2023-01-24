@@ -1608,9 +1608,6 @@ apply(MemoryArena *arena, Term *op, i32 arg_count, Term **args, Term *type, Stri
   return out0;
 }
 
-// TODO handle type!
-// TODO handle type!
-// TODO handle type!
 internal Term *
 evaluateMain(EvaluationContext *ctx, Term *in0)
 {
@@ -1625,7 +1622,9 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
 #endif
 
   if (isGlobalValue(in0))
+  {
     out0 = in0;
+  }
   else
   {
     switch (in0->cat)
@@ -1668,14 +1667,19 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
         Composite *in = castTerm(in0, Composite);
         Term **args = pushArray(arena, in->arg_count, Term *);
 
-        Term *op = evaluateMain(ctx, in->op);
+        Term *op = in->op;
+        if (op->cat != Term_Constructor)
+        {
+          op = evaluateMain(ctx, in->op);
+        }
+
         for (i32 id=0; id < in->arg_count; id++)
         {
           args[id] = evaluateMain(ctx, in->args[id]);
           assert(args[id]);
         }
 
-        Term *type = evaluateMain(ctx, getType(in0));
+        Term *type = evaluateMain(ctx, getType(in0));  // :eval-type
         if (checkFlag(ctx->flags, EvaluationFlag_ApplyMode))
         {
           out0 = apply(arena, op, in->arg_count, args, type, {});
@@ -1687,11 +1691,6 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
           out->op   = op;
           out->args = args;
           out->type = type;
-          if (type != in->type)
-          {
-            DUMP("\n", "type: ", type, " vs in->type: ", in->type, "\n");
-            breakhere;
-          }
           out0 = &out->t;
         }
       } break;
@@ -1718,7 +1717,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
       {
         Function *in  = castTerm(in0, Function);
         Function *out = copyStruct(arena, in);
-        out->type = evaluateMain(ctx, in->type);
+        out->type = evaluateMain(ctx, getType(in0));  // :eval-type
 
         u32 old_flags = ctx->flags;
         unsetFlag(&ctx->flags, EvaluationFlag_ApplyMode);
@@ -1735,12 +1734,15 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
         Accessor *in  = castTerm(in0, Accessor);
         Term *record0 = evaluateMain(ctx, in->record);
         if (Composite *record = castRecord(record0))
+        {
           // note: we could honor "ctx->normalize" but idk who would actually want that.
           out0 = record->args[in->field_id];
+        }
         else
         {
           Accessor *out = copyStruct(arena, in);
           out->record = record0;
+          out->type = evaluateMain(ctx, getType(in0));  // :eval-type
           out0 = &out->t;
         }
       } break;
@@ -1749,16 +1751,8 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
       {
         Computation *in  = castTerm(in0, Computation);
         Computation *out = copyStruct(arena, in);
-        // TODO need to evaluate the type too!
-#if 0
-        // NOTE: semi-hack so it doesn't normalize our propositions.
-        u32 old_flags = ctx->flags;
-        unsetFlag(&ctx->flags, EvaluationFlag_ApplyMode);
-        out->lhs = evaluateMain(ctx, in->lhs);
-        out->rhs = evaluateMain(ctx, in->rhs);
-        ctx->flags = old_flags;
-#endif
-        out0 = out;
+        out->type = evaluateMain(ctx, getType(in0));  // :eval-type
+        out0 = out;  // NOTE: copying since we might :eval-type below
       } break;
 
       case Term_Rewrite:
@@ -1769,6 +1763,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
           if (Term *body = evaluateMain(ctx, in->body))
           {
             Rewrite *out = copyStruct(arena, in);
+            out->type = evaluateMain(ctx, getType(in0));  // :eval-type
             out->eq_proof = eq_proof;
             out->body     = body;
             out0 = &out->t;
@@ -1785,16 +1780,21 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
           if (Composite *subject = castTerm(subject0, Composite))
           {
             if (Constructor *ctor = castTerm(subject->op, Constructor))
+            {
               out0 = evaluateMain(ctx, in->bodies[ctor->index]);
+            }
           }
         }
         else
         {
           Fork *out = copyStruct(arena, in);
+          out->type = evaluateMain(ctx, getType(in0));  // :eval-type
           out->subject = subject0;
           allocateArray(arena, in->case_count, out->bodies);
           for (i32 id=0; id < in->case_count; id++)
+          {
             out->bodies[id] = evaluateMain(ctx, in->bodies[id]);
+          }
           out0 = &out->t;
         }
       } break;
@@ -1830,7 +1830,6 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
       } break;
 
       case Term_Builtin:
-      case Term_Constructor:
       case Term_Hole:
       {out0=in0;} break;
 
