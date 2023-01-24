@@ -6,6 +6,7 @@
   - clean up the data tree containing constructors
   - we're printing terms every time we encounter an error, but the error might be recoverable so it's just wasted work. Either pass the intention down, or abandon the recoveriy route.
   - The #type-everywhere approach is just plain wrong, we have to manipulate the type every single time we do anything at all!
+  - Get stretchy buffer in here
  */
 
 #include "utils.h"
@@ -19,6 +20,14 @@ global_variable Term *builtin_Type;
 global_variable Term *builtin_equal;
 global_variable Term *builtin_False;
 global_variable Term *builtin_eqChain;
+
+// TODO: These List builtins are going too far...
+global_variable Term *builtin_List;
+global_variable Term *builtin_fold;
+global_variable Term *builtin_concat;
+global_variable Term *builtin_Permutation;
+global_variable Term *builtin_foldConcat;
+global_variable Term *builtin_foldPermutation;
 
 global_variable Term dummy_function_being_built;
 global_variable Term  holev_ = {.cat = Term_Hole};
@@ -48,7 +57,7 @@ isPolyTemplate(Union *in)
 }
 
 inline Union *
-specializeUnion(MemoryArena *arena, PolyUnion *puni, Term **args)
+specializeUnion(Arena *arena, PolyUnion *puni, Term **args)
 {
   Union *instance     = copyStruct(arena, puni->union_template);
   instance->poly_args = args;
@@ -120,7 +129,7 @@ globalNameOf(Term *term)
 }
 
 inline Term *
-newVariable(MemoryArena *arena, Typer *typer, i32 id, i32 delta)
+newVariable(Arena *arena, Typer *typer, i32 id, i32 delta)
 {
   Scope *scope = typer->scope;
   for (i32 id=0; id < delta; id++)
@@ -151,7 +160,7 @@ getParameterTypes(Term *op)
 }
 
 inline Term *
-getOutputType(MemoryArena *arena, Term *op, Term **args)
+getOutputType(Arena *arena, Term *op, Term **args)
 {
   Term *out = 0;
   if (Constructor *ctor = castTerm(op, Constructor))
@@ -175,7 +184,7 @@ getPolyArgCount(Union *in)
 }
 
 inline Term *
-newComposite(MemoryArena *arena, Term *op, i32 arg_count, Term **args)
+newComposite(Arena *arena, Term *op, i32 arg_count, Term **args)
 {
   Term *type = getOutputType(arena, op, args);
   Arrow *signature = getParameterTypes(op);
@@ -197,55 +206,28 @@ newComposite(MemoryArena *arena, Term *op, i32 arg_count, Term **args)
 }
 
 inline Term *
-newComposite1(MemoryArena *arena, Term *op, Term *arg0)
-{
-  Term **args = pushArray(arena, 1, Term*);
-  args[0] = arg0;
-  return newComposite(arena, op, 1, args);
-}
-
-inline Term *
-newComposite2(MemoryArena *arena, Term *op, Term *arg0, Term *arg1)
-{
-  Term **args = pushArray(arena, 2, Term*);
-  args[0] = arg0;
-  args[1] = arg1;
-  return newComposite(arena, op, 2, args);
-}
-
-inline Term *
-newComposite3(MemoryArena *arena, Term *op, Term *arg0, Term *arg1, Term *arg2)
-{
-  Term **args = pushArray(arena, 3, Term*);
-  args[0] = arg0;
-  args[1] = arg1;
-  args[2] = arg2;
-  return newComposite(arena, op, 3, args);
-}
-
-inline Term *
-newCompositeN(MemoryArena *arena, Term *op, i32 arg_count, ...)
+newCompositeN(Arena *arena, Term *op, ...)
 {
   va_list arg_list;
-  Term **args = pushArray(arena, arg_count, Term*);
-  __crt_va_start(arg_list, arg_count);
-  for (i32 i = 0; i < arg_count; i++)
+  i32 param_count = getParameterCount(op);
+  Term **args = pushArray(arena, param_count, Term*);
+  __crt_va_start(arg_list, op);
+  for (i32 i=0; i < param_count; i++)
   {
     args[i] = __crt_va_arg(arg_list, Term*);
   }
   __crt_va_end(arg_list);
-  return newComposite(arena, op, arg_count, args);
+  return newComposite(arena, op, param_count, args);
 }
 
 inline Term *
-newEquality(MemoryArena *arena, Term *lhs, Term *rhs)
+newEquality(Arena *arena, Term *lhs, Term *rhs)
 {
-  Term *op = builtin_equal;
-  return newComposite3(arena, op, getType(lhs), lhs, rhs);
+  return newCompositeN(arena, builtin_equal, getType(lhs), lhs, rhs);
 }
 
 inline Term *
-newIdentity(MemoryArena *arena, Term *term)
+newIdentity(Arena *arena, Term *term)
 {
   Term *eq = newEquality(arena, term, term);
   Computation *out = newTerm(arena, Computation, eq);
@@ -306,7 +288,7 @@ isSequenced(Term *term)
 }
 
 inline Term *
-newConstructor(MemoryArena *arena, Union *uni, i32 index)
+newConstructor(Arena *arena, Union *uni, i32 index)
 {
   // #why_constructors_dont_have_types
   Constructor *ctor = newTerm(arena, Constructor, 0);
@@ -316,7 +298,7 @@ newConstructor(MemoryArena *arena, Union *uni, i32 index)
 }
 
 inline Stack *
-newStack(MemoryArena *arena, Stack *outer, i32 count)
+newStack(Arena *arena, Stack *outer, i32 count)
 {
   Stack *stack = pushStruct(arena, Stack);
   stack->outer = outer;
@@ -326,7 +308,7 @@ newStack(MemoryArena *arena, Stack *outer, i32 count)
 }
 
 inline Term **
-synthesizeMembers(MemoryArena *arena, Term *parent, i32 ctor_id)
+synthesizeMembers(Arena *arena, Term *parent, i32 ctor_id)
 {
   Union *uni = castTerm(parent->type, Union);
   Arrow *struc = uni->structs[ctor_id];
@@ -347,7 +329,7 @@ synthesizeMembers(MemoryArena *arena, Term *parent, i32 ctor_id)
 }
 
 inline Term *
-synthesizeTree(MemoryArena *arena, Term *parent, DataTree *tree)
+synthesizeTree(Arena *arena, Term *parent, DataTree *tree)
 {
   Composite *record = 0;
   Union *uni   = castTerm(parent->type, Union);
@@ -386,7 +368,7 @@ getVarNameInScope(Typer *env, DataMap *map)
 }
 
 internal void
-print(MemoryArena *buffer, DataTree *tree)
+print(Arena *buffer, DataTree *tree)
 {
   if (tree)
   {
@@ -408,7 +390,7 @@ print(MemoryArena *buffer, DataTree *tree)
 }
 
 internal void
-printDataMap(MemoryArena *buffer, Typer *env)
+printDataMap(Arena *buffer, Typer *env)
 {
   for (DataMap *map = env->map; map; map=map->tail)
   {
@@ -432,7 +414,7 @@ castRecord(Term *term)
 }
 
 internal Term *
-rewriteTerm(MemoryArena *arena, Term *from, Term *to, TreePath *path, Term *in0)
+rewriteTerm(Arena *arena, Term *from, Term *to, TreePath *path, Term *in0)
 {
   Term *out0 = 0;
   if (path)
@@ -468,7 +450,7 @@ rewriteTerm(MemoryArena *arena, Term *from, Term *to, TreePath *path, Term *in0)
 }
 
 inline void
-initDataTree(MemoryArena *arena, DataTree *tree, Union *uni, i32 ctor_id)
+initDataTree(Arena *arena, DataTree *tree, Union *uni, i32 ctor_id)
 {
   i32 ctor_arg_count = uni->structs[ctor_id]->param_count;
   tree->ctor_names   = uni->ctor_names;
@@ -481,7 +463,7 @@ inline i32 getScopeDepth(Scope *scope) {return scope ? scope->depth : 0;}
 inline i32 getScopeDepth(Typer *env)   {return (env && env->scope) ? env->scope->depth : 0;}
 
 internal AddDataTree
-getOrAddDataTree(MemoryArena *arena, Typer *env, Term *in0, i32 ctor_id)
+getOrAddDataTree(Arena *arena, Typer *env, Term *in0, i32 ctor_id)
 {
   DataTree *tree = 0;
   b32 added = false;
@@ -660,7 +642,7 @@ getType(Term *in0)
 }
 
 inline LocalBindings *
-extendBindings(MemoryArena *arena, Typer *env)
+extendBindings(Arena *arena, Typer *env)
 {
   LocalBindings *out = pushStruct(arena, LocalBindings, true);
   out->tail     = env->bindings;
@@ -750,7 +732,7 @@ precedenceOf(String op)
 }
 
 inline char *
-printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
+printComposite(Arena *buffer, void *in0, b32 is_term, PrintOptions opt)
 {
   char *out = buffer ? (char *)getNext(buffer) : 0;
   int    precedence = 0;        // todo: no idea what the default should be
@@ -858,7 +840,7 @@ printComposite(MemoryArena *buffer, void *in0, b32 is_term, PrintOptions opt)
 }
 
 inline void
-print(MemoryArena *buffer, TreePath *tree_path)
+print(Arena *buffer, TreePath *tree_path)
 {
   print(buffer, "[");
   for (TreePath *path=tree_path; path; path=path->tail)
@@ -878,20 +860,20 @@ dump(TreePath *tree_path)
   print(0, tree_path);
 }
 
-inline void indent(MemoryArena *buffer, i32 indentation)
+inline void indent(Arena *buffer, i32 indentation)
 {
   for (int id=0; id < indentation; id++)
     print(buffer, " ");
 }
 
-inline void newlineAndIndent(MemoryArena *buffer, i32 indentation)
+inline void newlineAndIndent(Arena *buffer, i32 indentation)
 {
   print(buffer, "\n");
   indent(buffer, indentation);
 }
 
 forward_declare internal void
-print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
+print(Arena *buffer, Ast *in0, PrintOptions opt)
 {// printAst
   if (in0)
   {
@@ -1019,13 +1001,13 @@ print(MemoryArena *buffer, Ast *in0, PrintOptions opt)
 }
 
 forward_declare internal void
-print(MemoryArena *buffer, Ast *in0)
+print(Arena *buffer, Ast *in0)
 {
   return print(buffer, in0, {});
 }
 
 internal void
-printTermsInParentheses(MemoryArena *buffer, i32 count, Term **terms, PrintOptions opt={})
+printTermsInParentheses(Arena *buffer, i32 count, Term **terms, PrintOptions opt={})
 {
   print(buffer, "(");
   for (i32 i=0; i < count; i++)
@@ -1038,7 +1020,7 @@ printTermsInParentheses(MemoryArena *buffer, i32 count, Term **terms, PrintOptio
 }
 
 forward_declare internal void
-print(MemoryArena *buffer, Term *in0, PrintOptions opt)
+print(Arena *buffer, Term *in0, PrintOptions opt)
 {// mark: printTerm
   if (in0)
   {
@@ -1262,7 +1244,7 @@ print(MemoryArena *buffer, Term *in0, PrintOptions opt)
 }
 
 inline void
-print(MemoryArena *buffer, Scope *scopes)
+print(Arena *buffer, Scope *scopes)
 {
   print(buffer, "[");
   while (scopes)
@@ -1292,13 +1274,13 @@ inline void dump(Scope *stack) {print(0, stack);}
 inline void dump(Typer *env) {dump("stack: "); dump(env->scope);}
 
 forward_declare internal void
-print(MemoryArena *buffer, Term *in0)
+print(Arena *buffer, Term *in0)
 {
   return print(buffer, in0, {});
 }
 
 forward_declare internal void
-print(MemoryArena *buffer, void *in0, b32 is_absolute, PrintOptions opt)
+print(Arena *buffer, void *in0, b32 is_absolute, PrintOptions opt)
 {
   if (is_absolute)
     return print(buffer, (Term*)in0, opt);
@@ -1377,7 +1359,7 @@ isGround(Term *in0)
 
 // todo make this an inline mutation
 internal Term *
-rebaseMain(MemoryArena *arena, Term *in0, i32 delta, i32 offset)
+rebaseMain(Arena *arena, Term *in0, i32 delta, i32 offset)
 {
   Term *out0 = 0;
   if (!isGround(in0) && (delta != 0))
@@ -1509,13 +1491,13 @@ rebaseMain(MemoryArena *arena, Term *in0, i32 delta, i32 offset)
 }
 
 forward_declare internal Term *
-rebase(MemoryArena *arena, Term *in0, i32 delta)
+rebase(Arena *arena, Term *in0, i32 delta)
 {
   return rebaseMain(arena, in0, delta, 0);
 }
 
 internal Term *
-apply(MemoryArena *arena, Term *op, i32 arg_count, Term **args, Term *type, String name_to_unfold)
+apply(Arena *arena, Term *op, i32 arg_count, Term **args, Term *type, String name_to_unfold)
 {
   Term *out0 = 0;
 
@@ -1604,7 +1586,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
 {
   Term *out0 = 0;
   assert(ctx->offset >= 0);
-  MemoryArena *arena = ctx->arena;
+  Arena *arena = ctx->arena;
 
 #if DEBUG_LOG_evaluate
   i32 serial = DEBUG_SERIAL++;
@@ -1838,7 +1820,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
 }
 
 forward_declare inline Term *
-evaluate(MemoryArena *arena, Term **args, Term *in0)
+evaluate(Arena *arena, Term **args, Term *in0)
 {
   EvaluationContext ctx = {.arena=arena, .args=args};
   return evaluateMain(&ctx, in0);
@@ -1852,7 +1834,7 @@ evaluate(EvaluationContext ctx, Term *in0)
 
 // todo #cleanup "same_type" doesn't need to be passed down
 internal CompareTerms
-compareTerms(MemoryArena *arena, b32 same_type, Term *l0, Term *r0)
+compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
 {
   CompareTerms out = {.result = Trinary_Unknown};
 
@@ -2180,7 +2162,7 @@ internal Term *
 normalizeMain(NormalizeContext *ctx, Term *in0) 
 {
   Term *out0 = in0;
-  MemoryArena *arena = ctx->arena;
+  Arena *arena = ctx->arena;
 
 #if DEBUG_LOG_normalize
   i32 serial = DEBUG_SERIAL++;
@@ -2325,14 +2307,14 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
 }
 
 internal Term *
-normalize(MemoryArena *arena, Typer *env, Term *in0, String name_to_unfold)
+normalize(Arena *arena, Typer *env, Term *in0, String name_to_unfold)
 {
   NormalizeContext ctx = {.arena=arena, .map=(env ? env->map : 0), .depth=getScopeDepth(env), .name_to_unfold=name_to_unfold};
   return normalizeMain(&ctx, in0);
 }
 
 forward_declare internal Term *
-normalize(MemoryArena *arena, Typer *env, Term *in0)
+normalize(Arena *arena, Typer *env, Term *in0)
 {
   NormalizeContext ctx = {.arena=arena, .map=(env ? env->map : 0), .depth=getScopeDepth(env)};
   return normalizeMain(&ctx, in0);
@@ -2848,7 +2830,7 @@ solveArgs(Solver solver, Term *op, Term *goal, Token *blame_token)
 }
 
 inline Term *
-newComputation_(MemoryArena *arena, Term *lhs, Term *rhs)
+newComputation_(Arena *arena, Term *lhs, Term *rhs)
 {
   Term *eq = newEquality(arena, lhs, rhs);
   Computation *out = newTerm(arena, Computation, eq);
@@ -2856,9 +2838,8 @@ newComputation_(MemoryArena *arena, Term *lhs, Term *rhs)
 }
 
 inline Term *
-newComputationIfEqual(MemoryArena *arena, Typer *typer, Term *lhs, Term *rhs)
+newComputationIfEqual(Arena *arena, Typer *typer, Term *lhs, Term *rhs)
 {
-  // NOTE: mega_paranoid check.
   Term *out = 0;
   if (equal(normalize(arena, typer, lhs),
             normalize(arena, typer, rhs)))
@@ -2869,7 +2850,7 @@ newComputationIfEqual(MemoryArena *arena, Typer *typer, Term *lhs, Term *rhs)
 }
 
 inline Term *
-seekGoal(MemoryArena *arena, Typer *typer, Term *goal)
+seekGoal(Arena *arena, Typer *typer, Term *goal)
 {
   Term *out = 0;
   auto temp = beginTemporaryMemory(arena);
@@ -2970,7 +2951,7 @@ solveGoal(Solver *solver, Term *goal)
             SolveArgs solution = solveArgs(solver, hint, goal, 0);
             if (solution.args)
             {
-              MemoryArena *arena = solver->arena;
+              Arena *arena = solver->arena;
               Term **args = copyArray(arena, solution.arg_count, solution.args);
               out = newComposite(arena, hint, solution.arg_count, args);
             }
@@ -3045,7 +3026,7 @@ getFunctionOverloads(Identifier *ident, Term *output_type_goal)
 }
 
 inline Term *
-fillInEllipsis(MemoryArena *arena, Typer *typer, Identifier *op_ident, Term *goal)
+fillInEllipsis(Arena *arena, Typer *typer, Identifier *op_ident, Term *goal)
 {
   // NOTE: This routine is different from "solveGoal" in that the top-level
   // operator is fixed.
@@ -3094,7 +3075,7 @@ fillInEllipsis(MemoryArena *arena, Typer *typer, Identifier *op_ident, Term *goa
 }
 
 internal SearchOutput
-searchExpression(MemoryArena *arena, Typer *env, Term *lhs, Term* in0)
+searchExpression(Arena *arena, Typer *env, Term *lhs, Term* in0)
 {
   SearchOutput out = {};
   if (equal(in0, lhs))
@@ -3153,7 +3134,7 @@ searchExpression(MemoryArena *arena, Typer *env, Term *lhs, Term* in0)
 }
 
 inline Ast *
-parseSequence(MemoryArena *arena, b32 require_braces=true)
+parseSequence(Arena *arena, b32 require_braces=true)
 {
   Ast *out = 0;
   i32 count = 0;
@@ -3422,7 +3403,7 @@ parseSequence(MemoryArena *arena, b32 require_braces=true)
 }
 
 inline Ast *
-synthesizeAst(MemoryArena *arena, Term *term, Token *token)
+synthesizeAst(Arena *arena, Term *term, Token *token)
 {
   SyntheticAst *out = newAst(arena, SyntheticAst, token);
   out->term = term;
@@ -3430,14 +3411,14 @@ synthesizeAst(MemoryArena *arena, Term *term, Token *token)
 }
 
 internal Arrow *
-copyArrow(MemoryArena *arena, Arrow *in)
+copyArrow(Arena *arena, Arrow *in)
 {
   Arrow *out = copyStruct(arena, in);
   return out;
 }
 
 inline Term *
-buildCtorAst(MemoryArena *arena, CtorAst *in, Term *output_type)
+buildCtorAst(Arena *arena, CtorAst *in, Term *output_type)
 {
   Term *out = 0;
   if (Union *uni = castTerm(output_type, Union))
@@ -3453,7 +3434,7 @@ buildCtorAst(MemoryArena *arena, CtorAst *in, Term *output_type)
 }
 
 inline HintDatabase *
-addHint(MemoryArena *arena, HintDatabase *hint_db, Term *term)
+addHint(Arena *arena, HintDatabase *hint_db, Term *term)
 {
   HintDatabase *new_hints = pushStruct(arena, HintDatabase, true);
   new_hints->head = term;
@@ -3516,6 +3497,21 @@ isAlgebraicNorm(Ast *ast)
 }
 
 inline b32
+isTestSort(Ast *ast)
+{
+  // Could be extended to a general macro matcher, if we need more macros.
+  b32 out = false;
+  if (Identifier *ident = castAst(ast, Identifier))
+  {
+    if (equal(&ident->a.token, "test_sort"))
+    {
+      out = true;
+    }
+  }
+  return out;
+}
+
+inline b32
 stringLessThan(String a, String b)
 {
   b32 out = false;
@@ -3553,7 +3549,7 @@ algebraicallyLessThan(Term *a0, Term *b0)
 }
 
 inline TreePath *
-treePath(MemoryArena *arena, i32 head, TreePath *tail)
+treePath(Arena *arena, i32 head, TreePath *tail)
 {
   TreePath *out = pushStruct(arena, TreePath, true);
   out->head = head;
@@ -3576,7 +3572,7 @@ reverseInPlace(TreePath *in)
 }
 
 inline TreePath *
-reversePath(MemoryArena *arena, TreePath *in)
+reversePath(Arena *arena, TreePath *in)
 {
   TreePath *out = 0;
   for (TreePath *it = in; it; it = it->tail)
@@ -3590,7 +3586,7 @@ reversePath(MemoryArena *arena, TreePath *in)
 }
 
 inline TreePath *
-addToEnd(MemoryArena *arena, TreePath *prefix, i32 item)
+addToEnd(Arena *arena, TreePath *prefix, i32 item)
 {
   TreePath *reverse_prefix = reversePath(arena, prefix);
   TreePath *out = pushStruct(arena, TreePath, true);
@@ -3608,24 +3604,24 @@ getTransformationResult(Term *in)
 }
 
 inline Term *
-applyEqChain(MemoryArena *arena, Term *e1, Term *e2)
+applyEqChain(Arena *arena, Term *e1, Term *e2)
 {
   auto [a,b] = getEqualitySides(getType(e1));
   auto [_,c] = getEqualitySides(getType(e2));
   Term *A = getType(a);
-  Term *out = newCompositeN(arena, builtin_eqChain, 6, A, a,b,c, e1,e2);
+  Term *out = newCompositeN(arena, builtin_eqChain, A, a,b,c, e1,e2);
   return out;
 }
 
 inline Term *
-transformPartOfExpression(MemoryArena *arena, Term *eq_proof, TreePath *path, Term *in)
+transformPartOfExpression(Arena *arena, Term *eq_proof, TreePath *path, Term *in)
 {
   Term *id = newIdentity(arena, in);
   return newRewrite(arena, eq_proof, id, treePath(arena, 2, path), true);
 }
 
 inline Term *
-getAlgebraicNorm(MemoryArena *arena, Typer *typer, Algebra *algebra, Term *in0)
+getAlgebraicNorm(Arena *arena, Typer *typer, Algebra *algebra, Term *in0)
 {
   Term *out = 0;
   Term *expression0 = in0;
@@ -3658,7 +3654,7 @@ getAlgebraicNorm(MemoryArena *arena, Typer *typer, Algebra *algebra, Term *in0)
           if (equal(l->op, algebra->add))
           {
             stop = false;
-            Term *new_proof = newComposite3(arena, algebra->addAssociative, l->args[0], l->args[1], r);
+            Term *new_proof = newCompositeN(arena, algebra->addAssociative, l->args[0], l->args[1], r);
             if (out)
               out = applyEqChain(arena, out, new_proof);
             else
@@ -3674,7 +3670,7 @@ getAlgebraicNorm(MemoryArena *arena, Typer *typer, Algebra *algebra, Term *in0)
 }
 
 inline Term *
-buildAlgebraicNorm(MemoryArena *arena, Typer *typer, CompositeAst *in)
+buildAlgebraicNorm(Arena *arena, Typer *typer, CompositeAst *in)
 {
   Term *out = 0;
   // Solver solver = Solver{.arena=arena, .typer=typer, .use_global_hints=true};
@@ -3705,8 +3701,61 @@ buildAlgebraicNorm(MemoryArena *arena, Typer *typer, CompositeAst *in)
   return out;
 }
 
+internal TermArray
+convertToCArray(Arena *arena, Term *list0)
+{
+  TermArray out = {};
+  const i32 MAX_TERM_ARRAY_LENGTH = 20;
+  allocateArray(arena, MAX_TERM_ARRAY_LENGTH, out.items);
+  assert(getType(list0) == builtin_List);
+  Composite *list = castTerm(list0, Composite);
+  Constructor *ctor = castTerm(list->op, Constructor);
+  if (ctor->index == 0)
+  {
+    out.items[out.count++] = list->args[0];
+    assert(out.count <= MAX_TERM_ARRAY_LENGTH);
+  }
+  else
+  {
+    todoIncomplete;
+  }
+  return out;
+}
+
+internal Term *
+newRecord(Union *uni, i32 ctor_index, ...)
+{
+  Term *out = 0;
+  return out;
+}
+
+internal Term *
+convertToTermList(Arena *arena, TermArray array)
+{
+  Term *out = 0;
+  if (array.count == 1)
+  {
+    out = newRecord(castTerm(builtin_List, Union), 0, getType(array.items[0]), array.items[0]);
+  }
+  else
+    todoIncomplete;
+  return out;
+}
+
+internal Term *
+buildTestSort(Arena *arena, Typer *typer, CompositeAst *in)
+{
+  Term *out = 0;
+  assert(in->arg_count == 1);
+  if (Term *list0 = buildTerm(arena, typer, in->args[0], holev))
+  {
+    convertToCArray(arena, list0);
+  }
+  return out;
+}
+
 forward_declare internal BuildTerm
-buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
+buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
 {
   // beware: Usually we mutate in-place, but we may also allocate anew.
   i32 UNUSED_VAR serial = DEBUG_SERIAL++;
@@ -3729,6 +3778,11 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
           out0 = fillInEllipsis(arena, typer, op_ident, goal);
         else
           parseError(in->args[0], "todo: ellipsis only works with identifier atm");
+      }
+      else if (isTestSort(in->op))
+      {
+        // macro interception
+        out0 = buildTestSort(arena, typer, in);
       }
       else if (isAlgebraicNorm(in->op))
       {
@@ -4429,7 +4483,7 @@ buildTerm(MemoryArena *arena, Typer *typer, Ast *in0, Term *goal)
 }
 
 forward_declare internal Term *
-buildFork(MemoryArena *arena, Typer *env, ForkAst *in, Term *goal)
+buildFork(Arena *arena, Typer *env, ForkAst *in, Term *goal)
 {
   if (goal->cat == Term_Hole)
   {
@@ -4532,7 +4586,7 @@ buildFork(MemoryArena *arena, Typer *env, ForkAst *in, Term *goal)
 }
 
 forward_declare inline Term *
-newRewrite(MemoryArena *arena, Term *eq_proof, Term *body, TreePath *path, b32 right_to_left)
+newRewrite(Arena *arena, Term *eq_proof, Term *body, TreePath *path, b32 right_to_left)
 {
   auto [lhs, rhs] = getEqualitySides(getType(eq_proof));
   Term *from = right_to_left ? lhs : rhs;
@@ -4548,7 +4602,7 @@ newRewrite(MemoryArena *arena, Term *eq_proof, Term *body, TreePath *path, b32 r
 }
 
 inline BuildTerm
-parseExpressionAndBuild(MemoryArena *arena, LocalBindings *bindings, Term *expected_type)
+parseExpressionAndBuild(Arena *arena, LocalBindings *bindings, Term *expected_type)
 {
   BuildTerm out = {};
   if (Ast *ast = parseExpression(arena))
@@ -4561,7 +4615,7 @@ parseExpressionAndBuild(MemoryArena *arena, LocalBindings *bindings, Term *expec
 }
 
 inline BuildTerm
-parseExpressionAndBuild(MemoryArena *arena)
+parseExpressionAndBuild(Arena *arena)
 {
   return parseExpressionAndBuild(arena, 0, holev);
 }
@@ -4573,7 +4627,7 @@ struct NormList {
 
 // todo No need to normalize a fork if that fork contains other forks inside.
 inline void
-insertAutoNormalizations(MemoryArena *arena, NormList norm_list, Ast *in0)
+insertAutoNormalizations(Arena *arena, NormList norm_list, Ast *in0)
 {
   switch (in0->cat)
   {
@@ -4623,7 +4677,7 @@ insertAutoNormalizations(MemoryArena *arena, NormList norm_list, Ast *in0)
 }
 
 internal FunctionAst *
-parseGlobalFunction(MemoryArena *arena, Token *name, b32 is_theorem)
+parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
 {
   FunctionAst *out = newAst(arena, FunctionAst, name);
   assert(isIdentifier(name));
@@ -4697,7 +4751,7 @@ parseGlobalFunction(MemoryArena *arena, Token *name, b32 is_theorem)
 }
 
 forward_declare internal Ast *
-parseFork(MemoryArena *arena)
+parseFork(Arena *arena)
 {
   ForkAst *out = 0;
   Token token = global_tokenizer->last_token;
@@ -4752,7 +4806,7 @@ parseFork(MemoryArena *arena)
 }
 
 internal ArrowAst *
-parseArrowType(MemoryArena *arena, b32 is_struct)
+parseArrowType(Arena *arena, b32 is_struct)
 {
   ArrowAst *out = 0;
   i32      param_count = 0;
@@ -4880,7 +4934,7 @@ areSequential(Token *first, Token *next)
 }
 
 internal UnionAst *
-parseUnion(MemoryArena *arena)
+parseUnion(Arena *arena)
 {
   UnionAst *uni = newAst(arena, UnionAst, lastToken());
 
@@ -4938,7 +4992,7 @@ parseUnion(MemoryArena *arena)
 }
 
 struct ProcessPolyConstructorTypeContext {
-  MemoryArena *arena;
+  Arena *arena;
   i32          poly_param_count;
 };
 
@@ -4949,7 +5003,7 @@ internal Term *
 processPolyConstructorType(ProcessPolyConstructorTypeContext *ctx, Term *in0)
 {
   Term *out0 = in0;
-  MemoryArena *arena = ctx->arena;
+  Arena *arena = ctx->arena;
   if (!isGlobalValue(in0))
   {
     switch (in0->cat)
@@ -5028,7 +5082,7 @@ processPolyConstructorType(ProcessPolyConstructorTypeContext *ctx, Term *in0)
 }
 
 forward_declare internal Term *
-buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
+buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
 {
   Union *uni = newTerm(arena, Union, builtin_Type);
   PolyUnion *poly_union = 0;
@@ -5161,7 +5215,7 @@ buildUnion(MemoryArena *arena, Typer *typer, UnionAst *in, Token *global_name)
 }
 
 inline CtorAst *
-parseCtor(MemoryArena *arena)
+parseCtor(Arena *arena)
 {
   CtorAst *out = newAst(arena, CtorAst, &global_tokenizer->last_token);
   if (requireChar('['))
@@ -5173,7 +5227,7 @@ parseCtor(MemoryArena *arena)
 }
 
 inline SeekAst *
-parseSeek(MemoryArena *arena)
+parseSeek(Arena *arena)
 {
   SeekAst *seek = newAst(arena, SeekAst, &global_tokenizer->last_token);
   if (!seesExpressionEndMarker())
@@ -5184,7 +5238,7 @@ parseSeek(MemoryArena *arena)
 }
 
 inline Ast *
-parseOverload(MemoryArena *arena)
+parseOverload(Arena *arena)
 {
   OverloadAst *out = newAst(arena, OverloadAst, lastToken());
   if (requireChar('('))
@@ -5204,7 +5258,7 @@ parseOverload(MemoryArena *arena)
 }
 
 internal Ast *
-parseFunctionExpression(MemoryArena *arena)
+parseFunctionExpression(Arena *arena)
 {
   // cutnpaste from "parseGlobalFunction"
   FunctionAst *out = newAst(arena, FunctionAst, lastToken());
@@ -5233,7 +5287,7 @@ parseFunctionExpression(MemoryArena *arena)
 }
 
 internal Ast *
-parseOperand(MemoryArena *arena)
+parseOperand(Arena *arena)
 {
   Ast *operand = 0;
   Token token = nextToken();
@@ -5377,7 +5431,7 @@ parseLambda(MemoryArena *arena)
 #endif
 
 internal Ast *
-parseExpressionMain(MemoryArena *arena, ParseExpressionOptions opt)
+parseExpressionMain(Arena *arena, ParseExpressionOptions opt)
 {
   Ast *out = 0;
   if (seesArrowExpression())
@@ -5442,7 +5496,7 @@ parseExpressionMain(MemoryArena *arena, ParseExpressionOptions opt)
 }
 
 forward_declare inline Ast *
-parseExpression(MemoryArena *arena)
+parseExpression(Arena *arena)
 {
   return parseExpressionMain(arena, ParseExpressionOptions{});
 }
@@ -5458,7 +5512,7 @@ addGlobalHint(Function *fun)
 
 // todo :build-global-function-vs-local-function
 internal Function *
-buildGlobalFunction(MemoryArena *arena, FunctionAst *in)
+buildGlobalFunction(Arena *arena, FunctionAst *in)
 {
   pushContext(in->token.string, true);
   Function *out = 0;
@@ -5496,7 +5550,7 @@ buildGlobalFunction(MemoryArena *arena, FunctionAst *in)
 internal void
 parseTopLevel(EngineState *state)
 {
-  MemoryArena *arena = state->top_level_arena;
+  Arena *arena = state->top_level_arena;
   b32 should_fail_active = false;
 
   Token token_ = nextToken(); 
@@ -5778,7 +5832,7 @@ parseTopLevel(EngineState *state)
 forward_declare internal b32
 interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
 {
-  MemoryArena *arena = state->top_level_arena;
+  Arena *arena = state->top_level_arena;
   b32 success = true;
 #define REA_PROFILE 0
 #if REA_PROFILE
@@ -5788,11 +5842,11 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
   ReadFileResult read = platformReadEntireFile(input_path.path);
   if (read.content)
   {
-    auto new_file_list           = pushStruct(arena, FileList);
+    auto new_file_list          = pushStruct(arena, FileList);
     new_file_list->head_path    = input_path.path;
     new_file_list->head_content = read.content;
-    new_file_list->tail          = state->file_list;
-    state->file_list             = new_file_list;
+    new_file_list->tail         = state->file_list;
+    state->file_list            = new_file_list;
 
     Tokenizer  tk_ = newTokenizer(input_path.directory, read.content);
     Tokenizer *tk  = &tk_;
@@ -5800,10 +5854,6 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
     Tokenizer *old_tokenizer = global_tokenizer;
     global_tokenizer         = tk;
 
-    if (is_root_file)
-    {
-      printf("> Interpreting file: %s\n", input_path.file);
-    }
     parseTopLevel(state);
     if (ParseError *error = tk->error)
     {
@@ -5850,8 +5900,6 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
       auto compile_time = platformGetSecondsElapsed(begin_time, platformGetWallClock(arena));
       printf("Compile time for file %s: %fs\n", input_path.file, compile_time);
 #endif
-      for (i32 i=0; i < 80; i++) printf("-");
-      printf("\n\n");
     }
 
     global_tokenizer = old_tokenizer;
@@ -5871,7 +5919,7 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
 }
 
 internal b32
-beginInterpreterSession(MemoryArena *top_level_arena, char *initial_file)
+beginInterpreterSession(Arena *top_level_arena, FilePath input_path)
 {
   DEBUG_OFF;
   // :global_state_cleared_at_startup Clear global state as we might run the
@@ -5904,17 +5952,25 @@ beginInterpreterSession(MemoryArena *top_level_arena, char *initial_file)
     builtin_False = &castTerm(builtin_False0, Union)->t;
     addBuiltinGlobalBinding("False", builtin_False);
 
-    builtin_tk.at = R""""(fn ($A: Type, $a, $b, $c: A, a=b, b=c) -> a=c
-{=> b = c {seek(a=b)} seek}
-)"""";
+    builtin_tk.at = "(fn ($A: Type, $a, $b, $c: A, a=b, b=c) -> a=c {=> b = c {seek(a=b)} seek})";
     builtin_eqChain = parseExpressionAndBuild(arena).term;
     assert(noError());
     addBuiltinGlobalBinding("eqChain", builtin_eqChain);
 
+    FilePath builtin_path = platformGetFileFullPath(arena, "../data/builtins.rea");
+    interpretFile(&global_state, builtin_path, true);
+
+    // TODO: These List builtins are going too far...
+    builtin_List            = lookupBuiltinGlobalName("List");
+    builtin_fold            = lookupBuiltinGlobalName("fold");
+    builtin_concat          = lookupBuiltinGlobalName("+");
+    builtin_Permutation     = lookupBuiltinGlobalName("Permutation");
+    builtin_foldConcat      = lookupBuiltinGlobalName("foldConcat");
+    builtin_foldPermutation = lookupBuiltinGlobalName("foldPermutation");
+
     resetArena(temp_arena);
   }
 
-  FilePath input_path = platformGetFileFullPath(arena, initial_file);
   b32 success = interpretFile(&global_state, input_path, true);
 
   for (FileList *file_list = global_state.file_list;
@@ -5944,8 +6000,8 @@ int engineMain()
   void   *top_level_arena_base = (void*)teraBytes(2);
   size_t  top_level_arena_size = megaBytes(256);
   top_level_arena_base = platformVirtualAlloc(top_level_arena_base, top_level_arena_size);
-  MemoryArena top_level_arena_ = newArena(top_level_arena_size, top_level_arena_base);
-  MemoryArena *top_level_arena = &top_level_arena_;
+  Arena top_level_arena_ = newArena(top_level_arena_size, top_level_arena_base);
+  Arena *top_level_arena = &top_level_arena_;
 
   void   *temp_arena_base = (void*)teraBytes(3);
   size_t  temp_arena_size = megaBytes(2);
@@ -5960,8 +6016,15 @@ int engineMain()
   };
   for (i32 file_id=0; file_id < arrayCount(files); file_id++)
   {
-    if (!beginInterpreterSession(top_level_arena, files[file_id]))
-      success = false;
+    FilePath input_path = platformGetFileFullPath(top_level_arena, files[file_id]);
+    printf("> Interpreting file: %s\n", input_path.file);
+    b32 file_success = beginInterpreterSession(top_level_arena, input_path);
+    success = success && file_success;
+    for (i32 i=0; i < 80; i++)
+    {
+      printf("-");
+    }
+    printf("\n\n");
     resetArena(top_level_arena, true);
   }
   return success;

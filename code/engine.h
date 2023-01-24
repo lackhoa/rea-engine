@@ -7,8 +7,8 @@
 #include "tokenization.h"
 
 // NOTE: This should work like the function stack, we'll clean it after every top-level form.
-global_variable MemoryArena  temp_arena_;
-global_variable MemoryArena *temp_arena = &temp_arena_;
+global_variable Arena  temp_arena_;
+global_variable Arena *temp_arena = &temp_arena_;
 global_variable StringBuffer  error_buffer_;
 global_variable StringBuffer *error_buffer = &error_buffer_;
 
@@ -90,7 +90,7 @@ initAst(Ast *in, AstCategory cat, Token *token)
 }
 
 inline Ast *
-newAst_(MemoryArena *arena, AstCategory cat, Token *token, size_t size)
+newAst_(Arena *arena, AstCategory cat, Token *token, size_t size)
 {
   Ast *out = (Ast *)pushSize(arena, size, true);
   initAst(out, cat, token);
@@ -182,7 +182,7 @@ struct Stack {
   i32     count;
   Term  **items;
   Stack  *outer;
-  MemoryArena *unification_arena;
+  Arena *unification_arena;
 };
 
 struct Scope {
@@ -229,7 +229,7 @@ initTerm(Term *in, TermCategory cat, Term *type)
 }
 
 inline Term *
-_newTerm(MemoryArena *arena, TermCategory cat, Term *type, size_t size)
+_newTerm(Arena *arena, TermCategory cat, Term *type, size_t size)
 {
   Term *out = (Term *)pushSize(arena, size, true);
   initTerm(out, cat, type);
@@ -300,7 +300,7 @@ struct LookupLocalName {
 
 struct LocalBindings
 {
-  MemoryArena   *arena;
+  Arena   *arena;
   LocalBinding   table[128];
   LocalBindings *tail;
 };
@@ -519,7 +519,7 @@ struct SyntheticAst {
 const u32 EvaluationFlag_ApplyMode = 1 << 0;
 
 struct EvaluationContext {
-  MemoryArena  *arena;
+  Arena  *arena;
   Term        **args;
   Term        **poly_args;
   i32           offset;
@@ -559,7 +559,7 @@ struct SolveArgs {b32 matches; i32 arg_count; Term **args;};
 
 #define MAX_SOLVE_DEPTH 3
 struct Solver {
-  MemoryArena  *arena;
+  Arena  *arena;
   Typer        *typer;
   b32           use_global_hints;
   HintDatabase *local_hints;
@@ -587,7 +587,7 @@ struct AlgebraDatabase {
 
 // :global_state_cleared_at_startup
 struct EngineState {
-  MemoryArena     *top_level_arena;
+  Arena     *top_level_arena;
   FileList        *file_list;
   GlobalBindings  *bindings;
   HintDatabase    *hints;
@@ -600,7 +600,7 @@ struct TreePathList {
 };
 
 struct NormalizeContext {
-  MemoryArena *arena;
+  Arena *arena;
   DataMap     *map;
   i32          depth;
   String       name_to_unfold;

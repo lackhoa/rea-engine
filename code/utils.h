@@ -74,7 +74,7 @@ zeroSize(void *base, size_t size)
 #define zeroStruct(base, type) zeroSize(base, sizeof(type));
 #define zeroOut(base) zeroSize(base, sizeof(base))
 
-struct MemoryArena
+struct Arena
 {
     u8     *base;
     size_t  used;
@@ -83,26 +83,26 @@ struct MemoryArena
     i32 temp_count;
 };
 
-typedef MemoryArena StringBuffer;
+typedef Arena StringBuffer;
 
-inline MemoryArena
+inline Arena
 newArena(size_t cap, void *base)
 {
-    MemoryArena arena = {};
+    Arena arena = {};
     arena.cap = cap;
     arena.base = (u8 *)base;
     return arena;
 }
 
 inline size_t
-getArenaFree(MemoryArena *arena)
+getArenaFree(Arena *arena)
 {
     size_t out = arena->cap - arena->used;
     return out;
 }
 
 inline void *
-pushSize(MemoryArena *arena, size_t size, b32 zero = false)
+pushSize(Arena *arena, size_t size, b32 zero = false)
 {
     void *out = (arena->base + arena->used);
     arena->used += size;
@@ -121,10 +121,10 @@ pushSize(MemoryArena *arena, size_t size, b32 zero = false)
 #define allocate(arena, x, ...) x = (mytypeof(x)) pushSize(arena, sizeof(*x), __VA_ARGS__)
 #define allocateArray(arena, count, x, ...) x = (mytypeof(x)) pushSize(arena, (count)*sizeof(*x), __VA_ARGS__)
 
-inline MemoryArena
-subArena(MemoryArena *parent, size_t size)
+inline Arena
+subArena(Arena *parent, size_t size)
 {
-    MemoryArena result = {};
+    Arena result = {};
     result.base = (u8 *)pushSize(parent, size);
     result.cap  = size;
     return result;
@@ -132,12 +132,12 @@ subArena(MemoryArena *parent, size_t size)
 
 struct TemporaryMemory
 {
-    MemoryArena *arena;
+    Arena *arena;
     size_t       original_used;
 };
 
 inline TemporaryMemory
-beginTemporaryMemory(MemoryArena *arena)
+beginTemporaryMemory(Arena *arena)
 {
   TemporaryMemory out = {};
   out.arena         = arena;
@@ -161,13 +161,13 @@ commitTemporaryMemory(TemporaryMemory temp)
 }
 
 inline void
-checkArena(MemoryArena *arena)
+checkArena(Arena *arena)
 {
     assert(arena->temp_count == 0);
 }
 
 inline void
-resetArena(MemoryArena *arena, b32 zero=false)
+resetArena(Arena *arena, b32 zero=false)
 {
   arena->used = 0;
   if (zero)
@@ -175,7 +175,7 @@ resetArena(MemoryArena *arena, b32 zero=false)
 }
 
 inline void *
-copySize(MemoryArena *arena, void *src, size_t size)
+copySize(Arena *arena, void *src, size_t size)
 {
   void *dst = pushSize(arena, size);
   copyMemory(dst, src, size);
@@ -218,7 +218,7 @@ struct String
 };
 
 inline void *
-getNext(MemoryArena *buffer)
+getNext(Arena *buffer)
 {
   if (buffer)
     return (buffer->base + buffer->used);
@@ -347,7 +347,7 @@ equal(char *s1, char *s2)
 }
 
 internal String
-printVA(MemoryArena *buffer, char *format, va_list arg_list)
+printVA(Arena *buffer, char *format, va_list arg_list)
 {
   char *at = (char *)getNext(buffer);
   int printed = vsprintf_s(at, (buffer->cap - buffer->used), format, arg_list);
@@ -356,7 +356,7 @@ printVA(MemoryArena *buffer, char *format, va_list arg_list)
 }
 
 internal String
-print(MemoryArena *buffer, char *format, ...)
+print(Arena *buffer, char *format, ...)
 {
   String out = {};
 
@@ -380,7 +380,7 @@ print(MemoryArena *buffer, char *format, ...)
 }
 
 inline String
-print(MemoryArena *buffer, String s)
+print(Arena *buffer, String s)
 {
   String out = {};
   if (buffer)
@@ -402,7 +402,7 @@ print(MemoryArena *buffer, String s)
 }
 
 inline b32
-belongsToArena(MemoryArena *arena, u8 *memory)
+belongsToArena(Arena *arena, u8 *memory)
 {
   return ((memory >= arena->base) && (memory < arena->base + arena->cap));
 }
@@ -455,13 +455,13 @@ inline void dump(int d) {printf("%d", d);}
 inline void dump(char *c) {printf("%s", c);}
 
 inline b32
-inArena(MemoryArena *arena, void *p)
+inArena(Arena *arena, void *p)
 {
   return ((u64)p >= (u64)arena->base && (u64)p < (u64)arena->base+arena->cap);
 }
 
 inline String
-copyString(MemoryArena *buffer, String src)
+copyString(Arena *buffer, String src)
 {
   String out;
   out.chars  = copyArray(buffer, src.length, src.chars);

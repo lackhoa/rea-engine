@@ -15,7 +15,7 @@ ReadFileResult platformReadEntireFile(const char *file_name);
 
 void platformPrint(const char *string);
 void platformFreeFileMemory(void *memory);
-void *platformGetWallClock(MemoryArena *arena);
+void *platformGetWallClock(Arena *arena);
 r32 platformGetSecondsElapsed(void *start, void *end);
 
 struct FilePath
@@ -24,7 +24,7 @@ struct FilePath
     String  directory;
     char   *file;
 };
-FilePath platformGetFileFullPath(MemoryArena* arena, char *file);
+FilePath platformGetFileFullPath(Arena* arena, char *file);
 
 #if 0
 struct EngineMemory

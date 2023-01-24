@@ -3,8 +3,8 @@
 #include "utils.h"
 #include "clang-c/Index.h"
 
-global_variable MemoryArena *permanent_arena;
-global_variable MemoryArena *temp_arena;
+global_variable Arena *permanent_arena;
+global_variable Arena *temp_arena;
 global_variable String current_dir;
 global_variable __attribute__((unused)) b32 global_debug_mode;
 
@@ -165,7 +165,7 @@ getAllCppFilesInDirectory()
 }
 
 inline String
-print(MemoryArena *buffer, CXString string)
+print(Arena *buffer, CXString string)
 {
   String out = {};
   const char *cstring = clang_getCString(string);
@@ -178,7 +178,7 @@ print(MemoryArena *buffer, CXString string)
 }
 
 internal char *
-printFunctionSignature(MemoryArena *buffer, CXCursor cursor)
+printFunctionSignature(Arena *buffer, CXCursor cursor)
 {
   char *out = (char *)getNext(buffer);
 
@@ -210,7 +210,7 @@ internal CXChildVisitResult
 structVisitor(CXCursor cursor, CXCursor parent, CXClientData client_data)
 {
   (void)parent;
-  MemoryArena *arena = permanent_arena;
+  Arena *arena = permanent_arena;
   String *out = (String *)client_data;
   CXCursorKind cursor_kind = clang_getCursorKind(cursor);
   switch (cursor_kind)
@@ -253,7 +253,7 @@ printStructFields(CXCursor cursor, String *out)
 internal CXChildVisitResult
 topLevelVisitor(CXCursor cursor, CXCursor parent, CXClientData client_data)
 {
-  MemoryArena *arena = permanent_arena;
+  Arena *arena = permanent_arena;
   State *state = (State *)client_data;
   (void)parent; (void)client_data;
   TemporaryMemory temp_mem = beginTemporaryMemory(temp_arena);
@@ -368,14 +368,14 @@ topLevelVisitor(CXCursor cursor, CXCursor parent, CXClientData client_data)
 
 int main()
 {
-  MemoryArena temp_arena_ = newArena(megaBytes(8), (void *)teraBytes(3));
+  Arena temp_arena_ = newArena(megaBytes(8), (void *)teraBytes(3));
   VirtualAlloc(temp_arena_.base, temp_arena_.cap, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
   temp_arena = &temp_arena_;
 
-  MemoryArena permanent_arena_ = newArena(megaBytes(128), (void *)teraBytes(2));
+  Arena permanent_arena_ = newArena(megaBytes(128), (void *)teraBytes(2));
   VirtualAlloc(permanent_arena_.base, permanent_arena_.cap, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
   permanent_arena = &permanent_arena_;
-  MemoryArena *arena = permanent_arena;
+  Arena *arena = permanent_arena;
 
   char *current_dir_base = (char*)getNext(arena);
   i32 current_dir_length = GetCurrentDirectory(arena->cap, (char *)arena->base);

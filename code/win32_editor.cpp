@@ -177,7 +177,7 @@ win32GetWallClock(void)
 }
 
 void *
-platformGetWallClock(MemoryArena *arena)
+platformGetWallClock(Arena *arena)
 {
     auto out = pushStruct(arena, LARGE_INTEGER);
     *out = win32GetWallClock();
@@ -247,7 +247,7 @@ win32ResizeDIBSection(win32_offscreen_buffer *buffer, int width, int height)
 }
 
 FilePath
-platformGetFileFullPath(MemoryArena* arena, char *file)
+platformGetFileFullPath(Arena* arena, char *file)
 {
     FilePath out;
     out.path = (char *)getNext(arena);
