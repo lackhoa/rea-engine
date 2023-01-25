@@ -16,18 +16,20 @@
 #include "tokenization.cpp"
 #include "debug_config.h"
 
-global_variable Term *builtin_Type;
-global_variable Term *builtin_equal;
-global_variable Term *builtin_False;
-global_variable Term *builtin_eqChain;
+global_variable Term *rea_Type;
+global_variable Term *rea_equal;
+global_variable Term *rea_False;
+global_variable Term *rea_eqChain;
 
 // TODO: These List builtins are going too far...
-global_variable Term *builtin_List;
-global_variable Term *builtin_fold;
-global_variable Term *builtin_concat;
-global_variable Term *builtin_Permutation;
-global_variable Term *builtin_foldConcat;
-global_variable Term *builtin_foldPermutation;
+global_variable Term *rea_List;
+global_variable Term *rea_single;
+global_variable Term *rea_cons;
+global_variable Term *rea_fold;
+global_variable Term *rea_concat;
+global_variable Term *rea_Permutation;
+global_variable Term *rea_foldConcat;
+global_variable Term *rea_foldPermutation;
 
 global_variable Term dummy_function_being_built;
 global_variable Term  holev_ = {.cat = Term_Hole};
@@ -184,46 +186,78 @@ getPolyArgCount(Union *in)
 }
 
 inline Term *
+newConstructor(Arena *arena, Union *uni, i32 index)
+{
+  // #why_constructors_dont_have_types
+  Constructor *ctor = newTerm(arena, Constructor, 0);
+  ctor->index = index;
+  ctor->uni   = uni;
+  return &ctor->t;
+}
+
+inline Term *
 newComposite(Arena *arena, Term *op, i32 arg_count, Term **args)
 {
-  Term *type = getOutputType(arena, op, args);
+  Term *out0 = 0;
   Arrow *signature = getParameterTypes(op);
+  Term  *type      = getOutputType(arena, op, args);
 
   assert(signature->param_count == arg_count);
-  for (i32 i=0; i < arg_count; i++)
+  for (i32 arg_i=0; arg_i < arg_count; arg_i++)
   {
-    Term *actual_type   = getType(args[i]);
-    Term *expected_type = evaluate(arena, args, signature->param_types[i]);
+    Term *actual_type   = getType(args[arg_i]);
+    Term *expected_type = evaluate(arena, args, signature->param_types[arg_i]);
     assert(equal(actual_type, expected_type));
   }
 
-  Composite *out = newTerm(arena, Composite, type);
-  out->op        = op;
-  out->arg_count = arg_count;
-  out->args      = args;
+  if (PolyUnion *puni = castTerm(op, PolyUnion))
+  {
+    Union *out     = copyStruct(arena, puni->union_template);
+    out->poly_args = args;
+    out0 = &out->t;
+  }
+  else
+  {
+    if (PolyConstructor *pctor = castTerm(op, PolyConstructor))
+    {
+      i32 poly_param_count = getParameterCount(&pctor->poly_union->t);
+      assert(arg_count >= poly_param_count);
+      Union *instance = specializeUnion(arena, pctor->poly_union, args);
+      op        = newConstructor(arena, instance, pctor->index);
+      arg_count = arg_count - poly_param_count;
+      args      = args + poly_param_count;
+    }
+    Composite *out = newTerm(arena, Composite, type);
+    out->op        = op;
+    out->arg_count = arg_count;
+    out->args      = args;
+    out0 = &out->t;
+  }
 
-  return &out->t;
+  return out0;
 }
 
 inline Term *
 newCompositeN(Arena *arena, Term *op, ...)
 {
-  va_list arg_list;
   i32 param_count = getParameterCount(op);
   Term **args = pushArray(arena, param_count, Term*);
+
+  va_list arg_list;
   __crt_va_start(arg_list, op);
   for (i32 i=0; i < param_count; i++)
   {
     args[i] = __crt_va_arg(arg_list, Term*);
   }
   __crt_va_end(arg_list);
+
   return newComposite(arena, op, param_count, args);
 }
 
 inline Term *
 newEquality(Arena *arena, Term *lhs, Term *rhs)
 {
-  return newCompositeN(arena, builtin_equal, getType(lhs), lhs, rhs);
+  return newCompositeN(arena, rea_equal, getType(lhs), lhs, rhs);
 }
 
 inline Term *
@@ -239,7 +273,7 @@ isEquality(Term *eq0)
 {
   if (Composite *eq = castTerm(eq0, Composite))
   {
-    if (eq->op == builtin_equal)
+    if (eq->op == rea_equal)
       return true;
   }
   return false;
@@ -251,7 +285,7 @@ getEqualitySides(Term *eq0, b32 must_succeed=true)
   TermPair out = {};
   if (Composite *eq = castTerm(eq0, Composite))
   {
-    if (eq->op == builtin_equal)
+    if (eq->op == rea_equal)
       out = TermPair{eq->args[1], eq->args[2]};
   }
   assert(!must_succeed || out)
@@ -285,16 +319,6 @@ isSequenced(Term *term)
     default: out = false;
   }
   return out;
-}
-
-inline Term *
-newConstructor(Arena *arena, Union *uni, i32 index)
-{
-  // #why_constructors_dont_have_types
-  Constructor *ctor = newTerm(arena, Constructor, 0);
-  ctor->index = index;
-  ctor->uni   = uni;
-  return &ctor->t;
 }
 
 inline Stack *
@@ -1127,12 +1151,12 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
           }
         } break;
 
-        case Term_Builtin:
+        case Term_Primitive:
         {
           // todo cleanup probably don't need these anymore
-          if (in0 == builtin_equal)
+          if (in0 == rea_equal)
             print(buffer, "=");
-          else if (in0 == builtin_Type)
+          else if (in0 == rea_Type)
             print(buffer, "Type");
           else
             todoIncomplete;
@@ -1337,7 +1361,7 @@ isGround(Term *in0)
     } break;
 
     case Term_PolyConstructor:
-    case Term_Builtin:
+    case Term_Primitive:
     {return true;} break;
 
     case Term_Hole:
@@ -1522,7 +1546,7 @@ apply(Arena *arena, Term *op, i32 arg_count, Term **args, Term *type, String nam
       out0 = evaluate(EvaluationContext{.arena=arena, .args=args, .flags=EvaluationFlag_ApplyMode},
                       fun->body);
   }
-  else if (op == builtin_equal)
+  else if (op == rea_equal)
   {// special case for equality
     Term *l0 = args[1];
     Term *r0 = args[2];
@@ -1549,7 +1573,7 @@ apply(Arena *arena, Term *op, i32 arg_count, Term **args, Term *type, String nam
                 args[0] = getType(larg);
                 args[1] = larg;
                 args[2] = rarg;
-                out0 = apply(arena, builtin_equal, 3, args, type, {});
+                out0 = apply(arena, rea_equal, 3, args, type, {});
                 if (!out0)
                   out0 = newEquality(arena, larg, rarg);
               }
@@ -1564,7 +1588,7 @@ apply(Arena *arena, Term *op, i32 arg_count, Term **args, Term *type, String nam
     Trinary compare = equalTrinary(l0, r0);
     // #hack to handle inconsistency
     if (compare == Trinary_False)
-      out0 = builtin_False;
+      out0 = rea_False;
   }
   else if (op->cat == Term_Constructor)
   {
@@ -1802,7 +1826,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
         }
       } break;
 
-      case Term_Builtin:
+      case Term_Primitive:
       case Term_Hole:
       {out0=in0;} break;
 
@@ -1988,7 +2012,7 @@ compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
         }
       } break;
 
-      case Term_Builtin:
+      case Term_Primitive:
       {
         out.result = toTrinary(l0 == r0);
       } break;
@@ -2289,7 +2313,7 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
       {invalidCodePath;} break;
 
       case Term_Constructor:
-      case Term_Builtin:
+      case Term_Primitive:
       case Term_Function:
       case Term_Computation:
       {} break;
@@ -2360,7 +2384,7 @@ lookupGlobalName(Token *token)
 }
 
 inline Term *
-lookupBuiltinGlobalName(char *name)
+lookupBuiltin(char *name)
 {
   Token token = newToken(name);
   GlobalBinding *slot = lookupGlobalName(&token);
@@ -2740,7 +2764,7 @@ unify(Stack *stack, b32 same_type, Term *in0, Term *goal0)
       break;
 
     case Term_Function:
-    case Term_Builtin:
+    case Term_Primitive:
     {
       success = equal(in0, goal0);
     } break;
@@ -2903,7 +2927,7 @@ solveGoal(Solver *solver, Term *goal)
 
   b32 should_attempt_inference = true;
   if (solver->depth > MAX_SOLVE_DEPTH ||
-      goal == builtin_Type ||
+      goal == rea_Type ||
       goal->cat == Term_Hole)
   {
     should_attempt_inference = false;
@@ -3119,7 +3143,7 @@ searchExpression(Arena *arena, Typer *env, Term *lhs, Term* in0)
 
       case Term_Hole:
       case Term_Computation:
-      case Term_Builtin:
+      case Term_Primitive:
       case Term_Union:
       case Term_Function:
       case Term_Constructor:
@@ -3609,7 +3633,7 @@ applyEqChain(Arena *arena, Term *e1, Term *e2)
   auto [a,b] = getEqualitySides(getType(e1));
   auto [_,c] = getEqualitySides(getType(e2));
   Term *A = getType(a);
-  Term *out = newCompositeN(arena, builtin_eqChain, A, a,b,c, e1,e2);
+  Term *out = newCompositeN(arena, rea_eqChain, A, a,b,c, e1,e2);
   return out;
 }
 
@@ -3702,43 +3726,46 @@ buildAlgebraicNorm(Arena *arena, Typer *typer, CompositeAst *in)
 }
 
 internal TermArray
-convertToCArray(Arena *arena, Term *list0)
+toCArray(Arena *arena, Term *list0)
 {
   TermArray out = {};
   const i32 MAX_TERM_ARRAY_LENGTH = 20;
   allocateArray(arena, MAX_TERM_ARRAY_LENGTH, out.items);
-  assert(getType(list0) == builtin_List);
-  Composite *list = castTerm(list0, Composite);
-  Constructor *ctor = castTerm(list->op, Constructor);
-  if (ctor->index == 0)
+  assert(castTerm(getType(list0), Union)->poly_union == castTerm(rea_List, PolyUnion));
+
+  b32 stop=false;
+  for (Term *iter0=list0; !stop; )
   {
-    out.items[out.count++] = list->args[0];
+    Composite *iter = castTerm(iter0, Composite);
+    Term *head = iter->args[0];
+    out.items[out.count++] = head;
     assert(out.count <= MAX_TERM_ARRAY_LENGTH);
+
+    Constructor *ctor = castTerm(iter->op, Constructor);
+    if (ctor->index == 0)
+    {
+      stop = true;
+    }
+    else
+    {
+      assert(ctor->index == 1);
+      Term *tail = iter->args[1];
+      iter0 = tail;
+    }
   }
-  else
-  {
-    todoIncomplete;
-  }
+
   return out;
 }
 
 internal Term *
-newRecord(Union *uni, i32 ctor_index, ...)
+toTermList(Arena *arena, TermArray array)
 {
-  Term *out = 0;
-  return out;
-}
-
-internal Term *
-convertToTermList(Arena *arena, TermArray array)
-{
-  Term *out = 0;
-  if (array.count == 1)
+  Term *type = getType(array.items[0]);
+  Term *out = newCompositeN(arena, rea_single, type, array.items[array.count-1]);
+  for (i32 i=array.count-2; i >= 0; i--)
   {
-    out = newRecord(castTerm(builtin_List, Union), 0, getType(array.items[0]), array.items[0]);
+    out = newCompositeN(arena, rea_cons, type, array.items[i], out);
   }
-  else
-    todoIncomplete;
   return out;
 }
 
@@ -3749,7 +3776,8 @@ buildTestSort(Arena *arena, Typer *typer, CompositeAst *in)
   assert(in->arg_count == 1);
   if (Term *list0 = buildTerm(arena, typer, in->args[0], holev))
   {
-    convertToCArray(arena, list0);
+    TermArray array = toCArray(temp_arena, list0);
+    out = toTermList(arena, array);
   }
   return out;
 }
@@ -3946,31 +3974,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
               if (noError())
               {
                 args = copyArray(arena, param_count, args);
-                if (PolyUnion *puni = castTerm(op, PolyUnion))
-                {
-                  Union *out     = copyStruct(arena, puni->union_template);
-                  out->poly_args = args;
-                  out0 = &out->t;
-                }
-                else
-                {
-                  if (PolyConstructor *pctor = castTerm(op, PolyConstructor))
-                  {
-                    // bookmark some monkey business to convert the op to ctor.
-                    i32 poly_param_count = getParameterCount(&pctor->poly_union->t);
-                    assert(param_count >= poly_param_count);
-                    Union *instance = specializeUnion(arena, pctor->poly_union, args);
-                    Composite *out = newTerm(arena, Composite, &instance->t);
-                    out->op        = newConstructor(arena, instance, pctor->index);
-                    out->arg_count = param_count - poly_param_count;
-                    out->args      = args+poly_param_count;
-                    out0 = &out->t;
-                  }
-                  else
-                  {
-                    out0 = newComposite(arena, op, param_count, args);
-                  }
-                }
+                out0 = newComposite(arena, op, param_count, args);
               }
             }
           }
@@ -4061,7 +4065,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
     case Ast_ArrowAst:
     {
       ArrowAst *in = castAst(in0, ArrowAst);
-      Arrow *out = newTerm(arena, Arrow, builtin_Type);
+      Arrow *out = newTerm(arena, Arrow, rea_Type);
       i32 param_count = in->param_count;
       out->param_count = param_count;
       out->param_names = copyArray(arena, param_count, in->param_names); // todo copy festival
@@ -5084,13 +5088,14 @@ processPolyConstructorType(ProcessPolyConstructorTypeContext *ctx, Term *in0)
 forward_declare internal Term *
 buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
 {
-  Union *uni = newTerm(arena, Union, builtin_Type);
-  PolyUnion *poly_union = 0;
+  Union *uni = newTerm(arena, Union, rea_Type);
+  PolyUnion *puni = 0;
   
   i32 ctor_count = in->ctor_count;
   uni->ctor_count = ctor_count;
   uni->ctor_names = copyArray(arena, ctor_count, in->ctor_names);
   allocateArray(arena, ctor_count, uni->structs);
+  allocateArray(arena, ctor_count, uni->ctors);
 
   Arrow *poly_params = 0;
   if (in->params)
@@ -5098,6 +5103,12 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
     assert(global_name);
     Term *poly_params0 = buildTerm(arena, typer, &in->params->a, holev);
     poly_params = castTerm(poly_params0, Arrow);
+    Arrow *signature       = copyStruct(arena, poly_params);
+    signature->output_type = rea_Type;
+    puni                 = newTerm(arena, PolyUnion, &signature->t);
+    puni->union_template = uni;
+    allocateArray(arena, ctor_count, puni->pctors);
+    uni->poly_union = puni;
   }
 
   if (noError())
@@ -5106,15 +5117,7 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
     {
       // note: bind the name first to support recursive data structure.
       Term *term_to_bind = &uni->t;
-      if (poly_params)
-      {
-        Arrow *signature       = copyStruct(arena, poly_params);
-        signature->output_type = builtin_Type;
-        poly_union       = newTerm(arena, PolyUnion, &signature->t);
-        poly_union->union_template = uni;
-        uni->poly_union = poly_union;
-        term_to_bind = &poly_union->t;
-      }
+      if (poly_params) term_to_bind = &puni->t;
       addGlobalBinding(global_name, term_to_bind);
     }
 
@@ -5177,8 +5180,9 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
         signature->output_type = &synthetic_output_type->t;
 
         PolyConstructor *pctor = newTerm(arena, PolyConstructor, &signature->t);
-        pctor->poly_union  = poly_union;
+        pctor->poly_union  = puni;
         pctor->index       = ctor_i;
+        puni->pctors[ctor_i] = pctor;
 
         addGlobalBinding(&uni->ctor_names[ctor_i], &pctor->t);
       }
@@ -5193,6 +5197,7 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
         Constructor *ctor = newTerm(arena, Constructor, &signature->t);
         ctor->uni   = uni;
         ctor->index = ctor_i;
+        uni->ctors[ctor_i] = ctor;
         Term *term_to_bind = &ctor->t;
         if (struc->param_count == 0)
           term_to_bind = newComposite(arena, &ctor->t, 0, 0);
@@ -5203,14 +5208,14 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
 
   if (noError())
   {
-    assert(uni || poly_union);
+    assert(uni || puni);
   }
   else
   {
     uni = 0;
-    poly_union = 0;
+    puni = 0;
   }
-  if (poly_union) return &poly_union->t;
+  if (puni) return &puni->t;
   else return &uni->t;
 }
 
@@ -5685,7 +5690,7 @@ parseTopLevel(EngineState *state)
           b32 goal_valid = false;
           if (Composite *eq = castTerm(goal, Composite))
           {
-            if (eq->op == builtin_equal)
+            if (eq->op == rea_equal)
             {
               goal_valid = true;
               Term *lhs = normalize(temp_arena, empty_env, eq->args[1]);
@@ -5935,38 +5940,42 @@ beginInterpreterSession(Arena *top_level_arena, FilePath input_path)
   // aren't many sessions, this redundancy is fine, just ugly.
   {
     error_buffer_      = subArena(temp_arena, 2048);
-    builtin_Type       = &newTerm(arena, Builtin, 0)->t;
-    builtin_Type->type = builtin_Type; // NOTE: circular types
-    addBuiltinGlobalBinding("Type", builtin_Type);
+    rea_Type       = &newTerm(arena, Primitive, 0)->t;
+    rea_Type->type = rea_Type; // NOTE: circular types
+    addBuiltinGlobalBinding("Type", rea_Type);
 
     Tokenizer builtin_tk = newTokenizer(toString("<builtin_not_a_real_dir>"), 0);
     global_tokenizer = &builtin_tk;
     builtin_tk.at = "($A: Type, a,b: A) -> Type";
     Term *equal_type = parseExpressionAndBuild(arena).term; 
     assert(noError());
-    builtin_equal = &newTerm(arena, Builtin, equal_type)->t;
-    addBuiltinGlobalBinding("=", builtin_equal);
+    rea_equal = &newTerm(arena, Primitive, equal_type)->t;
+    addBuiltinGlobalBinding("=", rea_equal);
 
     builtin_tk.at = "union {}";
     Term *builtin_False0 = parseExpressionAndBuild(arena).term;
-    builtin_False = &castTerm(builtin_False0, Union)->t;
-    addBuiltinGlobalBinding("False", builtin_False);
+    rea_False = &castTerm(builtin_False0, Union)->t;
+    addBuiltinGlobalBinding("False", rea_False);
 
     builtin_tk.at = "(fn ($A: Type, $a, $b, $c: A, a=b, b=c) -> a=c {=> b = c {seek(a=b)} seek})";
-    builtin_eqChain = parseExpressionAndBuild(arena).term;
+    rea_eqChain = parseExpressionAndBuild(arena).term;
     assert(noError());
-    addBuiltinGlobalBinding("eqChain", builtin_eqChain);
+    addBuiltinGlobalBinding("eqChain", rea_eqChain);
 
     FilePath builtin_path = platformGetFileFullPath(arena, "../data/builtins.rea");
     interpretFile(&global_state, builtin_path, true);
 
-    // TODO: These List builtins are going too far...
-    builtin_List            = lookupBuiltinGlobalName("List");
-    builtin_fold            = lookupBuiltinGlobalName("fold");
-    builtin_concat          = lookupBuiltinGlobalName("+");
-    builtin_Permutation     = lookupBuiltinGlobalName("Permutation");
-    builtin_foldConcat      = lookupBuiltinGlobalName("foldConcat");
-    builtin_foldPermutation = lookupBuiltinGlobalName("foldPermutation");
+    // TODO #cleanup These List builtins are going too far...
+#define LOOKUP_BUILTIN(name) rea_##name = lookupBuiltin(#name);
+    LOOKUP_BUILTIN(List);
+    LOOKUP_BUILTIN(single);
+    LOOKUP_BUILTIN(cons);
+    LOOKUP_BUILTIN(fold);
+    rea_concat = lookupBuiltin("+");
+    LOOKUP_BUILTIN(Permutation);
+    LOOKUP_BUILTIN(foldConcat);
+    LOOKUP_BUILTIN(foldPermutation);
+#undef LOOKUP_BUILTIN
 
     resetArena(temp_arena);
   }
@@ -5982,6 +5991,51 @@ beginInterpreterSession(Arena *top_level_arena, FilePath input_path)
     
   checkArena(arena);
   return success;
+}
+
+internal i32
+partition(i32 *in, i32 count)
+{
+  i32 pivot = in[count-1];
+  i32 write = 0;
+  for (i32 i=0; i < count-1; i++)
+  {
+    if (in[i] <= pivot)
+    {
+      SWAP(in[write], in[i]);
+      write++;
+    }
+  }
+  SWAP(in[write], in[count-1]);
+  return write;
+}
+
+internal void
+quickSort(i32 *in, i32 count)
+{
+  if (count == 2)
+  {
+    if (in[0] > in[1])
+    {
+      SWAP(in[0], in[1]);
+    }
+  }
+  else if (count > 1)
+  {
+    i32 pivot_index = partition(in, count);
+    quickSort(in, pivot_index);
+    quickSort(in+pivot_index+1, count-pivot_index-1);
+  }
+}
+
+internal void
+testSort(i32 *in, i32 count) 
+{
+  quickSort(in, count);
+  for (i32 i=0; i < count-1; i++)
+  {
+    assert(in[i] <= in[i+1]);
+  }
 }
 
 int engineMain()
@@ -6007,6 +6061,15 @@ int engineMain()
   size_t  temp_arena_size = megaBytes(2);
   temp_arena_base = platformVirtualAlloc(temp_arena_base, top_level_arena_size);
   temp_arena_ = newArena(temp_arena_size, temp_arena_base);
+
+  i32 in[] = {7, 7, 2, 5, 3, 7, 3, 4, 6, 1, 6, 4, 5, 4, 8};
+  i32 in1[] = {};
+  i32 in2[] = {2};
+  i32 in3[] = {37, 12, 94, 67, 51,};
+  testSort(in, arrayCount(in));
+  testSort(in1, arrayCount(in1));
+  testSort(in2, arrayCount(in2));
+  testSort(in3, arrayCount(in3));
 
   char *files[] = {
     "../data/test.rea",

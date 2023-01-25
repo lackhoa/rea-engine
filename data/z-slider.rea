@@ -49,38 +49,38 @@ mulDistributive :: (a,b,c: Z) -> a*c+b*c == (a+b)*c
  norm;
  ;; (((a.l * c.r + a.r * c.l) + b.l * c.r + b.r * c.l) + (a.l + b.l) * c.l + (a.r + b.r) * c.r =
  ;;  ((a.l * c.l + a.r * c.r) + b.l * c.l + b.r * c.r) + (a.l + b.l) * c.r + (a.r + b.r) * c.l);
- => ((a.l*c.r + a.r*c.l + (b.l*c.r + b.r*c.l)) + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
-     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
- => ((a.l*c.r + (b.l*c.r + b.r*c.l) + a.r*c.l) + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
-     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
- => (((a.l*c.r + b.l*c.r + b.r*c.l) + a.r*c.l) + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
-     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
- => ((((a.l*c.r + b.l*c.r) + b.r*c.l) + a.r*c.l) + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
-     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
- => ((((a.l + b.l)*c.r + b.r*c.l) + a.r*c.l) + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
-     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
- => (((a.l + b.l)*c.r + b.r*c.l + a.r*c.l) + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
-     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
- => (((a.l + b.l)*c.r + (b.r + a.r)*c.l) + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
-     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
- => ((a.l + b.l)*c.r + (b.r + a.r)*c.l + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
-     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
- => ((a.l + b.l)*c.r + ((b.r + a.r)*c.l + (a.l + b.l)*c.l) + (a.r + b.r)*c.r =
-     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
- => ((a.l + b.l)*c.r + (((b.r + a.r) + a.l + b.l)*c.l) + (a.r + b.r)*c.r =
-     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
- => ((a.l + b.l)*c.r + (((a.l + b.l) + b.r + a.r)*c.l) + (a.r + b.r)*c.r =
-     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
- => ((a.l + b.l)*c.r + ((a.l + b.l + b.r + a.r)*c.l) + (a.r + b.r)*c.r =
-     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
- => ((a.l + b.l)*c.r + (a.r + b.r)*c.r + ((a.l + b.l + b.r + a.r)*c.l) =
-     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
- => (((a.l + b.l)*c.r + (a.r + b.r)*c.r) + ((a.l + b.l + b.r + a.r)*c.l) =
-     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
- => ((((a.l + b.l) + a.r + b.r)*c.r) + ((a.l + b.l + b.r + a.r)*c.l) =
-     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
- => (((a.l + b.l + a.r + b.r)*c.r) + ((a.l + b.l + b.r + a.r)*c.l) =
-     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
- => (((a.l + b.l + a.r + b.r)*c.r) + ((a.l + b.l + a.r + b.r)*c.l) =
-     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ ;; => ((a.l*c.r + a.r*c.l + (b.l*c.r + b.r*c.l)) + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
+ ;;     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ ;; => ((a.l*c.r + (b.l*c.r + b.r*c.l) + a.r*c.l) + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
+ ;;     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ ;; => (((a.l*c.r + b.l*c.r + b.r*c.l) + a.r*c.l) + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
+ ;;     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ ;; => ((((a.l*c.r + b.l*c.r) + b.r*c.l) + a.r*c.l) + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
+ ;;     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ ;; => ((((a.l + b.l)*c.r + b.r*c.l) + a.r*c.l) + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
+ ;;     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ ;; => (((a.l + b.l)*c.r + b.r*c.l + a.r*c.l) + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
+ ;;     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ ;; => (((a.l + b.l)*c.r + (b.r + a.r)*c.l) + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
+ ;;     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ ;; => ((a.l + b.l)*c.r + (b.r + a.r)*c.l + (a.l + b.l)*c.l + (a.r + b.r)*c.r =
+ ;;     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ ;; => ((a.l + b.l)*c.r + ((b.r + a.r)*c.l + (a.l + b.l)*c.l) + (a.r + b.r)*c.r =
+ ;;     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ ;; => ((a.l + b.l)*c.r + (((b.r + a.r) + a.l + b.l)*c.l) + (a.r + b.r)*c.r =
+ ;;     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ ;; => ((a.l + b.l)*c.r + (((a.l + b.l) + b.r + a.r)*c.l) + (a.r + b.r)*c.r =
+ ;;     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ ;; => ((a.l + b.l)*c.r + ((a.l + b.l + b.r + a.r)*c.l) + (a.r + b.r)*c.r =
+ ;;     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ ;; => ((a.l + b.l)*c.r + (a.r + b.r)*c.r + ((a.l + b.l + b.r + a.r)*c.l) =
+ ;;     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ ;; => (((a.l + b.l)*c.r + (a.r + b.r)*c.r) + ((a.l + b.l + b.r + a.r)*c.l) =
+ ;;     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ ;; => ((((a.l + b.l) + a.r + b.r)*c.r) + ((a.l + b.l + b.r + a.r)*c.l) =
+ ;;     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ ;; => (((a.l + b.l + a.r + b.r)*c.r) + ((a.l + b.l + b.r + a.r)*c.l) =
+ ;;     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
+ ;; => (((a.l + b.l + a.r + b.r)*c.r) + ((a.l + b.l + a.r + b.r)*c.l) =
+ ;;     ((a.l*c.l + a.r*c.r) + b.l*c.l + b.r*c.r) + (a.l + b.l)*c.r + (a.r + b.r)*c.l)
  }

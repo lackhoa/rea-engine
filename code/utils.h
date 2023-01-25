@@ -514,3 +514,9 @@ unsetFlag(u32 *flags, u32 flag)
 {
   *flags &= ~flag;
 }
+
+#define SWAP(a, b) { \
+    auto temp = a; \
+    a = b; \
+    b = temp; \
+}

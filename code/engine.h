@@ -15,6 +15,7 @@ global_variable StringBuffer *error_buffer = &error_buffer_;
 global_variable b32 DEBUG_MODE;
 global_variable i32 DEBUG_SERIAL;
 
+struct PolyConstructor;
 struct Function;
 struct Union;
 struct Arrow;
@@ -54,7 +55,7 @@ enum TermCategory {
   Term_Hole = 1,
   Term_PolyConstructor,
 
-  Term_Builtin,
+  Term_Primitive,
   Term_Union,
   Term_Constructor,
   Term_PolyUnion,
@@ -219,7 +220,7 @@ embed_struct struct Term {
   Token        *global_name;
 };
 
-struct Builtin {embed_Term(t);};
+struct Primitive {embed_Term(t);};
 
 inline void
 initTerm(Term *in, TermCategory cat, Term *type)
@@ -249,7 +250,8 @@ struct Constructor {
 // NOTE: does not appear in expression.
 struct PolyUnion {
   embed_Term(t);
-  Union *union_template;
+  PolyConstructor **pctors;
+  Union            *union_template;
 };
 
 // NOTE: does not appear in expression.
@@ -261,9 +263,10 @@ struct PolyConstructor {
 
 struct Union {
   embed_Term(t);
-  i32     ctor_count;
-  Token  *ctor_names;
-  Arrow **structs;
+  Constructor **ctors;          // NOTE: for globals only
+  i32           ctor_count;
+  Token        *ctor_names;
+  Arrow       **structs;
 
   PolyUnion  *poly_union;
   Term      **poly_args;

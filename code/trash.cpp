@@ -171,3 +171,24 @@ computeType(MemoryArena *arena, Typer *typer, Term *in0)
   return out0;
 }
 #endif
+
+#if 0
+internal Term *
+newRecord(Union *uni, i32 ctor_index, ...)
+{
+  i32 param_count = uni->structs[ctor_index]->param_count;
+  Term **args = pushArray(arena, param_count, Term*);
+
+  va_list arg_list;
+  __crt_va_start(arg_list, op);
+  for (i32 i=0; i < param_count; i++)
+  {
+    args[i] = __crt_va_arg(arg_list, Term*);
+  }
+  __crt_va_end(arg_list);
+
+  Constructor *ctor = uni->ctors[ctor_index];
+  return newComposite(arena, &ctor->t, param_count);
+}
+#endif
+
