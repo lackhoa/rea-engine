@@ -21,7 +21,7 @@ newToken(const char *text)
 }
 
 inline Tokenizer
-newTokenizer(String directory, char *input)
+newTokenizer(char *input, String directory=toString("<dir_not_provided>"))
 {
   Tokenizer out = {};
   out.line         = 1;

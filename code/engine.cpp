@@ -32,6 +32,7 @@ global_variable Term *rea_foldConcat;
 global_variable Term *rea_foldPermutation;
 global_variable Term *rea_permutationSame;
 global_variable Term *rea_permutation;
+global_variable Term *rea_permutationLast;
 
 global_variable Term dummy_function_being_built;
 global_variable Term  holev_ = {.cat = Term_Hole};
@@ -3771,6 +3772,7 @@ toCArray(Arena *arena, Term *list0)
 internal Term *
 toReaList(Arena *arena, Term **array, i32 count)
 {
+  assert(count > 0);
   Term *T = getType(array[0]);
   Term *out = newCompositeN(arena, rea_single, T, array[count-1]);
   for (i32 i=count-2; i >= 0; i--)
@@ -3840,6 +3842,7 @@ struct PermutationList
   Term *abc;
   Term *bac;
   
+  Term *a;
   Term *bc;
   Term *b;
   Term *c;
@@ -3850,6 +3853,9 @@ struct PermutationList
 internal Term *
 provePermutation(Arena *arena, Typer *typer, Term **abc0, Term **bac0, i32 *indexes, i32 count0)
 {
+  // bookmark
+  Tokenizer tk = newTokenizer("");
+
   assert(count0 > 0);
   Term *out = 0;
   Term *abc = toReaList(arena, abc0, count0);
@@ -3862,7 +3868,7 @@ provePermutation(Arena *arena, Typer *typer, Term **abc0, Term **bac0, i32 *inde
   {
     i32 count = count0 - i;
 
-    PermutationList *new_list = pushStruct(temp_arena, PermutationList);
+    PermutationList *new_list = pushStruct(temp_arena, PermutationList, true);
     new_list->abc             = abc;
     new_list->bac             = toReaList(arena, bac, count);
 
@@ -3881,9 +3887,13 @@ provePermutation(Arena *arena, Typer *typer, Term **abc0, Term **bac0, i32 *inde
         new_bac[i-1] = bac[i];
       }
 
+      new_list->a  = getArg(abc, 1);
       new_list->bc = bc;
       new_list->b  = toReaList(arena, new_bac, a_index);
-      new_list->c  = toReaList(arena, new_bac+(a_index+1), count-(a_index+1));
+      if (a_index+1 < count)
+      {
+        new_list->c = toReaList(arena, new_bac+(a_index+1), count-(a_index+1));
+      }
 
       abc = bc;
       bac = new_bac;
@@ -3892,12 +3902,29 @@ provePermutation(Arena *arena, Typer *typer, Term **abc0, Term **bac0, i32 *inde
     new_list->tail = list;
     list           = new_list;
   }
-  for (PermutationList *ls=list; list; list=list->tail)
+  for (PermutationList *ls=list; ls; ls=list->tail)
   {
     if (ls->tail)
     {
-      todoIncomplete;
-      // out = newCompositeN(arena, rea_permutation, T, bc,b,c, abc_destruct, bac_destruct, recurse);
+      Term *abc_destruct = equalByComputation(arena, typer, ls->abc,
+                                              newCompositeN(arena, rea_cons, T, ls->a, ls->bc));
+      if (ls->c)
+      {
+        // out = newCompositeN(arena, rea_permutation, T, bc,b,c, abc_destruct, bac_destruct, recurse);
+        Term *bac_destruct = equalByComputation(arena, typer,
+                                                ls->bac,
+                                                newCompositeN(arena, rea_concat, T, ls->b,
+                                                              newCompositeN(arena, rea_concat, T, ls->a, ls->b)));
+        out = newCompositeN(arena, rea_permutation, T, ls->bc,ls->b,ls->c, abc_destruct, bac_destruct, out);
+      }
+      else
+      {
+        Term *bac_destruct = equalByComputation(arena, typer,
+                                                ls->bac,
+                                                newCompositeN(arena, rea_concat, T, ls->b,
+                                                              newCompositeN(arena, rea_single, ls->a)));
+        out = newCompositeN(arena, rea_permutationLast, T, ls->bc,ls->b, abc_destruct, bac_destruct, out);
+      }
     }
     else
     {
@@ -4351,6 +4378,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
         {
           Term *from = in->right_to_left ? rhs : lhs;
           Term *to   = in->right_to_left ? lhs : rhs;
+
           SearchOutput search = searchExpression(arena, typer, from, goal);
           if (search.found)
           {
@@ -5319,7 +5347,6 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
         Arrow *struc = uni->structs[ctor_i];
         Arrow *signature        = copyStruct(arena, struc);
         signature->param_count += poly_count;
-        // BOOKMARK
         allocateArray(arena, signature->param_count, signature->param_names);
         allocateArray(arena, signature->param_count, signature->param_types);
         allocateArray(arena, signature->param_count, signature->param_flags);
@@ -6012,7 +6039,7 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
     new_file_list->tail         = state->file_list;
     state->file_list            = new_file_list;
 
-    Tokenizer  tk_ = newTokenizer(input_path.directory, read.content);
+    Tokenizer  tk_ = newTokenizer(read.content, input_path.directory);
     Tokenizer *tk  = &tk_;
 
     Tokenizer *old_tokenizer = global_tokenizer;
@@ -6103,7 +6130,7 @@ beginInterpreterSession(Arena *top_level_arena, FilePath input_path)
     rea_Type->type = rea_Type; // NOTE: circular types
     addBuiltinGlobalBinding("Type", rea_Type);
 
-    Tokenizer builtin_tk = newTokenizer(toString("<builtin_not_a_real_dir>"), 0);
+    Tokenizer builtin_tk = newTokenizer(0);
     global_tokenizer = &builtin_tk;
     builtin_tk.at = "($A: Type, a,b: A) -> Type";
     Term *equal_type = parseExpressionAndBuild(arena).term; 
@@ -6136,6 +6163,7 @@ beginInterpreterSession(Arena *top_level_arena, FilePath input_path)
     LOOKUP_BUILTIN(foldPermutation);
     LOOKUP_BUILTIN(permutationSame);
     LOOKUP_BUILTIN(permutation);
+    LOOKUP_BUILTIN(permutationLast);
 #undef LOOKUP_BUILTIN
 
     resetArena(temp_arena);

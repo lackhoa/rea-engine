@@ -59,6 +59,18 @@ foldPermutation :: ($T: Type,
   permutationSame
   rewrite p.same,
 
+  permutationLast
+  rewrite p.abc_destruct;
+  rewrite p.bac_destruct;
+  norm;
+  ;; p.a op fold(op, p.bc) = fold(op, p.b + single(p.a))
+  => p.a op fold(op, p.bc) = fold(op, p.b) op fold(op, single(p.a));
+  norm;
+  => p.a op fold(op, p.bc) = p.a op fold(op, p.b) {op_commutative};
+  prove fold(op, p.bc) = fold(op, p.b) {return foldPermutation(...)} as e
+  rewrite e;
+  ,
+
   permutation
   rewrite p.abc_destruct;
   rewrite p.bac_destruct;
@@ -74,3 +86,9 @@ foldPermutation :: ($T: Type,
   rewrite e;
   }
  }
+
+;; #debug bookmark
+;; helper :: fn(T: Type, a,b,c: List(T), p: Permutation(a,b), e: b=c) -> Permutation(a,c)
+;; {
+;;  rewrite <- e;
+;;  }
