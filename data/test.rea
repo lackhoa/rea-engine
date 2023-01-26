@@ -232,8 +232,9 @@ check_truth fold(overload(+, Nat), 1 cons single(2)) = 3;
 ;; print(single(1) + single(2));
 check_truth (1 cons single(2)) + single(3) = 1 cons (2 cons single(3));
 
-print test_sort(single(4));
-print test_sort(4 cons (3 cons (2 cons (1 cons single(5)))));
+print test_sort(single(0));
+;; print test_sort(2 cons single (0));
+;; print test_sort(2 cons (0 cons (4 cons (3 cons (single(1))))));
 
 ;; testSortList :: () -> (Permutation((4 cons (3 cons (2 cons (1 cons single(5))))),
 ;;                                    (1 cons (2 cons (3 cons (4 cons single(5)))))))

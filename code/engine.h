@@ -194,6 +194,7 @@ struct Scope {
 
 struct Typer
 {
+  Arena *build_arena;
   LocalBindings *bindings;
   Scope         *scope;
   Arrow         *poly_params;

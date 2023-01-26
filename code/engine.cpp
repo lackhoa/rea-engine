@@ -30,6 +30,8 @@ global_variable Term *rea_concat;
 global_variable Term *rea_Permutation;
 global_variable Term *rea_foldConcat;
 global_variable Term *rea_foldPermutation;
+global_variable Term *rea_permutationSame;
+global_variable Term *rea_permutation;
 
 global_variable Term dummy_function_being_built;
 global_variable Term  holev_ = {.cat = Term_Hole};
@@ -238,13 +240,13 @@ newComposite(Arena *arena, Term *op, i32 arg_count, Term **args)
 }
 
 inline Term *
-newCompositeN(Arena *arena, Term *op, ...)
+newCompositeN_(Arena *arena, Term *op, i32 param_count, ...)
 {
-  i32 param_count = getParameterCount(op);
+  // assert(param_count == getParameterCount(op));
   Term **args = pushArray(arena, param_count, Term*);
 
   va_list arg_list;
-  __crt_va_start(arg_list, op);
+  __crt_va_start(arg_list, param_count);
   for (i32 i=0; i < param_count; i++)
   {
     args[i] = __crt_va_arg(arg_list, Term*);
@@ -253,6 +255,8 @@ newCompositeN(Arena *arena, Term *op, ...)
 
   return newComposite(arena, op, param_count, args);
 }
+
+#define newCompositeN(arena, op, ...) newCompositeN_(arena, op, PP_NARG(__VA_ARGS__), __VA_ARGS__)
 
 inline Term *
 newEquality(Arena *arena, Term *lhs, Term *rhs)
@@ -2862,7 +2866,7 @@ newComputation_(Arena *arena, Term *lhs, Term *rhs)
 }
 
 inline Term *
-newComputationIfEqual(Arena *arena, Typer *typer, Term *lhs, Term *rhs)
+equalByComputation(Arena *arena, Typer *typer, Term *lhs, Term *rhs)
 {
   Term *out = 0;
   if (equal(normalize(arena, typer, lhs),
@@ -2948,7 +2952,7 @@ solveGoal(Solver *solver, Term *goal)
 
     if (auto [l,r] = getEqualitySides(goal, false))
     {
-      out = newComputationIfEqual(solver->arena, solver->typer, l, r);
+      out = equalByComputation(solver->arena, solver->typer, l, r);
     }
 
     if (!out)
@@ -3557,17 +3561,24 @@ stringLessThan(String a, String b)
 }
 
 inline b32
-algebraicallyLessThan(Term *a0, Term *b0)
+algebraicLessThan(Term *a0, Term *b0)
 {
   b32 out = false;
-  switch (a0->cat)
+  if (a0->global_name && b0->global_name)
   {
-    case Term_Variable:
+    out = stringLessThan(a0->global_name->string, b0->global_name->string);
+  }
+  else
+  {
+    switch (a0->cat)
     {
-      Variable *a = castTerm(a0, Variable);
-      if (Variable *b = castTerm(b0, Variable))
-        out = stringLessThan(a->name, b->name);
-    } break;
+      case Term_Variable:
+      {
+        Variable *a = castTerm(a0, Variable);
+        if (Variable *b = castTerm(b0, Variable))
+          out = stringLessThan(a->name, b->name);
+      } break;
+    }
   }
   return out;
 }
@@ -3758,13 +3769,141 @@ toCArray(Arena *arena, Term *list0)
 }
 
 internal Term *
-toTermList(Arena *arena, TermArray array)
+toReaList(Arena *arena, Term **array, i32 count)
 {
-  Term *type = getType(array.items[0]);
-  Term *out = newCompositeN(arena, rea_single, type, array.items[array.count-1]);
-  for (i32 i=array.count-2; i >= 0; i--)
+  Term *T = getType(array[0]);
+  Term *out = newCompositeN(arena, rea_single, T, array[count-1]);
+  for (i32 i=count-2; i >= 0; i--)
   {
-    out = newCompositeN(arena, rea_cons, type, array.items[i], out);
+    out = newCompositeN(arena, rea_cons, T, array[i], out);
+  }
+  return out;
+}
+
+internal i32
+qsortPartition(Term **in, i32 *indexes, i32 count)
+{
+  Term *pivot = in[count-1];
+  i32 write = 0;
+  for (i32 i=0; i < count-1; i++)
+  {
+    if (algebraicLessThan(in[i], pivot))
+    {
+      SWAP(in[write], in[i]);
+      SWAP(indexes[write], indexes[i]);
+      write++;
+    }
+  }
+  SWAP(in[write], in[count-1]);
+  SWAP(indexes[write], indexes[count-1]);
+  return write;
+}
+
+internal void
+quickSort(Term **in, i32 *indexes, i32 count)
+{
+  if (count > 1)
+  {
+    i32 pivot_index = qsortPartition(in, indexes, count);
+    quickSort(in, indexes, pivot_index);
+    quickSort(in+(pivot_index+1), indexes+(pivot_index+1), count-(pivot_index+1));
+  }
+}
+
+internal Term **
+arrayFromMask(Arena *arena, Term **in, i32 in_count, b32 *mask, i32 mask_count)
+{
+  Term **out = pushArray(arena, mask_count, Term *);
+  i32 write=0;
+  for (i32 i=0; i < in_count; i++)
+  {
+    if (mask[i])
+    {
+      out[write++] = in[i];
+      assert(write <= mask_count);
+    }
+  }
+  assert(write == mask_count-1);
+  return out;
+}
+
+inline Term *
+getArg(Term *in0, i32 index)
+{
+  Composite *in = castTerm(in0, Composite);
+  assert(index < in->arg_count);
+  return in->args[index];
+}
+
+struct PermutationList
+{
+  Term *abc;
+  Term *bac;
+  
+  Term *bc;
+  Term *b;
+  Term *c;
+
+  PermutationList *tail;
+};
+
+internal Term *
+provePermutation(Arena *arena, Typer *typer, Term **abc0, Term **bac0, i32 *indexes, i32 count0)
+{
+  assert(count0 > 0);
+  Term *out = 0;
+  Term *abc = toReaList(arena, abc0, count0);
+  Term *T = getType(abc0[0]);
+  // b32 *mask = pushArray(temp_arena, count0, b32);
+  // for (i32 i=0; i < count0; i++) { mask[i] = true; }
+  Term **bac = bac0;
+  PermutationList *list = 0;
+  for (i32 i=0; i < count0; i++)
+  {
+    i32 count = count0 - i;
+
+    PermutationList *new_list = pushStruct(temp_arena, PermutationList);
+    new_list->abc             = abc;
+    new_list->bac             = toReaList(arena, bac, count);
+
+    if (i != count-1)
+    {
+      i32 a_index = indexes[i];
+      Term *bc = getArg(abc, 2);
+      Term **new_bac = pushArray(temp_arena, count-1, Term *);
+      for (i32 i=0; i < a_index; i++)
+      {
+        new_bac[i] = bac[i];
+      }
+      for (i32 i=a_index+1; i < count; i++)
+      {
+        assert(i-1 < count-1);
+        new_bac[i-1] = bac[i];
+      }
+
+      new_list->bc = bc;
+      new_list->b  = toReaList(arena, new_bac, a_index);
+      new_list->c  = toReaList(arena, new_bac+(a_index+1), count-(a_index+1));
+
+      abc = bc;
+      bac = new_bac;
+    }
+
+    new_list->tail = list;
+    list           = new_list;
+  }
+  for (PermutationList *ls=list; list; list=list->tail)
+  {
+    if (ls->tail)
+    {
+      todoIncomplete;
+      // out = newCompositeN(arena, rea_permutation, T, bc,b,c, abc_destruct, bac_destruct, recurse);
+    }
+    else
+    {
+      Term *eq = equalByComputation(arena, typer, ls->abc, ls->bac);
+      out = newCompositeN(arena, rea_permutationSame, T, ls->abc, ls->bac, eq);
+    }
   }
   return out;
 }
@@ -3772,14 +3911,32 @@ toTermList(Arena *arena, TermArray array)
 internal Term *
 buildTestSort(Arena *arena, Typer *typer, CompositeAst *in)
 {
-  Term *out = 0;
+  Term *proof = 0;
   assert(in->arg_count == 1);
   if (Term *list0 = buildTerm(arena, typer, in->args[0], holev))
   {
-    TermArray array = toCArray(temp_arena, list0);
-    out = toTermList(arena, array);
+    auto [count, in] = toCArray(temp_arena, list0);
+    Term **out = copyArray(temp_arena, count, in);
+    i32 *indexes = pushArray(temp_arena, count, i32);
+    for (i32 i=0; i < count; i++) { indexes[i] = i; }
+    quickSort(in, indexes, count);
+    i32 *inverse = pushArray(temp_arena, count, i32);
+    for (i32 i=0; i < count; i++) { inverse[indexes[i]] = i; }
+    i32 *subtracted = pushArray(temp_arena, count, i32);
+    for (i32 i=0; i < count; i++)
+    {
+      subtracted[i] = inverse[i];
+      for (i32 left_index=0; left_index < i; left_index++)
+      {
+        if (inverse[left_index] < inverse[i])
+        {
+          subtracted[i]--;
+        }
+      }
+    }
+    proof = provePermutation(arena, typer, in, out, inverse, count);
   }
-  return out;
+  return proof;
 }
 
 forward_declare internal BuildTerm
@@ -5101,14 +5258,16 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
   if (in->params)
   {
     assert(global_name);
-    Term *poly_params0 = buildTerm(arena, typer, &in->params->a, holev);
-    poly_params = castTerm(poly_params0, Arrow);
-    Arrow *signature       = copyStruct(arena, poly_params);
-    signature->output_type = rea_Type;
-    puni                 = newTerm(arena, PolyUnion, &signature->t);
-    puni->union_template = uni;
-    allocateArray(arena, ctor_count, puni->pctors);
-    uni->poly_union = puni;
+    if (Term *poly_params0 = buildTerm(arena, typer, &in->params->a, holev))
+    {
+      poly_params = castTerm(poly_params0, Arrow);
+      Arrow *signature       = copyStruct(arena, poly_params);
+      signature->output_type = rea_Type;
+      puni                 = newTerm(arena, PolyUnion, &signature->t);
+      puni->union_template = uni;
+      allocateArray(arena, ctor_count, puni->pctors);
+      uni->poly_union = puni;
+    }
   }
 
   if (noError())
@@ -5975,6 +6134,8 @@ beginInterpreterSession(Arena *top_level_arena, FilePath input_path)
     LOOKUP_BUILTIN(Permutation);
     LOOKUP_BUILTIN(foldConcat);
     LOOKUP_BUILTIN(foldPermutation);
+    LOOKUP_BUILTIN(permutationSame);
+    LOOKUP_BUILTIN(permutation);
 #undef LOOKUP_BUILTIN
 
     resetArena(temp_arena);
@@ -5991,51 +6152,6 @@ beginInterpreterSession(Arena *top_level_arena, FilePath input_path)
     
   checkArena(arena);
   return success;
-}
-
-internal i32
-partition(i32 *in, i32 count)
-{
-  i32 pivot = in[count-1];
-  i32 write = 0;
-  for (i32 i=0; i < count-1; i++)
-  {
-    if (in[i] <= pivot)
-    {
-      SWAP(in[write], in[i]);
-      write++;
-    }
-  }
-  SWAP(in[write], in[count-1]);
-  return write;
-}
-
-internal void
-quickSort(i32 *in, i32 count)
-{
-  if (count == 2)
-  {
-    if (in[0] > in[1])
-    {
-      SWAP(in[0], in[1]);
-    }
-  }
-  else if (count > 1)
-  {
-    i32 pivot_index = partition(in, count);
-    quickSort(in, pivot_index);
-    quickSort(in+pivot_index+1, count-pivot_index-1);
-  }
-}
-
-internal void
-testSort(i32 *in, i32 count) 
-{
-  quickSort(in, count);
-  for (i32 i=0; i < count-1; i++)
-  {
-    assert(in[i] <= in[i+1]);
-  }
 }
 
 int engineMain()
@@ -6062,6 +6178,7 @@ int engineMain()
   temp_arena_base = platformVirtualAlloc(temp_arena_base, top_level_arena_size);
   temp_arena_ = newArena(temp_arena_size, temp_arena_base);
 
+#if 0
   i32 in[] = {7, 7, 2, 5, 3, 7, 3, 4, 6, 1, 6, 4, 5, 4, 8};
   i32 in1[] = {};
   i32 in2[] = {2};
@@ -6070,6 +6187,7 @@ int engineMain()
   testSort(in1, arrayCount(in1));
   testSort(in2, arrayCount(in2));
   testSort(in3, arrayCount(in3));
+#endif
 
   char *files[] = {
     "../data/test.rea",
