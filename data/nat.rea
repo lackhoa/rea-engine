@@ -1,5 +1,4 @@
 #load "boolean.rea"
-#load "utils.rea"
 
 Nat :: union
 {0,

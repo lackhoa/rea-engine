@@ -489,6 +489,7 @@ struct CompareTerms {Trinary result; TreePath *diff_path;};
 const u32 FunctionFlag_is_global_hint         = 1 << 0;
 const u32 FunctionFlag_no_apply               = 1 << 1;
 const u32 FunctionFlag_no_print_as_binop      = 1 << 2;
+const u32 FunctionFlag_expand                 = 1 << 3;
 
 struct FunctionAst {
   embed_Ast(a);
@@ -516,7 +517,7 @@ struct SyntheticAst {
   Term *term;
 };
 
-const u32 EvaluationFlag_ApplyMode = 1 << 0;
+const u32 EvaluationFlag_AlwaysApply = 1 << 0;
 
 struct EvaluationContext {
   Arena  *arena;

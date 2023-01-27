@@ -17,7 +17,7 @@ void print(Arena * buffer, void * in0, b32 is_absolute, PrintOptions opt);
 Scope * newScope(Scope * outer, Arrow * signature);
 b32 equal(Term * lhs, Term * rhs);
 Term * rebase(Arena * arena, Term * in0, i32 delta);
-Term * evaluate(Arena * arena, Term ** args, Term * in0);
+Term * evaluate(Arena * arena, Term * in0, Term ** args);
 Term * evaluate(EvaluationContext ctx, Term * in0);
 Trinary equalTrinary(Term * lhs0, Term * rhs0);
 Term * normalize(Arena * arena, Typer * env, Term * in0);

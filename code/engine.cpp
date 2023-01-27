@@ -1,6 +1,6 @@
 /*
   General Todos: 
-  - #cleanup Replace all token <-> string comparison with keyword checks.
+  - #speed string interning.
   - #tool something that cleans up when it goes out of scope
   - #speed evaluating functions by substituting the body is really bad in case of "let"
   - clean up the data tree containing constructors
@@ -193,7 +193,7 @@ getOutputType(Arena *arena, Term *op, Term **args)
   }
   else
   {
-    out = evaluate(arena, args, castTerm(getType(op), Arrow)->output_type);
+    out = evaluate(arena, castTerm(getType(op), Arrow)->output_type, args);
   }
   return out;
 }
@@ -241,7 +241,7 @@ newComposite(Arena *arena, Term *op, i32 arg_count, Term **args)
   for (i32 arg_i=0; arg_i < arg_count; arg_i++)
   {
     Term *actual_type   = getType(args[arg_i]);
-    Term *expected_type = evaluate(arena, args, signature->param_types[arg_i]);
+    Term *expected_type = evaluate(arena, signature->param_types[arg_i], args);
     assertEqual(actual_type, expected_type);
   }
 
@@ -1598,7 +1598,7 @@ apply(Arena *arena, Term *op, i32 arg_count, Term **args, Term *type, String nam
     }
 
     if (should_apply_function)
-      out0 = evaluate(EvaluationContext{.arena=arena, .args=args, .flags=EvaluationFlag_ApplyMode},
+      out0 = evaluate(EvaluationContext{.arena=arena, .args=args, .flags=EvaluationFlag_AlwaysApply},
                       fun->body);
   }
   else if (op == rea_equal)
@@ -1661,7 +1661,7 @@ apply(Arena *arena, Term *op, i32 arg_count, Term **args, Term *type, String nam
 }
 
 internal Term *
-evaluateMain(EvaluationContext *ctx, Term *in0)
+evaluate_(EvaluationContext *ctx, Term *in0)
 {
   Term *out0 = 0;
   assert(ctx->offset >= 0);
@@ -1722,17 +1722,17 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
         Term *op = in->op;
         if (op->cat != Term_Constructor)
         {
-          op = evaluateMain(ctx, in->op);
+          op = evaluate_(ctx, in->op);
         }
 
         for (i32 id=0; id < in->arg_count; id++)
         {
-          args[id] = evaluateMain(ctx, in->args[id]);
+          args[id] = evaluate_(ctx, in->args[id]);
           assert(args[id]);
         }
 
-        Term *type = evaluateMain(ctx, getType(in0));  // :eval-type
-        if (checkFlag(ctx->flags, EvaluationFlag_ApplyMode))
+        Term *type = evaluate_(ctx, getType(in0));  // :eval-type
+        if (checkFlag(ctx->flags, EvaluationFlag_AlwaysApply))
         {
           out0 = apply(arena, op, in->arg_count, args, type, {});
         }
@@ -1756,10 +1756,10 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
         ctx->offset++;
         for (i32 id=0; id < out->param_count; id++)
         {
-          out->param_types[id] = evaluateMain(ctx, in->param_types[id]);
+          out->param_types[id] = evaluate_(ctx, in->param_types[id]);
         }
         if (in->output_type)
-          out->output_type = evaluateMain(ctx, in->output_type);
+          out->output_type = evaluate_(ctx, in->output_type);
         ctx->offset--;
 
         out0 = &out->t;
@@ -1769,12 +1769,12 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
       {
         Function *in  = castTerm(in0, Function);
         Function *out = copyStruct(arena, in);
-        out->type = evaluateMain(ctx, getType(in0));  // :eval-type
+        out->type = evaluate_(ctx, getType(in0));  // :eval-type
 
         u32 old_flags = ctx->flags;
-        unsetFlag(&ctx->flags, EvaluationFlag_ApplyMode);
+        unsetFlag(&ctx->flags, EvaluationFlag_AlwaysApply);
         ctx->offset++;
-        out->body = evaluateMain(ctx, in->body);
+        out->body = evaluate_(ctx, in->body);
         ctx->offset--;
         ctx->flags = old_flags;
 
@@ -1784,7 +1784,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
       case Term_Accessor:
       {
         Accessor *in  = castTerm(in0, Accessor);
-        Term *record0 = evaluateMain(ctx, in->record);
+        Term *record0 = evaluate_(ctx, in->record);
         if (Composite *record = castRecord(record0))
         {
           // note: we could honor "ctx->normalize" but idk who would actually want that.
@@ -1794,7 +1794,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
         {
           Accessor *out = copyStruct(arena, in);
           out->record = record0;
-          out->type = evaluateMain(ctx, getType(in0));  // :eval-type
+          out->type = evaluate_(ctx, getType(in0));  // :eval-type
           out0 = &out->t;
         }
       } break;
@@ -1803,19 +1803,19 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
       {
         Computation *in  = castTerm(in0, Computation);
         Computation *out = copyStruct(arena, in);
-        out->type = evaluateMain(ctx, getType(in0));  // :eval-type
+        out->type = evaluate_(ctx, getType(in0));  // :eval-type
         out0 = out;  // NOTE: copying since we might :eval-type below
       } break;
 
       case Term_Rewrite:
       {
         Rewrite *in = castTerm(in0, Rewrite);
-        if (Term *eq_proof = evaluateMain(ctx, in->eq_proof))
+        if (Term *eq_proof = evaluate_(ctx, in->eq_proof))
         {
-          if (Term *body = evaluateMain(ctx, in->body))
+          if (Term *body = evaluate_(ctx, in->body))
           {
             Rewrite *out = copyStruct(arena, in);
-            out->type = evaluateMain(ctx, getType(in0));  // :eval-type
+            out->type = evaluate_(ctx, getType(in0));  // :eval-type
             out->eq_proof = eq_proof;
             out->body     = body;
             out0 = &out->t;
@@ -1826,26 +1826,26 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
       case Term_Fork:
       {
         Fork *in = castTerm(in0, Fork);
-        Term *subject0 = evaluateMain(ctx, in->subject);
-        if (checkFlag(ctx->flags, EvaluationFlag_ApplyMode))
+        Term *subject0 = evaluate_(ctx, in->subject);
+        if (checkFlag(ctx->flags, EvaluationFlag_AlwaysApply))
         {
           if (Composite *subject = castTerm(subject0, Composite))
           {
             if (Constructor *ctor = castTerm(subject->op, Constructor))
             {
-              out0 = evaluateMain(ctx, in->bodies[ctor->index]);
+              out0 = evaluate_(ctx, in->bodies[ctor->index]);
             }
           }
         }
         else
         {
           Fork *out = copyStruct(arena, in);
-          out->type = evaluateMain(ctx, getType(in0));  // :eval-type
+          out->type = evaluate_(ctx, getType(in0));  // :eval-type
           out->subject = subject0;
           allocateArray(arena, in->case_count, out->bodies);
           for (i32 id=0; id < in->case_count; id++)
           {
-            out->bodies[id] = evaluateMain(ctx, in->bodies[id]);
+            out->bodies[id] = evaluate_(ctx, in->bodies[id]);
           }
           out0 = &out->t;
         }
@@ -1876,7 +1876,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
           allocateArray(arena, in->ctor_count, out->structs);
           for (i32 id=0; id < in->ctor_count; id++)
           {
-            Term *struc = evaluateMain(ctx, &in->structs[id]->t);
+            Term *struc = evaluate_(ctx, &in->structs[id]->t);
             out->structs[id] = castTerm(struc, Arrow);
           }
           out0 = &out->t;
@@ -1896,21 +1896,21 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
   if (DEBUG_MODE) {DEBUG_DEDENT(); DUMP("=> ", out0, "\n");}
 #endif
 
-  assert(checkFlag(ctx->flags, EvaluationFlag_ApplyMode) || out0);
+  assert(checkFlag(ctx->flags, EvaluationFlag_AlwaysApply) || out0);
   return out0;
 }
 
 forward_declare inline Term *
-evaluate(Arena *arena, Term **args, Term *in0)
+evaluate(Arena *arena, Term *in0, Term **args)
 {
   EvaluationContext ctx = {.arena=arena, .args=args};
-  return evaluateMain(&ctx, in0);
+  return evaluate_(&ctx, in0);
 }
 
 forward_declare inline Term *
 evaluate(EvaluationContext ctx, Term *in0)
 {
-  return evaluateMain(&ctx, in0);
+  return evaluate_(&ctx, in0);
 }
 
 // todo #cleanup "same_type" doesn't need to be passed down
@@ -2216,7 +2216,7 @@ lookupCurrentFrame(LocalBindings *bindings, String key, b32 add_if_missing)
 
 // todo #cleanup #leak don't allocate without progress
 internal Term *
-normalizeMain(NormalizeContext *ctx, Term *in0) 
+normalize_(NormalizeContext *ctx, Term *in0) 
 {
   Term *out0 = in0;
   Arena *arena = ctx->arena;
@@ -2241,11 +2241,11 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
              arg_id < in->arg_count;
              arg_id++)
         {
-          norm_args[arg_id] = normalizeMain(ctx, in->args[arg_id]);
+          norm_args[arg_id] = normalize_(ctx, in->args[arg_id]);
           progressed = progressed || (norm_args[arg_id] != in->args[arg_id]);
         }
 
-        Term *norm_op = normalizeMain(ctx, in->op);
+        Term *norm_op = normalize_(ctx, in->op);
         progressed = progressed || (norm_op != in->op);
 
         out0 = apply(arena, norm_op, in->arg_count, norm_args, getType(in0), ctx->name_to_unfold);
@@ -2267,9 +2267,9 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
         allocateArray(arena, out->param_count, out->param_types);
         ctx->depth++;
         for (i32 id=0; id < out->param_count; id++)
-          out->param_types[id] = normalizeMain(ctx, in->param_types[id]);
+          out->param_types[id] = normalize_(ctx, in->param_types[id]);
         if (in->output_type)
-          out->output_type = normalizeMain(ctx, in->output_type);
+          out->output_type = normalize_(ctx, in->output_type);
         ctx->depth--;
 
         out0 = &out->t;
@@ -2278,8 +2278,8 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
       case Term_Rewrite:
       {
         Rewrite *in = castTerm(in0, Rewrite);
-        Term *body     = normalizeMain(ctx, in->body);
-        Term *eq_proof = normalizeMain(ctx, in->eq_proof);
+        Term *body     = normalize_(ctx, in->body);
+        Term *eq_proof = normalize_(ctx, in->eq_proof);
         if ((body != in->body) || (eq_proof != in->eq_proof))
         {
           Rewrite *out = copyStruct(arena, in);
@@ -2292,7 +2292,7 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
       case Term_Accessor:
       {
         Accessor *in = castTerm(in0, Accessor);
-        Term *record0 = normalizeMain(ctx, in->record);
+        Term *record0 = normalize_(ctx, in->record);
         if (Composite *record = castRecord(record0))
           out0 = record->args[in->field_id];
         else if (record0 != in->record)
@@ -2336,7 +2336,7 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
           for (i32 id=0; id < in->ctor_count; id++)
           {
             Term *signature = &in->structs[id]->t;
-            signature = normalizeMain(ctx, signature);
+            signature = normalize_(ctx, signature);
             out->structs[id] = castTerm(signature, Arrow);
           }
           out0 = &out->t;
@@ -2369,14 +2369,14 @@ internal Term *
 normalize(Arena *arena, Typer *env, Term *in0, String name_to_unfold)
 {
   NormalizeContext ctx = {.arena=arena, .map=(env ? env->map : 0), .depth=getScopeDepth(env), .name_to_unfold=name_to_unfold};
-  return normalizeMain(&ctx, in0);
+  return normalize_(&ctx, in0);
 }
 
 forward_declare internal Term *
 normalize(Arena *arena, Typer *env, Term *in0)
 {
   NormalizeContext ctx = {.arena=arena, .map=(env ? env->map : 0), .depth=getScopeDepth(env)};
-  return normalizeMain(&ctx, in0);
+  return normalize_(&ctx, in0);
 }
 
 inline void
@@ -2854,7 +2854,7 @@ solveArgs(Solver *solver, Term *op, Term *goal0, Token *blame_token)
         if (!args[arg_i])
         {
           // todo #leak the type could be referenced
-          Term *type = evaluate(solver->arena, args, signature->param_types[arg_i]);
+          Term *type = evaluate(solver->arena, signature->param_types[arg_i], args);
           if (!(args[arg_i] = solveGoal(solver, type)))
           {
             if (blame_token)
@@ -4151,7 +4151,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
                   }
                   else
                   {
-                    Term *expected_arg_type = evaluate(arena, args, param_type0);
+                    Term *expected_arg_type = evaluate(arena, param_type0, args);
                     if (Term *arg = buildTerm(arena, typer, in_arg, expected_arg_type).term)
                     {
                       args[arg_i] = arg;
@@ -4173,7 +4173,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
                   {
                     Ast *in_arg = expanded_args[arg_i];
                     Term *param_type0 = signature->param_types[arg_i];
-                    Term *expected_arg_type = evaluate(arena, args, param_type0);
+                    Term *expected_arg_type = evaluate(arena, param_type0, args);
                     if (in_arg->cat == Ast_Hole)
                     {
                       if (Term *fill = solveGoal(Solver{.arena=arena, .typer=typer}, expected_arg_type))
@@ -4196,8 +4196,19 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
 
               if (noError())
               {
-                args = copyArray(arena, param_count, args);
-                out0 = newComposite(arena, op, param_count, args);
+                assert(!out0);
+                if (Function *fun = castTerm(op, Function))
+                {
+                  if (checkFlag(fun->function_flags, FunctionFlag_expand))
+                  {
+                    out0 = evaluate(arena, fun->body, args);
+                  }
+                }
+                if (!out0)
+                {
+                  args = copyArray(arena, param_count, args);
+                  out0 = newComposite(arena, op, param_count, args);
+                }
               }
             }
           }
@@ -4912,6 +4923,7 @@ parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
     {
       while (true)
       {
+        // todo #speed calling "optionalCategory" repeatedly is slow
         if (optionalCategory(Token_Directive_norm))
         {
           pushContext("auto normalization: #norm(IDENTIFIER...)");
@@ -4952,6 +4964,10 @@ parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
         else if (optionalCategory(Token_Directive_no_print_as_binop))
         {
           setFlag(&out->function_flags, FunctionFlag_no_print_as_binop);
+        }
+        else if (optionalCategory(Token_Directive_expand))
+        {
+          setFlag(&out->function_flags, FunctionFlag_expand);
         }
         else
           break;

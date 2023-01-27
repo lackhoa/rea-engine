@@ -1,24 +1,46 @@
+;; -----
+;; Utils
+;; -----
+
+!= :: fn ($A: Type, a,b: A) -> Type
+#expand
+{ return (a=b) -> False }
+
+id :: fn(A: Type) -> (A) -> A
+{return fn {return seek(A)}}
+
 ;; ----
 ;; List 
 ;; ----
 
 List :: union(ListType: Type)
-{single(head: ListType),
- cons  (head: ListType, tail: List(ListType))}
+{nil,
+ cons(head: ListType, tail: List(ListType))}
 
-fold :: fn($A: Type, op: (a,b: A) -> A, list: List(A)) -> A
+nonEmpty :: fn ($A: Type, list: List(A)) -> Type
+#expand
+{
+ return list != nil(A)
+ }
+
+fold :: fn($A: Type, op: (a,b: A) -> A, list: List(A), $ne: nonEmpty(list)) -> A
 #no_print_as_binop
 {fork list
- {single
-  return list.head,
+ {nil
+  f : False := ne(_); fork f {},
 
   cons
-  return list.head op fold(op, list.tail)}}
+  fork list.tail
+  {
+   nil  return list.head,
+   cons
+   prove (list.tail = nil(A)) -> False {norm; return fn (f: False) -> False {return f;}}
+   return list.head op fold(op, list.tail)}}}
 
 + :: fn($T: Type, l,m: List(T)) -> List(T)
 {fork l
- {single return l.head cons m,
-  cons   return l.head cons (l.tail + m)}}
+ {nil  return m,
+  cons return l.head cons (l.tail + m)}}
 
 Permutation :: union($T: Type, al,bac: List(T))
 {
@@ -26,11 +48,7 @@ Permutation :: union($T: Type, al,bac: List(T))
  permutation(a: T, l,b,c: List(T),
              al_destruct: al=(a cons l),
              bac_destruct: bac=(b + (a cons c)),
-             recurse: Permutation(l, b+c)),
- permutationLast(a: T, l,b: List(T),
-                 al_destruct: al=(a cons l),
-                 bac_destruct: bac=(b + single(a)),
-                 recurse: Permutation(l, b))
+             recurse: Permutation(l, b+c))
  }
 
 foldConcat :: ($T: Type, op: (a,b: T) -> T,
