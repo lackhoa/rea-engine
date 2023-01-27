@@ -13,9 +13,7 @@ fold :: fn($A: Type, op: (a,b: A) -> A, list: List(A)) -> A
   return list.head,
 
   cons
-  return list.head op fold(op, list.tail)
-  }
- }
+  return list.head op fold(op, list.tail)}}
 
 + :: fn($T: Type, l,m: List(T)) -> List(T)
 {fork l

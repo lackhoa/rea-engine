@@ -43,6 +43,20 @@ global_variable EngineState global_state;
 #define DEBUG_ON  {DEBUG_MODE = true; setvbuf(stdout, NULL, _IONBF, 0);}
 #define DEBUG_OFF {DEBUG_MODE = false; setvbuf(stdout, NULL, _IONBF, BUFSIZ);}
 
+inline Union *
+castUnionOrPolyUnion(Term *in0)
+{
+  if (Union *uni = castTerm(in0, Union))
+  {
+    return uni;
+  }
+  else if (Composite *in = castTerm(in0, Composite))
+  {
+    return castTerm(in->op, Union);
+  }
+  return 0;
+}
+
 inline b32
 isGlobalValue(Term *in0)
 {
@@ -50,17 +64,12 @@ isGlobalValue(Term *in0)
 }
 
 inline b32
-isPolyInstance(Union *in)
+isPolyUnion(Union *in)
 {
-  return (b32)in->poly_union && in->poly_args;
+  return getType(&in->t)->cat == Term_Arrow;
 }
 
-inline b32
-isPolyTemplate(Union *in)
-{
-  return in->poly_union && !in->poly_args;
-}
-
+#if 0
 inline Union *
 specializeUnion(Arena *arena, PolyUnion *puni, Term **args)
 {
@@ -68,6 +77,7 @@ specializeUnion(Arena *arena, PolyUnion *puni, Term **args)
   instance->poly_args = args;
   return instance;
 }
+#endif
 
 inline void
 attach(char *key, String value, Tokenizer *tk=global_tokenizer)
@@ -156,12 +166,22 @@ getParameterTypes(Term *op)
 {
   // NOTE: we split the signature retrieval out to avoid having to build the
   // constructor type, which might be premature.
-  Arrow *out = 0;
+
+  // bookmark: let's see what kinda "op" is passed in here, we might wanna
+  // design things a bit more rigidly. Obviously getting parameter type from the
+  // constructor alone without the type is impossible.
   if (Constructor *ctor = castTerm(op, Constructor))
-    out = ctor->uni->structs[ctor->index];
+  {
+    if (Union *uni = castTerm(ctor->uni, Union))
+    {
+      return uni->structs[ctor->index];
+    }
+  }
   else
-    out = castTerm(getType(op), Arrow);
-  return out;
+  {
+    return castTerm(getType(op), Arrow);
+  }
+  invalidCodePath;
 }
 
 inline Term *
@@ -169,9 +189,13 @@ getOutputType(Arena *arena, Term *op, Term **args)
 {
   Term *out = 0;
   if (Constructor *ctor = castTerm(op, Constructor))
-    out = &ctor->uni->t;
+  {
+    out = ctor->uni;
+  }
   else
+  {
     out = evaluate(arena, args, castTerm(getType(op), Arrow)->output_type);
+  }
   return out;
 }
 
@@ -182,14 +206,16 @@ getParameterCount(Term *in)
   return signature->param_count;
 }
 
+#if 0
 inline i32
 getPolyArgCount(Union *in)
 {
   return getParameterCount(&in->poly_union->t);
 }
+#endif
 
 inline Term *
-newConstructor(Arena *arena, Union *uni, i32 index)
+newConstructor(Arena *arena, Term *uni, i32 index)
 {
   // #why_constructors_dont_have_types
   Constructor *ctor = newTerm(arena, Constructor, 0);
@@ -213,29 +239,20 @@ newComposite(Arena *arena, Term *op, i32 arg_count, Term **args)
     assert(equal(actual_type, expected_type));
   }
 
-  if (PolyUnion *puni = castTerm(op, PolyUnion))
+  if (PolyConstructor *pctor = castTerm(op, PolyConstructor))
   {
-    Union *out     = copyStruct(arena, puni->union_template);
-    out->poly_args = args;
-    out0 = &out->t;
+    i32 poly_param_count = getParameterCount(&pctor->uni->t);
+    assert(arg_count >= poly_param_count);
+
+    op        = newConstructor(arena, type, pctor->index);
+    arg_count = arg_count - poly_param_count;
+    args      = args + poly_param_count;
   }
-  else
-  {
-    if (PolyConstructor *pctor = castTerm(op, PolyConstructor))
-    {
-      i32 poly_param_count = getParameterCount(&pctor->poly_union->t);
-      assert(arg_count >= poly_param_count);
-      Union *instance = specializeUnion(arena, pctor->poly_union, args);
-      op        = newConstructor(arena, instance, pctor->index);
-      arg_count = arg_count - poly_param_count;
-      args      = args + poly_param_count;
-    }
-    Composite *out = newTerm(arena, Composite, type);
-    out->op        = op;
-    out->arg_count = arg_count;
-    out->args      = args;
-    out0 = &out->t;
-  }
+  Composite *out = newTerm(arena, Composite, type);
+  out->op        = op;
+  out->arg_count = arg_count;
+  out->args      = args;
+  out0 = &out->t;
 
   return out0;
 }
@@ -336,17 +353,35 @@ newStack(Arena *arena, Stack *outer, i32 count)
   return stack;
 }
 
+struct UnionAndArgs {Union *uni; Term **args; operator bool() {return uni;}};
+inline UnionAndArgs
+castUnion(Term *in0)
+{
+  if (Union *in = castTerm(in0, Union))
+  {
+    return {.uni=in};
+  }
+  else if (Composite *in = castTerm(in0, Composite))
+  {
+    if (Union *uni = castTerm(in->op, Union))
+    {
+      return {.uni=uni, .args=in->args};
+    }
+  }
+  return {};
+}
+
 inline Term **
 synthesizeMembers(Arena *arena, Term *parent, i32 ctor_id)
 {
-  Union *uni = castTerm(parent->type, Union);
+  auto [uni, poly_args] = castUnion(getType(parent));
   Arrow *struc = uni->structs[ctor_id];
   i32 param_count = struc->param_count;
   Term **members = pushArray(temp_arena, param_count, Term *);
   for (i32 field_id=0; field_id < param_count; field_id++)
   {
     String field_name = struc->param_names[field_id];
-    Term *type = evaluate(EvaluationContext{.arena=arena, .args=members, .poly_args=uni->poly_args},
+    Term *type = evaluate(EvaluationContext{.arena=arena, .args=members, .poly_args=poly_args},
                           struc->param_types[field_id]);
     Accessor *accessor = newTerm(arena, Accessor, type);
     accessor->record     = parent;
@@ -361,9 +396,9 @@ inline Term *
 synthesizeTree(Arena *arena, Term *parent, DataTree *tree)
 {
   Composite *record = 0;
-  Union *uni   = castTerm(parent->type, Union);
+  auto [uni, poly_args] = castUnion(getType(parent));
   Arrow *struc = uni->structs[tree->ctor_i];
-  Term *ctor = newConstructor(arena, uni, tree->ctor_i);
+  Term *ctor = newConstructor(arena, getType(parent), tree->ctor_i);
   i32 param_count = struc->param_count;
   record = newTerm(arena, Composite, parent->type);
   record->op        = ctor;
@@ -479,8 +514,9 @@ rewriteTerm(Arena *arena, Term *from, Term *to, TreePath *path, Term *in0)
 }
 
 inline void
-initDataTree(Arena *arena, DataTree *tree, Union *uni, i32 ctor_id)
+initDataTree(Arena *arena, DataTree *tree, Term *uni0, i32 ctor_id)
 {
+  Union *uni = castUnionOrPolyUnion(uni0);
   i32 ctor_arg_count = uni->structs[ctor_id]->param_count;
   tree->ctor_names   = uni->ctor_names;
   tree->ctor_i       = ctor_id;
@@ -500,14 +536,13 @@ getOrAddDataTree(Arena *arena, Typer *env, Term *in0, i32 ctor_id)
 
   Variable *in_root = 0;
   i32    path_length = 0;
-  Union *reverse_unions[32];
-  u8     reverse_path[32];
+  Term *reverse_unions[32];
+  u8    reverse_path[32];
   Term *iter0 = in0;
-  b32 stop = false;
-  Union *root_union = 0;
-  for (;!stop;)
+  Term *root_union = 0;
+  for (b32 stop = false ;!stop;)
   {
-    Union *uni = castTerm(getType(iter0), Union);
+    Term *uni = getType(iter0);
     switch (iter0->cat)
     {
       case Term_Variable:
@@ -566,7 +601,7 @@ getOrAddDataTree(Arena *arena, Typer *env, Term *in0, i32 ctor_id)
     }
     else 
     {
-      assert(root_union->ctor_count == 1);
+      assert(castUnionOrPolyUnion(root_union)->ctor_count == 1);
       DataMap *map = pushStruct(arena, DataMap, true);
       map->depth   = in_root_depth;
       map->index   = in_root->index;
@@ -579,9 +614,9 @@ getOrAddDataTree(Arena *arena, Typer *env, Term *in0, i32 ctor_id)
 
   for (i32 path_index=0; path_index < path_length; path_index++)
   {
-    i32 reverse_index = path_length-1-path_index;
-    i32    field_index = reverse_path[reverse_index];
-    Union *uni         = reverse_unions[reverse_index];
+    i32   reverse_index = path_length-1-path_index;
+    i32   field_index   = reverse_path[reverse_index];
+    Term *uni           = reverse_unions[reverse_index];
     DataTree *parent = tree;
     tree = tree->members[field_index];
     if (!tree)
@@ -605,7 +640,7 @@ getOrAddDataTree(Arena *arena, Typer *env, Term *in0, i32 ctor_id)
       }
       else
       {
-        assert(uni->ctor_count == 1);
+        assert(castUnionOrPolyUnion(uni)->ctor_count == 1);
         DataTree *new_tree = pushStruct(arena, DataTree, true);
         initDataTree(arena, new_tree, uni, 0);
         parent->members[field_index] = new_tree;
@@ -650,10 +685,12 @@ getConstructorIndex(Typer *typer, Term *in0)
   }
   if (!is_record)
   {
-    if (Union *uni = castTerm(getType(in0), Union))
+    if (Union *uni = castUnionOrPolyUnion(getType(in0)))
     {
       if (uni->ctor_count == 1)
+      {
         out = 0;
+      }
       else
       {
         if (DataTree *tree = getDataTree(typer, in0))
@@ -791,10 +828,12 @@ printComposite(Arena *buffer, void *in0, b32 is_term, PrintOptions opt)
     if (op_is_constructor)
     {
       i32 ctor_i = castTerm(in->op, Constructor)->index;
-      op_signature = castTerm(getType(term), Union)->structs[ctor_i];
+      op_signature = castUnionOrPolyUnion(getType(term))->structs[ctor_i];
     }
     else
+    {
       op_signature = getParameterTypes(in->op);
+    }
     assert(op_signature);
 
     String op_name = {};
@@ -1048,6 +1087,21 @@ printTermsInParentheses(Arena *buffer, i32 count, Term **terms, PrintOptions opt
   print(buffer, ")");
 }
 
+inline String
+getConstructorName(Constructor *ctor)
+{
+  if (Union *uni = castTerm(ctor->uni, Union))
+  {
+    return uni->ctor_names[ctor->index];
+  }
+  else
+  {
+    Composite *composite = castTerm(ctor->uni, Composite);
+    return castTerm(composite->op, Union)->ctor_names[ctor->index];
+  }
+  invalidCodePath;
+}
+
 forward_declare internal void
 print(Arena *buffer, Term *in0, PrintOptions opt)
 {// mark: printTerm
@@ -1089,31 +1143,20 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
         case Term_Union:
         {
           Union *in = castTerm(in0, Union);
-          if (isPolyInstance(in))
+          print(buffer, "union {");
+          if (in->ctor_count)
           {
-            print(buffer, in->poly_union->global_name->string);
-            Arrow *signature = castTerm(getType(&in->poly_union->t), Arrow);
-            printTermsInParentheses(buffer, signature->param_count, in->poly_args);
-          }
-          else
-          {
-            if (!isPolyTemplate(in))
-              print(buffer, "union ");
-            print(buffer, "{");
-            if (in->ctor_count)
+            unsetFlag(&new_opt.flags, PrintFlag_Detailed);
+            for (i32 ctor_id = 0; ctor_id < in->ctor_count; ctor_id++)
             {
-              unsetFlag(&new_opt.flags, PrintFlag_Detailed);
-              for (i32 ctor_id = 0; ctor_id < in->ctor_count; ctor_id++)
-              {
-                print(buffer, in->ctor_names[ctor_id]);
-                print(buffer, ": ");
-                print(buffer, &in->structs[ctor_id]->t, new_opt);
-                if (ctor_id != in->ctor_count-1)
-                  print(buffer, ", ");
-              }
+              print(buffer, in->ctor_names[ctor_id]);
+              print(buffer, ": ");
+              print(buffer, &in->structs[ctor_id]->t, new_opt);
+              if (ctor_id != in->ctor_count-1)
+                print(buffer, ", ");
             }
-            print(buffer, "}");
           }
+          print(buffer, "}");
         } break;
 
         case Term_Function:
@@ -1170,7 +1213,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
         case Term_Constructor:
         {
           Constructor *in = castTerm(in0, Constructor);
-          print(buffer, in->uni->ctor_names[in->index]);
+          print(buffer, getConstructorName(in));
         } break;
 
         case Term_Rewrite:
@@ -1220,7 +1263,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
           print(buffer, in->subject, new_opt);
           newlineAndIndent(buffer, opt.indentation);
           print(buffer, "{");
-          Union *uni = in->uni;
+          Union *uni = castUnionOrPolyUnion(getType(in->subject));
           for (i32 ctor_id = 0;
                ctor_id < uni->ctor_count;
                ctor_id++)
@@ -1237,6 +1280,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
           print(buffer, "}");
         } break;
 
+#if 0
         case Term_PolyUnion:
         {
           PolyUnion *in = castTerm(in0, PolyUnion);
@@ -1246,11 +1290,12 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
           print(buffer, " ");
           print(buffer, &in->union_template->t, new_opt);
         } break;
+#endif
 
         case Term_PolyConstructor:
         {
           PolyConstructor *in = castTerm(in0, PolyConstructor);
-          print(buffer, in->poly_union->union_template->ctor_names[in->index]);
+          print(buffer, in->uni->ctor_names[in->index]);
         } break;
 
         default:
@@ -1380,9 +1425,6 @@ isGround(Term *in0)
     case Term_Union:
     case Term_Constructor:
     {return false;} break;
-
-    case Term_PolyUnion:
-      invalidCodePath;
   }
 }
 
@@ -1478,6 +1520,7 @@ rebaseMain(Arena *arena, Term *in0, i32 delta, i32 offset)
       {
         Union *in  = castTerm(in0, Union);
         Union *out = copyStruct(arena, in);
+#if 0
         if (isPolyInstance(in))
         {
           // #poly_unions_are_global
@@ -1489,6 +1532,7 @@ rebaseMain(Arena *arena, Term *in0, i32 delta, i32 offset)
           }
         }
         else
+#endif
         {
           allocateArray(arena, in->ctor_count, out->structs);
           for (i32 i=0; i < in->ctor_count; i++)
@@ -1804,6 +1848,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
       case Term_Union:
       {
         Union *in  = castTerm(in0, Union);
+#if 0
         if (isPolyInstance(in))
         {
           // NOTE: assuming that if it's a poly instance, the "abstract" part it
@@ -1819,6 +1864,7 @@ evaluateMain(EvaluationContext *ctx, Term *in0)
           out0 = &out->t;
         }
         else
+#endif
         {
           Union *out = copyStruct(arena, in);
           allocateArray(arena, in->ctor_count, out->structs);
@@ -2028,48 +2074,24 @@ compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
         {
           Union *lhs = castTerm(l0, Union);
           Union *rhs = castTerm(r0, Union);
-          if (isPolyInstance(lhs))
+          i32 ctor_count = lhs->ctor_count;
+          if (rhs->ctor_count == ctor_count)
           {
-            if (isPolyInstance(rhs)
-                && equal(&lhs->poly_union->t, &rhs->poly_union->t))
+            b32 found_mismatch = false;
+            for (i32 id=0; id < ctor_count && !found_mismatch; id++)
             {
-              // #poly_unions_are_global
-              b32 found_mismatch = false;
-              i32 poly_param_count = getPolyArgCount(lhs);
-              for (i32 i=0; i < poly_param_count && !found_mismatch; i++)
+              if (!equal(&lhs->structs[id]->t,
+                         &rhs->structs[id]->t))
               {
-                if (!equal(lhs->poly_args[i],
-                           rhs->poly_args[i]))
-                {
-                  found_mismatch = true;
-                }
+                found_mismatch = true;
               }
-              if (!found_mismatch)
-                out.result = Trinary_True;
             }
-          }
-          else
-          {
-            i32 ctor_count = lhs->ctor_count;
-            if (rhs->ctor_count == ctor_count)
-            {
-              b32 found_mismatch = false;
-              for (i32 id=0; id < ctor_count && !found_mismatch; id++)
-              {
-                if (!equal(&lhs->structs[id]->t,
-                           &rhs->structs[id]->t))
-                {
-                  found_mismatch = true;
-                }
-              }
-              if (!found_mismatch)
-                out.result = Trinary_True;
-            }
+            if (!found_mismatch)
+              out.result = Trinary_True;
           }
         }
       } break;
 
-      case Term_PolyUnion:
       case Term_Function:
       case Term_Hole:
       case Term_Rewrite:
@@ -2295,11 +2317,13 @@ normalizeMain(NormalizeContext *ctx, Term *in0)
       case Term_Union:
       {
         Union *in  = castTerm(in0, Union);
+#if 0
         if (isPolyInstance(in))
         {
           // NOTE: we could normalize the poly args here, but who cares.
         }
         else
+#endif
         {
           Union *out = copyStruct(arena, in);
           allocateArray(arena, in->ctor_count, out->structs);
@@ -2736,6 +2760,7 @@ unify(Stack *stack, b32 same_type, Term *in0, Term *goal0)
       }
     } break;
 
+#if 0
     case Term_Union:
     {
       Union *in = castTerm(in0, Union);
@@ -2763,11 +2788,13 @@ unify(Stack *stack, b32 same_type, Term *in0, Term *goal0)
         success = equal(in0, goal0);
       }
     } break;
+#endif
 
     case Term_Constructor:
       invalidCodePath;
       break;
 
+    case Term_Union:
     case Term_Function:
     case Term_Primitive:
     {
@@ -2788,6 +2815,7 @@ unify(Stack *stack, b32 same_type, Term *in0, Term *goal0)
   return success;
 }
 
+#if 0
 inline Union *
 castUnionWithArgs(Term *in0)
 {
@@ -2799,31 +2827,31 @@ castUnionWithArgs(Term *in0)
   }
   return out;
 }
+#endif
 
 inline SolveArgs
-solveArgs(Solver *solver, Term *op, Term *goal, Token *blame_token)
+solveArgs(Solver *solver, Term *op, Term *goal0, Token *blame_token)
 {
   b32    matches   = false;
   i32    arg_count = 0;
   Term **args      = 0;
   if (Constructor *ctor = castTerm(op, Constructor))
   {
-    matches = equal(&ctor->uni->t, goal);
+    matches = equal(ctor->uni, goal0);
     // don't attempt to solve args since it's a constructor.
   }
-  else if (PolyConstructor *ctor = castTerm(op, PolyConstructor))
+  else if (PolyConstructor *pctor = castTerm(op, PolyConstructor))
   {
-    if (Union *uni = castUnionWithArgs(goal))
+    if (Composite *goal = castTerm(goal0, Composite))
     {
-      matches = (ctor->poly_union == uni->poly_union);
+      matches = equal(&pctor->uni->t, goal->op);
     }
-    // don't attempt to solve args since it's a constructor.
   }
   else if (Arrow *signature = castTerm(getType(op), Arrow))
   {
     Stack *stack = newStack(solver->arena, 0, signature->param_count);
     stack->unification_arena = solver->arena;
-    if (unify(stack, false, signature->output_type, goal))
+    if (unify(stack, false, signature->output_type, goal0))
     {
       matches   = true;
       arg_count = signature->param_count;
@@ -2898,11 +2926,12 @@ seekGoal(Arena *arena, Typer *typer, Term *goal)
         {
           out = var;
         }
-        else if (Union *uni = castTerm(getType(var), Union))
+        else
         {
           i32 ctor_i = getConstructorIndex(typer, var);
           if (ctor_i >= 0)
           {
+            Union *uni = castUnionOrPolyUnion(getType(var));
             Arrow *struc = uni->structs[ctor_i];
             Term **members = synthesizeMembers(arena, var, ctor_i);
             for (i32 member_i = 0; member_i < struc->param_count && !out; member_i++)
@@ -3450,10 +3479,11 @@ inline Term *
 buildCtorAst(Arena *arena, CtorAst *in, Term *output_type)
 {
   Term *out = 0;
+  // NOTE: don't really need to handle poly union here?
   if (Union *uni = castTerm(output_type, Union))
   {
     if (in->ctor_i < uni->ctor_count)
-      out = newConstructor(arena, uni, in->ctor_i);
+      out = newConstructor(arena, &uni->t, in->ctor_i);
     else
       parseError(&in->a, "union only has %d constructors", uni->ctor_count);
   }
@@ -3743,7 +3773,6 @@ toCArray(Arena *arena, Term *list0)
   TermArray out = {};
   const i32 MAX_TERM_ARRAY_LENGTH = 20;
   allocateArray(arena, MAX_TERM_ARRAY_LENGTH, out.items);
-  assert(castTerm(getType(list0), Union)->poly_union == castTerm(rea_List, PolyUnion));
 
   b32 stop=false;
   for (Term *iter0=list0; !stop; )
@@ -3854,7 +3883,7 @@ internal Term *
 provePermutation(Arena *arena, Typer *typer, Term **abc0, Term **bac0, i32 *indexes, i32 count0)
 {
   // bookmark
-  Tokenizer tk = newTokenizer("");
+  // Tokenizer tk = newTokenizer("");
 
   assert(count0 > 0);
   Term *out = 0;
@@ -4289,14 +4318,14 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
         i32 ctor_i = getConstructorIndex(typer, record0);
         if (ctor_i >= 0)
         {
-          Union *uni = castTerm(getType(record0), Union);
-          Arrow *op_type = uni->structs[ctor_i];
-          i32 param_count = op_type->param_count;
+          Union *uni = castUnionOrPolyUnion(getType(record0));
+          Arrow *struc = uni->structs[ctor_i];
+          i32 param_count = struc->param_count;
           b32 valid_param_name = false;
           i32 field_i = -1;
           for (i32 param_i=0; param_i < param_count; param_i++)
           {// figure out the param id
-            if (equal(in->field_name.string, op_type->param_names[param_i]))
+            if (equal(in->field_name.string, struc->param_names[param_i]))
             {
               field_i = param_i;
               valid_param_name = true;
@@ -4687,7 +4716,7 @@ buildFork(Arena *arena, Typer *env, ForkAst *in, Term *goal)
     i32 case_count = in->case_count;
 
     Term *subject_type = getType(subject.term);
-    if (Union *uni = castTerm(subject_type, Union))
+    if (Union *uni = castUnionOrPolyUnion(subject_type))
     {
       if (uni->ctor_count == case_count)
       {
@@ -4730,13 +4759,12 @@ buildFork(Arena *arena, Typer *env, ForkAst *in, Term *goal)
             else
             {
               parseError(in->subject, "cannot fork this term");
-              attach("serial", serial);
             }
           }
           else
           {
             tokenError(ctor_name, "not a valid constructor");  // todo print them out
-            attach("type", &uni->t);
+            attach("union", &uni->t);
 
             StartString ctor_names = startString(error_buffer);
             for (i32 id=0; id < uni->ctor_count; id++)
@@ -4749,11 +4777,7 @@ buildFork(Arena *arena, Typer *env, ForkAst *in, Term *goal)
           }
         }
 
-        if (noError())
-        {
-          out->uni    = uni;
-          out->bodies = ordered_bodies;
-        }
+        out->bodies = ordered_bodies;
       }
       else
         parseError(&in->a, "wrong number of cases, expected: %d, got: %d",
@@ -5217,24 +5241,6 @@ processPolyConstructorType(ProcessPolyConstructorTypeContext *ctx, Term *in0)
         out0 = &out->t;
       } break;
 
-      case Term_Union:
-      {
-        Union *in = castTerm(in0, Union);
-        if (isPolyInstance(in))
-        {
-          Union *out = copyStruct(arena, in);
-          i32 poly_param_count = getPolyArgCount(out);
-          allocateArray(arena, poly_param_count, out->poly_args);
-          for (i32 i=0; i < poly_param_count; i++)
-          {
-            out->poly_args[i] = processPolyConstructorType(ctx, in->poly_args[i]);
-          }
-          out0 = &out->t;
-        }
-        else
-          todoIncomplete;
-      } break;
-
       case Term_Composite:
       {
         Composite *in = castTerm(in0, Composite);
@@ -5274,13 +5280,11 @@ forward_declare internal Term *
 buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
 {
   Union *uni = newTerm(arena, Union, rea_Type);
-  PolyUnion *puni = 0;
-  
+
   i32 ctor_count = in->ctor_count;
   uni->ctor_count = ctor_count;
   uni->ctor_names = copyArray(arena, ctor_count, in->ctor_names);
   allocateArray(arena, ctor_count, uni->structs);
-  allocateArray(arena, ctor_count, uni->ctors);
 
   Arrow *poly_params = 0;
   if (in->params)
@@ -5291,10 +5295,7 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
       poly_params = castTerm(poly_params0, Arrow);
       Arrow *signature       = copyStruct(arena, poly_params);
       signature->output_type = rea_Type;
-      puni                 = newTerm(arena, PolyUnion, &signature->t);
-      puni->union_template = uni;
-      allocateArray(arena, ctor_count, puni->pctors);
-      uni->poly_union = puni;
+      uni->type = &signature->t;
     }
   }
 
@@ -5303,9 +5304,7 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
     if (global_name)
     {
       // note: bind the name first to support recursive data structure.
-      Term *term_to_bind = &uni->t;
-      if (poly_params) term_to_bind = &puni->t;
-      addGlobalBinding(global_name, term_to_bind);
+      addGlobalBinding(global_name, &uni->t);
     }
 
     if (poly_params)
@@ -5329,18 +5328,20 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
   {
     if (poly_params)
     {
-      // NOTE: synthesize output_type just for type consistency and printing's sake.
+      // NOTE: output type is actually used.
       i32 poly_count = poly_params->param_count;
-      Union *synthetic_output_type = copyStruct(arena, uni);
-      allocateArray(arena, poly_count, synthetic_output_type->poly_args);
+      Composite *output_type = newTerm(arena, Composite, rea_Type);
+      output_type->arg_count = poly_count;
+      allocateArray(arena, poly_count, output_type->args);
       for (i32 i=0; i < poly_count; i++)
       {
         Variable *var = newTerm(arena, Variable, poly_params->param_types[i]);
         var->name  = poly_params->param_names[i];
         var->delta = 0;
         var->index = i;
-        synthetic_output_type->poly_args[i] = &var->t;
+        output_type->args[i] = &var->t;
       }
+      output_type->op = &uni->t;
 
       for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
       {
@@ -5363,12 +5364,11 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
           signature->param_types[poly_count+param_i] = processPolyConstructorType(&ctx, struc->param_types[param_i]);
           signature->param_flags[poly_count+param_i] = struc->param_flags[param_i];
         }
-        signature->output_type = &synthetic_output_type->t;
+        signature->output_type = &output_type->t;
 
         PolyConstructor *pctor = newTerm(arena, PolyConstructor, &signature->t);
-        pctor->poly_union  = puni;
-        pctor->index       = ctor_i;
-        puni->pctors[ctor_i] = pctor;
+        pctor->uni   = uni;
+        pctor->index = ctor_i;
 
         addGlobalBinding(&uni->ctor_names[ctor_i], &pctor->t);
       }
@@ -5381,9 +5381,8 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
         Arrow *signature = copyStruct(arena, struc);
         signature->output_type = &uni->t;
         Constructor *ctor = newTerm(arena, Constructor, &signature->t);
-        ctor->uni   = uni;
+        ctor->uni   = &uni->t;
         ctor->index = ctor_i;
-        uni->ctors[ctor_i] = ctor;
         Term *term_to_bind = &ctor->t;
         if (struc->param_count == 0)
           term_to_bind = newComposite(arena, &ctor->t, 0, 0);
@@ -5392,17 +5391,8 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
     }
   }
 
-  if (noError())
-  {
-    assert(uni || puni);
-  }
-  else
-  {
-    uni = 0;
-    puni = 0;
-  }
-  if (puni) return &puni->t;
-  else return &uni->t;
+  NULL_WHEN_ERROR(uni);
+  return &uni->t;
 }
 
 inline CtorAst *

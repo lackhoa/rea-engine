@@ -15,7 +15,6 @@ global_variable StringBuffer *error_buffer = &error_buffer_;
 global_variable b32 DEBUG_MODE;
 global_variable i32 DEBUG_SERIAL;
 
-struct PolyConstructor;
 struct Function;
 struct Union;
 struct Arrow;
@@ -58,7 +57,7 @@ enum TermCategory {
   Term_Primitive,
   Term_Union,
   Term_Constructor,
-  Term_PolyUnion,
+  // Term_PolyUnion,
   Term_Function,
   Term_Fork,
   Term_Variable,
@@ -244,33 +243,31 @@ _newTerm(Arena *arena, TermCategory cat, Term *type, size_t size)
 
 struct Constructor {
   embed_Term(t);
-  Union *uni;
+  Term *uni;  // can be thought of as "output_type", minus the stupid rebase
+  i32   index;
+};
+
+// NOTE: does not appear in expression.
+struct PolyConstructor {
+  embed_Term(t);
+  Union *uni;                   // poly union
   i32    index;
 };
 
+#if 0
 // NOTE: does not appear in expression.
 struct PolyUnion {
   embed_Term(t);
   PolyConstructor **pctors;
   Union            *union_template;
 };
-
-// NOTE: does not appear in expression.
-struct PolyConstructor {
-  embed_Term(t);
-  PolyUnion *poly_union;
-  i32        index;
-};
+#endif
 
 struct Union {
   embed_Term(t);
-  Constructor **ctors;          // NOTE: for globals only
-  i32           ctor_count;
-  Token        *ctor_names;
-  Arrow       **structs;
-
-  PolyUnion  *poly_union;
-  Term      **poly_args;
+  i32     ctor_count;
+  Token  *ctor_names;
+  Arrow **structs;
 };
 
 struct Function {
@@ -509,7 +506,6 @@ struct TermPair
 
 struct Fork {
   embed_Term(t);
-  Union  *uni;
   Term   *subject;
   i32     case_count;
   Term  **bodies;
