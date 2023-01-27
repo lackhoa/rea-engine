@@ -69,16 +69,6 @@ isPolyUnion(Union *in)
   return getType(&in->t)->cat == Term_Arrow;
 }
 
-#if 0
-inline Union *
-specializeUnion(Arena *arena, PolyUnion *puni, Term **args)
-{
-  Union *instance     = copyStruct(arena, puni->union_template);
-  instance->poly_args = args;
-  return instance;
-}
-#endif
-
 inline void
 attach(char *key, String value, Tokenizer *tk=global_tokenizer)
 {
@@ -3018,9 +3008,11 @@ solveGoal(Solver *solver, Term *goal)
         else
           break;
       }
+    }
 
-      if (!out)
-        out = seekGoal(solver->arena, solver->typer, goal);
+    if (!out)
+    {
+      out = seekGoal(solver->arena, solver->typer, goal);
     }
 
     if (out)
@@ -4176,13 +4168,13 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
                     Term *expected_arg_type = evaluate(arena, param_type0, args);
                     if (in_arg->cat == Ast_Hole)
                     {
-                      if (Term *fill = solveGoal(Solver{.arena=arena, .typer=typer}, expected_arg_type))
+                      if (Term *fill = solveGoal(Solver{.arena=arena, .typer=typer, .use_global_hints=true}, expected_arg_type))
                       {
                         args[arg_i] = fill;
                       }
                       else
                       {
-                        parseError(in_arg, "cannot fill in argument %d", arg_i);
+                        parseError(in_arg, "cannot solve argument %d", arg_i);
                         attach("expected_arg_type", expected_arg_type);
                       }
                     }
@@ -5095,7 +5087,9 @@ parseArrowType(Arena *arena, b32 is_struct)
               if (typeless_run)
               {
                 for (i32 offset = 1; offset <= typeless_run; offset++)
+                {
                   param_types[param_i - offset] = param_type;
+                }
                 typeless_run = 0;
               }
             }
@@ -5110,7 +5104,9 @@ parseArrowType(Arena *arena, b32 is_struct)
         }
 
         if (param_name.chars)
+        {
           param_names[param_i] = param_name;
+        }
         else
         {
           *global_tokenizer = tk_save;
@@ -5120,7 +5116,9 @@ parseArrowType(Arena *arena, b32 is_struct)
           {
             param_types[param_i] = param_type;
             if (typeless_run)
+            {
               tokenError(&anonymous_parameter_token, "cannot follow a typeless parameter with an anonymous parameter");
+            }
           }
           popContext();
         }

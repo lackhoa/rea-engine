@@ -6,8 +6,13 @@
 #expand
 { return (a=b) -> False }
 
-id :: fn(A: Type) -> (A) -> A
-{return fn {return seek(A)}}
+;; todo wtf name?
+identity :: fn(A: Type) -> (a: A) -> A
+{ return fn {return a} }
+
+hypotheticalFalsehoodAchieved :: () -> ((f: False) -> False)
+#hint
+{return identity(False);}
 
 ;; ----
 ;; List 
@@ -19,9 +24,7 @@ List :: union(ListType: Type)
 
 nonEmpty :: fn ($A: Type, list: List(A)) -> Type
 #expand
-{
- return list != nil(A)
- }
+{return list != nil(A)}
 
 fold :: fn($A: Type, op: (a,b: A) -> A, list: List(A), $ne: nonEmpty(list)) -> A
 #no_print_as_binop
@@ -34,13 +37,17 @@ fold :: fn($A: Type, op: (a,b: A) -> A, list: List(A), $ne: nonEmpty(list)) -> A
   {
    nil  return list.head,
    cons
-   prove (list.tail = nil(A)) -> False {norm; return fn (f: False) -> False {return f;}}
+   prove (list.tail = nil(A)) -> False {norm;}
    return list.head op fold(op, list.tail)}}}
 
 + :: fn($T: Type, l,m: List(T)) -> List(T)
 {fork l
  {nil  return m,
   cons return l.head cons (l.tail + m)}}
+
+concatNonEmpty :: (T:Type, l,m: List(T), nonEmpty(l), nonEmpty(m)) -> nonEmpty(l+m)
+#hint
+{fork l {nil, cons}}
 
 Permutation :: union($T: Type, al,bac: List(T))
 {
@@ -53,7 +60,7 @@ Permutation :: union($T: Type, al,bac: List(T))
 
 foldConcat :: ($T: Type, op: (a,b: T) -> T,
                associative: (a,b,c: T) -> (a op b) op c = a op b op c,
-               l,m: List(T)) -> (fold(op, l+m) = fold(op, l) op fold(op, m))
+               l,m: List(T), $nonEmpty(l), $nonEmpty(m)) -> (fold(op, l+m) = fold(op, l) op fold(op, m))
 #hint
 {fork l
  {single,
