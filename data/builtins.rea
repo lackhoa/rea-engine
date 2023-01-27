@@ -20,17 +20,17 @@ fold :: fn($A: Type, op: (a,b: A) -> A, list: List(A)) -> A
  {single return l.head cons m,
   cons   return l.head cons (l.tail + m)}}
 
-Permutation :: union($T: Type, abc,bac: List(T))
+Permutation :: union($T: Type, al,bac: List(T))
 {
- permutationSame(same: abc=bac),
- permutation(a: T, bc,b,c: List(T),
-             abc_destruct: abc=(a cons bc),
+ permutationSame(same: al=bac),
+ permutation(a: T, l,b,c: List(T),
+             al_destruct: al=(a cons l),
              bac_destruct: bac=(b + (a cons c)),
-             recurse: Permutation(bc, b+c)),
- permutationLast(a: T, bc,b: List(T),
-                 abc_destruct: abc=(a cons bc),
+             recurse: Permutation(l, b+c)),
+ permutationLast(a: T, l,b: List(T),
+                 al_destruct: al=(a cons l),
                  bac_destruct: bac=(b + single(a)),
-                 recurse: Permutation(bc, b))
+                 recurse: Permutation(l, b))
  }
 
 foldConcat :: ($T: Type, op: (a,b: T) -> T,
@@ -58,35 +58,32 @@ foldPermutation :: ($T: Type,
   rewrite p.same,
 
   permutationLast
-  rewrite p.abc_destruct;
+  rewrite p.al_destruct;
   rewrite p.bac_destruct;
   norm;
-  ;; p.a op fold(op, p.bc) = fold(op, p.b + single(p.a))
-  => p.a op fold(op, p.bc) = fold(op, p.b) op fold(op, single(p.a));
+  ;; p.a op fold(op, p.l) = fold(op, p.b + single(p.a))
+  => p.a op fold(op, p.l) = fold(op, p.b) op fold(op, single(p.a));
   norm;
-  => p.a op fold(op, p.bc) = p.a op fold(op, p.b) {op_commutative};
-  prove fold(op, p.bc) = fold(op, p.b) {return foldPermutation(...)} as e
+  => p.a op fold(op, p.l) = p.a op fold(op, p.b) {op_commutative};
+  prove fold(op, p.l) = fold(op, p.b) {return foldPermutation(...)} as e
   rewrite e;
   ,
 
   permutation
-  rewrite p.abc_destruct;
+  rewrite p.al_destruct;
   rewrite p.bac_destruct;
   norm;
-  ;; p.a op fold(op, p.bc) = fold(op, p.b + (p.a cons p.c))
-  => p.a op fold(op, p.bc) = fold(op, p.b) op fold(op, p.a cons p.c)
-  => p.a op fold(op, p.bc) = fold(op, p.b) op p.a op fold(op, p.c)
-  => p.a op fold(op, p.bc) = (p.a op fold(op, p.c)) op fold(op, p.b) {op_commutative}
-  => p.a op fold(op, p.bc) = p.a op fold(op, p.c) op fold(op, p.b) {op_associative}
-  => p.a op fold(op, p.bc) = p.a op fold(op, p.b) op fold(op, p.c) {op_commutative}
-  => p.a op fold(op, p.bc) = p.a op fold(op, p.b + p.c);
-  prove fold(op, p.bc) = fold(op, p.b + p.c) {return foldPermutation(...)} as e
+  ;; p.a op fold(op, p.l) = fold(op, p.b + (p.a cons p.c))
+  => p.a op fold(op, p.l) = fold(op, p.b) op fold(op, p.a cons p.c)
+  => p.a op fold(op, p.l) = fold(op, p.b) op p.a op fold(op, p.c)
+  => p.a op fold(op, p.l) = (p.a op fold(op, p.c)) op fold(op, p.b) {op_commutative}
+  => p.a op fold(op, p.l) = p.a op fold(op, p.c) op fold(op, p.b) {op_associative}
+  => p.a op fold(op, p.l) = p.a op fold(op, p.b) op fold(op, p.c) {op_commutative}
+  => p.a op fold(op, p.l) = p.a op fold(op, p.b + p.c);
+  prove fold(op, p.l) = fold(op, p.b + p.c) {return foldPermutation(...)} as e
   rewrite e;
   }
  }
 
-;; #debug bookmark
-;; helper :: fn(T: Type, a,b,c: List(T), p: Permutation(a,b), e: b=c) -> Permutation(a,c)
-;; {
-;;  rewrite <- e;
-;;  }
+provePermutationHelper :: fn(T: Type, a,b,c: List(T), p: Permutation(a,b), e: b=c) -> Permutation(a,c)
+{rewrite <- e;}

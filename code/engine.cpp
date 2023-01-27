@@ -167,9 +167,8 @@ getParameterTypes(Term *op)
   // NOTE: we split the signature retrieval out to avoid having to build the
   // constructor type, which might be premature.
 
-  // bookmark: let's see what kinda "op" is passed in here, we might wanna
-  // design things a bit more rigidly. Obviously getting parameter type from the
-  // constructor alone without the type is impossible.
+  // TODO: Obviously getting parameter type from the constructor alone without
+  // the type is impossible. But we're never gonna pass it in here.
   if (Constructor *ctor = castTerm(op, Constructor))
   {
     if (Union *uni = castTerm(ctor->uni, Union))
@@ -206,14 +205,6 @@ getParameterCount(Term *in)
   return signature->param_count;
 }
 
-#if 0
-inline i32
-getPolyArgCount(Union *in)
-{
-  return getParameterCount(&in->poly_union->t);
-}
-#endif
-
 inline Term *
 newConstructor(Arena *arena, Term *uni, i32 index)
 {
@@ -223,6 +214,21 @@ newConstructor(Arena *arena, Term *uni, i32 index)
   ctor->uni   = uni;
   return &ctor->t;
 }
+
+#if REA_INTERNAL
+inline void
+assertEqual(Term *l, Term *r)
+{
+  if (!equal(l, r))
+  {
+    DUMP("l: ", l, "\n");
+    DUMP("r: ", r, "\n");
+    invalidCodePath;
+  }
+}
+#else
+inline void assertEqual(Term *l, Term *r) {}
+#endif
 
 inline Term *
 newComposite(Arena *arena, Term *op, i32 arg_count, Term **args)
@@ -236,7 +242,7 @@ newComposite(Arena *arena, Term *op, i32 arg_count, Term **args)
   {
     Term *actual_type   = getType(args[arg_i]);
     Term *expected_type = evaluate(arena, args, signature->param_types[arg_i]);
-    assert(equal(actual_type, expected_type));
+    assertEqual(actual_type, expected_type);
   }
 
   if (PolyConstructor *pctor = castTerm(op, PolyConstructor))
@@ -2815,20 +2821,6 @@ unify(Stack *stack, b32 same_type, Term *in0, Term *goal0)
   return success;
 }
 
-#if 0
-inline Union *
-castUnionWithArgs(Term *in0)
-{
-  Union *out = 0;
-  if (Union *in = castTerm(in0, Union))
-  {
-    if (in->poly_union)
-      out = in;
-  }
-  return out;
-}
-#endif
-
 inline SolveArgs
 solveArgs(Solver *solver, Term *op, Term *goal0, Token *blame_token)
 {
@@ -2895,7 +2887,7 @@ newComputation_(Arena *arena, Term *lhs, Term *rhs)
 }
 
 inline Term *
-equalByComputation(Arena *arena, Typer *typer, Term *lhs, Term *rhs)
+reaComputation(Arena *arena, Typer *typer, Term *lhs, Term *rhs)
 {
   Term *out = 0;
   if (equal(normalize(arena, typer, lhs),
@@ -2904,6 +2896,12 @@ equalByComputation(Arena *arena, Typer *typer, Term *lhs, Term *rhs)
     out = newComputation_(arena, lhs, rhs);
   }
   return out;
+}
+
+inline Term *
+reaIdentity(Arena *arena, Term *term)
+{
+  return newComputation_(arena, term, term);
 }
 
 inline Term *
@@ -2982,7 +2980,7 @@ solveGoal(Solver *solver, Term *goal)
 
     if (auto [l,r] = getEqualitySides(goal, false))
     {
-      out = equalByComputation(solver->arena, solver->typer, l, r);
+      out = reaComputation(solver->arena, solver->typer, l, r);
     }
 
     if (!out)
@@ -3866,6 +3864,7 @@ getArg(Term *in0, i32 index)
   return in->args[index];
 }
 
+#if 0
 struct PermutationList
 {
   Term *abc;
@@ -3878,90 +3877,101 @@ struct PermutationList
 
   PermutationList *tail;
 };
+#endif
+
+inline Term *
+reaSingle(Arena *arena, Term *head)
+{
+  return newCompositeN(arena, rea_single, getType(head), head);
+}
+
+inline Term *
+reaCons(Arena *arena, Term *head, Term *tail)
+{
+  return newCompositeN(arena, rea_cons, getType(head), head, tail);
+}
+
+inline Term *
+reaGetListType(Term *l)
+{
+  return getType(getArg(l, 0));
+}
+
+inline Term *
+reaConcat(Arena *arena, Term *a, Term *b)
+{
+  return newCompositeN(arena, rea_concat, reaGetListType(a), a, b);
+}
 
 internal Term *
-provePermutation(Arena *arena, Typer *typer, Term **abc0, Term **bac0, i32 *indexes, i32 count0)
+provePermutation_(Arena *arena, Typer *typer, Term *al, Term **c_bac, i32 *indexes, i32 count)
 {
-  // bookmark
-  // Tokenizer tk = newTokenizer("");
-
-  assert(count0 > 0);
+  i32 UNUSED_VAR serial = DEBUG_SERIAL++;
   Term *out = 0;
-  Term *abc = toReaList(arena, abc0, count0);
-  Term *T = getType(abc0[0]);
-  // b32 *mask = pushArray(temp_arena, count0, b32);
-  // for (i32 i=0; i < count0; i++) { mask[i] = true; }
-  Term **bac = bac0;
-  PermutationList *list = 0;
-  for (i32 i=0; i < count0; i++)
+  assert(count > 0);
+  local_persist Term *helper = lookupBuiltin("provePermutationHelper");
+
+  Term *T = getType(c_bac[0]);
+  Term *bac = toReaList(arena, c_bac, count);
+
+  if (count == 1)
   {
-    i32 count = count0 - i;
+    Term *bac = toReaList(arena, c_bac, count);
+    Term *eq = reaComputation(arena, typer, al, bac);
+    out = newCompositeN(arena, rea_permutationSame, T, al, bac, eq);
+  }
+  else
+  {
+    i32 a_index = indexes[0];
+    Term *l = getArg(al, 1);
 
-    PermutationList *new_list = pushStruct(temp_arena, PermutationList, true);
-    new_list->abc             = abc;
-    new_list->bac             = toReaList(arena, bac, count);
-
-    if (i != count-1)
+    Term **c_bc = pushArray(temp_arena, count-1, Term *);
+    for (i32 i=0; i < a_index; i++)
     {
-      i32 a_index = indexes[i];
-      Term *bc = getArg(abc, 2);
-      Term **new_bac = pushArray(temp_arena, count-1, Term *);
-      for (i32 i=0; i < a_index; i++)
-      {
-        new_bac[i] = bac[i];
-      }
-      for (i32 i=a_index+1; i < count; i++)
-      {
-        assert(i-1 < count-1);
-        new_bac[i-1] = bac[i];
-      }
+      c_bc[i] = c_bac[i];
+    }
+    for (i32 i=a_index+1; i < count; i++)
+    {
+      assert(i-1 < count-1);
+      c_bc[i-1] = c_bac[i];
+    }
+    Term *bc = toReaList(arena, c_bc, count-1);
 
-      new_list->a  = getArg(abc, 1);
-      new_list->bc = bc;
-      new_list->b  = toReaList(arena, new_bac, a_index);
-      if (a_index+1 < count)
-      {
-        new_list->c = toReaList(arena, new_bac+(a_index+1), count-(a_index+1));
-      }
-
-      abc = bc;
-      bac = new_bac;
+    Term *a = getArg(al, 0);
+    Term *b = toReaList(arena, c_bc, a_index);
+    Term *c = 0;
+    if (a_index+1 < count)
+    {
+      c = toReaList(arena, c_bc+a_index, count-(a_index+1));
     }
 
-    new_list->tail = list;
-    list           = new_list;
-  }
-  for (PermutationList *ls=list; ls; ls=list->tail)
-  {
-    if (ls->tail)
+    Term *recurse = provePermutation_(arena, typer, l, c_bc, indexes+1, count-1);
+
+    Term *al_destruct = reaIdentity(arena, al);
+    if (c)
     {
-      Term *abc_destruct = equalByComputation(arena, typer, ls->abc,
-                                              newCompositeN(arena, rea_cons, T, ls->a, ls->bc));
-      if (ls->c)
-      {
-        // out = newCompositeN(arena, rea_permutation, T, bc,b,c, abc_destruct, bac_destruct, recurse);
-        Term *bac_destruct = equalByComputation(arena, typer,
-                                                ls->bac,
-                                                newCompositeN(arena, rea_concat, T, ls->b,
-                                                              newCompositeN(arena, rea_concat, T, ls->a, ls->b)));
-        out = newCompositeN(arena, rea_permutation, T, ls->bc,ls->b,ls->c, abc_destruct, bac_destruct, out);
-      }
-      else
-      {
-        Term *bac_destruct = equalByComputation(arena, typer,
-                                                ls->bac,
-                                                newCompositeN(arena, rea_concat, T, ls->b,
-                                                              newCompositeN(arena, rea_single, ls->a)));
-        out = newCompositeN(arena, rea_permutationLast, T, ls->bc,ls->b, abc_destruct, bac_destruct, out);
-      }
+      Term *bac_destruct = reaComputation(arena, typer, bac, reaConcat(arena, b, reaCons(arena, a, c)));
+      Term *b_plus_c = reaConcat(arena, b, c);
+      Term *e = reaComputation(arena, typer, bc, b_plus_c);
+      recurse = newCompositeN(arena, helper, T, l,bc,b_plus_c, recurse,e);
+      out = newCompositeN(arena, rea_permutation, T,al,bac, a,l,b,c, al_destruct,bac_destruct, recurse);
     }
     else
     {
-      Term *eq = equalByComputation(arena, typer, ls->abc, ls->bac);
-      out = newCompositeN(arena, rea_permutationSame, T, ls->abc, ls->bac, eq);
+      Term *bac_destruct = reaComputation(arena, typer,
+                                          bac,
+                                          reaConcat(arena, b, reaSingle(arena, a)));
+      out = newCompositeN(arena, rea_permutationLast, T,al,bac, a,l,b, al_destruct,bac_destruct, recurse);
     }
   }
   return out;
+}
+
+internal Term *
+provePermutation(Arena *arena, Typer *typer, Term **abc0, Term **bac, i32 *indexes, i32 count)
+{
+  Term *abc = toReaList(arena, abc0, count);
+  return provePermutation_(arena, typer, abc, bac, indexes, count);
 }
 
 internal Term *
