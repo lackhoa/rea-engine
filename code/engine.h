@@ -619,4 +619,7 @@ struct LookupPolyParameter {
 
 #define DEFAULT_MAX_LIST_LENGTH 64
 
+internal BuildTerm
+buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error=false);
+
 #include "generated/engine_forward.h"

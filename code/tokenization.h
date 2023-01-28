@@ -87,8 +87,8 @@ struct ErrorAttachment { char *key; String value; };
 
 // 1 << 0 is unused
 u32 ErrorTypecheck     = 1 << 1;
-u32 ErrorUnrecoverable = 1 << 2;
-u32 ErrorAmbiguousName = 1 << 3;
+// u32 ErrorUnrecoverable   = 1 << 2;
+// u32 ErrorAmbiguousName = 1 << 3;
 u32 ErrorGoalAttached  = 1 << 4;
 
 struct ParseContext { String first; ParseContext *next; b32 is_important; };

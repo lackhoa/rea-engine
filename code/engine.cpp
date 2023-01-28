@@ -2407,7 +2407,6 @@ lookupGlobalName(Token *token)
     // note: assume that if the code gets here, then the identifier isn't in
     // local scope either.
     tokenError(token, "identifier not found");
-    setErrorFlag(ErrorUnrecoverable);
     attach("identifier", token);
     return 0;
   }
@@ -3095,7 +3094,7 @@ solveGoal(Solver *solver, Term *goal)
 }
 
 inline TermArray
-getFunctionOverloads(Identifier *ident, Term *goal0)
+getFunctionOverloads(Identifier *ident, Term *goal0, b32 expect_error)
 {
   i32 UNUSED_VAR serial = DEBUG_SERIAL;
   TermArray out = {};
@@ -3126,19 +3125,26 @@ getFunctionOverloads(Identifier *ident, Term *goal0)
       }
       if (out.count == 0)
       {
-        parseError(&ident->a, "found no matching overload");
-        attach("serial", serial);
-        attach("function", ident->token.string);
-        attach("output_type_goal", goal0);
-        attach("available_overloads", slot->count, slot->items, printOptionPrintType());
+        if (expect_error) silentError();
+        else
+        {
+          parseError(&ident->a, "found no matching overload");
+          attach("serial", serial);
+          attach("function", ident->token.string);
+          attach("output_type_goal", goal0);
+          attach("available_overloads", slot->count, slot->items, printOptionPrintType());
+        }
       }
     }
   }
   else
   {
-    parseError(&ident->a, "identifier not found");
-    setErrorFlag(ErrorUnrecoverable);
-    attach("identifier", ident->token.string);
+    if (expect_error) silentError();
+    else
+    {
+      parseError(&ident->a, "identifier not found");
+      attach("identifier", ident->token.string);
+    }
   }
   return out;
 }
@@ -3185,7 +3191,6 @@ fillInEllipsis(Arena *arena, Typer *typer, Identifier *op_ident, Term *goal)
   else
   {
     parseError(&op_ident->a, "identifier not found");
-    setErrorFlag(ErrorUnrecoverable);
     attach("identifier", op_ident->token.string);
   }
   
@@ -4068,8 +4073,8 @@ buildTestSort(Arena *arena, Typer *typer, CompositeAst *in)
   return proof;
 }
 
-forward_declare internal BuildTerm
-buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
+internal BuildTerm
+buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
 {
   // beware: Usually we mutate in-place, but we may also allocate anew.
   i32 UNUSED_VAR serial = DEBUG_SERIAL++;
@@ -4080,7 +4085,8 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
   b32 try_reductio = typer->try_reductio;
   if (!checkFlag(in0->flags, AstFlag_Generated))
   {
-    // Only turn off reductio if the user wanna try something else.
+    // NOTE: Only turn off reductio if the user wanna do something (instead of
+    // automated generated expressions).
     typer->try_reductio = false;
   }
 
@@ -4118,7 +4124,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
           if (!lookupLocalName(typer, &in->op->token))
           {
             should_build_op = false;
-            op_list = getFunctionOverloads(op_ident, goal);
+            op_list = getFunctionOverloads(op_ident, goal, expect_error);
           }
         }
         else if (CtorAst *op_ctor = castAst(in->op, CtorAst))
@@ -4142,6 +4148,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
           }
         }
 
+        expect_error = expect_error || op_list.count > 1;
         for (i32 attempt=0;
              (attempt < op_list.count) && (!out0) && noError();
              attempt++)
@@ -4177,7 +4184,11 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
               }
               else
               {
-                parseError(&in0->token, "argument count does not match the number of explicit parameters (expected: %d, got: %d)", explicit_param_count, in->arg_count);
+                if (expect_error) silentError();
+                else
+                {
+                  parseError(&in0->token, "argument count does not match the number of explicit parameters (expected: %d, got: %d)", explicit_param_count, in->arg_count);
+                }
               }
             }
 
@@ -4197,7 +4208,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
                 {
                   if (stack_has_hole)
                   {
-                    if (Term *arg = buildTerm(arena, typer, in_arg, holev).term)
+                    if (Term *arg = buildTerm(arena, typer, in_arg, holev, true).term)
                     {
                       args[arg_i] = arg;
                       arg_was_filled = true;
@@ -4205,23 +4216,26 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
                       b32 unify_result = unify(&stack, false, param_type0, getType(arg));
                       if (!unify_result)
                       {
-                        parseError(in_arg, "cannot unify parameter type with argument %d's type", arg_i);
-                        attach("serial", serial);
-                        attach("parameter_type", param_type0);
-                        attach("argument_type", getType(arg));
+                        if (expect_error) silentError();
+                        else
+                        {
+                          parseError(in_arg, "cannot unify parameter type with argument %d's type", arg_i);
+                          attach("serial", serial);
+                          attach("parameter_type", param_type0);
+                          attach("argument_type", getType(arg));
+                        }
                       }
                     }
                     else
                     {
-                      // todo recover from ambiguity only
-                      if (checkErrorFlag(ErrorAmbiguousName))
+                      if (hasSilentError())
                         wipeError();
                     }
                   }
                   else
                   {
                     Term *expected_arg_type = evaluate(arena, param_type0, args);
-                    if (Term *arg = buildTerm(arena, typer, in_arg, expected_arg_type).term)
+                    if (Term *arg = buildTerm(arena, typer, in_arg, expected_arg_type, expect_error).term)
                     {
                       args[arg_i] = arg;
                       arg_was_filled = true;
@@ -4255,7 +4269,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
                         attach("expected_arg_type", expected_arg_type);
                       }
                     }
-                    else if (Term *arg = buildTerm(arena, typer, in_arg, expected_arg_type).term)
+                    else if (Term *arg = buildTerm(arena, typer, in_arg, expected_arg_type, expect_error).term)
                     {
                       args[arg_i] = arg;
                     }
@@ -4283,13 +4297,17 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
           }
           else
           {
-            parseError(in->op, "operator must have an arrow type");
-            attach("operator type", getType(op));
+            if (expect_error) silentError();
+            else
+            {
+              parseError(in->op, "operator must have an arrow type");
+              attach("operator type", getType(op));
+            }
           }
 
           if (op_list.count > 1)
           {
-            if (hasError() && !checkErrorFlag(ErrorUnrecoverable))
+            if (hasSilentError())
             {
               wipeError();
               if (attempt == op_list.count-1)
@@ -4344,21 +4362,34 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
             {
               if (value)
               {// ambiguous
-                tokenError(name, "not enough type information to disambiguate global name");
-                setErrorFlag(ErrorAmbiguousName);
+                if (expect_error) silentError();
+                else
+                {
+                  tokenError(name, "not enough type information to disambiguate global name");
+                  attach("serial", serial);
+                }
                 break;
               }
               else
+              {
                 value = slot_value;
+              }
             }
           }
           if (!value)
           {
-            tokenError(name, "global name does not match expected type");
-            attach("name", name);
-            attach("expected_type", goal);
-            if (globals->count == 1)
-              attach("actual_type", getType(globals->items[0]));
+            if (expect_error) silentError();
+            else
+            {
+              tokenError(name, "global name does not match expected type");
+              attach("name", name);
+              attach("expected_type", goal);
+              attach("serial", serial);
+              if (globals->count == 1)
+              {
+                attach("actual_type", getType(globals->items[0]));
+              }
+            }
           }
         }
 
@@ -4447,13 +4478,11 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
           {
             tokenError(&in->field_name, "accessor has invalid member");
             attach("expected a member of constructor", uni->ctor_names[ctor_i]);
-            setErrorFlag(ErrorUnrecoverable);
           }
         }
         else
         {
           parseError(in->record, "cannot access a non-record");
-          setErrorFlag(ErrorUnrecoverable);
         }
       }
     } break;
@@ -4584,7 +4613,6 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
                 else
                 {
                   parseError(&ident->a, "identifier not found");
-                  setErrorFlag(ErrorUnrecoverable);
                   attach("identifier", ident->token.string);
                 }
               }
@@ -4763,8 +4791,18 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
     {
       if (!matchType(actual, goal))
       {
-        parseError(in0, "actual type differs from expected type");
-        attach("got", actual);
+        if (expect_error)
+        {
+          silentError();
+        }
+        else
+        {
+          if (serial == 11199)
+            breakhere;
+          parseError(in0, "actual type differs from expected type");
+          attach("got", actual);
+          attach("serial", serial);
+        }
       }
     }
   }
@@ -6316,8 +6354,8 @@ int engineMain()
 
   char *files[] = {
     "../data/test.rea",
-    "../data/z-slider.rea",
     "../data/z.rea",
+    "../data/z-slider.rea",
   };
   for (i32 file_id=0; file_id < arrayCount(files); file_id++)
   {

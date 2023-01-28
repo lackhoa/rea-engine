@@ -183,10 +183,23 @@ getError(Tokenizer *tk=global_tokenizer)
   return tk->error;
 }
 
+ParseError SILENT_ERROR;
 inline ParseError *
 hasError(Tokenizer *tk=global_tokenizer)
 {
   return tk->error;
+}
+
+inline void
+silentError(Tokenizer *tk=global_tokenizer)
+{
+  tk->error = &SILENT_ERROR;
+}
+
+inline b32
+hasSilentError(Tokenizer *tk=global_tokenizer)
+{
+  return tk->error == &SILENT_ERROR;
 }
 
 inline char
