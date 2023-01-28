@@ -40,23 +40,28 @@ fold :: fn($A: Type, op: (a,b: A) -> A, list: List(A), $nonEmpty(list)) -> A
    prove (list.tail = nil(A)) -> False {}
    return list.head op fold(op, list.tail)}}}
 
-;; + :: fn($T: Type, l,m: List(T)) -> List(T)
-;; {fork l
-;;  {nil  return m,
-;;   cons return l.head cons (l.tail + m)}}
++ :: fn($T: Type, l,m: List(T)) -> List(T)
+{fork l
+ {nil  return m,
+  cons return l.head cons (l.tail + m)}}
 
-;; concatNonEmpty :: (T:Type, l,m: List(T), nonEmpty(l), nonEmpty(m)) -> nonEmpty(l+m)
-;; #hint
-;; {fork l {nil, cons}}
+concatNonEmpty :: (T:Type, l,m: List(T), nonEmpty(l), nonEmpty(m)) -> nonEmpty(l+m)
+#hint
+{fork l {nil, cons}}
 
-;; Permutation :: union($T: Type, al,bac: List(T))
-;; {
-;;  permutationSame(same: al=bac),
-;;  permutation(a: T, l,b,c: List(T),
-;;              al_destruct: al=(a cons l),
-;;              bac_destruct: bac=(b + (a cons c)),
-;;              recurse: Permutation(l, b+c))
-;;  }
+Permutation :: union($T: Type, al,bac: List(T))
+{
+ permutationSame(same: al=bac),
+ permutation(a: T, l,b,c: List(T),
+             al_destruct: al=(a cons l),
+             bac_destruct: bac=(b + (a cons c)),
+             recurse: Permutation(l, b+c))
+ }
+
+test :: ($T: Type, l: List(T), nonEmpty(l)) -> False
+{fork l
+ {nil, cons}
+ }
 
 ;; foldConcat :: ($T: Type, op: (a,b: T) -> T,
 ;;                associative: (a,b,c: T) -> (a op b) op c = a op b op c,

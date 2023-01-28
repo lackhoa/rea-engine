@@ -2972,7 +2972,7 @@ solveGoal(Solver *solver, Term *goal)
 
     if (auto [l,r] = getEqualitySides(goal, false))
     {
-      out = reaComputation(solver->arena, solver->typer, l, r);
+      out = computationIfEqual(solver->arena, solver->typer, l, r);
     }
 
     if (!out)
