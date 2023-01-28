@@ -1,2 +1,0 @@
-;; forks as expressions
-check truth : (fork true {true: &, false: |})(true, false) = false;

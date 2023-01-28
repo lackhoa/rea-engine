@@ -2947,20 +2947,22 @@ solveGoal(Solver *solver, Term *goal)
   Term *out = 0;
   solver->depth++;
 
-  b32 should_attempt_inference = true;
+  b32 should_attempt = true;
   if (solver->depth > MAX_SOLVE_DEPTH ||
       goal == rea_Type ||
       goal->cat == Term_Hole)
   {
-    should_attempt_inference = false;
+    should_attempt = false;
   }
   else if (Union *uni = castTerm(goal, Union))
   {
-    if (uni->global_name)
-      should_attempt_inference = false;
+    if (uni->global_name && goal != rea_False)
+    {
+      should_attempt = false;
+    }
   }
 
-  if (should_attempt_inference)
+  if (should_attempt)
   {
 #if DEBUG_LOG_solve
   i32 serial = DEBUG_SERIAL++;
