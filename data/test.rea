@@ -226,7 +226,8 @@ check_truth testPolymorphSolver(3) = 6;
 algebraTest :: (a,b,c,d,e,f: Nat) -> ((a+b)+c)+(d+e)+f = a+b+c+d+e+f
 {return algebraic_norm(((a+b)+c)+(d+e)+f)}
 
-check_truth fold(overload(+, Nat), 1 cons single(2)) = 3;
+consNil :: ($A: Type, a: A) -> List(A) #expand {return a cons nil(A)}
+check_truth fold(overload(+, Nat), 1 cons consNil(2)) = 3;
 ;; print(single(1) + single(2));
 check_truth (1 cons single(2)) + single(3) = 1 cons (2 cons single(3));
 

@@ -1518,26 +1518,11 @@ rebaseMain(Arena *arena, Term *in0, i32 delta, i32 offset)
       {
         Union *in  = castTerm(in0, Union);
         Union *out = copyStruct(arena, in);
-#if 0
-        if (isPolyInstance(in))
+        allocateArray(arena, in->ctor_count, out->structs);
+        for (i32 i=0; i < in->ctor_count; i++)
         {
-          // #poly_unions_are_global
-          i32 poly_param_count = getPolyArgCount(in);
-          allocateArray(arena, poly_param_count, out->poly_args);
-          for (i32 i=0; i < poly_param_count; i++)
-          {
-            out->poly_args[i] = rebaseMain(arena, in->poly_args[i], delta, offset);
-          }
-        }
-        else
-#endif
-        {
-          allocateArray(arena, in->ctor_count, out->structs);
-          for (i32 i=0; i < in->ctor_count; i++)
-          {
-            Term *rebased = rebaseMain(arena, &in->structs[i]->t, delta, offset);
-            out->structs[i] = castTerm(rebased, Arrow);
-          }
+          Term *rebased = rebaseMain(arena, &in->structs[i]->t, delta, offset);
+          out->structs[i] = castTerm(rebased, Arrow);
         }
         out0 = &out->t;
       } break;
@@ -2860,7 +2845,7 @@ newComputation_(Arena *arena, Term *lhs, Term *rhs)
 }
 
 inline Term *
-reaComputation(Arena *arena, Typer *typer, Term *lhs, Term *rhs)
+computationIfEqual(Arena *arena, Typer *typer, Term *lhs, Term *rhs)
 {
   Term *out = 0;
   if (equal(normalize(arena, typer, lhs),
@@ -2868,6 +2853,14 @@ reaComputation(Arena *arena, Typer *typer, Term *lhs, Term *rhs)
   {
     out = newComputation_(arena, lhs, rhs);
   }
+  return out;
+}
+
+inline Term *
+reaComputation(Arena *arena, Typer *typer, Term *lhs, Term *rhs)
+{
+  Term *out = computationIfEqual(arena, typer, lhs, rhs);
+  assert(out);
   return out;
 }
 
@@ -2897,7 +2890,8 @@ seekGoal(Solver *solver, Term *goal, b32 try_reductio=false)
         // todo #speed we're having to rebase everything, which sucks but
         // unless we store position-independent types, that's what we gotta do.
         Term *var = newVariable(solver->arena, solver->typer, param_i, delta);
-        if (equal(getType(var), goal))
+        Term *var_type = getType(var);
+        if (equal(var_type, goal))
         {
           out = var;
         }
@@ -2906,7 +2900,7 @@ seekGoal(Solver *solver, Term *goal, b32 try_reductio=false)
           i32 ctor_i = getConstructorIndex(solver->typer, var);
           if (ctor_i >= 0)
           {
-            Union *uni = castUnionOrPolyUnion(getType(var));
+            Union *uni = castUnionOrPolyUnion(var_type);
             Arrow *struc = uni->structs[ctor_i];
             Term **members = synthesizeMembers(solver->arena, var, ctor_i);
             for (i32 member_i = 0; member_i < struc->param_count && !out; member_i++)
@@ -2921,7 +2915,7 @@ seekGoal(Solver *solver, Term *goal, b32 try_reductio=false)
         }
         if (!out && try_reductio)
         {
-          if (Arrow *hypothetical = castTerm(getType(var), Arrow))
+          if (Arrow *hypothetical = castTerm(var_type, Arrow))
           {
             if (hypothetical->output_type == rea_False)
             {

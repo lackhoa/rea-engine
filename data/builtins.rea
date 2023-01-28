@@ -9,12 +9,9 @@
 identity :: fn(A: Type) -> (a: A) -> A
 { return fn {return a} }
 
-falseImpliesFalse :: () -> ((f: False) -> False)
+alreadyGotFalse :: (A: Type, e: A=False) -> ((A) -> False)
 #hint
-{return identity(False);}
-
-;; invalidCase :: ($T: Type, hypothetical: (T) -> False, witness: T, G: Type) -> G
-;; {f := hypothetical(witness); fork f {}}
+{ return fn (a:A) -> False { rewrite <- e; return a } }
 
 ;; ----
 ;; List 
@@ -28,20 +25,20 @@ nonEmpty :: fn ($A: Type, list: List(A)) -> Type
 #expand
 {return list != nil(A)}
 
-;; fold :: fn($A: Type, op: (a,b: A) -> A, list: List(A), nonEmpty(list)) -> A
-;; #no_print_as_binop
-;; {fork list
-;;  {nil
-;;   ,
+fold :: fn($A: Type, op: (a,b: A) -> A, list: List(A), $nonEmpty(list)) -> A
+#no_print_as_binop
+{fork list
+ {nil
+  ,
 
-;;   cons
-;;   fork list.tail
-;;   {nil
-;;    return list.head,
+  cons
+  fork list.tail
+  {nil
+   return list.head,
 
-;;    cons
-;;    prove (list.tail = nil(A)) -> False {norm;}
-;;    return list.head op fold(op, list.tail)}}}
+   cons
+   prove (list.tail = nil(A)) -> False {}
+   return list.head op fold(op, list.tail)}}}
 
 ;; + :: fn($T: Type, l,m: List(T)) -> List(T)
 ;; {fork l
