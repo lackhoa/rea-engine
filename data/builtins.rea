@@ -13,18 +13,12 @@ falseImpliesFalse :: () -> ((f: False) -> False)
 #hint
 {return identity(False);}
 
-falseImpliesEverything :: (f: False, T: Type) -> T
-;; TODO: atm we can't make this a hint, it'll try to prove "False" isn't available globally.
-;; actually maybe "False" is off-limit as a global hint
-{fork f {}}
+;; invalidCase :: ($T: Type, hypothetical: (T) -> False, witness: T, G: Type) -> G
+;; {f := hypothetical(witness); fork f {}}
 
 ;; ----
 ;; List 
 ;; ----
-
-testFalse :: (f: False, T: Type) -> T
-{return
- falseImpliesEverything(...)}
 
 List :: union(ListType: Type)
 {nil,
@@ -34,10 +28,11 @@ nonEmpty :: fn ($A: Type, list: List(A)) -> Type
 #expand
 {return list != nil(A)}
 
-fold :: fn($A: Type, op: (a,b: A) -> A, list: List(A), $nonEmpty(list)) -> A
+fold :: fn($A: Type, op: (a,b: A) -> A, list: List(A), nonEmpty(list)) -> A
 #no_print_as_binop
 {fork list
- {nil,
+ {nil
+  ,
 
   cons
   fork list.tail
@@ -71,7 +66,7 @@ foldConcat :: ($T: Type, op: (a,b: T) -> T,
                l,m: List(T), $nonEmpty(l), $nonEmpty(m)) -> (fold(op, l+m) = fold(op, l) op fold(op, m))
 #hint
 {fork l
- {nil absurd,
+ {nil,
   cons
   rewrite foldConcat(op, associative, l.tail, m);
   ;; (l.head op fold(op, l.tail) op fold(op, m)) = ((l.head op fold(op, l.tail)) op fold(op, m))

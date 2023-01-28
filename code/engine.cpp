@@ -33,6 +33,7 @@ global_variable Term *rea_foldPermutation;
 global_variable Term *rea_permutationSame;
 global_variable Term *rea_permutation;
 global_variable Term *rea_permutationLast;
+global_variable Term *rea_falseImpliesAll;
 
 global_variable Term dummy_function_being_built;
 global_variable Term  holev_ = {.cat = Term_Hole};
@@ -2811,8 +2812,9 @@ unify(Stack *stack, b32 same_type, Term *in0, Term *goal0)
   return success;
 }
 
+// bookmark todo: Separate the solving part from the unification part
 inline SolveArgs
-solveArgs(Solver *solver, Term *op, Term *goal0, Token *blame_token)
+solveArgs(Solver *solver, Term *op, Term *goal0, Token *blame_token=0)
 {
   b32    matches   = false;
   i32    arg_count = 0;
@@ -2862,12 +2864,6 @@ solveArgs(Solver *solver, Term *op, Term *goal0, Token *blame_token)
   return SolveArgs{matches, arg_count, args};
 }
 
-inline SolveArgs
-solveArgs(Solver solver, Term *op, Term *goal, Token *blame_token)
-{
-  return solveArgs(&solver, op, goal, blame_token);
-}
-
 inline Term *
 newComputation_(Arena *arena, Term *lhs, Term *rhs)
 {
@@ -2895,38 +2891,59 @@ reaIdentity(Arena *arena, Term *term)
 }
 
 inline Term *
-seekGoal(Arena *arena, Typer *typer, Term *goal)
+seekGoal(Solver *solver, Term *goal, b32 try_reductio=false)
 {
   Term *out = 0;
-  auto temp = beginTemporaryMemory(arena);
-  if (typer)
+  auto temp = beginTemporaryMemory(solver->arena);
+  if (solver->typer)
   {
     i32 delta = 0;
-    for (Scope *scope = typer->scope; scope; scope=scope->outer)
+    for (Scope *scope = solver->typer->scope;
+         scope && !out;
+         scope=scope->outer)
     {
       Arrow *arrow = scope->head;
-      for (i32 param_i=0; param_i < arrow->param_count; param_i++)
+      for (i32 param_i=0;
+           (param_i < arrow->param_count) && !out;
+           param_i++)
       {
         // todo #speed we're having to rebase everything, which sucks but
         // unless we store position-independent types, that's what we gotta do.
-        Term *var = newVariable(arena, typer, param_i, delta);
+        Term *var = newVariable(solver->arena, solver->typer, param_i, delta);
         if (equal(getType(var), goal))
         {
           out = var;
         }
         else
         {
-          i32 ctor_i = getConstructorIndex(typer, var);
+          i32 ctor_i = getConstructorIndex(solver->typer, var);
           if (ctor_i >= 0)
           {
             Union *uni = castUnionOrPolyUnion(getType(var));
             Arrow *struc = uni->structs[ctor_i];
-            Term **members = synthesizeMembers(arena, var, ctor_i);
+            Term **members = synthesizeMembers(solver->arena, var, ctor_i);
             for (i32 member_i = 0; member_i < struc->param_count && !out; member_i++)
             {
               Term *member = members[member_i];
               if (equal(getType(member), goal))
+              {
                 out = member;
+              }
+            }
+          }
+        }
+        if (!out && try_reductio)
+        {
+          if (Arrow *hypothetical = castTerm(getType(var), Arrow))
+          {
+            if (hypothetical->output_type == rea_False)
+            {
+              SolveArgs solve_args = solveArgs(solver, var, rea_False);
+              if (solve_args.args)
+              {
+                Term *f = newComposite(solver->arena, var, solve_args.arg_count, solve_args.args);
+                out = newCompositeN(solver->arena, rea_falseImpliesAll, f, goal);
+              }
             }
           }
         }
@@ -2946,6 +2963,8 @@ solveGoal(Solver *solver, Term *goal)
 {
   Term *out = 0;
   solver->depth++;
+  b32 try_reductio = solver->try_reductio;
+  solver->try_reductio = false;
 
   b32 should_attempt = true;
   if (solver->depth > MAX_SOLVE_DEPTH ||
@@ -2999,13 +3018,13 @@ solveGoal(Solver *solver, Term *goal)
             SolveArgs solution = solveArgs(solver, hint, goal, 0);
             if (solution.args)
             {
-              Arena *arena = solver->arena;
-              Term **args = copyArray(arena, solution.arg_count, solution.args);
-              out = newComposite(arena, hint, solution.arg_count, args);
+              out = newComposite(solver->arena, hint, solution.arg_count, solution.args);
             }
           }
           else if (equal(getType(hint), goal))
+          {
             out = hint;
+          }
         }
         else
           break;
@@ -3014,11 +3033,13 @@ solveGoal(Solver *solver, Term *goal)
 
     if (!out)
     {
-      out = seekGoal(solver->arena, solver->typer, goal);
+      out = seekGoal(solver, goal, try_reductio);
     }
 
     if (out)
+    {
       assert(equal(getType(out), goal));
+    }
 
 #if DEBUG_LOG_solve
   if (DEBUG_MODE) {DEBUG_DEDENT(); DUMP("=> ", out, "\n");}
@@ -3027,12 +3048,6 @@ solveGoal(Solver *solver, Term *goal)
 
   solver->depth--;
   return out;
-}
-
-internal Term *
-solveGoal(Solver solver, Term *goal)
-{
-  return solveGoal(&solver, goal);
 }
 
 inline TermArray
@@ -4008,6 +4023,8 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
   assert(goal);
   b32 should_check_type = true;
   b32 recursed = false;
+  b32 try_reductio = typer->try_reductio;
+  typer->try_reductio = false;
 
   switch (in0->cat)
   {
@@ -4232,10 +4249,14 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
 
     case Ast_Hole:
     {
-      if (Term *solution = solveGoal(Solver{.arena=arena, .typer=typer, .use_global_hints=true}, goal))
+      if (Term *solution = solveGoal(Solver{.arena=arena, .typer=typer, .use_global_hints=true, .try_reductio=try_reductio}, goal))
+      {
         out0 = solution;
+      }
       else
+      {
         parseError(in0, "please provide an expression here");
+      }
     } break;
 
     case Ast_SyntheticAst:
@@ -4652,7 +4673,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
 
       if (noError())
       {
-        out0 = seekGoal(arena, typer, proposition);
+        out0 = seekGoal(Solver{.arena=arena, .typer=typer}, proposition);
         if (!out0)
           parseError(in0, "cannot find a matching proof in scope");
       }
@@ -4716,7 +4737,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
 }
 
 forward_declare internal Term *
-buildFork(Arena *arena, Typer *env, ForkAst *in, Term *goal)
+buildFork(Arena *arena, Typer *typer, ForkAst *in, Term *goal)
 {
   if (goal->cat == Term_Hole)
   {
@@ -4725,7 +4746,7 @@ buildFork(Arena *arena, Typer *env, ForkAst *in, Term *goal)
   Fork *out = newTerm(arena, Fork, goal);
   out->case_count = in->case_count;
   i32 UNUSED_VAR serial = DEBUG_SERIAL++;
-  if (BuildTerm subject = buildTerm(arena, env, in->subject, holev))
+  if (BuildTerm subject = buildTerm(arena, typer, in->subject, holev))
   {
     out->subject = subject.term;
     i32 case_count = in->case_count;
@@ -4755,7 +4776,7 @@ buildFork(Arena *arena, Typer *env, ForkAst *in, Term *goal)
 
           if (ctor_id != -1)
           {
-            if (getOrAddDataTree(temp_arena, env, subject.term, ctor_id).added)
+            if (getOrAddDataTree(temp_arena, typer, subject.term, ctor_id).added)
             {
               if (ordered_bodies[ctor_id])
               {
@@ -4764,12 +4785,13 @@ buildFork(Arena *arena, Typer *env, ForkAst *in, Term *goal)
               }
               else
               {
-                if (BuildTerm body = buildTerm(arena, env, in->bodies[input_case_id], goal))
+                typer->try_reductio = true;
+                if (BuildTerm body = buildTerm(arena, typer, in->bodies[input_case_id], goal))
                 {
                   ordered_bodies[ctor_id] = body.term;
                 }
               }
-              undoDataMap(env);
+              undoDataMap(typer);
             }
             else
             {
@@ -5624,19 +5646,6 @@ seesArrowExpression()
   return out;
 }
 
-#if 0
-internal FunctionAst *
-parseLambda(MemoryArena *arena)
-{
-  pushContext("lambda: _ => {SEQUENCE}");
-  nextToken(); nextToken();
-  FunctionAst *out = newAst(arena, FunctionAst, &global_tokenizer->last_token);
-  out->body = parseSequence(arena);
-  popContext();
-  return out;
-}
-#endif
-
 internal Ast *
 parseExpressionMain(Arena *arena, ParseExpressionOptions opt)
 {
@@ -6155,14 +6164,19 @@ beginInterpreterSession(Arena *top_level_arena, FilePath input_path)
     addBuiltinGlobalBinding("=", rea_equal);
 
     builtin_tk.at = "union {}";
-    Term *builtin_False0 = parseExpressionAndBuild(arena).term;
-    rea_False = &castTerm(builtin_False0, Union)->t;
+    rea_False = parseExpressionAndBuild(arena).term;
+    assert(noError());
     addBuiltinGlobalBinding("False", rea_False);
 
     builtin_tk.at = "(fn ($A: Type, $a, $b, $c: A, a=b, b=c) -> a=c {=> b = c {seek(a=b)} seek})";
     rea_eqChain = parseExpressionAndBuild(arena).term;
     assert(noError());
     addBuiltinGlobalBinding("eqChain", rea_eqChain);
+
+    builtin_tk.at = "fn(f: False, G: Type) -> G {fork f {}}";
+    rea_falseImpliesAll = parseExpressionAndBuild(arena).term;
+    assert(noError());
+    addBuiltinGlobalBinding("falseImpliesAll", rea_falseImpliesAll);
 
     FilePath builtin_path = platformGetFileFullPath(arena, "../data/builtins.rea");
     interpretFile(&global_state, builtin_path, true);

@@ -199,6 +199,7 @@ struct Typer
   Arrow         *poly_params;
   DataMap           *map;
   DataMapAddHistory *add_history;
+  b32 try_reductio;
 };
 
 struct AstList
@@ -563,8 +564,10 @@ struct Solver {
   Arena  *arena;
   Typer        *typer;
   b32           use_global_hints;
+  b32           try_reductio;
   HintDatabase *local_hints;
   i32           depth;
+  operator Solver*() {return this;}
 };
 
 struct Algebra {
