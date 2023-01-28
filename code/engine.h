@@ -341,6 +341,7 @@ struct Composite {
 };
 
 u32 ParameterFlag_Inferred = 1 << 0;
+u32 ParameterFlag_Unused   = 1 << 1;
 
 struct ArrowAst {
   embed_Ast(a);

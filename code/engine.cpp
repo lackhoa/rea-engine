@@ -1977,7 +1977,9 @@ compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
             {
               op_equal = (lctor->index == rctor->index);
               if (!op_equal)
+              {
                 out.result = Trinary_False;
+              }
             }
           }
         }
@@ -1988,6 +1990,17 @@ compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
 
         if (op_equal)
         {
+          Arrow *arrow = 0;
+          if (Constructor *ctor = castTerm(l->op, Constructor))
+          {
+            Union *uni = castUnionOrPolyUnion(getType(l0));
+            arrow = uni->structs[ctor->index];
+          }
+          else
+          {
+            arrow = castTerm(getType(l->op), Arrow);
+          }
+
           i32 count = l->arg_count;
           assert(l->arg_count == r->arg_count);
 
@@ -1996,19 +2009,23 @@ compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
           int       unique_diff_id   = 0;
           TreePath *unique_diff_path = 0;
           out.result = Trinary_True;
-          for (i32 id=0; id < count; id++)
+          for (i32 arg_i=0; arg_i < count; arg_i++)
           {
-            CompareTerms recurse = compareTerms(arena, true, l->args[id], r->args[id]);
-            if (recurse.result != Trinary_True)
+            // todo "ParameterFlag_Unused" is just a hack, it doesn't mean anything yet.
+            if (!checkFlag(arrow->param_flags[arg_i], ParameterFlag_Unused))
             {
-              mismatch_count++;
-              if (mismatch_count == 1)
+              CompareTerms recurse = compareTerms(arena, true, l->args[arg_i], r->args[arg_i]);
+              if (recurse.result != Trinary_True)
               {
-                unique_diff_id   = id;
-                unique_diff_path = recurse.diff_path;
+                mismatch_count++;
+                if (mismatch_count == 1)
+                {
+                  unique_diff_id   = arg_i;
+                  unique_diff_path = recurse.diff_path;
+                }
+                if (recurse.result == Trinary_False)
+                  false_count++;
               }
-              if (recurse.result == Trinary_False)
-                false_count++;
             }
           }
           if (mismatch_count > 0)
@@ -2390,6 +2407,7 @@ lookupGlobalName(Token *token)
     // note: assume that if the code gets here, then the identifier isn't in
     // local scope either.
     tokenError(token, "identifier not found");
+    setErrorFlag(ErrorUnrecoverable);
     attach("identifier", token);
     return 0;
   }
@@ -2870,6 +2888,51 @@ reaIdentity(Arena *arena, Term *term)
   return newComputation_(arena, term, term);
 }
 
+#if 0
+// todo: cutnpaste from "seekGoal"
+inline Term *
+reductioAdAbsurdum(Solver *solver, Term *goal)
+{
+  Term *out = 0;
+  auto temp = beginTemporaryMemory(solver->arena);
+  if (solver->typer)
+  {
+    i32 delta = 0;
+    for (Scope *scope = solver->typer->scope;
+         scope && !out;
+         scope=scope->outer)
+    {
+      Arrow *arrow = scope->head;
+      for (i32 param_i=0;
+           (param_i < arrow->param_count) && !out;
+           param_i++)
+      {
+        Term *var = newVariable(solver->arena, solver->typer, param_i, delta);
+        Term *var_type = getType(var);
+        if (Arrow *hypothetical = castTerm(var_type, Arrow))
+        {
+          if (hypothetical->output_type == rea_False)
+          {
+            SolveArgs solve_args = solveArgs(solver, var, rea_False);
+            if (solve_args.args)
+            {
+              Term *f = newComposite(solver->arena, var, solve_args.arg_count, solve_args.args);
+              out = newCompositeN(solver->arena, rea_falseImpliesAll, f, goal);
+            }
+          }
+        }
+      }
+      delta++;
+    }
+  }
+  if (out)
+    commitTemporaryMemory(temp);
+  else
+    endTemporaryMemory(temp);
+  return out;
+}
+#endif
+
 inline Term *
 seekGoal(Solver *solver, Term *goal, b32 try_reductio=false)
 {
@@ -3074,6 +3137,7 @@ getFunctionOverloads(Identifier *ident, Term *goal0)
   else
   {
     parseError(&ident->a, "identifier not found");
+    setErrorFlag(ErrorUnrecoverable);
     attach("identifier", ident->token.string);
   }
   return out;
@@ -3121,6 +3185,7 @@ fillInEllipsis(Arena *arena, Typer *typer, Identifier *op_ident, Term *goal)
   else
   {
     parseError(&op_ident->a, "identifier not found");
+    setErrorFlag(ErrorUnrecoverable);
     attach("identifier", op_ident->token.string);
   }
   
@@ -4013,7 +4078,11 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
   b32 should_check_type = true;
   b32 recursed = false;
   b32 try_reductio = typer->try_reductio;
-  typer->try_reductio = false;
+  if (!checkFlag(in0->flags, AstFlag_Generated))
+  {
+    // Only turn off reductio if the user wanna try something else.
+    typer->try_reductio = false;
+  }
 
   switch (in0->cat)
   {
@@ -4227,6 +4296,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
               {
                 parseError(in->op, "found no suitable overload");
                 attach("available_overloads", op_list.count, op_list.items, printOptionPrintType());
+                attach("serial", serial);
               }
             }
             else
@@ -4514,6 +4584,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal)
                 else
                 {
                   parseError(&ident->a, "identifier not found");
+                  setErrorFlag(ErrorUnrecoverable);
                   attach("identifier", ident->token.string);
                 }
               }
@@ -5078,6 +5149,11 @@ parseArrowType(Arena *arena, b32 is_struct)
       {
         i32 param_i = param_count++;
         assert(param_i < DEFAULT_MAX_LIST_LENGTH);
+
+        if (optionalCategory(Token_Directive_unused))
+        {
+          setFlag(&param_flags[param_i], ParameterFlag_Unused);
+        }
         if (optionalChar('$'))
         {
           setFlag(&param_flags[param_i], ParameterFlag_Inferred);

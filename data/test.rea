@@ -12,11 +12,17 @@
 typecheck :: fn (id: (A: Type, a: A) -> a=a, b: Bool) -> b=b
 {return id(Bool, b)}
 
+typecheckAlpha :: (a,b,c: Bool, a=false) -> a & b = a & c
+{=> false & b = a & c
+ => false & b = false & c}
+
 #should_fail
 typecheck1 :: fn (id: (A: Type, a: A) -> a=a, b: Bool) -> b=b
 {return b}
 typecheck2 :: fn (id: (A: Type, a: A) -> a=a, a,b: Bool) -> b=b
 {return id(Bool, a)}
+typecheckBeta :: (a,b,c: Bool, a=false) -> a & b = a & c
+{}
 #should_fail off
 
 check_truth false & true = false;
@@ -226,14 +232,14 @@ check_truth testPolymorphSolver(3) = 6;
 algebraTest :: (a,b,c,d,e,f: Nat) -> ((a+b)+c)+(d+e)+f = a+b+c+d+e+f
 {return algebraic_norm(((a+b)+c)+(d+e)+f)}
 
-consNil :: ($A: Type, a: A) -> List(A) #expand {return a cons nil(A)}
-check_truth fold(overload(+, Nat), 1 cons consNil(2)) = 3;
+single :: ($A: Type, a: A) -> List(A) #expand {return a cons nil(A)}
+check_truth fold(overload(+, Nat), 1 cons single(2)) = 3;
 ;; print(single(1) + single(2));
-check_truth (1 cons single(2)) + single(3) = 1 cons (2 cons single(3));
+check_truth ((1 cons single(2)) + single(3)) = (1 cons (2 cons single(3)));
 
-print test_sort(single(0));
-print test_sort(2 cons single (0));
-print test_sort(2 cons (0 cons (4 cons (3 cons (single(1))))));
+;; print test_sort(single(0));
+;; print test_sort(2 cons single (0));
+;; print test_sort(2 cons (0 cons (4 cons (3 cons (single(1))))));
 
 ;; testSortList :: () -> (Permutation((4 cons (3 cons (2 cons (1 cons single(5))))),
 ;;                                    (1 cons (2 cons (3 cons (4 cons single(5)))))))
