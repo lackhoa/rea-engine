@@ -557,7 +557,7 @@ struct SeekAst {
   Ast *proposition;
 };
 
-struct SolveArgs {b32 matches; i32 arg_count; Term **args;};
+struct SolveArgs {i32 arg_count; Term **args;};
 
 #define MAX_SOLVE_DEPTH 3
 struct Solver {

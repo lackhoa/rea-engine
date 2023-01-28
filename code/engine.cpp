@@ -344,8 +344,9 @@ inline Stack *
 newStack(Arena *arena, Stack *outer, i32 count)
 {
   Stack *stack = pushStruct(arena, Stack);
-  stack->outer = outer;
-  stack->count = count;
+  stack->outer             = outer;
+  stack->count             = count;
+  stack->unification_arena = arena;
   allocateArray(arena, count, stack->items, true);
   return stack;
 }
@@ -2741,7 +2742,6 @@ unify(Stack *stack, b32 same_type, Term *in0, Term *goal0)
         {
           success = true;
           Stack *new_stack = newStack(temp_arena, stack, in->param_count);
-          new_stack->unification_arena = temp_arena;
           for (i32 id=0; id < in->param_count && success; id++)
           {
             if (!unify(new_stack, same_type, in->param_types[id], goal->param_types[id]))
@@ -2812,56 +2812,43 @@ unify(Stack *stack, b32 same_type, Term *in0, Term *goal0)
   return success;
 }
 
-// bookmark todo: Separate the solving part from the unification part
 inline SolveArgs
 solveArgs(Solver *solver, Term *op, Term *goal0, Token *blame_token=0)
 {
-  b32    matches   = false;
   i32    arg_count = 0;
   Term **args      = 0;
-  if (Constructor *ctor = castTerm(op, Constructor))
+  if (op->cat != Term_Constructor && op->cat != Term_PolyConstructor)
   {
-    matches = equal(ctor->uni, goal0);
-    // don't attempt to solve args since it's a constructor.
-  }
-  else if (PolyConstructor *pctor = castTerm(op, PolyConstructor))
-  {
-    if (Composite *goal = castTerm(goal0, Composite))
+    if (Arrow *signature = castTerm(getType(op), Arrow))
     {
-      matches = equal(&pctor->uni->t, goal->op);
-    }
-  }
-  else if (Arrow *signature = castTerm(getType(op), Arrow))
-  {
-    Stack *stack = newStack(solver->arena, 0, signature->param_count);
-    stack->unification_arena = solver->arena;
-    if (unify(stack, false, signature->output_type, goal0))
-    {
-      matches   = true;
-      arg_count = signature->param_count;
-      args      = stack->items;
-      for (i32 arg_i=0; arg_i < signature->param_count; arg_i++)
+      Stack *stack = newStack(solver->arena, 0, signature->param_count);
+      if (unify(stack, false, signature->output_type, goal0))
       {
-        // solving loop
-        if (!args[arg_i])
+        arg_count = signature->param_count;
+        args      = stack->items;
+        for (i32 arg_i=0; arg_i < signature->param_count; arg_i++)
         {
-          // todo #leak the type could be referenced
-          Term *type = evaluate(solver->arena, signature->param_types[arg_i], args);
-          if (!(args[arg_i] = solveGoal(solver, type)))
+          // solving loop
+          if (!args[arg_i])
           {
-            if (blame_token)
+            // todo #leak the type could be referenced
+            Term *type = evaluate(solver->arena, signature->param_types[arg_i], args);
+            if (!(args[arg_i] = solveGoal(solver, type)))
             {
-              parseError(blame_token, "failed to solve arg %d", arg_i);
-              attach("arg_type", type);
+              if (blame_token)
+              {
+                parseError(blame_token, "failed to solve arg %d", arg_i);
+                attach("arg_type", type);
+              }
+              args = 0;
+              break;
             }
-            args = 0;
-            break;
           }
         }
       }
     }
   }
-  return SolveArgs{matches, arg_count, args};
+  return SolveArgs{arg_count, args};
 }
 
 inline Term *
@@ -3015,10 +3002,10 @@ solveGoal(Solver *solver, Term *goal)
           Term *hint = hints->head;
           if (getType(hint)->cat == Term_Arrow)
           {
-            SolveArgs solution = solveArgs(solver, hint, goal, 0);
-            if (solution.args)
+            SolveArgs solve_args = solveArgs(solver, hint, goal);
+            if (solve_args.args)
             {
-              out = newComposite(solver->arena, hint, solution.arg_count, solution.args);
+              out = newComposite(solver->arena, hint, solve_args.arg_count, solve_args.args);
             }
           }
           else if (equal(getType(hint), goal))
@@ -3051,13 +3038,13 @@ solveGoal(Solver *solver, Term *goal)
 }
 
 inline TermArray
-getFunctionOverloads(Identifier *ident, Term *output_type_goal)
+getFunctionOverloads(Identifier *ident, Term *goal0)
 {
   i32 UNUSED_VAR serial = DEBUG_SERIAL;
   TermArray out = {};
   if (GlobalBinding *slot = lookupGlobalNameSlot(ident, false))
   {
-    if (output_type_goal->cat == Term_Hole)
+    if (goal0->cat == Term_Hole)
     {
       // bypass typechecking.
       out.items = slot->items;
@@ -3065,19 +3052,27 @@ getFunctionOverloads(Identifier *ident, Term *output_type_goal)
     }
     else
     {
+      b32 matches = false;
       allocateArray(temp_arena, slot->count, out.items);
       for (int slot_id=0; slot_id < slot->count; slot_id++)
       {
         Term *item = slot->items[slot_id];
-        if (solveArgs(Solver{.arena=temp_arena}, item, output_type_goal, 0).matches)
+        if (Arrow *signature = castTerm(getType(item), Arrow))
+        {
+          Stack *stack = newStack(temp_arena, 0, signature->param_count);
+          matches = unify(stack, false, signature->output_type, goal0);
+        }
+        if (matches)
+        {
           out.items[out.count++] = slot->items[slot_id];
+        }
       }
       if (out.count == 0)
       {
         parseError(&ident->a, "found no matching overload");
         attach("serial", serial);
         attach("function", ident->token.string);
-        attach("output_type_goal", output_type_goal);
+        attach("output_type_goal", goal0);
         attach("available_overloads", slot->count, slot->items, printOptionPrintType());
       }
     }
@@ -3114,7 +3109,7 @@ fillInEllipsis(Arena *arena, Typer *typer, Identifier *op_ident, Term *goal)
     {
       Term *item = slot->items[slot_i];
       SolveArgs solution = solveArgs(Solver{.arena=temp_arena, .typer=typer}, item, goal, &op_ident->token);
-      if (solution.matches && solution.args)
+      if (solution.args)
       {
         // NOTE: we don't care which function matches, just grab whichever
         // matches first.
@@ -6181,6 +6176,7 @@ beginInterpreterSession(Arena *top_level_arena, FilePath input_path)
     FilePath builtin_path = platformGetFileFullPath(arena, "../data/builtins.rea");
     interpretFile(&global_state, builtin_path, true);
 
+#if 0
     // TODO #cleanup These List builtins are going too far...
 #define LOOKUP_BUILTIN(name) rea_##name = lookupBuiltin(#name);
     LOOKUP_BUILTIN(List);
@@ -6195,6 +6191,7 @@ beginInterpreterSession(Arena *top_level_arena, FilePath input_path)
     LOOKUP_BUILTIN(permutation);
     LOOKUP_BUILTIN(permutationLast);
 #undef LOOKUP_BUILTIN
+#endif
 
     resetArena(temp_arena);
   }
@@ -6250,7 +6247,6 @@ int engineMain()
   char *files[] = {
     "../data/test.rea",
     "../data/z-slider.rea",
-    "../data/natp-experiment.rea",
     "../data/z.rea",
   };
   for (i32 file_id=0; file_id < arrayCount(files); file_id++)

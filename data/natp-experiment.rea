@@ -15,7 +15,7 @@ natp :: fn(a: Nat) -> Natp
 ;; todo this is what I'm talking about with the union-with-one-constructor
 ;; monkey business: you can't normalize unless you fork.
 natpNot0 :: (a: Natp) -> nat(a) != 0
-{fork a {+++ return id(False)}}
+{fork a {+++ return identity(False)}}
 
 + :: fn(a,b: Natp) -> Natp
 {return natp(nat(a) + nat(b))}
