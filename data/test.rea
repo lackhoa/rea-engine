@@ -229,19 +229,24 @@ check_truth testPolymorphSolver(3) = 6;
 ;; The Manhattan algebra test!
 ;; ---------------------------
 
-algebraTest :: (a,b,c,d,e,f: Nat) -> ((a+b)+c)+(d+e)+f = a+b+c+d+e+f
-{return algebraic_norm(((a+b)+c)+(d+e)+f)}
-
 check_truth fold(overload(+, Nat), 1 cons single(2)) = 3;
-;; print(single(1) + single(2));
+test_eval(single(1) + single(2));
 check_truth ((1 cons single(2)) + single(3)) = (1 cons (2 cons single(3)));
 
-test_eval test_sort(single(0));
-test_eval test_sort(2 cons single (0));
-test_eval test_sort(0 cons single (2));
+test_eval test_sort([0]);
+test_eval test_sort([2, 0]);
+test_eval test_sort([0, 2]);
 
-testSortList :: () -> (Permute((2 cons (0 cons (4 cons (3 cons (single(1)))))),
-                               (0 cons (1 cons (2 cons (3 cons single(4)))))))
+#debug
+print([2, 0, 4, 3, 1]);
+#debug off
+
+testSortList :: () -> (Permute([2, 0, 4, 3, 1], [0, 1, 2, 3, 4]))
 {
- return test_sort(2 cons (0 cons (4 cons (3 cons (single(1))))));
+ return test_sort([2, 0, 4, 3, 1]);
  }
+;; algebraTest :: (a,b,c,d,e,f: Nat) -> ((a+b)+c)+(d+e)+f = fold(+, cons([a,b,c,d,e]))
+;; {
+;;  return algebraic_norm(((a+b)+c)+(d+e)+f)
+;;  }
+

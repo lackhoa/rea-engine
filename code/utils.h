@@ -16,6 +16,7 @@
 #endif
 
 #define UNUSED_VAR __attribute__((unused))
+#define unused_var __attribute__((unused))
 
 #define internal        static
 #define global_variable UNUSED_VAR static

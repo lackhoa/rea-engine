@@ -8,6 +8,7 @@ enum TokenCategory
   // 0-255 reserved for single-char ASCII types.
 
   Token_Special = 256,
+  Token_DoubleDot,
   Token_Ellipsis,
   Token_Alphanumeric,
   Token_DoubleDash,

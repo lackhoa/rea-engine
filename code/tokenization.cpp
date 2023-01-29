@@ -364,6 +364,11 @@ eatToken(Tokenizer *tk = global_tokenizer)
         nextChar(tk);
         out.cat = Token_Ellipsis;
       }
+      else if (*tk->at == '.')
+      {
+        nextChar(tk);
+        out.cat = Token_DoubleDot;
+      }
       else
         out.cat = (TokenCategory)'.';
     } break;
@@ -445,7 +450,7 @@ eatToken(Tokenizer *tk = global_tokenizer)
         advanced = true;
       }
       if (!advanced)
-        out.cat = (TokenCategory)'_';
+        out.cat = (TokenCategory)'_';  // todo: why is the underscore special?
     } break;
 
     default:

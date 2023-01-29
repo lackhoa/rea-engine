@@ -805,40 +805,47 @@ printComposite(Arena *buffer, void *in0, b32 is_term, PrintOptions opt)
   i32    arg_count  = 0;
   void **raw_args   = 0;
 
-  Ast  *ast  = (Ast *)in0;
-  Term *term = (Term *)in0;
+  CompositeAst *ast  = (CompositeAst *)in0;
+  Composite    *term = (Composite *)in0;
   Arrow *op_signature = 0;
-  b32 op_is_constructor = false;
+  Constructor *op_ctor = 0;
+  b32 print_as_list     = false;
   b32 no_print_as_binop = false;
   if (is_term)
   {
-    Composite *in = castTerm(term, Composite);
-    op           = in->op;
+    op           = term->op;
     op_signature = 0;
-    raw_args     = (void **)in->args;
-    arg_count    = in->arg_count;
+    raw_args     = (void **)term->args;
+    arg_count    = term->arg_count;
+    Term *type0 = getType(&term->t);
 
-    if (in->op->cat == Term_Constructor)
-      op_is_constructor = true;
+    op_ctor = castTerm(term->op, Constructor);
 
-    if (Function *fun = castTerm(in->op, Function))
+    if (Composite *type = castTerm(type0, Composite))
+    {
+      if (type->op == rea_List && op_ctor)
+      {
+        print_as_list = true;
+      }
+    }
+
+    if (Function *fun = castTerm(term->op, Function))
       no_print_as_binop = checkFlag(fun->function_flags, FunctionFlag_no_print_as_binop);
 
-    if (op_is_constructor)
+    if (op_ctor)
     {
-      i32 ctor_i = castTerm(in->op, Constructor)->index;
-      op_signature = castUnionOrPolyUnion(getType(term))->structs[ctor_i];
+      op_signature = castUnionOrPolyUnion(type0)->structs[op_ctor->index];
     }
     else
     {
-      op_signature = getParameterTypes(in->op);
+      op_signature = getParameterTypes(term->op);
     }
     assert(op_signature);
 
     String op_name = {};
-    if (Token *global_name = in->op->global_name)
+    if (Token *global_name = term->op->global_name)
       op_name = global_name->string;
-    else if (Variable *var = castTerm(in->op, Variable))
+    else if (Variable *var = castTerm(term->op, Variable))
       op_name = var->name;
     precedence = precedenceOf(op_name);
   }
@@ -867,7 +874,50 @@ printComposite(Arena *buffer, void *in0, b32 is_term, PrintOptions opt)
   else
     printed_args = raw_args;
 
-  if (arg_count == 2 && !no_print_as_binop)
+  if (print_as_list)
+  {// list path
+    print(buffer, "[");
+    Constructor *ctor = op_ctor;
+    for (Composite *iter = term; iter; )
+    {
+      Term *next_iter0 = 0;
+      if (ctor->index == 0)
+      {
+        print(buffer, iter->args[0]);
+      }
+      else if (ctor->index == 1)
+      {
+        print(buffer, iter->args[0]);
+        next_iter0 = iter->args[1];
+      }
+
+      iter = 0;
+      ctor = 0;
+      if (next_iter0)
+      {
+        if (Composite *next_iter = castTerm(next_iter0, Composite))
+        {
+          if (Constructor *next_ctor = castTerm(next_iter->op, Constructor))
+          {
+            ctor = next_ctor;
+            iter = next_iter;
+          }
+        }
+
+        if (iter)
+        {
+          print(buffer, ", ");
+        }
+        else
+        {
+          print(buffer, " .. ");
+          print(buffer, next_iter0);
+        }
+      }
+    }
+    print(buffer, "]");
+  }
+  else if (arg_count == 2 && !no_print_as_binop)
   {// special path for infix binary operator
     if (precedence < opt.no_paren_precedence)
       print(buffer, "(");
@@ -889,7 +939,7 @@ printComposite(Arena *buffer, void *in0, b32 is_term, PrintOptions opt)
   else
   {// normal prefix path
     print(buffer, op, is_term, opt);
-    if (!(op_is_constructor && arg_count == 0))
+    if (!(op_ctor && arg_count == 0))
     {
       print(buffer, "(");
       PrintOptions arg_opt        = opt;
@@ -2591,7 +2641,7 @@ struct OptionalU32 { b32 success; u32 value; };
 inline b32
 isExpressionEndMarker(Token *token)
 {
-  if (inString("{},);:", token))
+  if (inString(")]}{,;:", token))
     return true;
 
   if (token->cat > Token_Directive_START && token->cat < Token_Directive_END)
@@ -3865,7 +3915,7 @@ buildAlgebraicNorm(Arena *arena, Typer *typer, CompositeAst *in)
   else
     parseError("expected 1 argument");
 
-  if (!out)
+  if (!out && noError())
     parseError(&in->a, "either the expression is already in normal form, or we can't solve the goal");
 
   return out;
@@ -5666,12 +5716,72 @@ parseFunctionExpression(Arena *arena)
 }
 
 internal Ast *
+parseList(Arena *arena)
+{
+  CompositeAst *out = 0;
+  // :list-opening-brace-eaten
+  Token *first_token = lastToken();
+  i32 count = 0;
+  Ast **items = pushArray(arena, DEFAULT_MAX_LIST_LENGTH, Ast*);
+  char closing = ']';
+  Ast unused_var *tail = 0;
+  for (; noError(); )
+  {
+    if (optionalChar(closing))
+      break;
+
+    items[count++] = parseExpression(arena);
+
+    if (!optionalChar(','))
+    {
+      if (optionalCategory(Token_DoubleDot))
+      {
+        todoIncomplete;
+        tail = parseExpression(arena);
+      }
+      requireChar(closing);
+      break;
+    }
+  }
+  if (count == 0)
+  {
+    parseError(first_token, "empty list currently not supported");
+  }
+  if (noError())
+  {
+    if (tail)
+    {
+      todoIncomplete;
+    }
+    else
+    {
+      out = newAst(arena, CompositeAst, first_token);
+      out->op        = synthesizeAst(arena, rea_single, first_token);
+      out->arg_count = 1;
+      out->args      = pushArray(arena, 1, Ast *);
+      out->args[0]   = items[count-1];
+      for (i32 i=count-2; i >= 0; i--)
+      {
+        Token *token = &items[i]->token;
+        CompositeAst *new_out = newAst(arena, CompositeAst, token);
+        new_out->op        = synthesizeAst(arena, rea_cons, token);
+        new_out->arg_count = 2;
+        new_out->args      = pushArray(arena, 2, Ast*);
+        new_out->args[0]   = items[i];
+        new_out->args[1]   = &out->a;
+        out = new_out;
+      }
+    }
+  }
+  return &out->a;
+}
+
+internal Ast *
 parseOperand(Arena *arena)
 {
   Ast *operand = 0;
   Token token = nextToken();
   switch (token.cat)
-
   {
     case '_':
     {
@@ -5682,6 +5792,11 @@ parseOperand(Arena *arena)
     {
       operand = parseExpression(arena);
       requireChar(')');
+    } break;
+
+    case '[':
+    {// :list-opening-brace-eaten
+      operand = parseList(arena);
     } break;
 
     case Token_Keyword_fn:
@@ -5797,7 +5912,7 @@ seesArrowExpression()
 }
 
 internal Ast *
-parseExpressionMain(Arena *arena, ParseExpressionOptions opt)
+parseExpression_(Arena *arena, ParseExpressionOptions opt)
 {
   Ast *out = 0;
   if (seesArrowExpression())
@@ -5826,7 +5941,7 @@ parseExpressionMain(Arena *arena, ParseExpressionOptions opt)
           //      ^
           ParseExpressionOptions opt1 = opt;
           opt1.min_precedence = precedence;
-          if (Ast *recurse = parseExpressionMain(arena, opt1))
+          if (Ast *recurse = parseExpression_(arena, opt1))
           {
             i32 arg_count = 2;
             Ast **args    = pushArray(arena, arg_count, Ast*);
@@ -5864,7 +5979,7 @@ parseExpressionMain(Arena *arena, ParseExpressionOptions opt)
 forward_declare inline Ast *
 parseExpression(Arena *arena)
 {
-  return parseExpressionMain(arena, ParseExpressionOptions{});
+  return parseExpression_(arena, ParseExpressionOptions{});
 }
 
 inline void
