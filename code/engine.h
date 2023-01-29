@@ -158,7 +158,7 @@ struct DataTree {
   i32        ctor_i;
   i32        member_count;
   DataTree **members;
-  Token     *ctor_names;        // debug only
+  String    *ctor_names;        // debug only
 };
 
 struct DataMapAddHistory {
@@ -267,7 +267,7 @@ struct PolyUnion {
 struct Union {
   embed_Term(t);
   i32     ctor_count;
-  Token  *ctor_names;
+  String *ctor_names;
   Arrow **structs;
 };
 

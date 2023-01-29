@@ -27,12 +27,13 @@ global_variable Term *rea_single;
 global_variable Term *rea_cons;
 global_variable Term *rea_fold;
 global_variable Term *rea_concat;
-global_variable Term *rea_Permutation;
+global_variable Term *rea_Permute;
 global_variable Term *rea_foldConcat;
-global_variable Term *rea_foldPermutation;
-global_variable Term *rea_permutationSame;
-global_variable Term *rea_permutation;
-global_variable Term *rea_permutationLast;
+global_variable Term *rea_foldPermute;
+global_variable Term *rea_permuteSame;
+global_variable Term *rea_permute;
+global_variable Term *rea_permuteFirst;
+global_variable Term *rea_permuteLast;
 global_variable Term *rea_falseImpliesAll;
 
 global_variable Term dummy_function_being_built;
@@ -1552,6 +1553,9 @@ rebase(Arena *arena, Term *in0, i32 delta)
   return rebaseMain(arena, in0, delta, 0);
 }
 
+const char *number_to_string[] = {"0", "1", "2", "3", "4", "5", "6", "7",
+                                  "8", "9", "10", "11", "12", "13", "14", "15"};
+
 internal Term *
 apply(Arena *arena, Term *op, i32 arg_count, Term **args, Term *type, String name_to_unfold)
 {
@@ -1593,11 +1597,13 @@ apply(Arena *arena, Term *op, i32 arg_count, Term **args, Term *type, String nam
           {
             if (lctor->index == rctor->index)
             {
-              if (l->arg_count == 0)
+              assert(l->arg_count == r->arg_count);
+              i32 arg_count = l->arg_count;
+              if (arg_count == 0)
               {
                 // we can't do anything here
               }
-              else if (l->arg_count == 1)
+              else if (arg_count == 1)
               {
                 Term *larg = l->args[0];
                 Term *rarg = r->args[0];
@@ -1605,12 +1611,40 @@ apply(Arena *arena, Term *op, i32 arg_count, Term **args, Term *type, String nam
                 args[0] = getType(larg);
                 args[1] = larg;
                 args[2] = rarg;
+                // if we're lucky maybe it'll decompose into False
                 out0 = apply(arena, rea_equal, 3, args, type, {});
                 if (!out0)
+                {
                   out0 = newEquality(arena, larg, rarg);
+                }
               }
               else
-                todoIncomplete;  // need conjunction
+              {
+                // bookmark
+                Union *out = newTerm(arena, Union, rea_Type);
+                out->ctor_count = 1;
+                out->ctor_names = pushArray(arena, 1, String);
+                out->structs    = pushArray(arena, 1, Arrow*);
+
+                out->ctor_names[0] = toString("struct");
+
+                out->structs[0] = newTerm(arena, Arrow, rea_Type);
+                Arrow *struc = out->structs[0];
+                struc->param_count = arg_count;
+                struc->param_names = pushArray(arena, arg_count, String);
+                struc->param_types = pushArray(arena, arg_count, Term *);
+                for (i32 arg_i=0; arg_i < arg_count; arg_i++)
+                {
+                  assert(arg_i < arrayCount(number_to_string));
+                  struc->param_names[arg_i] = toString(number_to_string[arg_i]);
+
+                  // todo: wish there were a way to systematize these stupid rebases.
+                  Term *larg = rebase(arena, l->args[arg_i], 1);
+                  Term *rarg = rebase(arena, r->args[arg_i], 1);
+                  struc->param_types[arg_i] = newEquality(arena, larg, rarg);
+                }
+                out0 = &out->t;
+              }
             }
           }
         }
@@ -2877,7 +2911,11 @@ inline Term *
 reaComputation(Arena *arena, Typer *typer, Term *lhs, Term *rhs)
 {
   Term *out = computationIfEqual(arena, typer, lhs, rhs);
-  assert(out);
+  if (!out)
+  {
+    DUMP("lhs: ", lhs, " =/= rhs: ", rhs, "\n");
+    invalidCodePath;
+  }
   return out;
 }
 
@@ -3972,21 +4010,23 @@ reaConcat(Arena *arena, Term *a, Term *b)
 }
 
 internal Term *
-provePermutation_(Arena *arena, Typer *typer, Term *al, Term **c_bac, i32 *indexes, i32 count)
+provePermute_(Arena *arena, Typer *typer, Term *al, Term **c_bac, i32 *indexes, i32 count)
 {
   i32 UNUSED_VAR serial = DEBUG_SERIAL++;
   Term *out = 0;
   assert(count > 0);
-  local_persist Term *helper = lookupBuiltin("provePermutationHelper");
+  local_persist Term *helper = lookupBuiltin("provePermuteHelper");
 
   Term *T = getType(c_bac[0]);
   Term *bac = toReaList(arena, c_bac, count);
+
+  // DUMP("provePermute_: (", al, ") and (", bac, ") \n");
 
   if (count == 1)
   {
     Term *bac = toReaList(arena, c_bac, count);
     Term *eq = reaComputation(arena, typer, al, bac);
-    out = newCompositeN(arena, rea_permutationSame, T, al, bac, eq);
+    out = newCompositeN(arena, rea_permuteSame, T, al, bac, eq);
   }
   else
   {
@@ -4006,30 +4046,32 @@ provePermutation_(Arena *arena, Typer *typer, Term *al, Term **c_bac, i32 *index
     Term *bc = toReaList(arena, c_bc, count-1);
 
     Term *a = getArg(al, 0);
-    Term *b = toReaList(arena, c_bc, a_index);
-    Term *c = 0;
-    if (a_index+1 < count)
-    {
-      c = toReaList(arena, c_bc+a_index, count-(a_index+1));
-    }
+    Term *b = (a_index > 0)       ? toReaList(arena, c_bc, a_index)                   : 0;
+    Term *c = (a_index+1 < count) ? toReaList(arena, c_bc+a_index, count-(a_index+1)) : 0;
 
-    Term *recurse = provePermutation_(arena, typer, l, c_bc, indexes+1, count-1);
+    Term *recurse = provePermute_(arena, typer, l, c_bc, indexes+1, count-1);
 
     Term *al_destruct = reaIdentity(arena, al);
-    if (c)
-    {
+    if (b && c)
+    {// permute
       Term *bac_destruct = reaComputation(arena, typer, bac, reaConcat(arena, b, reaCons(arena, a, c)));
       Term *b_plus_c = reaConcat(arena, b, c);
       Term *e = reaComputation(arena, typer, bc, b_plus_c);
       recurse = newCompositeN(arena, helper, T, l,bc,b_plus_c, recurse,e);
-      out = newCompositeN(arena, rea_permutation, T,al,bac, a,l,b,c, al_destruct,bac_destruct, recurse);
+      out = newCompositeN(arena, rea_permute, T,al,bac,
+                          a,l,b,c, al_destruct,bac_destruct, recurse);
+    }
+    else if (c)
+    {// permuteFirst
+      Term *bac_destruct = reaComputation(arena, typer, bac, reaCons(arena, a, c));
+      out = newCompositeN(arena, rea_permuteFirst, T,al,bac,
+                          a,l,c, al_destruct,bac_destruct, recurse);
     }
     else
-    {
-      Term *bac_destruct = reaComputation(arena, typer,
-                                          bac,
-                                          reaConcat(arena, b, reaSingle(arena, a)));
-      out = newCompositeN(arena, rea_permutationLast, T,al,bac, a,l,b, al_destruct,bac_destruct, recurse);
+    {// permuteLast
+      Term *bac_destruct = reaComputation(arena, typer, bac, reaConcat(arena, b, reaSingle(arena, a)));
+      out = newCompositeN(arena, rea_permuteLast, T,al,bac,
+                          a,l,b, al_destruct,bac_destruct, recurse);
     }
   }
   return out;
@@ -4039,21 +4081,21 @@ internal Term *
 provePermutation(Arena *arena, Typer *typer, Term **abc0, Term **bac, i32 *indexes, i32 count)
 {
   Term *abc = toReaList(arena, abc0, count);
-  return provePermutation_(arena, typer, abc, bac, indexes, count);
+  return provePermute_(arena, typer, abc, bac, indexes, count);
 }
 
 internal Term *
-buildTestSort(Arena *arena, Typer *typer, CompositeAst *in)
+buildTestSort(Arena *arena, Typer *typer, CompositeAst *ast)
 {
   Term *proof = 0;
-  assert(in->arg_count == 1);
-  if (Term *list0 = buildTerm(arena, typer, in->args[0], holev))
+  assert(ast->arg_count == 1);
+  if (Term *list0 = buildTerm(arena, typer, ast->args[0], holev))
   {
     auto [count, in] = toCArray(temp_arena, list0);
     Term **out = copyArray(temp_arena, count, in);
     i32 *indexes = pushArray(temp_arena, count, i32);
     for (i32 i=0; i < count; i++) { indexes[i] = i; }
-    quickSort(in, indexes, count);
+    quickSort(out, indexes, count);
     i32 *inverse = pushArray(temp_arena, count, i32);
     for (i32 i=0; i < count; i++) { inverse[indexes[i]] = i; }
     i32 *subtracted = pushArray(temp_arena, count, i32);
@@ -4068,7 +4110,7 @@ buildTestSort(Arena *arena, Typer *typer, CompositeAst *in)
         }
       }
     }
-    proof = provePermutation(arena, typer, in, out, inverse, count);
+    proof = provePermutation(arena, typer, in, out, subtracted, count);
   }
   return proof;
 }
@@ -5434,8 +5476,13 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
 
   i32 ctor_count = in->ctor_count;
   uni->ctor_count = ctor_count;
-  uni->ctor_names = copyArray(arena, ctor_count, in->ctor_names);
-  allocateArray(arena, ctor_count, uni->structs);
+  uni->ctor_names = pushArray(arena, ctor_count, String);
+  uni->structs    = pushArray(arena, ctor_count, Arrow *);
+
+  for (i32 ctor_i=0; ctor_i < ctor_count; ctor_i++)
+  {
+    uni->ctor_names[ctor_i] = in->ctor_names[ctor_i].string;
+  }
 
   Arrow *poly_params = 0;
   if (in->params)
@@ -5521,7 +5568,7 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
         pctor->uni   = uni;
         pctor->index = ctor_i;
 
-        addGlobalBinding(&uni->ctor_names[ctor_i], &pctor->t);
+        addGlobalBinding(&in->ctor_names[ctor_i], &pctor->t);
       }
     }
     else
@@ -5537,7 +5584,7 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
         Term *term_to_bind = &ctor->t;
         if (struc->param_count == 0)
           term_to_bind = newComposite(arena, &ctor->t, 0, 0);
-        addGlobalBinding(&uni->ctor_names[ctor_i], term_to_bind);
+        addGlobalBinding(&in->ctor_names[ctor_i], term_to_bind);
       }
     }
   }
@@ -6284,7 +6331,6 @@ beginInterpreterSession(Arena *top_level_arena, FilePath input_path)
     FilePath builtin_path = platformGetFileFullPath(arena, "../data/builtins.rea");
     interpretFile(&global_state, builtin_path, true);
 
-#if 0
     // TODO #cleanup These List builtins are going too far...
 #define LOOKUP_BUILTIN(name) rea_##name = lookupBuiltin(#name);
     LOOKUP_BUILTIN(List);
@@ -6292,14 +6338,14 @@ beginInterpreterSession(Arena *top_level_arena, FilePath input_path)
     LOOKUP_BUILTIN(cons);
     LOOKUP_BUILTIN(fold);
     rea_concat = lookupBuiltin("+");
-    LOOKUP_BUILTIN(Permutation);
+    LOOKUP_BUILTIN(Permute);
     LOOKUP_BUILTIN(foldConcat);
-    LOOKUP_BUILTIN(foldPermutation);
-    LOOKUP_BUILTIN(permutationSame);
-    LOOKUP_BUILTIN(permutation);
-    LOOKUP_BUILTIN(permutationLast);
+    LOOKUP_BUILTIN(foldPermute);
+    LOOKUP_BUILTIN(permuteSame);
+    LOOKUP_BUILTIN(permute);
+    LOOKUP_BUILTIN(permuteFirst);
+    LOOKUP_BUILTIN(permuteLast);
 #undef LOOKUP_BUILTIN
-#endif
 
     resetArena(temp_arena);
   }

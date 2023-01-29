@@ -232,17 +232,16 @@ check_truth testPolymorphSolver(3) = 6;
 algebraTest :: (a,b,c,d,e,f: Nat) -> ((a+b)+c)+(d+e)+f = a+b+c+d+e+f
 {return algebraic_norm(((a+b)+c)+(d+e)+f)}
 
-single :: ($A: Type, a: A) -> List(A) #expand {return a cons nil(A)}
 check_truth fold(overload(+, Nat), 1 cons single(2)) = 3;
 ;; print(single(1) + single(2));
 check_truth ((1 cons single(2)) + single(3)) = (1 cons (2 cons single(3)));
 
-;; print test_sort(single(0));
-;; print test_sort(2 cons single (0));
-;; print test_sort(2 cons (0 cons (4 cons (3 cons (single(1))))));
+test_eval test_sort(single(0));
+test_eval test_sort(2 cons single (0));
+test_eval test_sort(0 cons single (2));
 
-;; testSortList :: () -> (Permutation((4 cons (3 cons (2 cons (1 cons single(5))))),
-;;                                    (1 cons (2 cons (3 cons (4 cons single(5)))))))
-;; {
-;;  return test_sort(4 cons (3 cons (2 cons (1 cons single(5)))));
-;;  }
+testSortList :: () -> (Permute((2 cons (0 cons (4 cons (3 cons (single(1)))))),
+                               (0 cons (1 cons (2 cons (3 cons single(4)))))))
+{
+ return test_sort(2 cons (0 cons (4 cons (3 cons (single(1))))));
+ }
