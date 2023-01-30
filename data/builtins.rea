@@ -162,13 +162,15 @@ provePermuteHelper :: fn(T: Type, a,b,c: List(T), p: Permute(a,b), e: b=c) -> Pe
 ;;          }
 ;;  }
 
-toList :: fn(A: Type, l: NList(A), ne: l != nil(A)) -> List(A)
-{
- fork l
- {
-  nil  reductio,
-  cons ,
-  }
- }
+toList :: fn($A: Type, l: NList(A), $ne: l != nil(A)) -> List(A)
+{fork l
+ {nil  reductio,
+  cons fork l.tail {nil  return single(l.head),
+                    cons return l.head cons toList(l.tail)}}}
 
-print(toList);
+permuteEquivalent :: ($A: Type, l,m: NList(A), l!=nil(A), m!=nil(A), p: Permute(l,m))
+-> Permute(toList(l), toList(m))
+{fork p
+ {permuteSame rewrite p.same; return permuteSame(...),
+  permute,
+  }}

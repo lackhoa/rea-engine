@@ -7,7 +7,7 @@
 #define DEBUG_LOG_unify     0
 #define DEBUG_LOG_solve     0
 
-#define DEBUG_print_all_arguments 0
+#define DEBUG_print_all_arguments 1
 
 #define DEBUG_H
 #endif

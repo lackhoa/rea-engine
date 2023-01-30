@@ -144,18 +144,18 @@ globalNameOf(Term *term)
 }
 
 inline Term *
-newVariable(Arena *arena, Typer *typer, i32 id, i32 delta)
+newVariable(Arena *arena, Typer *typer, i32 index, i32 delta)
 {
   Scope *scope = typer->scope;
   for (i32 id=0; id < delta; id++)
     scope=scope->outer;
   assert(scope->depth == typer->scope->depth - delta);
-  Term *type = scope->head->param_types[id];
+  Term *type = scope->head->param_types[index];
   type = rebase(arena, type, delta);
 
   Variable *var = newTerm(arena, Variable, type);
-  var->name  = scope->head->param_names[id];
-  var->index = id;
+  var->name  = scope->head->param_names[index];
+  var->index = index;
   var->delta = delta;
 
   return &var->t;
@@ -485,17 +485,22 @@ print(Arena *buffer, DataTree *tree)
     print(buffer, "?");
 }
 
+inline i32 getScopeDepth(Scope *scope) {return scope ? scope->depth : 0;}
+inline i32 getScopeDepth(Typer *env)   {return (env && env->scope) ? env->scope->depth : 0;}
+
 internal void
-printDataMap(Arena *buffer, Typer *env)
+printDataMap(Arena *buffer, Typer *typer)
 {
-  for (DataMap *map = env->map; map; map=map->tail)
+  for (DataMap *map = typer->map; map; map=map->tail)
   {
-    String var = getVarNameInScope(env, map);
-    print(buffer, var);
+    Term *root = newVariable(temp_arena, typer, map->index, getScopeDepth(typer) - map->depth);
+    print(buffer, castTerm(root, Variable)->name);
     print(buffer, ": ");
-    print(buffer, &map->tree);
+    Term *tree = synthesizeTree(temp_arena, root, &map->tree);
+    PrintOptions print_options = {.print_type_depth=2};
+    print(buffer, tree, print_options);
     if (map->tail)
-      print(buffer, ", ");
+      print(buffer, "\n");
   }
 }
 
@@ -555,9 +560,6 @@ initDataTree(Arena *arena, DataTree *tree, Term *uni0, i32 ctor_id)
   tree->member_count = ctor_arg_count;
   tree->members      = pushArray(arena, ctor_arg_count, DataTree*, true);
 }
-
-inline i32 getScopeDepth(Scope *scope) {return scope ? scope->depth : 0;}
-inline i32 getScopeDepth(Typer *env)   {return (env && env->scope) ? env->scope->depth : 0;}
 
 internal AddDataTree
 getOrAddDataTree(Arena *arena, Typer *env, Term *in0, i32 ctor_id)
@@ -1198,8 +1200,13 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
     else
     {
       if (!checkFlag(opt.flags, PrintFlag_LockDetailed))
+      {
         unsetFlag(&new_opt.flags, PrintFlag_Detailed);
-      unsetFlag(&new_opt.flags, PrintFlag_PrintType);
+      }
+      if (new_opt.print_type_depth)
+      {
+        new_opt.print_type_depth--;
+      }
       new_opt.indentation = opt.indentation + 1;
 
       switch (in0->cat)
@@ -1296,6 +1303,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
         {
           Constructor *in = castTerm(in0, Constructor);
           print(buffer, getConstructorName(in));
+          if (!in->type) skip_print_type = true;
         } break;
 
         case Term_Rewrite:
@@ -1327,7 +1335,9 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
 
         case Term_Computation:
         {
-          print(buffer, "computation");
+          print(buffer, "computation: ");
+          print(buffer, getType(in0), new_opt);
+          skip_print_type = true;
         } break;
 
         case Term_Accessor:
@@ -1362,18 +1372,6 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
           print(buffer, "}");
         } break;
 
-#if 0
-        case Term_PolyUnion:
-        {
-          PolyUnion *in = castTerm(in0, PolyUnion);
-          print(buffer, "union ");
-          print(buffer, getType(in0), new_opt);
-          skip_print_type = true;
-          print(buffer, " ");
-          print(buffer, &in->union_template->t, new_opt);
-        } break;
-#endif
-
         case Term_PolyConstructor:
         {
           PolyConstructor *in = castTerm(in0, PolyConstructor);
@@ -1387,11 +1385,10 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
       }
     }
 
-    if ((checkFlag(opt.flags, PrintFlag_PrintType) ||
-         in0->cat == Term_Computation) &&
-        !skip_print_type)
+    if (opt.print_type_depth && !skip_print_type)
     {
       print(buffer, ": ");
+      new_opt.print_type_depth = 0;
       print(buffer, getType(in0), new_opt);
     }
   }
@@ -6125,13 +6122,13 @@ parseTopLevel(EngineState *state)
 
       case Token_Keyword_print:
       {
-        u32 flags = PrintFlag_Detailed|PrintFlag_PrintType;
+        u32 flags = PrintFlag_Detailed;
         if (optionalString("lock_detailed"))
           setFlag(&flags, PrintFlag_LockDetailed);
         if (BuildTerm expr = parseExpressionAndBuild(temp_arena))
         {
           Term *norm = normalize(arena, 0, expr.term);
-          print(0, norm, {.flags=flags});
+          print(0, norm, {.flags=flags, .print_type_depth=1});
           print(0, "\n");
         }
       } break;
@@ -6139,9 +6136,8 @@ parseTopLevel(EngineState *state)
       case Token_Keyword_print_raw:
       {
         if (auto parsing = parseExpressionAndBuild(temp_arena))
-          print(0, parsing.term, {.flags = (PrintFlag_Detailed     |
-                                            PrintFlag_LockDetailed |
-                                            PrintFlag_PrintType)});
+          print(0, parsing.term, {.flags = PrintFlag_Detailed|PrintFlag_LockDetailed,
+                                  .print_type_depth = 1});
         print(0, "\n");
       } break;
 
