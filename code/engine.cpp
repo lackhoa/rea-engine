@@ -1641,11 +1641,12 @@ apply(Arena *arena, Term *op, i32 arg_count, Term **args, Term *type, String nam
 {
   Term *out0 = 0;
 
-#if DEBUG_LOG_apply
-  i32 serial = DEBUG_SERIAL++;
-  if (DEBUG_MODE)
-  {DEBUG_INDENT(); DUMP("apply(", serial, "): ", op, "(...)\n");}
-#endif
+  if (DEBUG_LOG_apply)
+  {
+    i32 serial = DEBUG_SERIAL++;
+    if (DEBUG_MODE)
+    {DEBUG_INDENT(); DUMP("apply(", serial, "): ", op, "(...)\n");}
+  }
 
   if (Function *fun = castTerm(op, Function))
   {// Function application
@@ -1745,9 +1746,11 @@ apply(Arena *arena, Term *op, i32 arg_count, Term **args, Term *type, String nam
     out0 = &out->t;
   }
 
-#if DEBUG_LOG_apply
-  if (DEBUG_MODE) {DEBUG_DEDENT(); DUMP("=> ", out0, "\n");}
-#endif
+  if(DEBUG_LOG_apply)
+  {
+    if (DEBUG_MODE) {DEBUG_DEDENT(); DUMP("=> ", out0, "\n");}
+  }
+
   return out0;
 }
 
@@ -1758,11 +1761,12 @@ evaluate_(EvaluationContext *ctx, Term *in0)
   assert(ctx->offset >= 0);
   Arena *arena = ctx->arena;
 
-#if DEBUG_LOG_evaluate
-  i32 serial = DEBUG_SERIAL++;
-  if (DEBUG_MODE)
-  {DEBUG_INDENT(); DUMP("evaluate(", serial, "): ", in0, "\n");}
-#endif
+  if(DEBUG_LOG_evaluate)
+  {
+    i32 serial = DEBUG_SERIAL++;
+    if (DEBUG_MODE)
+    {DEBUG_INDENT(); DUMP("evaluate(", serial, "): ", in0, "\n");}
+  }
 
   if (isGlobalValue(in0))
   {
@@ -1976,9 +1980,10 @@ evaluate_(EvaluationContext *ctx, Term *in0)
     }
   }
 
-#if DEBUG_LOG_evaluate
-  if (DEBUG_MODE) {DEBUG_DEDENT(); DUMP("=> ", out0, "\n");}
-#endif
+  if(DEBUG_LOG_evaluate)
+  {
+    if (DEBUG_MODE) {DEBUG_DEDENT(); DUMP("=> ", out0, "\n");}
+  }
 
   assert(checkFlag(ctx->flags, EvaluationFlag_AlwaysApply) || out0);
   return out0;
@@ -2003,13 +2008,14 @@ compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
 {
   CompareTerms out = {.result = Trinary_Unknown};
 
-#if DEBUG_LOG_compare
   i32 serial = DEBUG_SERIAL++;
-  if (DEBUG_MODE)
+  if (DEBUG_LOG_compare)
   {
-    DEBUG_INDENT(); DUMP("comparing(", serial, "): ", l0, " and ", r0, "\n");
+    if (DEBUG_MODE)
+    {
+      DEBUG_INDENT(); DUMP("comparing(", serial, "): ", l0, " and ", r0, "\n");
+    }
   }
-#endif
 
   if (l0 == r0)
   {
@@ -2212,10 +2218,11 @@ compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
     }
   }
 
-#if DEBUG_LOG_compare
-  if (DEBUG_MODE)
-  {DEBUG_DEDENT(); DUMP("=>(", serial, ") ", out.result, "\n");}
-#endif
+  if (DEBUG_LOG_compare)
+  {
+    if (DEBUG_MODE)
+    {DEBUG_DEDENT(); DUMP("=>(", serial, ") ", out.result, "\n");}
+  }
 
   return out;
 }
@@ -2324,11 +2331,12 @@ normalize_(NormalizeContext *ctx, Term *in0)
   Term *out0 = in0;
   Arena *arena = ctx->arena;
 
-#if DEBUG_LOG_normalize
-  i32 serial = DEBUG_SERIAL++;
-  if (DEBUG_MODE)
-  {DEBUG_INDENT(); DUMP("normalize(", serial, "): ", in0, "\n");}
-#endif
+  if (DEBUG_LOG_normalize)
+  {
+    i32 serial = DEBUG_SERIAL++;
+    if (DEBUG_MODE)
+    {DEBUG_INDENT(); DUMP("normalize(", serial, "): ", in0, "\n");}
+  }
 
   if (!isGlobalValue(in0))
   {
@@ -2458,10 +2466,11 @@ normalize_(NormalizeContext *ctx, Term *in0)
     }
   }
 
-#if DEBUG_LOG_normalize
-  if (DEBUG_MODE)
-  {DEBUG_DEDENT(); dump("=> "); dump(out0); dump();}
-#endif
+  if(DEBUG_LOG_normalize)
+  {
+    if (DEBUG_MODE)
+    {DEBUG_DEDENT(); dump("=> "); dump(out0); dump();}
+  }
 
   // assert(isSequenced(in0) || out0);
   assert(out0);
@@ -2758,10 +2767,11 @@ unify(Stack *stack, b32 same_type, Term *in0, Term *goal0)
   b32 success = false;
 
   i32 UNUSED_VAR serial = DEBUG_SERIAL++;
-#if DEBUG_LOG_unify
-  if (DEBUG_MODE)
-  {DEBUG_INDENT(); DUMP("unify(", serial, ") ", in0, " with ", goal0, "\n");}
-#endif
+  if (DEBUG_LOG_unify)
+  {
+    if (DEBUG_MODE)
+    {DEBUG_INDENT(); DUMP("unify(", serial, ") ", in0, " with ", goal0, "\n");}
+  }
 
   switch (in0->cat)
   {
@@ -2898,10 +2908,11 @@ unify(Stack *stack, b32 same_type, Term *in0, Term *goal0)
     } break;
   }
 
-#if DEBUG_LOG_unify
-  if (DEBUG_MODE)
-  {DEBUG_DEDENT(); DUMP("=>(", serial, ") ", ((char *)(success ? "true\n" : "false\n")));}
-#endif
+  if (DEBUG_LOG_unify)
+  {
+    if (DEBUG_MODE)
+    {DEBUG_DEDENT(); DUMP("=>(", serial, ") ", ((char *)(success ? "true\n" : "false\n")));}
+  }
 
   return success;
 }
@@ -3123,11 +3134,12 @@ solveGoal(Solver *solver, Term *goal)
 
   if (should_attempt)
   {
-#if DEBUG_LOG_solve
-  i32 serial = DEBUG_SERIAL++;
-  if (DEBUG_MODE)
-  {DEBUG_INDENT(); DUMP("solve(", serial, "): ", goal, "\n");}
-#endif
+    if (DEBUG_LOG_solve)
+    {
+      i32 serial = DEBUG_SERIAL++;
+      if (DEBUG_MODE)
+      {DEBUG_INDENT(); DUMP("solve(", serial, "): ", goal, "\n");}
+    }
 
     if (auto [l,r] = getEqualitySides(goal, false))
     {
@@ -3181,9 +3193,10 @@ solveGoal(Solver *solver, Term *goal)
       assert(equal(getType(out), goal));
     }
 
-#if DEBUG_LOG_solve
-  if (DEBUG_MODE) {DEBUG_DEDENT(); DUMP("=> ", out, "\n");}
-#endif
+    if (DEBUG_LOG_solve)
+    {
+      if (DEBUG_MODE) {DEBUG_DEDENT(); DUMP("=> ", out, "\n");}
+    }
   }
 
   solver->depth--;
@@ -4342,6 +4355,10 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
                     Term *expected_arg_type = evaluate(arena, param_type0, args);
                     if (in_arg->cat == Ast_Hole)
                     {
+                      if (serial == 4813)
+                      {
+                        DEBUG_ON;
+                      }
                       if (Term *fill = solveGoal(Solver{.arena=arena, .typer=typer, .use_global_hints=true}, expected_arg_type))
                       {
                         args[arg_i] = fill;
