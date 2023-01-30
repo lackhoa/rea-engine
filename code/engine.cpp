@@ -46,6 +46,19 @@ global_variable EngineState global_state;
 #define DEBUG_OFF {DEBUG_MODE = false; setvbuf(stdout, NULL, _IONBF, BUFSIZ);}
 
 inline Term *
+_newTerm(Arena *arena, TermCategory cat, Term *type, size_t size)
+{
+  Term *out = (Term *)pushSize(arena, size, true);
+  initTerm(out, cat, type);
+  out->serial = DEBUG_SERIAL++;
+  return out;
+}
+
+#define newTerm(arena, cat, type)              \
+  ((cat *) _newTerm(arena, Term_##cat, type, sizeof(cat)))
+
+
+inline Term *
 getArg(Term *in0, i32 index)
 {
   Composite *in = castTerm(in0, Composite);
@@ -1219,7 +1232,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
           else
             print(buffer, "anon");
 
-          if (!in->name.chars || DEBUG_MODE)
+          if (!in->name.chars || DEBUG_print_detailed_variables)
             print(buffer, "[%d:%d]", in->delta, in->index);
         } break;
 
@@ -1509,7 +1522,7 @@ isGround(Term *in0)
 
 // todo make this an inline mutation
 internal Term *
-rebaseMain(Arena *arena, Term *in0, i32 delta, i32 offset)
+rebase_(Arena *arena, Term *in0, i32 delta, i32 offset)
 {
   Term *out0 = 0;
   if (!isGround(in0) && (delta != 0))
@@ -1539,12 +1552,12 @@ rebaseMain(Arena *arena, Term *in0, i32 delta, i32 offset)
         }
         else
         {
-          out->op = rebaseMain(arena, out->op, delta, offset);
+          out->op = rebase_(arena, out->op, delta, offset);
         }
         allocateArray(arena, out->arg_count, out->args);
         for (i32 id = 0; id < out->arg_count; id++)
         {
-          out->args[id] = rebaseMain(arena, in->args[id], delta, offset);
+          out->args[id] = rebase_(arena, in->args[id], delta, offset);
         }
         out0 = &out->t;
       } break;
@@ -1555,10 +1568,10 @@ rebaseMain(Arena *arena, Term *in0, i32 delta, i32 offset)
         Arrow *out = copyStruct(arena, in);
         allocateArray(arena, in->param_count, out->param_types);
         for (i32 id=0; id < in->param_count; id++)
-          out->param_types[id] = rebaseMain(arena, in->param_types[id], delta, offset+1);
+          out->param_types[id] = rebase_(arena, in->param_types[id], delta, offset+1);
         if (in->output_type)
         {
-          out->output_type = rebaseMain(arena, in->output_type, delta, offset+1);
+          out->output_type = rebase_(arena, in->output_type, delta, offset+1);
         }
         out0 = &out->t;
       } break;
@@ -1567,7 +1580,7 @@ rebaseMain(Arena *arena, Term *in0, i32 delta, i32 offset)
       {
         Accessor *in  = castTerm(in0, Accessor);
         Accessor *out = copyStruct(arena, in);
-        out->record = rebaseMain(arena, in->record, delta, offset);
+        out->record = rebase_(arena, in->record, delta, offset);
         out0 = &out->t;
       } break;
 
@@ -1575,8 +1588,8 @@ rebaseMain(Arena *arena, Term *in0, i32 delta, i32 offset)
       {
         Rewrite *in  = castTerm(in0, Rewrite);
         Rewrite *out = copyStruct(arena, in);
-        out->eq_proof = rebaseMain(arena, in->eq_proof, delta, offset);
-        out->body     = rebaseMain(arena, in->body, delta, offset);
+        out->eq_proof = rebase_(arena, in->eq_proof, delta, offset);
+        out->body     = rebase_(arena, in->body, delta, offset);
         out0 = &out->t;
       } break;
 
@@ -1591,7 +1604,7 @@ rebaseMain(Arena *arena, Term *in0, i32 delta, i32 offset)
       {
         Function *in  = castTerm(in0, Function);
         Function *out = copyStruct(arena, in);
-        out->body = rebaseMain(arena, in->body, delta, offset+1);
+        out->body = rebase_(arena, in->body, delta, offset+1);
         out0 = &out->t;
       } break;
 
@@ -1602,7 +1615,7 @@ rebaseMain(Arena *arena, Term *in0, i32 delta, i32 offset)
         allocateArray(arena, in->ctor_count, out->structs);
         for (i32 i=0; i < in->ctor_count; i++)
         {
-          Term *rebased = rebaseMain(arena, &in->structs[i]->t, delta, offset);
+          Term *rebased = rebase_(arena, &in->structs[i]->t, delta, offset);
           out->structs[i] = castTerm(rebased, Arrow);
         }
         out0 = &out->t;
@@ -1618,11 +1631,12 @@ rebaseMain(Arena *arena, Term *in0, i32 delta, i32 offset)
     }
     if (out0 != in0)
     {
-      out0->type = rebaseMain(arena, getType(in0), delta, offset);
+      out0->type = rebase_(arena, getType(in0), delta, offset);
     }
   }
   else
     out0 = in0;
+
   assert(out0);
   return out0;
 }
@@ -1630,7 +1644,7 @@ rebaseMain(Arena *arena, Term *in0, i32 delta, i32 offset)
 forward_declare internal Term *
 rebase(Arena *arena, Term *in0, i32 delta)
 {
-  return rebaseMain(arena, in0, delta, 0);
+  return rebase_(arena, in0, delta, 0);
 }
 
 const char *number_to_string[] = {"0", "1", "2", "3", "4", "5", "6", "7",
@@ -1761,9 +1775,9 @@ evaluate_(EvaluationContext *ctx, Term *in0)
   assert(ctx->offset >= 0);
   Arena *arena = ctx->arena;
 
-  if(DEBUG_LOG_evaluate)
+  i32 serial = DEBUG_SERIAL++;
+  if (DEBUG_LOG_evaluate)
   {
-    i32 serial = DEBUG_SERIAL++;
     if (DEBUG_MODE)
     {DEBUG_INDENT(); DUMP("evaluate(", serial, "): ", in0, "\n");}
   }
@@ -1982,7 +1996,7 @@ evaluate_(EvaluationContext *ctx, Term *in0)
 
   if(DEBUG_LOG_evaluate)
   {
-    if (DEBUG_MODE) {DEBUG_DEDENT(); DUMP("=> ", out0, "\n");}
+    if (DEBUG_MODE) {DEBUG_DEDENT(); DUMP("=>(", serial, ") ", out0, "\n");}
   }
 
   assert(checkFlag(ctx->flags, EvaluationFlag_AlwaysApply) || out0);
@@ -2002,7 +2016,7 @@ evaluate(EvaluationContext ctx, Term *in0)
   return evaluate_(&ctx, in0);
 }
 
-// todo #cleanup "same_type" doesn't need to be passed down
+// todo #cleanup "same_type" doesn't need to be passed down all the time.
 internal CompareTerms
 compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
 {
@@ -3691,6 +3705,11 @@ inline Term *
 getOverloadFromDistinguisher(GlobalBinding *lookup, Term *distinguisher)
 {
   Term *out = 0;
+  if (distinguisher->cat != Term_Union)
+  {
+    todoIncomplete;
+  }
+
   for (i32 slot_i=0;
        slot_i < lookup->count && !out;
        slot_i++)
@@ -3698,15 +3717,21 @@ getOverloadFromDistinguisher(GlobalBinding *lookup, Term *distinguisher)
     Term *item = lookup->items[slot_i];
     if (Arrow *signature = castTerm(getType(item), Arrow))
     {
-      b32 matches = false;
-      if (distinguisher->cat == Term_Union)
-        // TODO very #hacky
-        matches = equal(signature->param_types[0], distinguisher);
-      else
-        todoIncomplete;
-
-      if (matches)
-        out = item;
+      for (i32 param_i=0; param_i < signature->param_count && !out; param_i++)
+      {
+        Term *type0 = signature->param_types[param_i];
+        if (equal(type0, distinguisher))
+        {
+          out = item;
+        }
+        else if (Composite *type = castTerm(type0, Composite))
+        {
+          if (equal(type->op, distinguisher))
+          {
+            out = item;
+          }
+        }
+      }
     }
   }
   return out;
@@ -3983,23 +4008,6 @@ quickSort(Term **in, i32 *indexes, i32 count)
     quickSort(in, indexes, pivot_index);
     quickSort(in+(pivot_index+1), indexes+(pivot_index+1), count-(pivot_index+1));
   }
-}
-
-internal Term **
-arrayFromMask(Arena *arena, Term **in, i32 in_count, b32 *mask, i32 mask_count)
-{
-  Term **out = pushArray(arena, mask_count, Term *);
-  i32 write=0;
-  for (i32 i=0; i < in_count; i++)
-  {
-    if (mask[i])
-    {
-      out[write++] = in[i];
-      assert(write <= mask_count);
-    }
-  }
-  assert(write == mask_count-1);
-  return out;
 }
 
 internal Term *
@@ -4355,10 +4363,6 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
                     Term *expected_arg_type = evaluate(arena, param_type0, args);
                     if (in_arg->cat == Ast_Hole)
                     {
-                      if (serial == 4813)
-                      {
-                        DEBUG_ON;
-                      }
                       if (Term *fill = solveGoal(Solver{.arena=arena, .typer=typer, .use_global_hints=true}, expected_arg_type))
                       {
                         args[arg_i] = fill;
@@ -4742,6 +4746,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
             {
               parseError(in0, "cannot solve for equality proof");
               attach("equality", lr_eq);
+              attach("serial", serial);
             }
           }
         }
@@ -4930,7 +4935,6 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
       start = startString(error_buffer);
       printDataMap(error_buffer, typer);
       attach("data_map", endString(start));
-      attach("serial", serial);
 
       setErrorFlag(ErrorGoalAttached);
     }
@@ -5469,9 +5473,6 @@ struct ProcessPolyConstructorTypeContext {
   i32    offset;
 };
 
-// TODO: Handle type?
-// TODO: Handle type?
-// TODO: Handle type?
 internal Term *
 processPolyConstructorType(ProcessPolyConstructorTypeContext *ctx, Term *in0)
 {
@@ -5544,6 +5545,10 @@ processPolyConstructorType(ProcessPolyConstructorTypeContext *ctx, Term *in0)
 
 
       todoIncomplete;
+    }
+    if (out0 != in0)
+    {
+      out0->type = processPolyConstructorType(ctx, getType(in0));
     }
   }
   assert(out0);

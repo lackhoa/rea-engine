@@ -231,18 +231,6 @@ initTerm(Term *in, TermCategory cat, Term *type)
   in->type = type;
 }
 
-inline Term *
-_newTerm(Arena *arena, TermCategory cat, Term *type, size_t size)
-{
-  Term *out = (Term *)pushSize(arena, size, true);
-  initTerm(out, cat, type);
-  out->serial = DEBUG_SERIAL++;
-  return out;
-}
-
-#define newTerm(arena, cat, type)              \
-  ((cat *) _newTerm(arena, Term_##cat, type, sizeof(cat)))
-
 struct Constructor {
   embed_Term(t);
   Term *uni;  // can be thought of as "output_type", minus the stupid rebase
