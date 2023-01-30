@@ -17,31 +17,31 @@ alreadyGotFalse :: (A: Type, e: A=False) -> ((A) -> False)
 ;; NList (Lists that can be empty)
 ;; ----
 
-;; NList :: union(ListType: Type)
-;; {nil,
-;;  cons(head: ListType, tail: NList(ListType))}
+NList :: union(ListType: Type)
+{nil,
+ cons(head: ListType, tail: NList(ListType))}
 
-;; + :: fn($T: Type, l,m: NList(T)) -> NList(T)
-;; {fork l
-;;  {nil  return m,
-;;   cons return l.head cons (l.tail + m)}}
++ :: fn($T: Type, l,m: NList(T)) -> NList(T)
+{fork l
+ {nil  return m,
+  cons return l.head cons (l.tail + m)}}
 
-;; nonEmpty :: fn ($A: Type, list: NList(A)) -> Type
-;; #expand
-;; {return list != nil(A)}
+nonEmpty :: fn ($A: Type, list: NList(A)) -> Type
+#expand
+{return list != nil(A)}
 
-;; concatNonEmpty :: (T:Type, l,m: NList(T), nonEmpty(l), nonEmpty(m)) -> nonEmpty(l+m)
-;; #hint
-;; {fork l {nil, cons}}
+concatNonEmpty :: (T:Type, l,m: NList(T), nonEmpty(l), nonEmpty(m)) -> nonEmpty(l+m)
+#hint
+{fork l {nil, cons}}
 
-;; Permute :: union($T: Type, al,bac: NList(T))
-;; {
-;;  permuteSame(same: al=bac),
-;;  permute(a: T, l,b,c: NList(T),
-;;          al_destruct: al=(a cons l),
-;;          bac_destruct: bac=(b + (a cons c)),
-;;          recurse: Permute(l, b+c))
-;;  }
+Permute :: union($T: Type, al,bac: NList(T))
+{
+ permuteSame(same: al=bac),
+ permute(a: T, l,b,c: NList(T),
+         al_destruct: al=(a cons l),
+         bac_destruct: bac=(b + (a cons c)),
+         recurse: Permute(l, b+c))
+ }
 
 ;;
 ;; List (Populated list)
@@ -161,3 +161,14 @@ provePermuteHelper :: fn(T: Type, a,b,c: List(T), p: Permute(a,b), e: b=c) -> Pe
 ;;                  cons   return ctor[0](e.0, toNListEq(e.1))}
 ;;          }
 ;;  }
+
+toList :: fn(A: Type, l: NList(A), ne: l != nil(A)) -> List(A)
+{
+ fork l
+ {
+  nil  reductio,
+  cons ,
+  }
+ }
+
+print(toList);

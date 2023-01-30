@@ -3001,11 +3001,11 @@ reaIdentity(Arena *arena, Term *term)
   return newComputation_(arena, term, term);
 }
 
-#if 0
 // todo: cutnpaste from "seekGoal"
 inline Term *
 reductioAdAbsurdum(Solver *solver, Term *goal)
 {
+  if (getType(goal) != rea_Type) {todoIncomplete}
   Term *out = 0;
   auto temp = beginTemporaryMemory(solver->arena);
   if (solver->typer)
@@ -3044,7 +3044,6 @@ reductioAdAbsurdum(Solver *solver, Term *goal)
     endTemporaryMemory(temp);
   return out;
 }
-#endif
 
 inline Term *
 seekGoal(Solver *solver, Term *goal, b32 try_reductio=false)
@@ -3089,7 +3088,7 @@ seekGoal(Solver *solver, Term *goal, b32 try_reductio=false)
             }
           }
         }
-        if (!out && try_reductio)
+        if (!out && try_reductio && goal == rea_Type)
         {
           if (Arrow *hypothetical = castTerm(var_type, Arrow))
           {
@@ -3384,8 +3383,8 @@ parseSequence(Arena *arena, b32 require_braces=true)
   else
     brace_opened = optionalChar('{');
 
-  for (b32 reached_end_of_sequence = false;
-       noError() && !reached_end_of_sequence;
+  for (b32 expect_sequence_ended = false;
+       noError() && !expect_sequence_ended;
        )
   {
     // Can't get out of this rewind business, because sometimes the sequence is empty :<
@@ -3520,20 +3519,27 @@ parseSequence(Arena *arena, b32 require_braces=true)
       case Tactic_return:
       {
         ast0 = parseExpression(arena);
-        reached_end_of_sequence = true;
+        expect_sequence_ended = true;
       } break;
 
       case Tactic_fork:
       {
         ast0 = parseFork(arena);
-        reached_end_of_sequence = true;
+        expect_sequence_ended = true;
       } break;
 
       case Tactic_seek:
       {
         SeekAst *ast = newAst(arena, SeekAst, &token);
         ast0 = &ast->a;
-        reached_end_of_sequence = true;
+        expect_sequence_ended = true;
+      } break;
+
+      case Tactic_reductio:
+      {
+        ReductioAst *ast = newAst(arena, ReductioAst, &token);
+        ast0 = &ast->a;
+        expect_sequence_ended = true;
       } break;
 
       case (TacticEnum)0:
@@ -3588,7 +3594,7 @@ parseSequence(Arena *arena, b32 require_braces=true)
         {// synthetic hole
           ast0  = newAst(arena, Hole, &token);
           *global_tokenizer = tk_save;
-          reached_end_of_sequence = true;
+          expect_sequence_ended = true;
         }
         else
         {
@@ -3616,10 +3622,10 @@ parseSequence(Arena *arena, b32 require_braces=true)
   {
     assert(count > 0);
     Ast *previous = 0;
-    for (i32 id = 0; id < count; id++)
+    for (i32 item_i = 0; item_i < count; item_i++)
     {
       Ast *item0 = list->head;
-      if (id > 0)
+      if (item_i > 0)
       {
         if (Let *let = castAst(item0, Let))
           let->body = previous;
@@ -3631,7 +3637,7 @@ parseSequence(Arena *arena, b32 require_braces=true)
           invalidCodePath;
       }
       previous = item0;
-      if (id != count-1)
+      if (item_i != count-1)
         list = list->tail;
     }
     out = list->head;
@@ -4853,6 +4859,13 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
             parseError(in0, "found no overload corresponding to distinguisher");
         }
       }
+    } break;
+
+    case Ast_ReductioAst:
+    {
+      out0 = reductioAdAbsurdum(Solver{.arena=arena, .typer=typer}, goal);
+      if (!out0)
+        parseError(in0, "no contradiction found");
     } break;
 
     invalidDefaultCase;

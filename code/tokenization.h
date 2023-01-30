@@ -70,10 +70,11 @@ enum TacticEnum {
   Tactic_fork,
   Tactic_prove,
   Tactic_seek,
+  Tactic_reductio,
 
   Tactic_COUNT,
 };
-const char *language_tactics[] = {"", "rewrite", "=>", "norm", "return", "fork", "prove", "seek"};
+const char *language_tactics[] = {"", "rewrite", "=>", "norm", "return", "fork", "prove", "seek", "reductio"};
 
 struct Token
 {

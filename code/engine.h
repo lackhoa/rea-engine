@@ -40,7 +40,7 @@ enum AstCategory {
   Ast_OverloadAst,
   Ast_CtorAst,
   Ast_SeekAst,
-  // Ast_ListAst,
+  Ast_ReductioAst,
 
   // Sequence
   Ast_ForkAst,
@@ -559,12 +559,9 @@ struct SeekAst {
   Ast *proposition;
 };
 
-// struct ListAst {
-//   embed_Ast(a);
-//   i32   count;
-//   Ast **items;
-//   Ast  *tail;
-// };
+struct ReductioAst {
+  embed_Ast(a);
+};
 
 struct SolveArgs {i32 arg_count; Term **args;};
 
