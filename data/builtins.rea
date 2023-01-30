@@ -13,6 +13,10 @@ alreadyGotFalse :: (A: Type, e: A=False) -> ((A) -> False)
 #hint
 { return fn (a:A) -> False { rewrite <- e; return a } }
 
+Maybe :: union(A: Type)
+{none,
+ some(v: A)}
+
 ;; ----
 ;; NList (Lists that can be empty)
 ;; ----
@@ -162,15 +166,38 @@ provePermuteHelper :: fn(T: Type, a,b,c: List(T), p: Permute(a,b), e: b=c) -> Pe
 ;;          }
 ;;  }
 
-toList :: fn($A: Type, l: NList(A), $ne: l != nil(A)) -> List(A)
+toList :: fn($A: Type, a: A, l: NList(A)) -> List(A)
 {fork l
- {nil  reductio,
-  cons fork l.tail {nil  return single(l.head),
-                    cons return l.head cons toList(l.tail)}}}
+ {nil  return single(a),
+  cons return a cons toList(l.head, l.tail)}}
 
-permuteEquivalent :: ($A: Type, l,m: NList(A), l!=nil(A), m!=nil(A), p: Permute(l,m))
--> Permute(toList(l), toList(m))
+permuteEquivalent :: ($A: Type, a,b: A, l,m: NList(A),
+                      p: (a cons l) Permute (b cons m))
+-> toList(a, l) Permute toList(b, m)
 {fork p
- {permuteSame rewrite p.same; return permuteSame(...),
-  permute,
-  }}
+ {permuteSame
+  norm p.same; rewrite seek(a=b); rewrite seek(l=m); return permuteSame(...),
+
+  permute 
+  fork p.b
+  {nil
+   ;; eg [0,2,3] Permute [0,3,2]
+   prove (b cons m = p.a cons p.c) ;; eg b = 3, m = [2]
+   {=> b cons m = p.b + (p.a cons p.c)}
+
+   prove (p.l Permute p.c)  ;; eg [2,3] Permute [3,2]
+   {=> p.l Permute p.b + p.c}
+
+   norm p.al_destruct;
+   rewrite(seek(a = p.a));
+   rewrite(seek(l = p.l));
+   norm p.bac_destruct;
+   rewrite(seek(b = p.a));
+   rewrite(seek(m = p.c));
+   prove ((p.a cons p.l) Permute (p.a cons p.c))
+   {=> (p.a cons p.l) Permute (nil(A) + (p.a cons p.c));
+    return permute(p.a, p.l,nil(A),p.c,_,_,_)}
+   return permuteEquivalent(...)
+   ,
+   cons
+   }}}

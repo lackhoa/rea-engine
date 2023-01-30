@@ -417,7 +417,7 @@ synthesizeMembers(Arena *arena, Term *parent, i32 ctor_id)
                           struc->param_types[field_id]);
     Accessor *accessor = newTerm(arena, Accessor, type);
     accessor->record     = parent;
-    accessor->field_id   = field_id;
+    accessor->field_index   = field_id;
     accessor->field_name = field_name;
     members[field_id] = &accessor->t;
   }
@@ -592,7 +592,7 @@ getOrAddDataTree(Arena *arena, Typer *env, Term *in0, i32 ctor_id)
         i32 path_id = path_length++;
         assert(path_length < arrayCount(reverse_path));
         reverse_unions[path_id] = uni;
-        reverse_path[path_id]   = iter->field_id;
+        reverse_path[path_id]   = iter->field_index;
         iter0 = iter->record;
       } break;
 
@@ -1872,7 +1872,7 @@ evaluate_(EvaluationContext *ctx, Term *in0)
         if (Composite *record = castRecord(record0))
         {
           // note: we could honor "ctx->normalize" but idk who would actually want that.
-          out0 = record->args[in->field_id];
+          out0 = record->args[in->field_index];
         }
         else
         {
@@ -2163,10 +2163,12 @@ compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
       {
         Accessor *lhs = castTerm(l0, Accessor);
         Accessor *rhs = castTerm(r0, Accessor);
-        if (equal(lhs->record, rhs->record) &&
-            lhs->field_id == rhs->field_id)
+        if (lhs->field_index == rhs->field_index)
         {
-          out.result = Trinary_True;
+          if (equal(lhs->record, rhs->record))
+          {
+            out.result = Trinary_True;
+          }
         }
       } break;
 
@@ -2395,7 +2397,7 @@ normalize_(NormalizeContext *ctx, Term *in0)
         Accessor *in = castTerm(in0, Accessor);
         Term *record0 = normalize_(ctx, in->record);
         if (Composite *record = castRecord(record0))
-          out0 = record->args[in->field_id];
+          out0 = record->args[in->field_index];
         else if (record0 != in->record)
         {
           Accessor *out = copyStruct(arena, in);
@@ -2866,39 +2868,22 @@ unify(Stack *stack, b32 same_type, Term *in0, Term *goal0)
       }
     } break;
 
-#if 0
-    case Term_Union:
+    case Term_Accessor:
     {
-      Union *in = castTerm(in0, Union);
-      if (isPolyInstance(in))
+      Accessor *in = castTerm(in0, Accessor);
+      if (Accessor *goal = castTerm(goal0, Accessor))
       {
-        if (Union *goal = castTerm(goal0, Union))
+        if (in->field_index == goal->field_index)
         {
-          if (isPolyInstance(goal) &&
-              equal(&in->poly_union->t, &goal->poly_union->t))
-          {
-            i32 poly_param_count = getPolyArgCount(in);
-            b32 mismatch = false;
-            for (i32 i=0; i < poly_param_count && !mismatch; i++)
-            {
-              if (!unify(stack, true, in->poly_args[i], goal->poly_args[i]))
-                mismatch = true;
-            }
-            if (!mismatch)
-              success = true;
-          }
+          success = unify(stack, same_type, in->record, goal->record);
         }
       }
-      else
-      {
-        success = equal(in0, goal0);
-      }
     } break;
-#endif
 
     case Term_Constructor:
+    {
       invalidCodePath;
-      break;
+    } break;
 
     case Term_Union:
     case Term_Function:
@@ -2926,32 +2911,34 @@ solveArgs(Solver *solver, Term *op, Term *goal0, Token *blame_token=0)
 {
   i32    arg_count = 0;
   Term **args      = 0;
-  if (op->cat != Term_Constructor && op->cat != Term_PolyConstructor)
+
+  i32 serial = DEBUG_SERIAL++;
+
+  if (Arrow *signature = castTerm(getType(op), Arrow))
   {
-    if (Arrow *signature = castTerm(getType(op), Arrow))
+    Stack *stack = newStack(solver->arena, 0, signature->param_count);
+    if (unify(stack, false, signature->output_type, goal0))
     {
-      Stack *stack = newStack(solver->arena, 0, signature->param_count);
-      if (unify(stack, false, signature->output_type, goal0))
+      arg_count = signature->param_count;
+      args      = stack->items;
+      for (i32 arg_i=0; arg_i < signature->param_count; arg_i++)
       {
-        arg_count = signature->param_count;
-        args      = stack->items;
-        for (i32 arg_i=0; arg_i < signature->param_count; arg_i++)
+        // solving loop
+        if (!args[arg_i])
         {
-          // solving loop
-          if (!args[arg_i])
+          // todo #leak the type could be referenced
+          Term *type = evaluate(solver->arena, signature->param_types[arg_i], args);
+          if (!(args[arg_i] = solveGoal(solver, type)))
           {
-            // todo #leak the type could be referenced
-            Term *type = evaluate(solver->arena, signature->param_types[arg_i], args);
-            if (!(args[arg_i] = solveGoal(solver, type)))
+            if (blame_token)
             {
-              if (blame_token)
-              {
-                parseError(blame_token, "failed to solve arg %d", arg_i);
-                attach("arg_type", type);
-              }
-              args = 0;
-              break;
+              parseError(blame_token, "failed to solve arg %d", arg_i);
+              // :solveArgs-only-error-if-unification-succeeds
+              attach("arg_type", type);
+              attach("serial", serial);
             }
+            args = 0;
+            break;
           }
         }
       }
@@ -3262,10 +3249,11 @@ getFunctionOverloads(Identifier *ident, Term *goal0, b32 expect_error)
 inline Term *
 fillInEllipsis(Arena *arena, Typer *typer, Identifier *op_ident, Term *goal)
 {
-  // NOTE: This routine is different from "solveGoal" in that the top-level
-  // operator is fixed.
   Term *out = 0;
   pushContext(__func__);
+  i32 serial = DEBUG_SERIAL++;
+  if (serial == 3913)
+    breakhere;
 
   if (goal->cat == Term_Hole)
   {
@@ -3282,7 +3270,7 @@ fillInEllipsis(Arena *arena, Typer *typer, Identifier *op_ident, Term *goal)
          slot_i++)
     {
       Term *item = slot->items[slot_i];
-      SolveArgs solution = solveArgs(Solver{.arena=temp_arena, .typer=typer}, item, goal, &op_ident->token);
+      SolveArgs solution = solveArgs(Solver{.arena=arena, .typer=typer}, item, goal, &op_ident->token);
       if (solution.args)
       {
         // NOTE: we don't care which function matches, just grab whichever
@@ -3294,8 +3282,10 @@ fillInEllipsis(Arena *arena, Typer *typer, Identifier *op_ident, Term *goal)
     }
     if (!out && noError())
     {
+      // :solveArgs-only-error-if-unification-succeeds
       parseError(&op_ident->a, "found no matching overload");
       attach("available_overloads", slot->count, slot->items, printOptionPrintType());
+      attach("serial", serial);
     }
   }
   else
@@ -4272,7 +4262,24 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
             if (noError())
             {
               Term **args = pushArray(temp_arena, param_count, Term *, true);
+              Stack stack = {.count=param_count, .items=args, .unification_arena=arena};
               b32 stack_has_hole = false;  // This var is an optimization: in case we can just solve all the args in one pass.
+
+              if (goal->cat != Term_Hole)
+              {
+                Arrow *signature = castTerm(getType(op),Arrow);
+                assert(signature->output_type);
+                b32 ouput_unify = unify(&stack, false, signature->output_type, goal);
+                if (!ouput_unify)
+                {
+                  if (expect_error) silentError();
+                  else
+                  {
+                    parseError(in0, "cannot unify output");
+                  }
+                }
+              }
+
               for (int arg_i = 0;
                    (arg_i < param_count) && noError();
                    arg_i++)
@@ -4289,7 +4296,6 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
                     {
                       args[arg_i] = arg;
                       arg_was_filled = true;
-                      Stack stack = {.count=param_count, .items=args, .unification_arena=arena};
                       b32 unify_result = unify(&stack, false, param_type0, getType(arg));
                       if (!unify_result)
                       {
@@ -4907,6 +4913,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
       start = startString(error_buffer);
       printDataMap(error_buffer, typer);
       attach("data_map", endString(start));
+      attach("serial", serial);
 
       setErrorFlag(ErrorGoalAttached);
     }

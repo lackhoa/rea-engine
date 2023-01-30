@@ -323,7 +323,7 @@ struct TreePath {
 struct Accessor {
   embed_Term(t);
   Term   *record;
-  i32     field_id;
+  i32     field_index;
   String  field_name;           // #todo #debug_only
 };
 
