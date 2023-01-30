@@ -45,6 +45,14 @@ global_variable EngineState global_state;
 #define DEBUG_ON  {DEBUG_MODE = true; setvbuf(stdout, NULL, _IONBF, 0);}
 #define DEBUG_OFF {DEBUG_MODE = false; setvbuf(stdout, NULL, _IONBF, BUFSIZ);}
 
+inline Term *
+getArg(Term *in0, i32 index)
+{
+  Composite *in = castTerm(in0, Composite);
+  assert(index < in->arg_count);
+  return in->args[index];
+}
+
 inline Union *
 castUnionOrPolyUnion(Term *in0)
 {
@@ -273,6 +281,31 @@ newCompositeN_(Arena *arena, Term *op, i32 param_count, ...)
 }
 
 #define newCompositeN(arena, op, ...) newCompositeN_(arena, op, PP_NARG(__VA_ARGS__), __VA_ARGS__)
+
+
+inline Term *
+reaSingle(Arena *arena, Term *head)
+{
+  return newCompositeN(arena, rea_single, getType(head), head);
+}
+
+inline Term *
+reaCons(Arena *arena, Term *head, Term *tail)
+{
+  return newCompositeN(arena, rea_cons, getType(head), head, tail);
+}
+
+inline Term *
+reaGetListType(Term *l)
+{
+  return getType(getArg(l, 0));
+}
+
+inline Term *
+reaConcat(Arena *arena, Term *a, Term *b)
+{
+  return newCompositeN(arena, rea_concat, reaGetListType(a), a, b);
+}
 
 inline Term *
 newEquality(Arena *arena, Term *lhs, Term *rhs)
@@ -1492,7 +1525,7 @@ rebaseMain(Arena *arena, Term *in0, i32 delta, i32 offset)
         if (in->delta >= offset)
         {
           Variable *out = copyStruct(arena, in);
-          out->delta += delta;
+          out->delta += delta; assert(out->delta >= 0);
           out0 = &out->t;
         }
         else
@@ -1755,14 +1788,7 @@ evaluate_(EvaluationContext *ctx, Term *in0)
           {
             // NOTE: assert the poly union is in global context.
             assert(in->delta == ctx->offset+1);
-            if (ctx->offset)
-            {
-              todoIncomplete;
-            }
-            else
-            {
-              out0 = ctx->poly_args[in->index];
-            }
+            out0 = rebase(arena, ctx->poly_args[in->index], ctx->offset);
           }
           else
           {
@@ -3695,36 +3721,6 @@ getOverloadFromDistinguisher(Token *token, const char *name, Term *distinguisher
 }
 
 inline b32
-isAlgebraicNorm(Ast *ast)
-{
-  // Could be extended to a general macro matcher, if we need more macros.
-  b32 out = false;
-  if (Identifier *ident = castAst(ast, Identifier))
-  {
-    if (equal(&ident->a.token, "algebraic_norm"))
-    {
-      out = true;
-    }
-  }
-  return out;
-}
-
-inline b32
-isTestSort(Ast *ast)
-{
-  // Could be extended to a general macro matcher, if we need more macros.
-  b32 out = false;
-  if (Identifier *ident = castAst(ast, Identifier))
-  {
-    if (equal(&ident->a.token, "test_sort"))
-    {
-      out = true;
-    }
-  }
-  return out;
-}
-
-inline b32
 stringLessThan(String a, String b)
 {
   b32 out = false;
@@ -3746,7 +3742,7 @@ stringLessThan(String a, String b)
 }
 
 inline b32
-algebraicLessThan(Term *a0, Term *b0)
+algebraLessThan(Term *a0, Term *b0)
 {
   b32 out = false;
   if (a0->global_name && b0->global_name)
@@ -3817,14 +3813,14 @@ addToEnd(Arena *arena, TreePath *prefix, i32 item)
 }
 
 inline Term *
-getTransformationResult(Term *in)
+getRhs(Term *in)
 {
   auto [_, out] = getEqualitySides(getType(in));
   return out;
 }
 
 inline Term *
-applyEqChain(Arena *arena, Term *e1, Term *e2)
+eqChain(Arena *arena, Term *e1, Term *e2)
 {
   auto [a,b] = getEqualitySides(getType(e1));
   auto [_,c] = getEqualitySides(getType(e2));
@@ -3834,14 +3830,14 @@ applyEqChain(Arena *arena, Term *e1, Term *e2)
 }
 
 inline Term *
-transformPartOfExpression(Arena *arena, Term *eq_proof, TreePath *path, Term *in)
+transformSubExpression(Arena *arena, Term *eq_proof, TreePath *path, Term *in)
 {
   Term *id = newIdentity(arena, in);
   return newRewrite(arena, eq_proof, id, treePath(arena, 2, path), true);
 }
 
 inline Term *
-getAlgebraicNorm(Arena *arena, Typer *typer, Algebra *algebra, Term *in0)
+algebraFlatten(Arena *arena, Typer *typer, Algebra *algebra, Term *in0)
 {
   Term *out = 0;
   Term *expression0 = in0;
@@ -3851,10 +3847,10 @@ getAlgebraicNorm(Arena *arena, Typer *typer, Algebra *algebra, Term *in0)
     if (equal(expression->op, algebra->add))
     {
       Term *r = expression->args[1];
-      if (Term *norm_r = getAlgebraicNorm(arena, typer, algebra, r))
+      if (Term *norm_r = algebraFlatten(arena, typer, algebra, r))
       {
-        out = transformPartOfExpression(arena, norm_r, treePath(arena, 1, 0), expression0);
-        expression0 = getTransformationResult(out);
+        out = transformSubExpression(arena, norm_r, treePath(arena, 1, 0), expression0);
+        expression0 = getRhs(out);
       }
     }
   }
@@ -3876,10 +3872,10 @@ getAlgebraicNorm(Arena *arena, Typer *typer, Algebra *algebra, Term *in0)
             stop = false;
             Term *new_proof = newCompositeN(arena, algebra->addAssociative, l->args[0], l->args[1], r);
             if (out)
-              out = applyEqChain(arena, out, new_proof);
+              out = eqChain(arena, out, new_proof);
             else
               out = new_proof;
-            expression0 = getTransformationResult(out);
+            expression0 = getRhs(out);
           }
         }
       }
@@ -3889,35 +3885,23 @@ getAlgebraicNorm(Arena *arena, Typer *typer, Algebra *algebra, Term *in0)
   return out;
 }
 
-inline Term *
-buildAlgebraicNorm(Arena *arena, Typer *typer, CompositeAst *in)
+internal Term *
+getFoldList(Arena *arena, Typer *typer, Algebra *algebra, Term *in0)
 {
+  // todo need to pass the operator in here.
   Term *out = 0;
-  // Solver solver = Solver{.arena=arena, .typer=typer, .use_global_hints=true};
-  if (in->arg_count == 1)
+  if (Composite *in = castTerm(in0, Composite))
   {
-    if (Term *expression0 = buildTerm(arena, typer, in->args[0], holev))
+    if (equal(in->op, algebra->add))
     {
-      b32 found_algebra_match = false;
-      for (AlgebraDatabase *algebras = global_state.algebras;
-           algebras && !found_algebra_match;
-           algebras = algebras->tail)
-      {
-        Algebra *algebra = &algebras->head;
-        if (equal(getType(expression0), algebra->type))
-        {
-          found_algebra_match = true;
-          out = getAlgebraicNorm(arena, typer, algebra, expression0);
-        }
-      }
+      Term *tail = getFoldList(arena, typer, algebra, in->args[1]);
+      out = reaCons(arena, in->args[0], tail);
     }
   }
-  else
-    parseError("expected 1 argument");
-
-  if (!out && noError())
-    parseError(&in->a, "either the expression is already in normal form, or we can't solve the goal");
-
+  if (!out)
+  {
+    out = reaSingle(arena, in0);
+  }
   return out;
 }
 
@@ -3972,7 +3956,7 @@ qsortPartition(Term **in, i32 *indexes, i32 count)
   i32 write = 0;
   for (i32 i=0; i < count-1; i++)
   {
-    if (algebraicLessThan(in[i], pivot))
+    if (algebraLessThan(in[i], pivot))
     {
       SWAP(in[write], in[i]);
       SWAP(indexes[write], indexes[i]);
@@ -4010,53 +3994,6 @@ arrayFromMask(Arena *arena, Term **in, i32 in_count, b32 *mask, i32 mask_count)
   }
   assert(write == mask_count-1);
   return out;
-}
-
-inline Term *
-getArg(Term *in0, i32 index)
-{
-  Composite *in = castTerm(in0, Composite);
-  assert(index < in->arg_count);
-  return in->args[index];
-}
-
-#if 0
-struct PermutationList
-{
-  Term *abc;
-  Term *bac;
-  
-  Term *a;
-  Term *bc;
-  Term *b;
-  Term *c;
-
-  PermutationList *tail;
-};
-#endif
-
-inline Term *
-reaSingle(Arena *arena, Term *head)
-{
-  return newCompositeN(arena, rea_single, getType(head), head);
-}
-
-inline Term *
-reaCons(Arena *arena, Term *head, Term *tail)
-{
-  return newCompositeN(arena, rea_cons, getType(head), head, tail);
-}
-
-inline Term *
-reaGetListType(Term *l)
-{
-  return getType(getArg(l, 0));
-}
-
-inline Term *
-reaConcat(Arena *arena, Term *a, Term *b)
-{
-  return newCompositeN(arena, rea_concat, reaGetListType(a), a, b);
 }
 
 internal Term *
@@ -4135,34 +4072,79 @@ provePermutation(Arena *arena, Typer *typer, Term **abc0, Term **bac, i32 *index
 }
 
 internal Term *
+algebraSort(Arena *arena, Typer *typer, i32 count, Term **in)
+{
+  Term **out = copyArray(temp_arena, count, in);
+  i32 *indexes = pushArray(temp_arena, count, i32);
+  for (i32 i=0; i < count; i++) { indexes[i] = i; }
+  quickSort(out, indexes, count);
+  i32 *inverse = pushArray(temp_arena, count, i32);
+  for (i32 i=0; i < count; i++) { inverse[indexes[i]] = i; }
+  i32 *subtracted = pushArray(temp_arena, count, i32);
+  for (i32 i=0; i < count; i++)
+  {
+    subtracted[i] = inverse[i];
+    for (i32 left_index=0; left_index < i; left_index++)
+    {
+      if (inverse[left_index] < inverse[i])
+      {
+        subtracted[i]--;
+      }
+    }
+  }
+  Term *proof = provePermutation(arena, typer, in, out, subtracted, count);
+  return proof;
+}
+
+internal Term *
 buildTestSort(Arena *arena, Typer *typer, CompositeAst *ast)
 {
-  Term *proof = 0;
+  Term *out = 0;
   assert(ast->arg_count == 1);
   if (Term *list0 = buildTerm(arena, typer, ast->args[0], holev))
   {
     auto [count, in] = toCArray(temp_arena, list0);
-    Term **out = copyArray(temp_arena, count, in);
-    i32 *indexes = pushArray(temp_arena, count, i32);
-    for (i32 i=0; i < count; i++) { indexes[i] = i; }
-    quickSort(out, indexes, count);
-    i32 *inverse = pushArray(temp_arena, count, i32);
-    for (i32 i=0; i < count; i++) { inverse[indexes[i]] = i; }
-    i32 *subtracted = pushArray(temp_arena, count, i32);
-    for (i32 i=0; i < count; i++)
+    out = algebraSort(arena, typer, count, in);
+  }
+  return out;
+}
+
+inline Term *
+buildAlgebraNorm(Arena *arena, Typer *typer, CompositeAst *in)
+{
+  Term *out = 0;
+  if (in->arg_count == 1)
+  {
+    if (Term *expression0 = buildTerm(arena, typer, in->args[0], holev))
     {
-      subtracted[i] = inverse[i];
-      for (i32 left_index=0; left_index < i; left_index++)
+      b32 found_algebra_match = false;
+      for (AlgebraDatabase *algebras = global_state.algebras;
+           algebras && !found_algebra_match;
+           algebras = algebras->tail)
       {
-        if (inverse[left_index] < inverse[i])
+        Algebra *algebra = &algebras->head;
+        if (equal(getType(expression0), algebra->type))
         {
-          subtracted[i]--;
+          found_algebra_match = true;
+
+          Term *eq_flattened = algebraFlatten(arena, typer, algebra, expression0);
+          Term *flattened    = eq_flattened ? getRhs(eq_flattened) : expression0;
+          Term *list         = getFoldList(arena, typer, algebra, flattened);
+
+          Term *folded    = newCompositeN(arena, rea_fold, algebra->type, algebra->add, list);
+          Term *eq_folded = reaComputation(arena, typer, flattened, folded);
+          out = eq_flattened ? eqChain(arena, eq_flattened, eq_folded) : eq_folded;
         }
       }
     }
-    proof = provePermutation(arena, typer, in, out, subtracted, count);
   }
-  return proof;
+  else
+    parseError("expected 1 argument");
+
+  if (!out && noError())
+    parseError(&in->a, "expression is already algebraically normalized");
+
+  return out;
 }
 
 internal BuildTerm
@@ -4197,15 +4179,15 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
         else
           parseError(in->args[0], "todo: ellipsis only works with identifier atm");
       }
-      else if (isTestSort(in->op))
+      else if (equal(in->op->token, "test_sort"))
       {
         // macro interception
         out0 = buildTestSort(arena, typer, in);
       }
-      else if (isAlgebraicNorm(in->op))
+      else if (equal(in->op->token, "algebra_norm"))
       {
         // macro interception
-        out0 = buildAlgebraicNorm(arena, typer, in);
+        out0 = buildAlgebraNorm(arena, typer, in);
       }
       else
       {
@@ -5449,7 +5431,8 @@ parseUnion(Arena *arena)
 
 struct ProcessPolyConstructorTypeContext {
   Arena *arena;
-  i32          poly_param_count;
+  i32    poly_param_count;
+  i32    offset;
 };
 
 // TODO: Handle type?
@@ -5466,16 +5449,16 @@ processPolyConstructorType(ProcessPolyConstructorTypeContext *ctx, Term *in0)
     {
       case Term_Variable:
       {
-        // NOTE: this is hacky, doesn't handle arrow types
         Variable *in = castTerm(in0, Variable);
         Variable *out = copyStruct(arena, in);
-        if (in->delta == 0)
+        i32 delta = in->delta - ctx->offset;
+        if (delta == 0)
         {
-          out->index = in->index + ctx->poly_param_count;
+          out->index += ctx->poly_param_count;
         }
-        else if (in->delta == 1)
+        else if (delta == 1)
         {
-          out->delta = 0;
+          out->delta--;
         }
         else
         {
@@ -5511,8 +5494,22 @@ processPolyConstructorType(ProcessPolyConstructorTypeContext *ctx, Term *in0)
         }
       } break;
 
-      default:
-        todoIncomplete;
+      case Term_Arrow:
+      {
+        Arrow *in  = castTerm(in0, Arrow);
+        Arrow *out = copyStruct(arena, in);
+        out->param_types = pushArray(arena, in->param_count, Term*);
+        ctx->offset++;
+        for (i32 i=0; i < in->param_count; i++)
+        {
+          out->param_types[i] = processPolyConstructorType(ctx, in->param_types[i]);
+        }
+        ctx->offset--;
+        out0 = &out->t;
+      } break;
+
+
+      todoIncomplete;
     }
   }
   assert(out0);

@@ -237,16 +237,17 @@ test_eval test_sort([0]);
 test_eval test_sort([2, 0]);
 test_eval test_sort([0, 2]);
 
-#debug
-print([2, 0, 4, 3, 1]);
-#debug off
-
 testSortList :: () -> (Permute([2, 0, 4, 3, 1], [0, 1, 2, 3, 4]))
 {
  return test_sort([2, 0, 4, 3, 1]);
  }
-;; algebraTest :: (a,b,c,d,e,f: Nat) -> ((a+b)+c)+(d+e)+f = fold(+, cons([a,b,c,d,e]))
-;; {
-;;  return algebraic_norm(((a+b)+c)+(d+e)+f)
-;;  }
 
+algebraTest :: (a,b,c,d,e,f: Nat) -> ((a+b)+c)+(d+e)+f = fold(+, [a,b,c,d,e,f])
+{
+ return algebra_norm(((a+b)+c)+(d+e)+f)
+ }
+
+algebraTest2 :: (a,b,c,d,e,f: Nat) -> (((c+e)+a)+(b+f)+d) = fold(+, [a,b,c,d,e,f])
+{
+ return algebra_norm(((c+e)+a)+(b+f)+d)
+ }
