@@ -244,6 +244,16 @@ inline void assertEqual(Term *l, Term *r) {}
 #endif
 
 inline Term *
+newFunction(Arena *arena, Arrow *signature, Term *body, i32 function_flags=0)
+{
+  assert(equal(getType(body), signature->output_type));
+  Function *fun = newTerm(arena, Function, &signature->t);
+  fun->body           = body;
+  fun->function_flags = function_flags;  // we don't use any flag for local functions atm but let's just keep things the same.
+  return &fun->t;
+}
+
+inline Term *
 newComposite(Arena *arena, Term *op, i32 arg_count, Term **args)
 {
   Term *out0 = 0;
@@ -2625,7 +2635,7 @@ requireCategory(TokenCategory tc, char *message=0, Tokenizer *tk=global_tokenize
 }
 
 inline b32
-requireIdentifier(char *message, Tokenizer *tk=global_tokenizer)
+requireIdentifier(char *message=0, Tokenizer *tk=global_tokenizer)
 {
   b32 out = false;
   if (hasMore())
@@ -2701,6 +2711,7 @@ isExpressionEndMarker(Token *token)
     case Token_ColonEqual:
     case Token_DoubleDash:
     case Token_StrongArrow:
+    case Token_Keyword_in:
       return true;
     default: {}
   }
@@ -3485,18 +3496,22 @@ parseSequence(Arena *arena, b32 require_braces=true)
 
       case Tactic_rewrite:
       {
+        pushContext("rewrite EXPRESSION [in IDENTIFIER]");
         RewriteAst *rewrite = newAst(arena, RewriteAst, &token);
-
-        rewrite->right_to_left = false;
-        Token next = peekToken();
-        if (equal(next.string, "<-"))
+        if (optionalString("<-"))
         {
-          nextToken();
           rewrite->right_to_left = true;
         }
-
         rewrite->eq_proof = parseExpression(arena);
+        if (optionalCategory(Token_Keyword_in))
+        {
+          if (requireIdentifier())
+          {
+            rewrite->in_variable = *lastToken();
+          }
+        }
         ast0 = &rewrite->a;
+        popContext();
       } break;
 
       case Tactic_goal_transform:
@@ -4187,6 +4202,21 @@ buildAlgebraNorm(Arena *arena, Typer *typer, CompositeAst *in)
   return out;
 }
 
+inline Term *
+buildFunctionGivenSignature(Arena *arena, Typer *typer, Arrow *signature, Ast *in_body,
+                            i32 function_flags=0)
+{
+  // todo :build-global-function-vs-local-function
+  Term *fun = 0;
+  introduceSignature(typer, signature, true);
+  if (Term *body = buildTerm(arena, typer, in_body, signature->output_type).term)
+  {
+    fun = newFunction(arena, signature, body, function_flags);
+  }
+  unwindBindingsAndScope(typer);
+  return fun;
+}
+
 internal BuildTerm
 buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
 {
@@ -4626,32 +4656,23 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
 
     case Ast_FunctionAst:
     {
-      // todo :build-global-function-vs-local-function
       FunctionAst *in   = castAst(in0, FunctionAst);
       Term   *type = goal;
       if (in->signature)
+      {
         type = buildTerm(arena, typer, &in->signature->a, holev).term;
+      }
 
       if (noError())
       {
         if (Arrow *signature = castTerm(type, Arrow))
         {
-          Function *fun = newTerm(arena, Function, &signature->t);
-
-          introduceSignature(typer, signature, true);
-          if (Term *body = buildTerm(arena, typer, in->body, signature->output_type).term)
-          {
-            fun->body           = body;
-            fun->function_flags = in->function_flags;  // we don't use any flag for local functions atm but let's just keep things the same.
-          }
-          unwindBindingsAndScope(typer);
-          if (noError())
-            out0  = &fun->t;
+          out0 = buildFunctionGivenSignature(arena, typer, signature, in->body, in->function_flags);
         }
         else
         {
-          parseError(in0, "lambda has to have an arrow type");
-          attach("goal", goal);
+          parseError(in0, "function signature is required to be an arrow type");
+          attach("type", type);
         }
       }
     } break;
@@ -4807,17 +4828,16 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
       if (in->type && in->type->cat != Ast_NormalizeMeAst)
       {
         if (Term *type = buildTerm(arena, typer, in->type, holev).term)
+        {
           type_hint = type;
+        }
       }
       if (noError())
       {
-        if (Term *build_rhs = buildTerm(arena, typer, in->rhs, type_hint).term)
+        if (Term *rhs = buildTerm(arena, typer, in->rhs, type_hint).term)
         {
-          Term *rhs = build_rhs;
-          Term *rhs_type = type_hint;
-          if (type_hint->cat == Term_Hole)
-            rhs_type = getType(rhs);
-            
+          Term *rhs_type = (type_hint->cat == Term_Hole) ? getType(rhs) : type_hint;
+
           if (in->type)
           {// type coercion
             if (NormalizeMeAst *in_type = castAst(in->type, NormalizeMeAst))
@@ -4833,40 +4853,27 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
               {
                 Term *computation = newComputation_(arena, norm_rhs_type, rhs_type);
                 rhs_type = norm_rhs_type;
-                rhs = newRewrite(arena, computation, build_rhs, 0, false);
-                assert(equal(getType(rhs), rhs_type));
+                rhs = newRewrite(arena, computation, rhs, 0, false);
               }
             }
           }
 
           if (!recursed)
           {
-            Token *token = &in0->token;
-            FunctionAst *lambda = newAst(temp_arena, FunctionAst, token);
-            lambda->body = in->body;
-            ArrowAst *signature = newAst(temp_arena, ArrowAst, token);
             i32 param_count = 1;
-            allocateArray(temp_arena, param_count, signature->param_names);
-            allocateArray(temp_arena, param_count, signature->param_types);
-            allocateArray(temp_arena, param_count, signature->param_flags, true);
-            signature->param_count    = param_count;
+            Arrow *signature = newTerm(arena, Arrow, rea_Type);
+            signature->param_count = param_count;
+            allocateArray(arena, param_count, signature->param_names);
+            allocateArray(arena, param_count, signature->param_types);
+            allocateArray(arena, param_count, signature->param_flags, true);
             signature->param_names[0] = in->lhs;
+            signature->param_types[0] = rebase(arena, rhs_type, 1);
+            signature->output_type    = rebase(arena, goal, 1);
 
-            Term *rhs_type_rebased = rebase(arena, rhs_type, 1);
-            signature->param_types[0] = synthesizeAst(temp_arena, rhs_type_rebased, token);
-            signature->output_type    = synthesizeAst(temp_arena, rebase(arena, goal, 1), token);
-            lambda->signature = signature;
-
-            Ast *rhs_ast = synthesizeAst(arena, rhs, token);
-
-            CompositeAst *com = newAst(arena, CompositeAst, token);
-            allocateArray(temp_arena, param_count, com->args);
-            com->op        = &lambda->a;
-            com->arg_count = param_count;
-            com->args[0]   = rhs_ast;
-
-            out0 = buildTerm(arena, typer, &com->a, goal);
-            recursed = true;
+            if (Term *fun = buildFunctionGivenSignature(arena, typer, signature, in->body))
+            {
+              out0 = newCompositeN(arena, fun, rhs);
+            }
           }
         }
       }
@@ -6079,26 +6086,34 @@ buildGlobalFunction(Arena *arena, FunctionAst *in)
   Typer typer_ = {};
   auto  typer  = &typer_;
 
-  if (BuildTerm build_signature = buildTerm(arena, typer, &in->signature->a, holev))
+  if (Term *type = buildTerm(arena, typer, &in->signature->a, holev).term)
   {
-    Arrow *signature = castTerm(build_signature.term, Arrow);
-    out = newTerm(arena, Function, build_signature.term);
-    out->body           = &dummy_function_being_built;
-    out->function_flags = in->function_flags;
-
-    // NOTE: add binding first to support recursion
-    addGlobalBinding(&in->a.token, &out->t);
-
-    if (noError())
+    if (Arrow *signature = castTerm(type, Arrow))
     {
-      introduceSignature(typer, signature, true);
-      if (BuildTerm body = buildTerm(arena, typer, in->body, signature->output_type))
+      out = newTerm(arena, Function, type);
+      out->body           = &dummy_function_being_built;
+      out->function_flags = in->function_flags;
+
+      // NOTE: add binding first to support recursion
+      addGlobalBinding(&in->a.token, &out->t);
+
+      if (noError())
       {
-        out->body = body.term;
-        if (checkFlag(in->function_flags, FunctionFlag_is_global_hint))
-          addGlobalHint(out);
+        introduceSignature(typer, signature, true);
+        if (Term *body = buildTerm(arena, typer, in->body, signature->output_type).term)
+        {
+          out->body = body;
+          if (checkFlag(in->function_flags, FunctionFlag_is_global_hint))
+          {
+            addGlobalHint(out);
+          }
+        }
+        unwindBindingsAndScope(typer);
       }
-      unwindBindingsAndScope(typer);
+    }
+    else
+    {
+      parseError(&in->signature->a, "function signature is required to be an arrow type");
     }
   }
 

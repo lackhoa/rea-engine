@@ -368,6 +368,7 @@ struct RewriteAst
   Ast      *new_goal;
   Ast      *body;
   b32       right_to_left;
+  Token     in_variable;
 };
 
 struct GoalTransform

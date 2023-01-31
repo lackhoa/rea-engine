@@ -198,30 +198,37 @@ sumCancellation :: (a,b,c: Natp, p: a+b =? a+c = true) -> (b =? c = true)
 {
  fork a {
          1 return p,
-         ++ fork b {1 fork c {1, ++ return trueNotFalse(a.p + 1 =? a.p + ++(c.p),
-                                                        p,
-                                                        add1DifferentFromAddS(a.p, c.p))},
-                    ++ fork c
-                    {1
-                     lem1 := eqSymmetric(a.p + ++(b.p), a.p + 1, p);
-                     lem2 := add1DifferentFromAddS(a.p, b.p);
-                     return trueNotFalse(a.p + 1 =? a.p + ++(b.p), lem1, lem2)
-                     ,
-                     ++
-                     lem1 : ++(b.p) + a.p =? ++(c.p) + a.p = true :=
-                     seq {=> a.p + ++(b.p) =? ++(c.p) + a.p = true {addCommutative}
-                          => a.p + ++(b.p) =? a.p + ++(c.p) = true {addCommutative}
-                          return p
-                          };
-                     norm lem1;
-                     lem2: a.p + b.p =? a.p + c.p = true :=
-                     seq {
-                          => b.p + a.p =? a.p + c.p = true {addCommutative}
-                          => b.p + a.p =? c.p + a.p = true {addCommutative}
-                          return lem1;
-                          };
-                     return sumCancellation(a.p,b.p,c.p, lem2)
-                     }}}
+         ++ fork b
+         {1
+          fork c
+          {1,
+           ++
+           prove (a.p + 1 =? a.p + ++(c.p) = false) {return add1DifferentFromAddS(a.p, c.p)} as x;
+           rewrite x in p;
+           reductio;
+           ;; return trueNotFalse(a.p + 1 =? a.p + ++(c.p), p, _)
+           },
+          ++ fork c
+          {1
+           lem1 := eqSymmetric(a.p + ++(b.p), a.p + 1, p);
+           lem2 := add1DifferentFromAddS(a.p, b.p);
+           return trueNotFalse(a.p + 1 =? a.p + ++(b.p), lem1, lem2)
+           ,
+           ++
+           lem1 : ++(b.p) + a.p =? ++(c.p) + a.p = true :=
+           seq {=> a.p + ++(b.p) =? ++(c.p) + a.p = true {addCommutative}
+                => a.p + ++(b.p) =? a.p + ++(c.p) = true {addCommutative}
+                return p
+                };
+           norm lem1;
+           lem2: a.p + b.p =? a.p + c.p = true :=
+           seq {
+                => b.p + a.p =? a.p + c.p = true {addCommutative}
+                => b.p + a.p =? c.p + a.p = true {addCommutative}
+                return lem1;
+                };
+           return sumCancellation(a.p,b.p,c.p, lem2)
+           }}}
  }
 
 eqCorrect :: (a,b: Natp, p: a =? b = true) -> a = b
@@ -268,7 +275,7 @@ totalOrder :: (a,b: Natp) -> union {eq(p: a = b),
    1 return ctor[1](_),
    ++
    ind := totalOrder(a.p, b.p);
-   fork ind {eq lem := ind.p; return ctor[0](seq{rewrite lem}),
+   fork ind {eq return ctor[0](seq{rewrite ind.p}),
              gt return ctor[1](ind.p),
              lt return ctor[2](ind.p)} 
    }
@@ -282,7 +289,6 @@ differentFromPlus :: (a: Natp, b: Natp, p: a = a+b) -> False
  {
   1  return p,
   ++ return differentFromPlus(a.p, b, p)
-  ,
   }
  }
 

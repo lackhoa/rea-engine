@@ -25,6 +25,7 @@ enum TokenCategory
   Token_Keyword_seq,
   Token_Keyword_overload,
   Token_Keyword_seek,
+  Token_Keyword_in,
 
   // Token_Keyword_rewrite,
   // Token_Keyword_norm,
@@ -57,7 +58,7 @@ enum TokenCategory
 };
 
 const char *language_keywords[] = {
-  "", "fn", "union", "ctor", "seq", "overload", "seek",
+  "", "fn", "union", "ctor", "seq", "overload", "seek", "in",
   "test_eval", "print", "print_raw", "print_ast", "check", "check_truth", "algebra_declare",
 };
 const char *meta_directives[] = {"", "load", "should_fail", "debug", "norm", "hint", "no_apply", "expand", "no_print_as_binop", "print_proof", "unused"};
