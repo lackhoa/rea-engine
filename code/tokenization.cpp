@@ -86,7 +86,6 @@ isSpecial(char c)
     case '~':
     case '@':
     case '#':
-    case '$':
     case '^':
     case '&':
     case '|':

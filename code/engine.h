@@ -244,15 +244,6 @@ struct PolyConstructor {
   i32    index;
 };
 
-#if 0
-// NOTE: does not appear in expression.
-struct PolyUnion {
-  embed_Term(t);
-  PolyConstructor **pctors;
-  Union            *union_template;
-};
-#endif
-
 struct Union {
   embed_Term(t);
   i32     ctor_count;
@@ -331,6 +322,7 @@ struct Composite {
 
 u32 ParameterFlag_Inferred = 1 << 0;
 u32 ParameterFlag_Unused   = 1 << 1;
+u32 ParameterFlag_Poly     = 1 << 2;
 
 struct ArrowAst {
   embed_Ast(a);

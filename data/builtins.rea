@@ -17,189 +17,166 @@ Maybe :: union(A: Type)
 {none,
  some(v: A)}
 
-;; ----
-;; NList (Lists that can be empty)
-;; ----
+;; ;; ----
+;; ;; NList (Lists that can be empty)
+;; ;; ----
 
-NList :: union(ListType: Type)
-{nil,
- cons(head: ListType, tail: NList(ListType))}
+;; NList :: union(ListType: Type)
+;; {nil,
+;;  cons(head: ListType, tail: NList(ListType))}
 
-+ :: fn($T: Type, l,m: NList(T)) -> NList(T)
-{fork l
- {nil  return m,
-  cons return l.head cons (l.tail + m)}}
-
-nonEmpty :: fn ($A: Type, list: NList(A)) -> Type
-#expand
-{return list != nil(A)}
-
-concatNonEmpty :: (T:Type, l,m: NList(T), nonEmpty(l), nonEmpty(m)) -> nonEmpty(l+m)
-#hint
-{fork l {nil, cons}}
-
-Permute :: union($T: Type, al,bac: NList(T))
-{
- permuteSame(same: al=bac),
- permute(a: T, l,b,c: NList(T),
-         al_destruct: al=(a cons l),
-         bac_destruct: bac=(b + (a cons c)),
-         recurse: Permute(l, b+c))
- }
-
-;;
-;; List (Populated list)
-;;
-
-List :: union(ListType: Type)
-{single(head: ListType),
- cons(head: ListType, tail: List(ListType))}
-
-+ :: fn($T: Type, l,m: List(T)) -> List(T)
-{fork l
- {single return l.head cons m,
-  cons   return l.head cons (l.tail + m)}}
-
-fold :: fn($A: Type, op: (a,b: A) -> A, list: List(A)) -> A
-#no_print_as_binop
-{fork list
- {single,
-  cons
-  return list.head op fold(op, list.tail)}}
-
-foldConcat :: ($T: Type, op: (a,b: T) -> T,
-               associative: (a,b,c: T) -> (a op b) op c = a op b op c,
-               l,m: List(T)) -> (fold(op, l+m) = fold(op, l) op fold(op, m))
-#hint
-{fork l
- {single,
-  cons
-  rewrite associative(l.head, fold(op, l.tail), fold(op, m));
-  rewrite foldConcat(op, associative, l.tail, m);
-  }}
-
-Permute :: union($ListT: Type, al,bac: List(ListT))
-{
- permuteSame(same: al=bac),
- permute(a: ListT, l,b,c: List(ListT),
-         al_destruct: al=(a cons l),
-         bac_destruct: bac=(b + (a cons c)),
-         recurse: Permute(l, b+c)),
- permuteFirst(a: ListT, l,c: List(ListT),
-              al_destruct: al=(a cons l),
-              bac_destruct: bac=(a cons c),
-              recurse: Permute(l, c)),
- permuteLast(a: ListT, l,b: List(ListT),
-             al_destruct: al=(a cons l),
-             bac_destruct: bac=(b + single(a)),
-             recurse: Permute(l, b))
- }
-print(overload(Permute, List));
-print(single);
-
-foldPermute :: ($T: Type,
-                op: (a,b: T) -> T,
-                associative: (a,b,c: T) -> (a op b) op c = a op b op c,
-                commutative: (a,b: T) -> a op b = b op a,
-                l,m: List(T),
-                p: Permute(l, m)) -> fold(op, l) = fold(op, m)
-{
- fork p
- {permuteSame
-  rewrite p.same,
-
-  permute
-  rewrite p.al_destruct;
-  rewrite p.bac_destruct;
-  norm;
-  ;; p.a op fold(op, p.l) = fold(op, p.b + (p.a cons p.c))
-  => p.a op fold(op, p.l) = fold(op, p.b) op fold(op, p.a cons p.c) {foldConcat}
-  => p.a op fold(op, p.l) = fold(op, p.b) op p.a op fold(op, p.c)
-  => p.a op fold(op, p.l) = (p.a op fold(op, p.c)) op fold(op, p.b) {commutative}
-  => p.a op fold(op, p.l) = p.a op fold(op, p.c) op fold(op, p.b) {associative}
-  => p.a op fold(op, p.l) = p.a op fold(op, p.b) op fold(op, p.c) {commutative}
-  => p.a op fold(op, p.l) = p.a op fold(op, p.b + p.c);
-  prove fold(op, p.l) = fold(op, p.b + p.c) {return foldPermute(...)} as e;
-  rewrite e,
-
-  permuteFirst
-  rewrite p.al_destruct;
-  rewrite p.bac_destruct;
-  norm;
-  prove fold(op, p.l) = fold(op, p.c) {return foldPermute(...)} as e;
-  rewrite e,
-
-  permuteLast
-  rewrite p.al_destruct;
-  rewrite p.bac_destruct;
-  norm;
-  ;; p.a op fold(op, p.l) = fold(op, p.b + single(p.a))
-  => p.a op fold(op, p.l) = fold(op, p.b) op fold(op, single(p.a))
-  => p.a op fold(op, p.l) = fold(op, p.b) op p.a
-  => p.a op fold(op, p.l) = p.a op fold(op, p.b) {commutative}
-  prove fold(op, p.l) = fold(op, p.b) {return foldPermute(...)} as e;
-  rewrite e;
-  }
- }
-
-provePermuteHelper :: fn(T: Type, a,b,c: List(T), p: Permute(a,b), e: b=c) -> Permute(a,c)
-{rewrite <- e;}
-
-;; toNList :: fn($T: Type, l: List(T)) -> NList(T)
+;; + :: fn($T: Type, l,m: NList(T)) -> NList(T)
 ;; {fork l
-;;  {single return l.head cons nil(T),
-;;   cons   return l.head cons toNList(l.tail)}}
+;;  {nil  return m,
+;;   cons return l.head cons (l.tail + m)}}
 
-;; toNListNonNil :: ($T: Type, l: List(T)) -> toNList(l) != nil(T)
-;; {fork l {single, cons}}
+;; nonEmpty :: fn ($A: Type, list: NList(A)) -> Type
+;; #expand
+;; {return list != nil(A)}
 
-;; toNListEq :: ($T: Type, $l,$m: List(T), e: toNList(l) = toNList(m)) -> l = m
-;; #norm(e)
+;; concatNonEmpty :: (T:Type, l,m: NList(T), nonEmpty(l), nonEmpty(m)) -> nonEmpty(l+m)
+;; #hint
+;; {fork l {nil, cons}}
+
+;; ;; NOTE "$$" means "poly"
+;; Permute :: union($$T: Type, NList(T), NList(T))
 ;; {
-;;  fork l {single
-;;          fork m {single,
-;;                  cons
-;;                  prove(toNList(m.tail) = nil(T)) {rewrite e.1} as p
-;;                  return toNListNonNil(m.tail)(p)
-;;                  },
-;;          cons
-;;          fork m {single return toNListNonNil(l.tail)(e.1),
-;;                  cons   return ctor[0](e.0, toNListEq(e.1))}
-;;          }
+;;  permuteSame(l: NList(T)) -> Permute(l,l)
+;;  ,
+;;  permute(a: T, $l,$b,$c: NList(T), recurse: Permute(l, b+c)) -> Permute(a cons l, b + (a cons c))
 ;;  }
 
-toList :: fn($A: Type, a: A, l: NList(A)) -> List(A)
-{fork l
- {nil  return single(a),
-  cons return a cons toList(l.head, l.tail)}}
+;; ;;
+;; ;; List (Populated list)
+;; ;;
 
-permuteEquivalent :: ($A: Type, a,b: A, l,m: NList(A),
-                      p: (a cons l) Permute (b cons m))
--> toList(a, l) Permute toList(b, m)
-{fork p
- {permuteSame
-  norm p.same; rewrite seek(a=b); rewrite seek(l=m); return permuteSame(...),
+;; fold :: fn($A: Type, op: (a,b: A) -> A, a: A, tail: NList(A)) -> A
+;; #no_print_as_binop
+;; {fork tail
+;;  {nil return a,
+;;   cons
+;;   return a op fold(op, tail.head, tail.tail)}}
 
-  permute 
-  fork p.b
-  {nil
-   ;; eg [0,2,3] Permute [0,3,2]
-   prove (b cons m = p.a cons p.c) ;; eg b = 3, m = [2]
-   {=> b cons m = p.b + (p.a cons p.c)}
+;; ;; foldConcat :: ($T: Type, op: (a,b: T) -> T,
+;; ;;                associative: (a,b,c: T) -> (a op b) op c = a op b op c,
+;; ;;                a,b: T, l,m: NList(T)) -> (fold(op, a, l + (b cons m)) =
+;; ;;                                           fold(op, a cons l) op fold(op, b cons m))
+;; ;; #hint
+;; ;; {fork l
+;; ;;  {single,
+;; ;;   cons
+;; ;;   rewrite associative(l.head, fold(op, l.tail), fold(op, m));
+;; ;;   rewrite foldConcat(op, associative, l.tail, m);
+;; ;;   }}
 
-   prove (p.l Permute p.c)  ;; eg [2,3] Permute [3,2]
-   {=> p.l Permute p.b + p.c}
+;; foldPermute :: ($T: Type,
+;;                 op: (a,b: T) -> T,
+;;                 associative: (a,b,c: T) -> (a op b) op c = a op b op c,
+;;                 commutative: (a,b: T) -> a op b = b op a,
+;;                 a,b: T, l,m: NList(T),
+;;                 p: Permute(a cons l, b cons m)) -> fold(op, a, l) = fold(op, b, m)
+;; {
+;;  fork p
+;;  {permuteSame
+;;   norm p.same;
+;;   rewrite seek(a = b);
+;;   rewrite seek(l = m);
+;;   ,
 
-   norm p.al_destruct;
-   rewrite(seek(a = p.a));
-   rewrite(seek(l = p.l));
-   norm p.bac_destruct;
-   rewrite(seek(b = p.a));
-   rewrite(seek(m = p.c));
-   prove ((p.a cons p.l) Permute (p.a cons p.c))
-   {=> (p.a cons p.l) Permute (nil(A) + (p.a cons p.c));
-    return permute(p.a, p.l,nil(A),p.c,_,_,_)}
-   return permuteEquivalent(...)
-   ,
-   cons
-   }}}
+;;   ;; bookmark Please, make things better, for the children
+;;   permute
+;;   norm p.al_destruct;
+;;   rewrite seek(a = p.a);
+;;   rewrite seek(l = p.l);
+;;   fork p.b
+;;   {nil
+;;    norm p.bac_destruct;
+;;    rewrite seek(b=p.a);
+;;    rewrite seek(m=p.c);
+;;    norm p.recurse;
+
+;;    prove (p.a cons p.l) Permute (p.a cons p.c)
+;;    {prove (p.a cons p.l = p.a cons p.l) {} as x;
+;;     prove (p.a cons p.c = (nil(T) + (p.a cons p.c))) {} as y;
+;;     prove (Permute(p.l, nil(T) + p.c)) {norm;} as z;
+;;     return permute(x, y, z)}
+
+;;    return foldPermute(...)
+;;    ,
+
+;;    cons
+;;    }
+;;   ;; norm;
+;;   ;; p.a op fold(op, p.l) = fold(op, p.b + (p.a cons p.c))
+;;   ;; => p.a op fold(op, p.l) = fold(op, p.b) op fold(op, p.a cons p.c) {foldConcat}
+;;   ;; => p.a op fold(op, p.l) = fold(op, p.b) op p.a op fold(op, p.c)
+;;   ;; => p.a op fold(op, p.l) = (p.a op fold(op, p.c)) op fold(op, p.b) {commutative}
+;;   ;; => p.a op fold(op, p.l) = p.a op fold(op, p.c) op fold(op, p.b) {associative}
+;;   ;; => p.a op fold(op, p.l) = p.a op fold(op, p.b) op fold(op, p.c) {commutative}
+;;   ;; => p.a op fold(op, p.l) = p.a op fold(op, p.b + p.c);
+;;   ;; prove fold(op, p.l) = fold(op, p.b + p.c) {return foldPermute(...)} as e;
+;;   ;; rewrite e,
+;;   }
+;;  }
+
+;; provePermuteHelper :: fn(T: Type, a,b,c: List(T), p: Permute(a,b), e: b=c) -> Permute(a,c)
+;; {rewrite <- e;}
+
+;; ;; toNList :: fn($T: Type, l: List(T)) -> NList(T)
+;; ;; {fork l
+;; ;;  {single return l.head cons nil(T),
+;; ;;   cons   return l.head cons toNList(l.tail)}}
+
+;; ;; toNListNonNil :: ($T: Type, l: List(T)) -> toNList(l) != nil(T)
+;; ;; {fork l {single, cons}}
+
+;; ;; toNListEq :: ($T: Type, $l,$m: List(T), e: toNList(l) = toNList(m)) -> l = m
+;; ;; #norm(e)
+;; ;; {
+;; ;;  fork l {single
+;; ;;          fork m {single,
+;; ;;                  cons
+;; ;;                  prove(toNList(m.tail) = nil(T)) {rewrite e.1} as p
+;; ;;                  return toNListNonNil(m.tail)(p)
+;; ;;                  },
+;; ;;          cons
+;; ;;          fork m {single return toNListNonNil(l.tail)(e.1),
+;; ;;                  cons   return ctor[0](e.0, toNListEq(e.1))}
+;; ;;          }
+;; ;;  }
+
+;; toList :: fn($A: Type, a: A, l: NList(A)) -> List(A)
+;; {fork l
+;;  {nil  return single(a),
+;;   cons return a cons toList(l.head, l.tail)}}
+
+;; permuteEquivalent :: ($A: Type, a,b: A, l,m: NList(A),
+;;                       p: (a cons l) Permute (b cons m))
+;; -> toList(a, l) Permute toList(b, m)
+;; {fork p
+;;  {permuteSame
+;;   norm p.same; rewrite seek(a=b); rewrite seek(l=m); return permuteSame(...),
+
+;;   permute 
+;;   fork p.b
+;;   {nil
+;;    ;; eg [0,2,3] Permute [0,3,2]
+;;    prove (b cons m = p.a cons p.c) ;; eg b = 3, m = [2]
+;;    {=> b cons m = p.b + (p.a cons p.c)}
+
+;;    prove (p.l Permute p.c)  ;; eg [2,3] Permute [3,2]
+;;    {=> p.l Permute p.b + p.c}
+
+;;    norm p.al_destruct;
+;;    rewrite(seek(a = p.a));
+;;    rewrite(seek(l = p.l));
+;;    norm p.bac_destruct;
+;;    rewrite(seek(b = p.a));
+;;    rewrite(seek(m = p.c));
+;;    prove ((p.a cons p.l) Permute (p.a cons p.c))
+;;    {=> (p.a cons p.l) Permute (nil(A) + (p.a cons p.c));
+;;     return permute(p.a, p.l,nil(A),p.c,_,_,_)}
+;;    return permuteEquivalent(...)
+;;    ,
+;;    cons
+;;    }}}

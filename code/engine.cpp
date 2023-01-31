@@ -2787,57 +2787,31 @@ unify(Stack *stack, b32 same_type, Term *in0, Term *goal0)
     {DEBUG_INDENT(); DUMP("unify(", serial, ") ", in0, " with ", goal0, "\n");}
   }
 
-  switch (in0->cat)
+  if (isGlobalValue(in0) && isGlobalValue(goal0))
   {
-    case Term_Variable:
+    success = equal(in0, goal0);
+  }
+  else
+  {
+    switch (in0->cat)
     {
-      Variable *in = castTerm(in0, Variable);
-      Stack *lookup_stack = stack;
-      for (i32 delta=0;  delta < in->delta && lookup_stack;  delta++)
+      case Term_Variable:
       {
-        lookup_stack = lookup_stack->outer;
-      }
-      if (lookup_stack)
-      {
-        // unification variable
-        if (Term *lookup = lookup_stack->items[in->index])
+        Variable *in = castTerm(in0, Variable);
+        Stack *lookup_stack = stack;
+        for (i32 delta=0;  delta < in->delta && lookup_stack;  delta++)
         {
-          Term *rebased = rebase(temp_arena, lookup, in->delta);
-          success = equal(rebased, goal0);
+          lookup_stack = lookup_stack->outer;
         }
-        else
+        if (lookup_stack)
         {
-          if (!same_type)
+          // unification variable
+          if (Term *lookup = lookup_stack->items[in->index])
           {
-            same_type = unify(stack, false, getType(in0), getType(goal0));
+            Term *rebased = rebase(temp_arena, lookup, in->delta);
+            success = equal(rebased, goal0);
           }
-          if (same_type)
-          {
-            lookup_stack->items[in->index] = rebase(lookup_stack->unification_arena, goal0, -in->delta);
-            if (lookup_stack->unification_arena != temp_arena)
-              assert(inArena(lookup_stack->unification_arena, lookup_stack->items[in->index]));
-            success = true;
-          }
-        }
-      }
-      else if (Variable *goal = castTerm(goal0, Variable))
-      {
-        // NOTE: local variable from a local hint, we would remove one
-        // abstraction layer if unification succeeds, hence we deduct one stack
-        // delta.
-        success = ((in->delta-1 == goal->delta) && (in->index == goal->index));
-      }
-    } break;
-
-    case Term_Composite:
-    {
-      Composite *in = castTerm(in0, Composite);
-      if (Composite *goal = castTerm(goal0, Composite))
-      {
-        b32 op_equal = false;
-        if (Constructor *in_ctor = castTerm(in->op, Constructor))
-        {
-          if (Constructor *goal_ctor = castTerm(goal->op, Constructor))
+          else
           {
             if (!same_type)
             {
@@ -2845,81 +2819,133 @@ unify(Stack *stack, b32 same_type, Term *in0, Term *goal0)
             }
             if (same_type)
             {
-              op_equal = (in_ctor->index == goal_ctor->index);
+              lookup_stack->items[in->index] = rebase(lookup_stack->unification_arena, goal0, -in->delta);
+              if (lookup_stack->unification_arena != temp_arena)
+                assert(inArena(lookup_stack->unification_arena, lookup_stack->items[in->index]));
+              success = true;
             }
           }
         }
-        else
+        else if (Variable *goal = castTerm(goal0, Variable))
         {
-          op_equal = unify(stack, same_type, in->op, goal->op);
+          // NOTE: local variable from a local hint, we would remove one
+          // abstraction layer if unification succeeds, hence we deduct one stack
+          // delta. :variable-comparison-is-different
+          success = ((in->delta-1 == goal->delta) && (in->index == goal->index));
         }
+      } break;
 
-        if (op_equal)
-        {
-          success = true;
-          for (int id=0; id < in->arg_count && success; id++)
-          {
-            if (!unify(stack, true, in->args[id], goal->args[id]))
-            {
-              success = false;
-            }
-          }
-        }
-      }
-    } break;
-
-    case Term_Arrow:
-    {
-      Arrow *in = castTerm(in0, Arrow);
-      if (Arrow *goal = castTerm(goal0, Arrow))
+      case Term_Composite:
       {
-        if (in->param_count == goal->param_count)
+        Composite *in = castTerm(in0, Composite);
+        if (Composite *goal = castTerm(goal0, Composite))
         {
-          success = true;
-          Stack *new_stack = newStack(temp_arena, stack, in->param_count);
-          for (i32 id=0; id < in->param_count && success; id++)
+          b32 op_equal = false;
+          if (Constructor *in_ctor = castTerm(in->op, Constructor))
           {
-            if (!unify(new_stack, same_type, in->param_types[id], goal->param_types[id]))
+            if (Constructor *goal_ctor = castTerm(goal->op, Constructor))
             {
-              success = false;
+              if (!same_type)
+              {
+                same_type = unify(stack, false, getType(in0), getType(goal0));
+              }
+              if (same_type)
+              {
+                op_equal = (in_ctor->index == goal_ctor->index);
+              }
             }
           }
-          if (success)
+          else
           {
-            success = unify(new_stack, same_type, in->output_type, goal->output_type);
+            op_equal = unify(stack, same_type, in->op, goal->op);
+          }
+
+          if (op_equal)
+          {
+            success = true;
+            for (int id=0; id < in->arg_count && success; id++)
+            {
+              if (!unify(stack, true, in->args[id], goal->args[id]))
+              {
+                success = false;
+              }
+            }
           }
         }
-      }
-    } break;
+      } break;
 
-    case Term_Accessor:
-    {
-      Accessor *in = castTerm(in0, Accessor);
-      if (Accessor *goal = castTerm(goal0, Accessor))
+      case Term_Arrow:
       {
-        if (in->field_index == goal->field_index)
+        Arrow *in = castTerm(in0, Arrow);
+        if (Arrow *goal = castTerm(goal0, Arrow))
         {
-          success = unify(stack, same_type, in->record, goal->record);
+          if (in->param_count == goal->param_count)
+          {
+            success = true;
+            Stack *new_stack = newStack(temp_arena, stack, in->param_count);
+            for (i32 id=0; id < in->param_count && success; id++)
+            {
+              if (!unify(new_stack, same_type, in->param_types[id], goal->param_types[id]))
+              {
+                success = false;
+              }
+            }
+            if (success)
+            {
+              success = unify(new_stack, same_type, in->output_type, goal->output_type);
+            }
+          }
         }
-      }
-    } break;
+      } break;
 
-    case Term_Constructor:
-    {
-      invalidCodePath;
-    } break;
+      case Term_Accessor:
+      {
+        Accessor *in = castTerm(in0, Accessor);
+        if (Accessor *goal = castTerm(goal0, Accessor))
+        {
+          if (in->field_index == goal->field_index)
+          {
+            success = unify(stack, same_type, in->record, goal->record);
+          }
+        }
+      } break;
 
-    case Term_Union:
-    case Term_Function:
-    case Term_Primitive:
-    {
-      success = equal(in0, goal0);
-    } break;
+      case Term_Union:
+      {
+        // NOTE: "equal" wouldn't work, because :variable-comparison-is-different.
+        if (Union *in = castTerm(in0, Union))
+        {
+          if (Union *goal = castTerm(goal0, Union))
+          {
+            success = true;
+            for (i32 i=0; i < in->ctor_count && !success; i++)
+            {
+              success = unify(stack, same_type, &in->structs[i]->t, &goal->structs[i]->t);
+            }
+          }
+        }
+      } break;
 
-    default:
-    {
-      todoIncomplete;
-    } break;
+      case Term_Constructor:
+      {
+        invalidCodePath;
+      } break;
+
+      case Term_Primitive:
+      {
+        success = equal(in0, goal0);
+      } break;
+
+      case Term_Function:
+      {
+        success = false;
+      } break;
+
+      default:
+      {
+        todoIncomplete;
+      } break;
+    }
   }
 
   if (DEBUG_LOG_unify)
@@ -4288,15 +4314,22 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
 
               if (goal->cat != Term_Hole)
               {
-                Arrow *signature = castTerm(getType(op),Arrow);
-                assert(signature->output_type);
-                b32 ouput_unify = unify(&stack, false, signature->output_type, goal);
-                if (!ouput_unify)
+                if (Term *op_type = getType(op))
                 {
-                  if (expect_error) silentError();
-                  else
+                  Arrow *signature = castTerm(op_type, Arrow);
+                  if (serial == 18959)
+                    debugbreak;
+                  b32 ouput_unify = unify(&stack, false, signature->output_type, goal);
+                  if (!ouput_unify)
                   {
-                    parseError(in0, "cannot unify output");
+                    if (expect_error) silentError();
+                    else
+                    {
+                      parseError(in0, "cannot unify output");
+                      DEBUG_print_detailed_variables = 1;
+                      attach("signature->output_type", signature->output_type);
+                      attach("serial", serial);
+                    }
                   }
                 }
               }
@@ -5307,6 +5340,10 @@ parseArrowType(Arena *arena, b32 is_struct)
         if (optionalChar('$'))
         {
           setFlag(&param_flags[param_i], ParameterFlag_Inferred);
+          if (optionalChar('$'))
+          {
+            setFlag(&param_flags[param_i], ParameterFlag_Poly);
+          }
         }
 
         Tokenizer tk_save = *global_tokenizer;
@@ -5389,13 +5426,15 @@ parseArrowType(Arena *arena, b32 is_struct)
     out->param_names = param_names;
     out->param_types = param_types;
     out->param_flags = param_flags;
-    if (!is_struct)  // structs don't need return type
+
+    if (optionalCategory(Token_Arrow))
     {
-      if (requireCategory(Token_Arrow, "syntax: (param: type, ...) -> ReturnType"))
-      {
-        if (Ast *return_type = parseExpression(arena))
-          out->output_type = return_type;
-      }
+      if (Ast *return_type = parseExpression(arena))
+        out->output_type = return_type;
+    }
+    else if (!is_struct)  // structs don't need return type
+    {
+      parseError("non-struct arrow types require an output type");
     }
   }
 
@@ -5593,7 +5632,7 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
 
     if (poly_params)
     {
-      introduceSignature(typer, poly_params, true);
+      introduceSignature(typer, poly_params, true);  // TODO: check that we don't leak non-poly params
     }
     for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
     {
@@ -5612,8 +5651,10 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
   {
     if (poly_params)
     {
-      // NOTE: output type is actually used.
+      // i32 poly_count = getPolyParamCount(poly_params);
       i32 poly_count = poly_params->param_count;
+      // NOTE: "output type" is actually used.
+#if 1  // bookmark: "output_type" varies now: only the poly part is the same
       Composite *output_type = newTerm(arena, Composite, rea_Type);
       output_type->arg_count = poly_count;
       allocateArray(arena, poly_count, output_type->args);
@@ -5626,6 +5667,7 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
         output_type->args[i] = &var->t;
       }
       output_type->op = &uni->t;
+#endif
 
       for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
       {
@@ -5639,15 +5681,16 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
         {
           signature->param_names[param_i] = poly_params->param_names[param_i];
           signature->param_types[param_i] = poly_params->param_types[param_i];
-          signature->param_flags[param_i] = poly_params->param_flags[param_i] | ParameterFlag_Inferred;  // todo actually you can't infer the union parameter in case there's no arg (f.ex nil Nat), so in future we can improve this by automatically recognizing which params are inferred.
+          signature->param_flags[param_i] = poly_params->param_flags[param_i] | ParameterFlag_Inferred;  // todo actually you can't infer the union parameter in case there's no arg (f.ex nil Nat), but the compiler will complain in that case so it's fine.
         }
+        ProcessPolyConstructorTypeContext ctx = {.arena=arena, .poly_param_count=poly_count};
         for (i32 param_i=0; param_i < struc->param_count; param_i++)
         {
           signature->param_names[poly_count+param_i] = struc->param_names[param_i];
-          ProcessPolyConstructorTypeContext ctx = {.arena=arena, .poly_param_count=poly_count};
           signature->param_types[poly_count+param_i] = processPolyConstructorType(&ctx, struc->param_types[param_i]);
           signature->param_flags[poly_count+param_i] = struc->param_flags[param_i];
         }
+        // signature->output_type = processPolyConstructorType(&ctx, struc->output_type);
         signature->output_type = &output_type->t;
 
         PolyConstructor *pctor = newTerm(arena, PolyConstructor, &signature->t);
@@ -6481,6 +6524,7 @@ beginInterpreterSession(Arena *top_level_arena, FilePath input_path)
     FilePath builtin_path = platformGetFileFullPath(arena, "../data/builtins.rea");
     interpretFile(&global_state, builtin_path, true);
 
+#if 0
     // TODO #cleanup These List builtins are going too far...
 #define LOOKUP_BUILTIN(name) rea_##name = lookupBuiltin(#name);
     LOOKUP_BUILTIN(List);
@@ -6496,6 +6540,7 @@ beginInterpreterSession(Arena *top_level_arena, FilePath input_path)
     LOOKUP_BUILTIN(permuteFirst);
     LOOKUP_BUILTIN(permuteLast);
 #undef LOOKUP_BUILTIN
+#endif
 
     resetArena(temp_arena);
   }
