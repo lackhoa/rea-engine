@@ -205,7 +205,8 @@ sumCancellation :: (a,b,c: Natp, p: a+b =? a+c = true) -> (b =? c = true)
            ++
            prove (a.p + 1 =? a.p + ++(c.p) = false) {return add1DifferentFromAddS(a.p, c.p)} as x;
            rewrite x in p;
-           reductio;
+           norm p;
+           fork p {};
            ;; return trueNotFalse(a.p + 1 =? a.p + ++(c.p), p, _)
            },
           ++ fork c

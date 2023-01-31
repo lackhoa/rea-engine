@@ -3496,7 +3496,7 @@ parseSequence(Arena *arena, b32 require_braces=true)
 
       case Tactic_rewrite:
       {
-        pushContext("rewrite EXPRESSION [in IDENTIFIER]");
+        pushContext("rewrite EXPRESSION [in EXPRESSION]");
         RewriteAst *rewrite = newAst(arena, RewriteAst, &token);
         if (optionalString("<-"))
         {
@@ -3505,10 +3505,7 @@ parseSequence(Arena *arena, b32 require_braces=true)
         rewrite->eq_proof = parseExpression(arena);
         if (optionalCategory(Token_Keyword_in))
         {
-          if (requireIdentifier())
-          {
-            rewrite->in_variable = *lastToken();
-          }
+          rewrite->in_expression = parseExpression(arena);
         }
         ast0 = &rewrite->a;
         popContext();
@@ -4217,6 +4214,28 @@ buildFunctionGivenSignature(Arena *arena, Typer *typer, Arrow *signature, Ast *i
   return fun;
 }
 
+inline Term *
+buildWithNewAsset(Arena *arena, Typer *typer, String name, Term *asset, Ast *body, Term *goal)
+{
+  Term *out = 0;
+  i32 param_count = 1;
+  Arrow *signature = newTerm(arena, Arrow, rea_Type);
+  signature->param_count = param_count;
+  allocateArray(arena, param_count, signature->param_names);
+  allocateArray(arena, param_count, signature->param_types);
+  allocateArray(arena, param_count, signature->param_flags, true);
+  signature->param_names[0] = name;
+  signature->param_types[0] = rebase(arena, getType(asset), 1);
+  signature->output_type    = rebase(arena, goal, 1);
+
+  if (Term *fun = buildFunctionGivenSignature(arena, typer, signature, body))
+  {
+    out = newCompositeN(arena, fun, asset);
+  }
+
+  return out;
+}
+
 internal BuildTerm
 buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
 {
@@ -4347,8 +4366,6 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
                 if (Term *op_type = getType(op))
                 {
                   Arrow *signature = castTerm(op_type, Arrow);
-                  if (serial == 18959)
-                    debugbreak;
                   b32 ouput_unify = unify(&stack, false, signature->output_type, goal);
                   if (!ouput_unify)
                   {
@@ -4679,9 +4696,8 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
 
     case Ast_RewriteAst:
     {
-      should_check_type = false;
+      // should_check_type = false;
       RewriteAst *in  = castAst(in0, RewriteAst);
-      Term *new_goal = 0;
       if (Term *eq_proof = buildTerm(arena, typer, in->eq_proof, holev).term)
       {
         Term *proof_type = getType(eq_proof);
@@ -4689,18 +4705,49 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
         {
           Term *from = in->right_to_left ? rhs : lhs;
           Term *to   = in->right_to_left ? lhs : rhs;
-
-          SearchOutput search = searchExpression(arena, typer, from, goal);
-          if (search.found)
+          if (in->in_expression)
           {
-            new_goal = rewriteTerm(arena, from, to, search.path, goal);
-            if (Term *body = buildTerm(arena, typer, in->body, new_goal).term)
-              out0 = newRewrite(arena, eq_proof, body, search.path, in->right_to_left);
+            if (Term *in_expression = buildTerm(arena, typer, in->in_expression, holev).term)
+            {
+              if (SearchOutput search = searchExpression(arena, typer, from, getType(in_expression)))
+              {
+                b32 right_to_left = !in->right_to_left;  // since we rewrite the body, not the goal.
+                Term *asset = newRewrite(arena, eq_proof, in_expression, search.path, right_to_left);
+                String name = {};
+                if (Variable *var = castTerm(in_expression, Variable))
+                {
+                  name = var->name;
+                }
+                else
+                {
+                  todoIncomplete;
+                }
+                out0 = buildWithNewAsset(arena, typer, name, asset, in->body, goal);
+              }
+              else
+              {
+                parseError(in0, "cannot find a place to apply the rewrite");
+                attach("substitution", proof_type);
+                attach("in_expression_type", getType(in_expression));
+              }
+            }
           }
           else
           {
-            parseError(in0, "cannot find a place to apply the rewrite");
-            attach("substitution", proof_type);
+            SearchOutput search = searchExpression(arena, typer, from, goal);
+            if (search.found)
+            {
+              Term *new_goal = rewriteTerm(arena, from, to, search.path, goal);
+              if (Term *body = buildTerm(arena, typer, in->body, new_goal).term)
+              {
+                out0 = newRewrite(arena, eq_proof, body, search.path, in->right_to_left);
+              }
+            }
+            else
+            {
+              parseError(in0, "cannot find a place to apply the rewrite");
+              attach("substitution", proof_type);
+            }
           }
         }
         else
@@ -4860,20 +4907,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
 
           if (!recursed)
           {
-            i32 param_count = 1;
-            Arrow *signature = newTerm(arena, Arrow, rea_Type);
-            signature->param_count = param_count;
-            allocateArray(arena, param_count, signature->param_names);
-            allocateArray(arena, param_count, signature->param_types);
-            allocateArray(arena, param_count, signature->param_flags, true);
-            signature->param_names[0] = in->lhs;
-            signature->param_types[0] = rebase(arena, rhs_type, 1);
-            signature->output_type    = rebase(arena, goal, 1);
-
-            if (Term *fun = buildFunctionGivenSignature(arena, typer, signature, in->body))
-            {
-              out0 = newCompositeN(arena, fun, rhs);
-            }
+            out0 = buildWithNewAsset(arena, typer, in->lhs, rhs, in->body, goal);
           }
         }
       }
@@ -4949,8 +4983,6 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
         }
         else
         {
-          if (serial == 11199)
-            breakhere;
           parseError(in0, "actual type differs from expected type");
           attach("got", actual);
           attach("serial", serial);

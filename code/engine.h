@@ -364,11 +364,11 @@ struct BuildTerm
 struct RewriteAst
 {
   embed_Ast(a);
-  Ast      *eq_proof;
-  Ast      *new_goal;
-  Ast      *body;
-  b32       right_to_left;
-  Token     in_variable;
+  Ast *eq_proof;
+  Ast *new_goal;
+  Ast *body;
+  b32  right_to_left;
+  Ast *in_expression;
 };
 
 struct GoalTransform
@@ -455,7 +455,7 @@ struct AstArray {
   Term *items;
 };
 
-// NOTE: rewrite is done from "type" to "body".
+// NOTE: Rewrite is done on the type of the whole expression, resulting in the type of the body.
 struct Rewrite {
   embed_Term(t);
   TreePath *path;
@@ -466,7 +466,7 @@ struct Rewrite {
 
 typedef Term Computation;
 
-struct SearchOutput {b32 found; TreePath *path;};
+struct SearchOutput {b32 found; TreePath *path; operator bool() {return found;}};
 
 struct CompareTerms {Trinary result; TreePath *diff_path;};
 
