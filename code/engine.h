@@ -30,9 +30,10 @@ enum AstCategory {
   Ast_NormalizeMeAst,
   Ast_Ellipsis,
   Ast_SyntheticAst,
-  Ast_Identifier,               // result after initial parsing
+  Ast_Identifier,
 
   // Expressions
+  Ast_TypedExpression,
   Ast_CompositeAst,
   Ast_ArrowAst,
   Ast_AccessorAst,
@@ -602,6 +603,12 @@ struct LookupPolyParameter {
   b32 found;
   i32 index;
   operator bool() { return found; }
+};
+
+struct TypedExpression {
+  embed_Ast(a);
+  Ast *type;
+  Ast *expression;
 };
 
 #define DEFAULT_MAX_LIST_LENGTH 64

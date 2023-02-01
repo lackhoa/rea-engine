@@ -216,17 +216,17 @@ sumCancellation :: (a,b,c: Natp, p: a+b =? a+c = true) -> (b =? c = true)
            ,
            ++
            lem1 : ++(b.p) + a.p =? ++(c.p) + a.p = true :=
-           seq {=> a.p + ++(b.p) =? ++(c.p) + a.p = true {addCommutative}
-                => a.p + ++(b.p) =? a.p + ++(c.p) = true {addCommutative}
-                return p
-                };
+           prove {=> a.p + ++(b.p) =? ++(c.p) + a.p = true {addCommutative}
+                  => a.p + ++(b.p) =? a.p + ++(c.p) = true {addCommutative}
+                  return p
+                  };
            norm lem1;
            lem2: a.p + b.p =? a.p + c.p = true :=
-           seq {
-                => b.p + a.p =? a.p + c.p = true {addCommutative}
-                => b.p + a.p =? c.p + a.p = true {addCommutative}
-                return lem1;
-                };
+           prove {
+                  => b.p + a.p =? a.p + c.p = true {addCommutative}
+                  => b.p + a.p =? c.p + a.p = true {addCommutative}
+                  return lem1;
+                  };
            return sumCancellation(a.p,b.p,c.p, lem2)
            }}}
  }
@@ -265,8 +265,8 @@ addPreservesGt :: (a,b,c: Natp, p: a>b=true) -> a+c > b+c = true
 
 TotalOrder :: union (a,b: Natp)
 {eq(p: a = b),
- gt(p: a > b = true),
- lt(p: b > a = true)}
+ gt(p: a>b = true),
+ lt(p: b>a = true)}
 
 totalOrder :: (a,b: Natp) -> TotalOrder(a,b)
 {fork a
@@ -276,9 +276,9 @@ totalOrder :: (a,b: Natp) -> TotalOrder(a,b)
   {1 return ctor[1](_),
    ++
    ind := totalOrder(a.p, b.p);
-   fork ind {eq return ctor[0](seq{rewrite ind.p}),
-             gt return ctor[1](seq{norm; return ind.p}),
-             lt return ctor[2](seq{norm; return ind.p})}}}}
+   fork ind {eq return ctor[0](prove{rewrite ind.p}),
+             gt return ctor[1](prove{norm; return ind.p}),
+             lt return ctor[2](prove{norm; return ind.p})}}}}
 
 differentFromPlus :: (a: Natp, b: Natp, p: a = a+b) -> False
 #norm(p)

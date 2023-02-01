@@ -22,15 +22,10 @@ enum TokenCategory
   Token_Keyword_fn,
   Token_Keyword_union,
   Token_Keyword_ctor,
-  Token_Keyword_seq,
   Token_Keyword_overload,
+  Token_Keyword_prove,
   Token_Keyword_seek,
   Token_Keyword_in,
-
-  // Token_Keyword_rewrite,
-  // Token_Keyword_norm,
-  // Token_Keyword_prove,
-  // Token_Keyword_algebraic_manipulation,
 
   // todo #cleanup These commands can just be dispatched by the top-level parser!
   Token_Keyword_test_eval,
@@ -58,7 +53,7 @@ enum TokenCategory
 };
 
 const char *language_keywords[] = {
-  "", "fn", "union", "ctor", "seq", "overload", "seek", "in",
+  "", "fn", "union", "ctor", "overload", "prove", "seek", "in",
   "test_eval", "print", "print_raw", "print_ast", "check", "check_truth", "algebra_declare",
 };
 const char *meta_directives[] = {"", "load", "should_fail", "debug", "norm", "hint", "no_apply", "expand", "no_print_as_binop", "print_proof", "unused"};

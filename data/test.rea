@@ -126,7 +126,7 @@ testExecutionModel :: (a,b: Nat) -> (x: Nat) -> Nat
  }
 check_truth testExecutionModel(1,2)(1) = 5;
 
-oneIsNotZero : 1 != 0 := seq {norm; return fn {seek}};
+oneIsNotZero : 1 != 0 := prove {norm; return fn {seek}};
 test_eval mulPos(1,1,oneIsNotZero,oneIsNotZero);
 ;; print mulPos;
 
@@ -136,7 +136,7 @@ somethingWickedUsage :: () -> (x,y,z: Nat) -> (somethingWicked(x,y,z))
  return fn {return fn {return fn {rewrite p; rewrite q}}}}
 
 StructWithFunction :: union {makeStructWithFunction(a: Nat, b: (E: a=0) -> False)}
-oneEqualZeroImpliesFalse : ((E: 1=0) -> False) := seq{norm; return fn {return E}};
+oneEqualZeroImpliesFalse : ((E: 1=0) -> False) := prove {norm; return fn {return E}};
 testFunctionInComposite :: fn (x: StructWithFunction, E: x.a = 0) -> False
 {return x.b(E)}
 testFunctionInCompositeUsage :: (Wrong: 1=0) -> False
@@ -203,8 +203,7 @@ testFillingHole :: (xdebug: Nat, x_positive: xdebug!=0, P: xdebug=0) -> False
  }
 
 unionRebasing :: (a: Nat) -> union {eq(a = a)}
-{prove(a=a) {}
- return ctor[0](seek(a=a))}
+{return ctor[0](prove(a=a) {})}
 
 testAnonymousParameter :: fn (A: Type, A) -> A
 { seek }

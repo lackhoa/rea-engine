@@ -3437,10 +3437,8 @@ parseSequence(Arena *arena, b32 require_braces=true)
   AstList *list = 0;
 
   b32 brace_opened = false;
-  if (require_braces)
-    brace_opened = requireChar('{');
-  else
-    brace_opened = optionalChar('{');
+  if (require_braces) brace_opened = requireChar('{');
+  else                brace_opened = optionalChar('{');
 
   for (b32 expect_sequence_ended = false;
        noError() && !expect_sequence_ended;
@@ -3675,8 +3673,7 @@ parseSequence(Arena *arena, b32 require_braces=true)
     }
   }
 
-  if (brace_opened)
-    requireChar('}');
+  if (brace_opened) requireChar('}');
 
   if (noError())
   {
@@ -4222,7 +4219,7 @@ inline Term *
 buildFunctionGivenSignature(Arena *arena, Typer *typer, Arrow *signature, Ast *in_body,
                             i32 function_flags=0)
 {
-  // todo :build-global-function-vs-local-function
+  // todo :build-global-function-vs-local-function (we can pass the global-name in here to unify the code paths)
   Term *fun = 0;
   introduceSignature(typer, signature, true);
   if (Term *body = buildTerm(arena, typer, in_body, signature->output_type).term)
@@ -5003,6 +5000,15 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
       }
     } break;
 
+    case Ast_TypedExpression:
+    {
+      TypedExpression *in = castAst(in0, TypedExpression);
+      if (Term *type = buildTerm(arena, typer, in->type, holev))
+      {
+        out0 = buildTerm(arena, typer, in->expression, type);
+      }
+    } break;
+
     case Ast_ReductioAst:
     {
       out0 = reductioAdAbsurdum(Solver{.arena=arena, .typer=typer}, goal);
@@ -5698,14 +5704,18 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
   Arrow *poly_params = 0;
   if (in->params)
   {
-    assert(global_name);
-    if (Term *poly_params0 = buildTerm(arena, typer, &in->params->a, holev))
+    if (global_name)
     {
-      poly_params = castTerm(poly_params0, Arrow);
-      Arrow *signature       = copyStruct(arena, poly_params);
-      signature->output_type = rea_Type;
-      uni->type = &signature->t;
+      if (Term *poly_params0 = buildTerm(arena, typer, &in->params->a, holev))
+      {
+        poly_params = castTerm(poly_params0, Arrow);
+        Arrow *signature       = copyStruct(arena, poly_params);
+        signature->output_type = rea_Type;
+        uni->type = &signature->t;
+      }
     }
+    else
+      parseError(&in->params->a, "polymorphic unions has to be global");
   }
 
   if (noError())
@@ -5974,9 +5984,29 @@ parseOperand(Arena *arena)
       operand = parseFunctionExpression(arena);
     } break;
 
-    case Token_Keyword_seq:
+    case Token_Keyword_prove:
     {
-      operand = parseSequence(arena);
+      Ast *type = 0;
+      
+      if (peekNextChar() != '{')
+      {
+        type = parseExpression(arena);
+      }
+      if (noError())
+      {
+        if (Ast *expression = parseSequence(arena, true))
+        {
+          if (type)
+          {
+            TypedExpression *typed = newAst(arena, TypedExpression, &type->token);
+            typed->type       = type;
+            typed->expression = expression;
+            operand = &typed->a;
+          }
+          else
+            operand = expression;
+        }
+      }
     } break;
 
     case Token_Alphanumeric:
