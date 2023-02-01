@@ -160,7 +160,7 @@ struct DataTree {
   i32        ctor_i;
   i32        member_count;
   DataTree **members;
-  String    *ctor_names;        // debug only
+  Union     *debug_uni;
 };
 
 struct DataMapAddHistory {
@@ -248,8 +248,7 @@ struct PolyConstructor {
 struct Union {
   embed_Term(t);
   i32      ctor_count;
-  String  *ctor_names;          // TODO: currently all unions have constructors names, but those names may not be global.
-  Term   **global_ctors;        // NOTE: could be poly constructors
+  Term **global_ctors;          // NOTE: could be poly constructors (or even composites in case of atomic constructors???)
   Arrow  **structs;
 };
 
@@ -615,5 +614,12 @@ struct TypedExpression {
 
 internal BuildTerm
 buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error=false);
+
+String number_to_string[] = {
+  toString("0"), toString("1"), toString("2"), toString("3"),
+  toString("4"), toString("5"), toString("6"), toString("7"),
+  toString("8"), toString("9"), toString("10"), toString("11"),
+  toString("12"), toString("13"), toString("14"), toString("15"),
+};
 
 #include "generated/engine_forward.h"

@@ -486,12 +486,31 @@ getVarNameInScope(Typer *env, DataMap *map)
   return out;
 }
 
+inline String
+getConstructorName(Union *uni, i32 ctor_index)
+{
+  // todo: can't really print out a number as placeholder for constructors,
+  // since *numbers* can be constructors.
+  String out = {};
+  if (isGlobalValue(&uni->t))
+  {
+    assert(ctor_index < uni->ctor_count);
+    out = uni->global_ctors[ctor_index]->global_name->string;
+  }
+  else
+  {
+    assert(ctor_index < arrayCount(number_to_string));
+    out = number_to_string[ctor_index];
+  }
+  return out;
+}
+
 internal void
 print(Arena *buffer, DataTree *tree)
 {
   if (tree)
   {
-    print(buffer, tree->ctor_names[tree->ctor_i]);
+    print(buffer, getConstructorName(tree->debug_uni, tree->ctor_i));
     if (tree->member_count)
     {
       print(buffer, "(");
@@ -578,7 +597,7 @@ initDataTree(Arena *arena, DataTree *tree, Term *uni0, i32 ctor_id)
 {
   Union *uni = castUnionOrPolyUnion(uni0);
   i32 ctor_arg_count = uni->structs[ctor_id]->param_count;
-  tree->ctor_names   = uni->ctor_names;
+  tree->debug_uni    = uni;
   tree->ctor_i       = ctor_id;
   tree->member_count = ctor_arg_count;
   tree->members      = pushArray(arena, ctor_arg_count, DataTree*, true);
@@ -1199,12 +1218,13 @@ getConstructorName(Constructor *ctor)
 {
   if (Union *uni = castTerm(ctor->uni, Union))
   {
-    return uni->ctor_names[ctor->index];
+    return getConstructorName(uni, ctor->index);
   }
   else
   {
     Composite *composite = castTerm(ctor->uni, Composite);
-    return castTerm(composite->op, Union)->ctor_names[ctor->index];
+    Union *puni = castTerm(composite->op, Union);
+    return getConstructorName(puni, ctor->index);
   }
   invalidCodePath;
 }
@@ -1261,8 +1281,6 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
             unsetFlag(&new_opt.flags, PrintFlag_Detailed);
             for (i32 ctor_id = 0; ctor_id < in->ctor_count; ctor_id++)
             {
-              print(buffer, in->ctor_names[ctor_id]);
-              print(buffer, ": ");
               print(buffer, &in->structs[ctor_id]->t, new_opt);
               if (ctor_id != in->ctor_count-1)
                 print(buffer, ", ");
@@ -1383,7 +1401,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
                ctor_id < uni->ctor_count;
                ctor_id++)
           {
-            print(buffer, uni->ctor_names[ctor_id]);
+            print(buffer, getConstructorName(uni, ctor_id));
             print(buffer, ": ");
             print(buffer, in->bodies[ctor_id], new_opt);
             if (ctor_id != uni->ctor_count-1)
@@ -1398,7 +1416,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
         case Term_PolyConstructor:
         {
           PolyConstructor *in = castTerm(in0, PolyConstructor);
-          print(buffer, in->uni->ctor_names[in->index]);
+          print(buffer, getConstructorName(in->uni, in->index));
         } break;
 
         default:
@@ -1657,9 +1675,6 @@ rebase(Arena *arena, Term *in0, i32 delta)
   return rebase_(arena, in0, delta, 0);
 }
 
-const char *number_to_string[] = {"0", "1", "2", "3", "4", "5", "6", "7",
-                                  "8", "9", "10", "11", "12", "13", "14", "15"};
-
 internal Term *
 apply(Arena *arena, Term *op, i32 arg_count, Term **args, Term *type, String name_to_unfold)
 {
@@ -1725,13 +1740,9 @@ apply(Arena *arena, Term *op, i32 arg_count, Term **args, Term *type, String nam
               }
               else
               {
-                // bookmark
                 Union *out = newTerm(arena, Union, rea_Type);
                 out->ctor_count = 1;
-                out->ctor_names = pushArray(arena, 1, String);
                 out->structs    = pushArray(arena, 1, Arrow*);
-
-                out->ctor_names[0] = toString("struct");
 
                 out->structs[0] = newTerm(arena, Arrow, rea_Type);
                 Arrow *struc = out->structs[0];
@@ -1741,7 +1752,7 @@ apply(Arena *arena, Term *op, i32 arg_count, Term **args, Term *type, String nam
                 for (i32 arg_i=0; arg_i < arg_count; arg_i++)
                 {
                   assert(arg_i < arrayCount(number_to_string));
-                  struc->param_names[arg_i] = toString(number_to_string[arg_i]);
+                  struc->param_names[arg_i] = number_to_string[arg_i];
 
                   // todo: wish there were a way to systematize these stupid rebases.
                   Term *larg = rebase(arena, l->args[arg_i], 1);
@@ -3551,7 +3562,7 @@ parseSequence(Arena *arena, b32 require_braces=true)
 
       case Tactic_prove:
       {
-        pushContext("prove PROPOSITION {SEQUENCE} as IDENTIFIER");
+        pushContext("prove PROPOSITION {SEQUENCE} as IDENTIFIER");  // todo don't need the "as" anymore
         if (Ast *proposition = parseExpression(arena))
         {
           if (Ast *proof = parseSequence(arena, true))
@@ -4694,7 +4705,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
           else
           {
             tokenError(&in->field_name, "accessor has invalid member");
-            attach("expected a member of constructor", uni->ctor_names[ctor_i]);
+            attach("expected a member of constructor", getConstructorName(uni, ctor_i));
           }
         }
         else
@@ -5098,7 +5109,7 @@ buildFork(Arena *arena, Typer *typer, ForkAst *in, Term *goal)
           i32 ctor_id = -1;
           for (i32 id = 0; id < uni->ctor_count; id++)
           {
-            if (equal(uni->ctor_names[id], ctor_name->string))
+            if (equal(getConstructorName(uni, id), ctor_name->string))
             {
               ctor_id = id;
               break;
@@ -5112,7 +5123,7 @@ buildFork(Arena *arena, Typer *typer, ForkAst *in, Term *goal)
               if (ordered_bodies[ctor_id])
               {
                 parseError(in->bodies[input_case_id], "fork case handled twice");
-                attach("constructor", uni->ctor_names[ctor_id]);  // todo cleanup attach string
+                attach("constructor", getConstructorName(uni, ctor_id));  // todo cleanup attach string
               }
               else
               {
@@ -5137,7 +5148,7 @@ buildFork(Arena *arena, Typer *typer, ForkAst *in, Term *goal)
             StartString ctor_names = startString(error_buffer);
             for (i32 id=0; id < uni->ctor_count; id++)
             {
-              print(error_buffer, uni->ctor_names[id]);
+              print(error_buffer, getConstructorName(uni, id));
               if (id != uni->ctor_count-1)
                 print(error_buffer, ", ");
             }
@@ -5536,12 +5547,23 @@ areSequential(Token *first, Token *next)
   return next->string.chars == first->string.chars + first->string.length;
 }
 
+inline b32
+eitherOrChar(char optional, char require)
+{
+  b32 out = false;
+  if (!optionalChar(optional))
+  {
+    out = requireChar(require);
+  }
+  return out;
+}
+
 internal UnionAst *
-parseUnion(Arena *arena)
+parseUnion(Arena *arena, Token *global_name=0)
 {
   UnionAst *uni = newAst(arena, UnionAst, lastToken());
 
-  if (peekNextChar() == ('('))
+  if (peekChar() == ('('))
   {
     uni->params = parseArrowType(arena, true);
   }
@@ -5549,44 +5571,41 @@ parseUnion(Arena *arena)
   if (requireChar('{'))
   {
     allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, uni->structs);
-    allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, uni->ctor_names);
-    while (noError())
+    if (global_name)
     {
-      if (optionalChar('}'))
-        break;
+      allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, uni->ctor_names);
+    }
+    for (b32 stop=false; noError() && !stop; )
+    {
+      if (optionalChar('}')) stop=true;
       else
       {
         i32 ctor_i = uni->ctor_count++;
-        Token ctor_name = nextToken();
-        uni->ctor_names[ctor_i] = ctor_name;
-        if (isIdentifier(&ctor_name))
+        if (global_name)
         {
-          Token maybe_paren = peekToken();
-          if (equal(maybe_paren.string, "("))
-          {// subtype
-            pushContext("constructor(FIELD: TYPE ...)");
-            {
-              if (ArrowAst *struc = parseArrowType(arena, true))
-              {
-                uni->structs[ctor_i] = struc;
-              }
+          Token ctor_name = nextToken();
+          uni->ctor_names[ctor_i] = ctor_name;
+          if (isIdentifier(&ctor_name))
+          {
+            if (peekChar() == '(')
+            {// subtype
+              uni->structs[ctor_i] = parseArrowType(arena, true);
             }
-            popContext();
+            else
+            {// atomic constructor
+              ArrowAst *signature = newAst(arena, ArrowAst, &ctor_name);
+              uni->structs[ctor_i] = signature;  // empty arrow: no parameter, no output.
+            }
           }
           else
-          {// atomic constructor
-            ArrowAst *signature = newAst(arena, ArrowAst, &ctor_name);
-            uni->structs[ctor_i] = signature;  // empty arrow: no parameter, no output.
-          }
+            tokenError("expected an identifier as constructor name");
         }
         else
-          tokenError("expected an identifier as constructor name");
-
-        if (!optionalChar(','))
         {
-          requireChar('}');
-          break;
+          uni->structs[ctor_i] = parseArrowType(arena, true);
         }
+
+        stop = eitherOrChar(',', '}');
       }
     }
   }
@@ -5689,16 +5708,10 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
 
   i32 ctor_count = in->ctor_count;
   uni->ctor_count = ctor_count;
-  uni->ctor_names = pushArray(arena, ctor_count, String);
   uni->structs    = pushArray(arena, ctor_count, Arrow *);
   if (global_name)
   {
     uni->global_ctors = pushArray(arena, ctor_count, Term *);
-  }
-
-  for (i32 ctor_i=0; ctor_i < ctor_count; ctor_i++)
-  {
-    uni->ctor_names[ctor_i] = in->ctor_names[ctor_i].string;
   }
 
   Arrow *poly_params = 0;
@@ -5811,10 +5824,11 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
         Term *term_to_bind = &ctor->t;
         if (struc->param_count == 0)
         {
+          // todo: need to rethink "no-arg composite" thing
           term_to_bind = newComposite(arena, &ctor->t, 0, 0);
         }
         addGlobalBinding(&in->ctor_names[ctor_i], term_to_bind);
-        uni->global_ctors[ctor_i] = &ctor->t;
+        uni->global_ctors[ctor_i] = term_to_bind;
       }
     }
   }
@@ -5873,7 +5887,7 @@ parseFunctionExpression(Arena *arena)
   FunctionAst *out = newAst(arena, FunctionAst, lastToken());
 
   ArrowAst *signature = 0;
-  if (peekNextChar() == '{')
+  if (peekChar() == '{')
   {
     // inferred signature.
   }
@@ -5988,7 +6002,7 @@ parseOperand(Arena *arena)
     {
       Ast *type = 0;
       
-      if (peekNextChar() != '{')
+      if (peekChar() != '{')
       {
         type = parseExpression(arena);
       }
@@ -6455,8 +6469,10 @@ parseTopLevel(EngineState *state)
               if (after_dcolon.cat == Token_Keyword_union)
               {
                 nextToken();
-                if (UnionAst *ast = parseUnion(arena))
+                if (UnionAst *ast = parseUnion(arena, token))
+                {
                   buildUnion(arena, empty_env, ast, token);
+                }
               }
               else
               {

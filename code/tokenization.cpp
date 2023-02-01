@@ -535,7 +535,7 @@ peekToken(Tokenizer *tk = global_tokenizer)
 
 
 inline char
-peekNextChar(Tokenizer *tk = global_tokenizer)
+peekChar(Tokenizer *tk = global_tokenizer)
 {
   return *tk->at;  // :always-eat-spaces
 }

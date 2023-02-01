@@ -146,7 +146,7 @@ testFunctionInCompositeUsage :: (Wrong: 1=0) -> False
  }
 ;; print testFunctionInCompositeUsage;
 
-foo :: (a: Bool) -> union {f(p: a=false), t(p: a=true)}
+foo :: (a: Bool) -> union {(p: a=false), (p: a=true)}
 {fork a
  {false return ctor[0](_),
   true  return ctor[1](_),}}
@@ -202,7 +202,7 @@ testFillingHole :: (xdebug: Nat, x_positive: xdebug!=0, P: xdebug=0) -> False
   ++: norm P; return P}
  }
 
-unionRebasing :: (a: Nat) -> union {eq(a = a)}
+unionRebasing :: (a: Nat) -> union {(a = a)}
 {return ctor[0](prove(a=a) {})}
 
 testAnonymousParameter :: fn (A: Type, A) -> A
@@ -211,10 +211,8 @@ testAnonymousParameter :: fn (A: Type, A) -> A
 
 testFillHole :: (a: Nat) -> a + 0 = a {}
 
-testStructAsHint :: (u: union {c(v: true=false)}) -> true=false
-{
- ;; return u.v
- }
+testStructAsHint :: (u: union {(v: true=false)}) -> true=false
+{}
 
 twiceApplier :: fn($A: Type, op: (x,y: A) -> A, a: A) -> A
 {return op(a,a)}
