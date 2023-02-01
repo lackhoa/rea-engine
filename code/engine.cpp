@@ -1243,7 +1243,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
             print(buffer, "anon");
 
           if (!in->name.chars || DEBUG_print_detailed_variables)
-            print(buffer, "[%d:%d]", in->delta, in->index);
+            print(buffer, "[%d]", in->delta);
         } break;
 
         case Term_Hole:
@@ -3068,7 +3068,11 @@ reductioAdAbsurdum(Solver *solver, Term *goal)
       {
         Term *var = newVariable(solver->arena, solver->typer, param_i, delta);
         Term *var_type = getType(var);
-        if (Arrow *hypothetical = castTerm(var_type, Arrow))
+        if (equal(var_type, rea_False))
+        {
+          out = newCompositeN(solver->arena, rea_falseImpliesAll, var, goal);
+        }
+        else if (Arrow *hypothetical = castTerm(var_type, Arrow))
         {
           if (hypothetical->output_type == rea_False)
           {
@@ -3112,7 +3116,11 @@ seekGoal(Solver *solver, Term *goal, b32 try_reductio=false)
         // unless we store position-independent types, that's what we gotta do.
         Term *var = newVariable(solver->arena, solver->typer, param_i, delta);
         Term *var_type = getType(var);
-        if (equal(var_type, goal))
+        if (equal(var_type, rea_False))
+        {
+          out = newCompositeN(solver->arena, rea_falseImpliesAll, var, goal);
+        }
+        else if (equal(var_type, goal))
         {
           out = var;
         }
@@ -3717,16 +3725,28 @@ inline Term *
 buildCtorAst(Arena *arena, CtorAst *in, Term *output_type)
 {
   Term *out = 0;
-  // NOTE: don't really need to handle poly union here?
-  if (Union *uni = castTerm(output_type, Union))
+  if (Union *uni = castUnionOrPolyUnion(output_type))
   {
     if (in->ctor_i < uni->ctor_count)
-      out = newConstructor(arena, &uni->t, in->ctor_i);
+    {
+      if (isGlobalValue(&uni->t))
+      {
+        out = uni->global_ctors[in->ctor_i];
+      }
+      else
+      {
+        // anonymous union in the output
+        assert(output_type->cat == Term_Union);
+        out = newConstructor(arena, output_type, in->ctor_i);
+      }
+    }
     else
       parseError(&in->a, "union only has %d constructors", uni->ctor_count);
   }
   else
+  {
     parseError(&in->a, "cannot guess union of constructor");
+  }
   return out;
 }
 
@@ -3806,7 +3826,6 @@ stringLessThan(String a, String b)
       }
     }
   }
-
   return out;
 }
 
@@ -4389,7 +4408,24 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
                 Term *param_type0 = signature->param_types[arg_i];
                 Ast *in_arg = expanded_args[arg_i];
                 b32 arg_was_filled = false;
-                if (in_arg->cat != Ast_Hole)
+                if (args[arg_i])
+                {
+                  arg_was_filled = true;
+                  if (in_arg->cat != Ast_Hole)
+                  {
+                    Term *already_filled_arg_type = getType(args[arg_i]);
+                    if (Term *arg = buildTerm(arena, typer, in_arg, already_filled_arg_type).term)
+                    {
+                      if (!equal(arg, args[arg_i]))
+                      {
+                        parseError(in_arg, "actual arg differs from inferred arg");
+                        attach("actual", arg);
+                        attach("inferred", args[arg_i]);
+                      }
+                    }
+                  }
+                }
+                else if (in_arg->cat != Ast_Hole)
                 {
                   if (stack_has_hole)
                   {
@@ -4697,63 +4733,70 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
     case Ast_RewriteAst:
     {
       // should_check_type = false;
-      RewriteAst *in  = castAst(in0, RewriteAst);
-      if (Term *eq_proof = buildTerm(arena, typer, in->eq_proof, holev).term)
+      if (goal->cat == Term_Hole)
       {
-        Term *proof_type = getType(eq_proof);
-        if (auto [lhs, rhs] = getEqualitySides(proof_type, false))
+        parseError(in0, "we do not know what the goal is, so nothing to rewrite");
+      }
+      else
+      {
+        RewriteAst *in  = castAst(in0, RewriteAst);
+        if (Term *eq_proof = buildTerm(arena, typer, in->eq_proof, holev).term)
         {
-          Term *from = in->right_to_left ? rhs : lhs;
-          Term *to   = in->right_to_left ? lhs : rhs;
-          if (in->in_expression)
+          Term *proof_type = getType(eq_proof);
+          if (auto [lhs, rhs] = getEqualitySides(proof_type, false))
           {
-            if (Term *in_expression = buildTerm(arena, typer, in->in_expression, holev).term)
+            Term *from = in->right_to_left ? rhs : lhs;
+            Term *to   = in->right_to_left ? lhs : rhs;
+            if (in->in_expression)
             {
-              if (SearchOutput search = searchExpression(arena, typer, from, getType(in_expression)))
+              if (Term *in_expression = buildTerm(arena, typer, in->in_expression, holev).term)
               {
-                b32 right_to_left = !in->right_to_left;  // since we rewrite the body, not the goal.
-                Term *asset = newRewrite(arena, eq_proof, in_expression, search.path, right_to_left);
-                String name = {};
-                if (Variable *var = castTerm(in_expression, Variable))
+                if (SearchOutput search = searchExpression(arena, typer, from, getType(in_expression)))
                 {
-                  name = var->name;
+                  b32 right_to_left = !in->right_to_left;  // since we rewrite the body, not the goal.
+                  Term *asset = newRewrite(arena, eq_proof, in_expression, search.path, right_to_left);
+                  String name = {};
+                  if (Variable *var = castTerm(in_expression, Variable))
+                  {
+                    name = var->name;
+                  }
+                  else
+                  {
+                    todoIncomplete;
+                  }
+                  out0 = buildWithNewAsset(arena, typer, name, asset, in->body, goal);
                 }
                 else
                 {
-                  todoIncomplete;
+                  parseError(in0, "cannot find a place to apply the rewrite");
+                  attach("substitution", proof_type);
+                  attach("in_expression_type", getType(in_expression));
                 }
-                out0 = buildWithNewAsset(arena, typer, name, asset, in->body, goal);
+              }
+            }
+            else
+            {
+              SearchOutput search = searchExpression(arena, typer, from, goal);
+              if (search.found)
+              {
+                Term *new_goal = rewriteTerm(arena, from, to, search.path, goal);
+                if (Term *body = buildTerm(arena, typer, in->body, new_goal).term)
+                {
+                  out0 = newRewrite(arena, eq_proof, body, search.path, in->right_to_left);
+                }
               }
               else
               {
                 parseError(in0, "cannot find a place to apply the rewrite");
                 attach("substitution", proof_type);
-                attach("in_expression_type", getType(in_expression));
               }
             }
           }
           else
           {
-            SearchOutput search = searchExpression(arena, typer, from, goal);
-            if (search.found)
-            {
-              Term *new_goal = rewriteTerm(arena, from, to, search.path, goal);
-              if (Term *body = buildTerm(arena, typer, in->body, new_goal).term)
-              {
-                out0 = newRewrite(arena, eq_proof, body, search.path, in->right_to_left);
-              }
-            }
-            else
-            {
-              parseError(in0, "cannot find a place to apply the rewrite");
-              attach("substitution", proof_type);
-            }
+            parseError(in->eq_proof, "please provide a proof of equality for rewrite");
+            attach("got", proof_type);
           }
-        }
-        else
-        {
-          parseError(in->eq_proof, "please provide a proof of equality for rewrite");
-          attach("got", proof_type);
         }
       }
     } break;
@@ -5642,6 +5685,10 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
   uni->ctor_count = ctor_count;
   uni->ctor_names = pushArray(arena, ctor_count, String);
   uni->structs    = pushArray(arena, ctor_count, Arrow *);
+  if (global_name)
+  {
+    uni->global_ctors = pushArray(arena, ctor_count, Term *);
+  }
 
   for (i32 ctor_i=0; ctor_i < ctor_count; ctor_i++)
   {
@@ -5737,6 +5784,7 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
         pctor->index = ctor_i;
 
         addGlobalBinding(&in->ctor_names[ctor_i], &pctor->t);
+        uni->global_ctors[ctor_i] = &pctor->t;
       }
     }
     else
@@ -5749,10 +5797,14 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
         Constructor *ctor = newTerm(arena, Constructor, &signature->t);
         ctor->uni   = &uni->t;
         ctor->index = ctor_i;
+
         Term *term_to_bind = &ctor->t;
         if (struc->param_count == 0)
+        {
           term_to_bind = newComposite(arena, &ctor->t, 0, 0);
+        }
         addGlobalBinding(&in->ctor_names[ctor_i], term_to_bind);
+        uni->global_ctors[ctor_i] = &ctor->t;
       }
     }
   }

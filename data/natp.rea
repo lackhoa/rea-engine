@@ -160,8 +160,8 @@ addDifferent :: (a,b: Natp, p: a+b = a) -> False
 #norm(p)
 {
  lem1: a + b > a = true := addIncreases(a,b);
- lem2: a > a = true     := seq {=> a + b > a = true {p}; return lem1};
- return gtAntiReflexive(a, lem2);
+ rewrite p in lem1;
+ return gtAntiReflexive(a, lem1);
  }
 
 sumCancellation :: (a,b,c: Natp, p: a + b = a + c) -> (b = c)
@@ -206,14 +206,13 @@ sumCancellation :: (a,b,c: Natp, p: a+b =? a+c = true) -> (b =? c = true)
            prove (a.p + 1 =? a.p + ++(c.p) = false) {return add1DifferentFromAddS(a.p, c.p)} as x;
            rewrite x in p;
            norm p;
-           fork p {};
-           ;; return trueNotFalse(a.p + 1 =? a.p + ++(c.p), p, _)
            },
           ++ fork c
           {1
            lem1 := eqSymmetric(a.p + ++(b.p), a.p + 1, p);
            lem2 := add1DifferentFromAddS(a.p, b.p);
-           return trueNotFalse(a.p + 1 =? a.p + ++(b.p), lem1, lem2)
+           rewrite lem1 in lem2;
+           norm lem2;
            ,
            ++
            lem1 : ++(b.p) + a.p =? ++(c.p) + a.p = true :=
@@ -264,24 +263,22 @@ addPreservesGt :: (a,b,c: Natp, p: a>b=true) -> a+c > b+c = true
   }
  }
 
-totalOrder :: (a,b: Natp) -> union {eq(p: a = b),
-                                    gt(p: a > b = true),
-                                    lt(p: b > a = true)}
-{
- fork a
- {
-  1 fork b {1 return ctor[0](_), ++ return ctor[2](_)},
+TotalOrder :: union (a,b: Natp)
+{eq(p: a = b),
+ gt(p: a > b = true),
+ lt(p: b > a = true)}
+
+totalOrder :: (a,b: Natp) -> TotalOrder(a,b)
+{fork a
+ {1 fork b {1  return eq(_),
+            ++ return lt(_)},
   ++ fork b
-  {
-   1 return ctor[1](_),
+  {1 return ctor[1](_),
    ++
    ind := totalOrder(a.p, b.p);
    fork ind {eq return ctor[0](seq{rewrite ind.p}),
-             gt return ctor[1](ind.p),
-             lt return ctor[2](ind.p)} 
-   }
-  }
- }
+             gt return ctor[1](seq{norm; return ind.p}),
+             lt return ctor[2](seq{norm; return ind.p})}}}}
 
 differentFromPlus :: (a: Natp, b: Natp, p: a = a+b) -> False
 #norm(p)

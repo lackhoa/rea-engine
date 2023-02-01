@@ -246,9 +246,10 @@ struct PolyConstructor {
 
 struct Union {
   embed_Term(t);
-  i32     ctor_count;
-  String *ctor_names;
-  Arrow **structs;
+  i32      ctor_count;
+  String  *ctor_names;          // TODO: currently all unions have constructors names, but those names may not be global.
+  Term   **global_ctors;        // NOTE: could be poly constructors
+  Arrow  **structs;
 };
 
 struct Function {
