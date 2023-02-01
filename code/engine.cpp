@@ -57,6 +57,16 @@ _newTerm(Arena *arena, TermCategory cat, Term *type, size_t size)
 #define newTerm(arena, cat, type)              \
   ((cat *) _newTerm(arena, Term_##cat, type, sizeof(cat)))
 
+inline Term *
+_copyTerm(Arena *arena, void *src, size_t size)
+{
+  Term *out = (Term *)copySize(arena, src, size);
+  out->serial = DEBUG_SERIAL++;
+  return out;
+}
+
+#define copyTerm(arena, src) \
+  (mytypeof(src)) _copyTerm(arena, (src), sizeof(*(src)))
 
 inline Term *
 getArg(Term *in0, i32 index)
@@ -563,7 +573,7 @@ rewriteTerm(Arena *arena, Term *from, Term *to, TreePath *path, Term *in0)
   if (path)
   {
     Composite *in  = castTerm(in0, Composite);
-    Composite *out = copyStruct(arena, in);
+    Composite *out = copyTerm(arena, in);
     if (path->head == -1)
       out->op = rewriteTerm(arena, from, to, path->tail, in->op);
     else
@@ -1562,7 +1572,7 @@ rebase_(Arena *arena, Term *in0, i32 delta, i32 offset)
         Variable *in  = castTerm(in0, Variable);
         if (in->delta >= offset)
         {
-          Variable *out = copyStruct(arena, in);
+          Variable *out = copyTerm(arena, in);
           out->delta += delta; assert(out->delta >= 0);
           out0 = &out->t;
         }
@@ -1573,7 +1583,7 @@ rebase_(Arena *arena, Term *in0, i32 delta, i32 offset)
       case Term_Composite:
       {
         Composite *in  = castTerm(in0, Composite);
-        Composite *out = copyStruct(arena, in);
+        Composite *out = copyTerm(arena, in);
         if (in->op->cat == Term_Constructor)
         {
           // we copied the constructor index, and that's enough.
@@ -1593,7 +1603,7 @@ rebase_(Arena *arena, Term *in0, i32 delta, i32 offset)
       case Term_Arrow:
       {
         Arrow *in  = castTerm(in0, Arrow);
-        Arrow *out = copyStruct(arena, in);
+        Arrow *out = copyTerm(arena, in);
         allocateArray(arena, in->param_count, out->param_types);
         for (i32 id=0; id < in->param_count; id++)
           out->param_types[id] = rebase_(arena, in->param_types[id], delta, offset+1);
@@ -1607,7 +1617,7 @@ rebase_(Arena *arena, Term *in0, i32 delta, i32 offset)
       case Term_Accessor:
       {
         Accessor *in  = castTerm(in0, Accessor);
-        Accessor *out = copyStruct(arena, in);
+        Accessor *out = copyTerm(arena, in);
         out->record = rebase_(arena, in->record, delta, offset);
         out0 = &out->t;
       } break;
@@ -1615,7 +1625,7 @@ rebase_(Arena *arena, Term *in0, i32 delta, i32 offset)
       case Term_Rewrite:
       {
         Rewrite *in  = castTerm(in0, Rewrite);
-        Rewrite *out = copyStruct(arena, in);
+        Rewrite *out = copyTerm(arena, in);
         out->eq_proof = rebase_(arena, in->eq_proof, delta, offset);
         out->body     = rebase_(arena, in->body, delta, offset);
         out0 = &out->t;
@@ -1624,14 +1634,14 @@ rebase_(Arena *arena, Term *in0, i32 delta, i32 offset)
       case Term_Computation:
       {
         Computation *in  = castTerm(in0, Computation);
-        Computation *out = copyStruct(arena, in);
+        Computation *out = copyTerm(arena, in);
         out0 = out;
       } break;
 
       case Term_Function:
       {
         Function *in  = castTerm(in0, Function);
-        Function *out = copyStruct(arena, in);
+        Function *out = copyTerm(arena, in);
         out->body = rebase_(arena, in->body, delta, offset+1);
         out0 = &out->t;
       } break;
@@ -1639,7 +1649,7 @@ rebase_(Arena *arena, Term *in0, i32 delta, i32 offset)
       case Term_Union:
       {
         Union *in  = castTerm(in0, Union);
-        Union *out = copyStruct(arena, in);
+        Union *out = copyTerm(arena, in);
         allocateArray(arena, in->ctor_count, out->structs);
         for (i32 i=0; i < in->ctor_count; i++)
         {
@@ -1862,7 +1872,7 @@ evaluate_(EvaluationContext *ctx, Term *in0)
 
         if (!out0)
         {
-          Composite *out = copyStruct(arena, in);
+          Composite *out = copyTerm(arena, in);
           out->op   = op;
           out->args = args;
           out->type = type;
@@ -1873,7 +1883,7 @@ evaluate_(EvaluationContext *ctx, Term *in0)
       case Term_Arrow:
       {
         Arrow *in  = castTerm(in0, Arrow);
-        Arrow *out = copyStruct(arena, in);
+        Arrow *out = copyTerm(arena, in);
 
         allocateArray(arena, out->param_count, out->param_types);
         ctx->offset++;
@@ -1891,7 +1901,7 @@ evaluate_(EvaluationContext *ctx, Term *in0)
       case Term_Function:
       {
         Function *in  = castTerm(in0, Function);
-        Function *out = copyStruct(arena, in);
+        Function *out = copyTerm(arena, in);
         out->type = evaluate_(ctx, getType(in0));  // :eval-type
 
         u32 old_flags = ctx->flags;
@@ -1915,7 +1925,7 @@ evaluate_(EvaluationContext *ctx, Term *in0)
         }
         else
         {
-          Accessor *out = copyStruct(arena, in);
+          Accessor *out = copyTerm(arena, in);
           out->record = record0;
           out->type = evaluate_(ctx, getType(in0));  // :eval-type
           out0 = &out->t;
@@ -1925,7 +1935,7 @@ evaluate_(EvaluationContext *ctx, Term *in0)
       case Term_Computation:
       {
         Computation *in  = castTerm(in0, Computation);
-        Computation *out = copyStruct(arena, in);
+        Computation *out = copyTerm(arena, in);
         out->type = evaluate_(ctx, getType(in0));  // :eval-type
         out0 = out;  // NOTE: copying since we might :eval-type below
       } break;
@@ -1937,7 +1947,7 @@ evaluate_(EvaluationContext *ctx, Term *in0)
         {
           if (Term *body = evaluate_(ctx, in->body))
           {
-            Rewrite *out = copyStruct(arena, in);
+            Rewrite *out = copyTerm(arena, in);
             out->type = evaluate_(ctx, getType(in0));  // :eval-type
             out->eq_proof = eq_proof;
             out->body     = body;
@@ -1962,7 +1972,7 @@ evaluate_(EvaluationContext *ctx, Term *in0)
         }
         else
         {
-          Fork *out = copyStruct(arena, in);
+          Fork *out = copyTerm(arena, in);
           out->type = evaluate_(ctx, getType(in0));  // :eval-type
           out->subject = subject0;
           allocateArray(arena, in->case_count, out->bodies);
@@ -1982,7 +1992,7 @@ evaluate_(EvaluationContext *ctx, Term *in0)
         {
           // NOTE: assuming that if it's a poly instance, the "abstract" part it
           // must be global. All we have to do is replace the poly variable.
-          Union *out = copyStruct(arena, in);
+          Union *out = copyTerm(arena, in);
           // out->poly_args = ctx->poly_args;  // wrong
           i32 poly_param_count = getPolyArgCount(in);
           allocateArray(arena, poly_param_count, out->poly_args);
@@ -1995,7 +2005,7 @@ evaluate_(EvaluationContext *ctx, Term *in0)
         else
 #endif
         {
-          Union *out = copyStruct(arena, in);
+          Union *out = copyTerm(arena, in);
           allocateArray(arena, in->ctor_count, out->structs);
           for (i32 id=0; id < in->ctor_count; id++)
           {
@@ -2398,7 +2408,7 @@ normalize_(NormalizeContext *ctx, Term *in0)
 
         if (!out0)
         {
-          Composite *out = copyStruct(arena, in);
+          Composite *out = copyTerm(arena, in);
           out->op   = norm_op;
           out->args = norm_args;
           out0 = &out->t;
@@ -2408,7 +2418,7 @@ normalize_(NormalizeContext *ctx, Term *in0)
       case Term_Arrow:
       {
         Arrow *in  = castTerm(in0, Arrow);
-        Arrow *out = copyStruct(arena, in);
+        Arrow *out = copyTerm(arena, in);
 
         allocateArray(arena, out->param_count, out->param_types);
         ctx->depth++;
@@ -2428,7 +2438,7 @@ normalize_(NormalizeContext *ctx, Term *in0)
         Term *eq_proof = normalize_(ctx, in->eq_proof);
         if ((body != in->body) || (eq_proof != in->eq_proof))
         {
-          Rewrite *out = copyStruct(arena, in);
+          Rewrite *out = copyTerm(arena, in);
           out->eq_proof = eq_proof;
           out->body     = body;
           out0 = &out->t;
@@ -2443,7 +2453,7 @@ normalize_(NormalizeContext *ctx, Term *in0)
           out0 = record->args[in->field_index];
         else if (record0 != in->record)
         {
-          Accessor *out = copyStruct(arena, in);
+          Accessor *out = copyTerm(arena, in);
           out->record = record0;
           out0 = &out->t;
         }
@@ -2477,7 +2487,7 @@ normalize_(NormalizeContext *ctx, Term *in0)
         else
 #endif
         {
-          Union *out = copyStruct(arena, in);
+          Union *out = copyTerm(arena, in);
           allocateArray(arena, in->ctor_count, out->structs);
           for (i32 id=0; id < in->ctor_count; id++)
           {
@@ -3725,7 +3735,7 @@ synthesizeAst(Arena *arena, Term *term, Token *token)
 internal Arrow *
 copyArrow(Arena *arena, Arrow *in)
 {
-  Arrow *out = copyStruct(arena, in);
+  Arrow *out = copyTerm(arena, in);
   return out;
 }
 
@@ -5631,7 +5641,7 @@ processPolyConstructorType(ProcessPolyConstructorTypeContext *ctx, Term *in0)
       case Term_Variable:
       {
         Variable *in = castTerm(in0, Variable);
-        Variable *out = copyStruct(arena, in);
+        Variable *out = copyTerm(arena, in);
         i32 delta = in->delta - ctx->offset;
         if (delta == 0)
         {
@@ -5668,7 +5678,7 @@ processPolyConstructorType(ProcessPolyConstructorTypeContext *ctx, Term *in0)
         }
         if (progress)
         {
-          Composite *out = copyStruct(arena, in);
+          Composite *out = copyTerm(arena, in);
           out->op   = op;
           out->args = copyArray(arena, in->arg_count, args);
           out0 = &out->t;
@@ -5678,7 +5688,7 @@ processPolyConstructorType(ProcessPolyConstructorTypeContext *ctx, Term *in0)
       case Term_Arrow:
       {
         Arrow *in  = castTerm(in0, Arrow);
-        Arrow *out = copyStruct(arena, in);
+        Arrow *out = copyTerm(arena, in);
         out->param_types = pushArray(arena, in->param_count, Term*);
         ctx->offset++;
         for (i32 i=0; i < in->param_count; i++)
@@ -5722,7 +5732,7 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
       if (Term *poly_params0 = buildTerm(arena, typer, &in->params->a, holev))
       {
         poly_params = castTerm(poly_params0, Arrow);
-        Arrow *signature       = copyStruct(arena, poly_params);
+        Arrow *signature       = copyTerm(arena, poly_params);
         signature->output_type = rea_Type;
         uni->type = &signature->t;
       }
@@ -5781,7 +5791,7 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
       for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
       {
         Arrow *struc = uni->structs[ctor_i];
-        Arrow *signature        = copyStruct(arena, struc);
+        Arrow *signature        = copyTerm(arena, struc);
         signature->param_count += poly_count;
         allocateArray(arena, signature->param_count, signature->param_names);
         allocateArray(arena, signature->param_count, signature->param_types);
@@ -5815,7 +5825,7 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
       for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
       {
         Arrow *struc = uni->structs[ctor_i];
-        Arrow *signature = copyStruct(arena, struc);
+        Arrow *signature = copyTerm(arena, struc);
         signature->output_type = &uni->t;
         Constructor *ctor = newTerm(arena, Constructor, &signature->t);
         ctor->uni   = &uni->t;

@@ -140,4 +140,9 @@ mulCommutative :: (a,b: Nat) -> a*b = b*a
 eqReflexive :: (a: Nat) -> a==a = true
 {fork a {0, ++ return eqReflexive(a.p)}}
 
+<= :: fn(a, b: Nat) -> Bool
+{fork a
+ {0 : return true,
+  ++: fork b {0: return false, ++: return a.p <= b.p}}}
+
 algebra_declare Nat;
