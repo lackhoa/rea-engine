@@ -937,8 +937,7 @@ printComposite(Arena *buffer, Composite *in, b32 is_term, PrintOptions opt)
   i32 printed_arg_count = arg_count;
   if (op_signature)
   {// print out explicit args only
-    b32 force_print_all_args = DEBUG_MODE && DEBUG_print_all_arguments;
-    if (!force_print_all_args)
+    if (!print_all_args)
     {
       printed_args = pushArray(temp_arena, op_signature->param_count, Term*);
       printed_arg_count = 0;
@@ -1055,8 +1054,7 @@ printComposite(Arena *buffer, CompositeAst *in, b32 is_term, PrintOptions opt)
   i32 printed_arg_count = arg_count;
   if (op_signature)
   {// print out explicit args only
-    b32 force_print_all_args = DEBUG_MODE && DEBUG_print_all_arguments;
-    if (!force_print_all_args)
+    if (!print_all_args)
     {
       printed_args = pushArray(temp_arena, op_signature->param_count, void*);
       printed_arg_count = 0;
@@ -1334,14 +1332,24 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
         case Term_Variable:
         {
           Variable *in = castTerm(in0, Variable);
-          if (in->name.chars)
+          bool has_name = in->name.chars;
+          if (has_name)
             print(buffer, in->name);
           else
             print(buffer, "anon");
 
-          if (!in->name.chars || DEBUG_print_detailed_variables)
+          if (!has_name || print_var_delta || print_var_index)
           {
-            print(buffer, "[%d]", in->delta);
+            print(buffer, "[");
+            if (!has_name || print_var_delta)
+            {
+              print(buffer, "%d", in->delta);
+            }
+            if (!has_name || print_var_index)
+            {
+              print(buffer, ",%d", in->index);
+            }
+            print(buffer, "]");
           }
         } break;
 
@@ -4482,7 +4490,6 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 silent_error)
                     else
                     {
                       parseError(in0, "cannot unify output");
-                      DEBUG_print_detailed_variables = 1;
                       attach("signature->output_type", signature->output_type);
                       attach("serial", serial);
                     }
@@ -6451,6 +6458,22 @@ parseTopLevel(EngineState *state)
           }
         }
         popContext();
+      } break;
+
+      case Token_Directive_print:
+      {
+        if (optionalString("all_args"))
+        {
+          print_all_args = !optionalString("off");
+        }
+        else if (optionalString("var_delta"))
+        {
+          print_var_delta = !optionalString("off");
+        }
+        else if (optionalString("var_index"))
+        {
+          print_var_index = !optionalString("off");
+        }
       } break;
 
       case Token_Directive_should_fail:

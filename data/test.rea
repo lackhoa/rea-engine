@@ -280,6 +280,9 @@ Permute :: union($$T: Type, List(T), List(T))
  Permute(a cons l, b + (a cons c))
  }
 
+#print var_delta;
+#print var_index;
+
 ;;
 ;; PList (Populated list)
 ;;
