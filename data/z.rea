@@ -394,7 +394,7 @@ addPreservesGt :: (a,b,c: Z, p: a>b=true) -> a+c > b+c = true
                                     -
                                     return addPreservesGt(b.v.p, a.v.p, c.v, p)}}}}}}
 
-TotalOrder :: union(a,b: Z)
+TotalOrder :: union($$a,$$b: Z)
 {
  eq(p: a = b),
  gt(p: a > b = true),

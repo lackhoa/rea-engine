@@ -248,3 +248,169 @@ check_truth testPolymorphSolver(3) = 6;
 ;; {
 ;;  return algebra_norm(((c+e)+a)+(b+f)+d)
 ;;  }
+
+
+;; ----
+;; List (Lists that can be empty)
+;; ----
+
+List :: union($$ListType: Type)
+{nil,
+ cons(head: ListType, tail: List(ListType))}
+
++ :: fn($T: Type, l,m: List(T)) -> List(T)
+{fork l
+ {nil  return m,
+  cons return l.head cons (l.tail + m)}}
+
+nonEmpty :: fn ($A: Type, list: List(A)) -> Type
+#expand
+{return list != nil(A)}
+
+concatNonEmpty :: (T:Type, l,m: List(T), nonEmpty(l), nonEmpty(m)) -> nonEmpty(l+m)
+#hint
+{fork l {nil, cons}}
+
+;; NOTE "$$" means "poly"
+Permute :: union($$T: Type, List(T), List(T))
+{
+ permuteSame(l: List(T)) -> Permute(l,l)
+ ,
+ permute(a: T, $l,$b,$c: List(T), recurse: Permute(l, b+c)) ->
+ Permute(a cons l, b + (a cons c))
+ }
+
+;;
+;; PList (Populated list)
+;;
+
+fold :: fn($A: Type, op: (a,b: A) -> A, a: A, tail: List(A)) -> A
+#no_print_as_binop
+{fork tail
+ {nil return a,
+  cons
+  return a op fold(op, tail.head, tail.tail)}}
+
+foldConcat :: ($T: Type, op: (a,b: T) -> T,
+               associative: (a,b,c: T) -> (a op b) op c = a op b op c,
+               a,b: T, l,m: List(T)) -> (fold(op, a, l + (b cons m)) =
+                                         fold(op, a cons l) op fold(op, b cons m))
+#hint
+{fork l
+ {single,
+  cons
+  rewrite associative(l.head, fold(op, l.tail), fold(op, m));
+  rewrite foldConcat(op, associative, l.tail, m);
+  }}
+
+foldPermute :: ($T: Type,
+                op: (a,b: T) -> T,
+                associative: (a,b,c: T) -> (a op b) op c = a op b op c,
+                commutative: (a,b: T) -> a op b = b op a,
+                a,b: T, l,m: List(T),
+                p: Permute(a cons l, b cons m)) -> fold(op, a, l) = fold(op, b, m)
+{
+ fork p
+ {permuteSame
+  norm p.same;
+  rewrite seek(a = b);
+  rewrite seek(l = m);
+  ,
+
+  ;; bookmark Please, make things better, for the children
+  permute
+  norm p.al_destruct;
+  rewrite seek(a = p.a);
+  rewrite seek(l = p.l);
+  fork p.b
+  {nil
+   norm p.bac_destruct;
+   rewrite seek(b=p.a);
+   rewrite seek(m=p.c);
+   norm p.recurse;
+
+   prove (p.a cons p.l) Permute (p.a cons p.c)
+   {prove (p.a cons p.l = p.a cons p.l) {} as x;
+    prove (p.a cons p.c = (nil(T) + (p.a cons p.c))) {} as y;
+    prove (Permute(p.l, nil(T) + p.c)) {norm;} as z;
+    return permute(x, y, z)}
+
+   return foldPermute(...)
+   ,
+
+   cons
+   }
+  ;; norm;
+  ;; p.a op fold(op, p.l) = fold(op, p.b + (p.a cons p.c))
+  ;; => p.a op fold(op, p.l) = fold(op, p.b) op fold(op, p.a cons p.c) {foldConcat}
+  ;; => p.a op fold(op, p.l) = fold(op, p.b) op p.a op fold(op, p.c)
+  ;; => p.a op fold(op, p.l) = (p.a op fold(op, p.c)) op fold(op, p.b) {commutative}
+  ;; => p.a op fold(op, p.l) = p.a op fold(op, p.c) op fold(op, p.b) {associative}
+  ;; => p.a op fold(op, p.l) = p.a op fold(op, p.b) op fold(op, p.c) {commutative}
+  ;; => p.a op fold(op, p.l) = p.a op fold(op, p.b + p.c);
+  ;; prove fold(op, p.l) = fold(op, p.b + p.c) {return foldPermute(...)} as e;
+  ;; rewrite e,
+  }
+ }
+
+provePermuteHelper :: fn(T: Type, a,b,c: PList(T), p: Permute(a,b), e: b=c) -> Permute(a,c)
+{rewrite <- e;}
+
+;; toList :: fn($T: Type, l: PList(T)) -> List(T)
+;; {fork l
+;;  {single return l.head cons nil(T),
+;;   cons   return l.head cons toList(l.tail)}}
+
+;; toListNonNil :: ($T: Type, l: PList(T)) -> toList(l) != nil(T)
+;; {fork l {single, cons}}
+
+;; toListEq :: ($T: Type, $l,$m: PList(T), e: toList(l) = toList(m)) -> l = m
+;; #norm(e)
+;; {
+;;  fork l {single
+;;          fork m {single,
+;;                  cons
+;;                  prove(toList(m.tail) = nil(T)) {rewrite e.1} as p
+;;                  return toListNonNil(m.tail)(p)
+;;                  },
+;;          cons
+;;          fork m {single return toListNonNil(l.tail)(e.1),
+;;                  cons   return ctor[0](e.0, toListEq(e.1))}
+;;          }
+;;  }
+
+toPList :: fn($A: Type, a: A, l: List(A)) -> PList(A)
+{fork l
+ {nil  return single(a),
+  cons return a cons toPList(l.head, l.tail)}}
+
+permuteEquivalent :: ($A: Type, a,b: A, l,m: List(A),
+                      p: (a cons l) Permute (b cons m))
+-> toPList(a, l) Permute toPList(b, m)
+{fork p
+ {permuteSame
+  norm p.same; rewrite seek(a=b); rewrite seek(l=m); return permuteSame(...),
+
+  permute 
+  fork p.b
+  {nil
+   ;; eg [0,2,3] Permute [0,3,2]
+   prove (b cons m = p.a cons p.c) ;; eg b = 3, m = [2]
+   {=> b cons m = p.b + (p.a cons p.c)}
+
+   prove (p.l Permute p.c)  ;; eg [2,3] Permute [3,2]
+   {=> p.l Permute p.b + p.c}
+
+   norm p.al_destruct;
+   rewrite(seek(a = p.a));
+   rewrite(seek(l = p.l));
+   norm p.bac_destruct;
+   rewrite(seek(b = p.a));
+   rewrite(seek(m = p.c));
+   prove ((p.a cons p.l) Permute (p.a cons p.c))
+   {=> (p.a cons p.l) Permute (nil(A) + (p.a cons p.c));
+    return permute(p.a, p.l,nil(A),p.c,_,_,_)}
+   return permuteEquivalent(...)
+   ,
+   cons
+   }}}

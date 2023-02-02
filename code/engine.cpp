@@ -5,7 +5,6 @@
   - #speed evaluating functions by substituting the body is really bad in case of "let"
   - clean up the data tree containing constructors
   - we're printing terms every time we encounter an error, but the error might be recoverable so it's just wasted work. Either pass the intention down, or abandon the recoveriy route.
-  - The #type-everywhere approach is just plain wrong, we have to manipulate the type every single time we do anything at all!
   - Get stretchy buffer in here
  */
 
@@ -83,7 +82,7 @@ castUnionOrPolyUnion(Term *in0)
   {
     return uni;
   }
-  else if (Composite *in = castTerm(in0, Composite))
+  if (Composite *in = castTerm(in0, Composite))
   {
     return castTerm(in->op, Union);
   }
@@ -580,12 +579,12 @@ rewriteTerm(Arena *arena, Term *from, Term *to, TreePath *path, Term *in0)
     {
       assert((path->head >= 0) && (path->head < out->arg_count));
       allocateArray(arena, out->arg_count, out->args);
-      for (i32 arg_id=0; arg_id < out->arg_count; arg_id++)
+      for (i32 arg_i=0; arg_i < out->arg_count; arg_i++)
       {
-        if (arg_id == (i32)path->head)
-          out->args[arg_id] = rewriteTerm(arena, from, to, path->tail, in->args[arg_id]);
+        if (arg_i == (i32)path->head)
+          out->args[arg_i] = rewriteTerm(arena, from, to, path->tail, in->args[arg_i]);
         else
-          out->args[arg_id] = in->args[arg_id];
+          out->args[arg_i] = in->args[arg_i];
       }
     }
     out0 = &out->t;
@@ -843,18 +842,18 @@ forward_declare inline void DEBUG_DEDENT()
 #define NULL_WHEN_ERROR(name) if (noError()) {assert(name);} else {name = {};}
 
 inline b32
-isInferredParameter(ArrowAst *arrow, i32 param_id)
+isInferredParameter(ArrowAst *arrow, i32 param_i)
 {
   if (arrow->param_flags)
-    return checkFlag(arrow->param_flags[param_id], ParameterFlag_Inferred);
+    return checkFlag(arrow->param_flags[param_i], ParameterFlag_Inferred);
   return false;
 }
 
 inline b32
-isInferredParameter(Arrow *arrow, i32 param_id)
+isInferredParameter(Arrow *arrow, i32 param_i)
 {
   if (arrow->param_flags)
-    return checkFlag(arrow->param_flags[param_id], ParameterFlag_Inferred);
+    return checkFlag(arrow->param_flags[param_i], ParameterFlag_Inferred);
   return false;
 }
 
@@ -884,88 +883,79 @@ precedenceOf(String op)
 }
 
 inline char *
-printComposite(Arena *buffer, void *in0, b32 is_term, PrintOptions opt)
+printComposite(Arena *buffer, Composite *in, b32 is_term, PrintOptions opt)
 {
   char *out = buffer ? (char *)getNext(buffer) : 0;
   int    precedence = 0;        // todo: no idea what the default should be
-  void  *op         = 0;
+  Term  *op         = in->op;
   i32    arg_count  = 0;
-  void **raw_args   = 0;
 
-  CompositeAst *ast  = (CompositeAst *)in0;
-  Composite    *term = (Composite *)in0;
   Arrow *op_signature = 0;
-  Constructor *op_ctor = 0;
   b32 print_as_list     = false;
   b32 no_print_as_binop = false;
-  if (is_term)
+  op_signature = 0;
+  arg_count    = in->arg_count;
+  Term *type0 = getType(&in->t);
+
+  Constructor *ctor = castTerm(in->op, Constructor);
+
+  if (Composite *type = castTerm(type0, Composite))
   {
-    op           = term->op;
-    op_signature = 0;
-    raw_args     = (void **)term->args;
-    arg_count    = term->arg_count;
-    Term *type0 = getType(&term->t);
-
-    op_ctor = castTerm(term->op, Constructor);
-
-    if (Composite *type = castTerm(type0, Composite))
+    if (type->op == rea_List && ctor)
     {
-      if (type->op == rea_List && op_ctor)
-      {
-        print_as_list = true;
-      }
+      print_as_list = true;
     }
+  }
 
-    if (Function *fun = castTerm(term->op, Function))
-      no_print_as_binop = checkFlag(fun->function_flags, FunctionFlag_no_print_as_binop);
+  if (Function *fun = castTerm(in->op, Function))
+  {
+    no_print_as_binop = checkFlag(fun->function_flags, FunctionFlag_no_print_as_binop);
+  }
 
-    if (op_ctor)
-    {
-      op_signature = castUnionOrPolyUnion(type0)->structs[op_ctor->index];
-    }
-    else
-    {
-      op_signature = getParameterTypes(term->op);
-    }
-    assert(op_signature);
-
-    String op_name = {};
-    if (Token *global_name = term->op->global_name)
-      op_name = global_name->string;
-    else if (Variable *var = castTerm(term->op, Variable))
-      op_name = var->name;
-    precedence = precedenceOf(op_name);
+  if (ctor)
+  {
+    op_signature = castUnionOrPolyUnion(type0)->structs[ctor->index];
   }
   else
   {
-    CompositeAst *in = castAst(ast, CompositeAst);
-    op       = in->op;
-    raw_args = (void **)in->args;
-    arg_count = in->arg_count;
-
-    precedence = precedenceOf(in->op->token.string);
+    op_signature = getParameterTypes(in->op);
   }
+  assert(op_signature);
 
-  void **printed_args;
+  String op_name = {};
+  if (Token *global_name = in->op->global_name)
+  {
+    op_name = global_name->string;
+  }
+  else if (Variable *var = castTerm(in->op, Variable))
+  {
+    op_name = var->name;
+  }
+  precedence = precedenceOf(op_name);
+
+  Term **printed_args = in->args;
+  i32 printed_arg_count = arg_count;
   if (op_signature)
   {// print out explicit args only
-    arg_count = 0;
-    printed_args = pushArray(temp_arena, op_signature->param_count, void*);
-    for (i32 param_id = 0; param_id < op_signature->param_count; param_id++)
+    b32 force_print_all_args = DEBUG_MODE && DEBUG_print_all_arguments;
+    if (!force_print_all_args)
     {
-      b32 print_all_arguments = DEBUG_MODE && DEBUG_print_all_arguments;
-      if (print_all_arguments || !isInferredParameter(op_signature, param_id))
-        printed_args[arg_count++] = raw_args[param_id];
+      printed_args = pushArray(temp_arena, op_signature->param_count, Term*);
+      printed_arg_count = 0;
+      for (i32 param_i = 0; param_i < op_signature->param_count; param_i++)
+      {
+        if (!isInferredParameter(op_signature, param_i))
+        {
+          printed_args[printed_arg_count++] = in->args[param_i];
+        }
+      }
     }
   }
-  else
-    printed_args = raw_args;
 
   if (print_as_list)
   {// list path
     print(buffer, "[");
-    Constructor *ctor = op_ctor;
-    for (Composite *iter = term; iter; )
+    for (Composite *iter = in; iter; )
     {
       Term *next_iter0 = 0;
       if (ctor->index == 0)
@@ -1004,7 +994,7 @@ printComposite(Arena *buffer, void *in0, b32 is_term, PrintOptions opt)
     }
     print(buffer, "]");
   }
-  else if (arg_count == 2 && !no_print_as_binop)
+  else if (printed_arg_count == 2 && !no_print_as_binop)
   {// special path for infix binary operator
     if (precedence < opt.no_paren_precedence)
       print(buffer, "(");
@@ -1026,15 +1016,91 @@ printComposite(Arena *buffer, void *in0, b32 is_term, PrintOptions opt)
   else
   {// normal prefix path
     print(buffer, op, is_term, opt);
-    if (!(op_ctor && arg_count == 0))
+    if (!(ctor && printed_arg_count == 0))
     {
       print(buffer, "(");
       PrintOptions arg_opt        = opt;
       arg_opt.no_paren_precedence = 0;
-      for (i32 arg_id = 0; arg_id < arg_count; arg_id++)
+      for (i32 arg_i = 0; arg_i < printed_arg_count; arg_i++)
       {
-        print(buffer, printed_args[arg_id], is_term, arg_opt);
-        if (arg_id < arg_count-1)
+        print(buffer, printed_args[arg_i], is_term, arg_opt);
+        if (arg_i < printed_arg_count-1)
+          print(buffer, ", ");
+      }
+      print(buffer, ")");
+    }
+  }
+  return out;
+}
+
+inline char *
+printComposite(Arena *buffer, CompositeAst *in, b32 is_term, PrintOptions opt)
+{
+  char *out = buffer ? (char *)getNext(buffer) : 0;
+  int    precedence = 0;        // todo: no idea what the default should be
+  void  *op         = 0;
+  i32    arg_count  = 0;
+  void **raw_args   = 0;
+
+  Arrow *op_signature = 0;
+  Constructor *op_ctor = 0;
+  b32 no_print_as_binop = false;
+  op       = in->op;
+  raw_args = (void **)in->args;
+  arg_count = in->arg_count;
+
+  precedence = precedenceOf(in->op->token.string);
+
+  void **printed_args = raw_args;
+  i32 printed_arg_count = arg_count;
+  if (op_signature)
+  {// print out explicit args only
+    b32 force_print_all_args = DEBUG_MODE && DEBUG_print_all_arguments;
+    if (!force_print_all_args)
+    {
+      printed_args = pushArray(temp_arena, op_signature->param_count, void*);
+      printed_arg_count = 0;
+      for (i32 param_i = 0; param_i < op_signature->param_count; param_i++)
+      {
+        if (!isInferredParameter(op_signature, param_i))
+        {
+          printed_args[printed_arg_count++] = raw_args[param_i];
+        }
+      }
+    }
+  }
+
+  if (printed_arg_count == 2 && !no_print_as_binop)
+  {// special path for infix binary operator
+    if (precedence < opt.no_paren_precedence)
+      print(buffer, "(");
+
+    PrintOptions arg_opt = opt;
+    // #hack to force printing parentheses when the precedence is the same (a+b)+c.
+    arg_opt.no_paren_precedence = precedence+1;
+    print(buffer, printed_args[0], is_term, arg_opt);
+
+    print(buffer, " ");
+    print(buffer, op, is_term, opt);
+    print(buffer, " ");
+
+    arg_opt.no_paren_precedence = precedence;
+    print(buffer, printed_args[1], is_term, arg_opt);
+    if (precedence < opt.no_paren_precedence)
+      print(buffer, ")");
+  }
+  else
+  {// normal prefix path
+    print(buffer, op, is_term, opt);
+    if (!(op_ctor && printed_arg_count == 0))
+    {
+      print(buffer, "(");
+      PrintOptions arg_opt        = opt;
+      arg_opt.no_paren_precedence = 0;
+      for (i32 arg_i = 0; arg_i < printed_arg_count; arg_i++)
+      {
+        print(buffer, printed_args[arg_i], is_term, arg_opt);
+        if (arg_i < printed_arg_count-1)
           print(buffer, ", ");
       }
       print(buffer, ")");
@@ -1110,7 +1176,8 @@ print(Arena *buffer, Ast *in0, PrintOptions opt)
 
       case Ast_CompositeAst:
       {
-        printComposite(buffer, in0, false, new_opt);
+        auto *in = castAst(in0, CompositeAst);
+        printComposite(buffer, in, false, new_opt);
       } break;
 
       case Ast_ForkAst:
@@ -1142,14 +1209,14 @@ print(Arena *buffer, Ast *in0, PrintOptions opt)
       {
         ArrowAst *in = castAst(in0, ArrowAst);
         print(buffer, "(");
-        for (int param_id = 0;
-             param_id < in->param_count;
-             param_id++)
+        for (int param_i = 0;
+             param_i < in->param_count;
+             param_i++)
         {
-          print(buffer, in->param_names[param_id]);
+          print(buffer, in->param_names[param_i]);
           print(buffer, ": ");
-          print(buffer, in->param_types[param_id], new_opt);
-          if (param_id < in->param_count-1)
+          print(buffer, in->param_types[param_i], new_opt);
+          if (param_i < in->param_count-1)
             print(buffer, ", ");
         }
         print(buffer, ") -> ");
@@ -1273,14 +1340,19 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
             print(buffer, "anon");
 
           if (!in->name.chars || DEBUG_print_detailed_variables)
+          {
             print(buffer, "[%d]", in->delta);
+          }
         } break;
 
         case Term_Hole:
         {print(buffer, "_");} break;
 
         case Term_Composite:
-        {printComposite(buffer, in0, true, new_opt);} break;
+        {
+          auto in = castTerm(in0, Composite);
+          printComposite(buffer, in, true, new_opt);
+        } break;
 
         case Term_Union:
         {
@@ -1317,18 +1389,18 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
         {
           Arrow *in = castTerm(in0, Arrow);
           print(buffer, "(");
-          for (int param_id = 0;
-               param_id < in->param_count;
-               param_id++)
+          for (int param_i = 0;
+               param_i < in->param_count;
+               param_i++)
           {
-            String param_name = in->param_names[param_id];
+            String param_name = in->param_names[param_i];
             if (param_name.chars)
             {
               print(buffer, param_name);
               print(buffer, ": ");
             }
-            print(buffer, in->param_types[param_id], new_opt);
-            if (param_id < in->param_count-1)
+            print(buffer, in->param_types[param_i], new_opt);
+            if (param_i < in->param_count-1)
               print(buffer, ", ");
           }
           print(buffer, ")");
@@ -1455,14 +1527,14 @@ print(Arena *buffer, Scope *scopes)
   {
     auto scope = scopes->head;
     print(buffer, "(");
-    for (int param_id = 0;
-         param_id < scope->param_count;
-         param_id++)
+    for (int param_i = 0;
+         param_i < scope->param_count;
+         param_i++)
     {
-      print(buffer, scope->param_names[param_id]);
+      print(buffer, scope->param_names[param_i]);
       print(buffer, ": ");
-      print(buffer, scope->param_types[param_id], {});
-      if (param_id < scope->param_count-1)
+      print(buffer, scope->param_types[param_i], {});
+      if (param_i < scope->param_count-1)
         print(buffer, ", ");
     }
     print(buffer, ")");
@@ -2393,12 +2465,12 @@ normalize_(NormalizeContext *ctx, Term *in0)
         b32 progressed = false;
 
         Term **norm_args = pushArray(arena, in->arg_count, Term*);
-        for (auto arg_id = 0;
-             arg_id < in->arg_count;
-             arg_id++)
+        for (auto arg_i = 0;
+             arg_i < in->arg_count;
+             arg_i++)
         {
-          norm_args[arg_id] = normalize_(ctx, in->args[arg_id]);
-          progressed = progressed || (norm_args[arg_id] != in->args[arg_id]);
+          norm_args[arg_i] = normalize_(ctx, in->args[arg_i]);
+          progressed = progressed || (norm_args[arg_i] != in->args[arg_i]);
         }
 
         Term *norm_op = normalize_(ctx, in->op);
@@ -2773,9 +2845,9 @@ inline i32
 getExplicitParamCount(ArrowAst *in)
 {
   i32 out = 0;
-  for (i32 param_id = 0; param_id < in->param_count; param_id++)
+  for (i32 param_i = 0; param_i < in->param_count; param_i++)
   {
-    if (!isInferredParameter(in, param_id))
+    if (!isInferredParameter(in, param_i))
       out++;
   }
   return out;
@@ -2785,9 +2857,9 @@ inline i32
 getExplicitParamCount(Arrow *in)
 {
   i32 out = 0;
-  for (i32 param_id = 0; param_id < in->param_count; param_id++)
+  for (i32 param_i = 0; param_i < in->param_count; param_i++)
   {
-    if (!isInferredParameter(in, param_id))
+    if (!isInferredParameter(in, param_i))
       out++;
   }
   return out;
@@ -3414,14 +3486,14 @@ searchExpression(Arena *arena, Typer *env, Term *lhs, Term* in0)
         }
         else
         {
-          for (int arg_id=0; arg_id < in->arg_count; arg_id++)
+          for (int arg_i=0; arg_i < in->arg_count; arg_i++)
           {
-            SearchOutput arg = searchExpression(arena, env, lhs, in->args[arg_id]);
+            SearchOutput arg = searchExpression(arena, env, lhs, in->args[arg_i]);
             if (arg.found)
             {
               allocate(arena, out.path);
               out.found     = true;
-              out.path->head = arg_id;
+              out.path->head = arg_i;
               out.path->tail  = arg.path;
             }
           }
@@ -4274,7 +4346,7 @@ buildWithNewAsset(Arena *arena, Typer *typer, String name, Term *asset, Ast *bod
 }
 
 internal BuildTerm
-buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
+buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 silent_error)
 {
   // beware: Usually we mutate in-place, but we may also allocate anew.
   i32 UNUSED_VAR serial = DEBUG_SERIAL++;
@@ -4324,7 +4396,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
           if (!lookupLocalName(typer, &in->op->token))
           {
             should_build_op = false;
-            op_list = getFunctionOverloads(op_ident, goal, expect_error);
+            op_list = getFunctionOverloads(op_ident, goal, silent_error);
           }
         }
         else if (CtorAst *op_ctor = castAst(in->op, CtorAst))
@@ -4348,7 +4420,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
           }
         }
 
-        expect_error = expect_error || op_list.count > 1;
+        silent_error = silent_error || op_list.count > 1;
         for (i32 attempt=0;
              (attempt < op_list.count) && (!out0) && noError();
              attempt++)
@@ -4364,27 +4436,27 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
               if (in->arg_count == explicit_param_count)
               {
                 allocateArray(arena, param_count, expanded_args);
-                for (i32 param_id = 0, arg_id = 0;
-                     param_id < param_count;
-                     param_id++)
+                for (i32 param_i = 0, arg_i = 0;
+                     param_i < param_count;
+                     param_i++)
                 {
-                  if (isInferredParameter(signature, param_id))
+                  if (isInferredParameter(signature, param_i))
                   {
                     // NOTE: We fill the missing argument with synthetic holes,
                     // because the user input might also have actual holes, so
                     // this makes the code more uniform.
-                    expanded_args[param_id] = newAst(arena, Hole, &in->op->token);
+                    expanded_args[param_i] = newAst(arena, Hole, &in->op->token);
                   }
                   else
                   {
-                    assert(arg_id < explicit_param_count);
-                    expanded_args[param_id] = in->args[arg_id++];
+                    assert(arg_i < explicit_param_count);
+                    expanded_args[param_i] = in->args[arg_i++];
                   }
                 }
               }
               else
               {
-                if (expect_error) silentError();
+                if (silent_error) silentError();
                 else
                 {
                   parseError(&in0->token, "argument count does not match the number of explicit parameters (expected: %d, got: %d)", explicit_param_count, in->arg_count);
@@ -4406,7 +4478,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
                   b32 ouput_unify = unify(&stack, false, signature->output_type, goal);
                   if (!ouput_unify)
                   {
-                    if (expect_error) silentError();
+                    if (silent_error) silentError();
                     else
                     {
                       parseError(in0, "cannot unify output");
@@ -4454,7 +4526,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
                       b32 unify_result = unify(&stack, false, param_type0, getType(arg));
                       if (!unify_result)
                       {
-                        if (expect_error) silentError();
+                        if (silent_error) silentError();
                         else
                         {
                           parseError(in_arg, "cannot unify parameter type with argument %d's type", arg_i);
@@ -4473,7 +4545,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
                   else
                   {
                     Term *expected_arg_type = evaluate(arena, param_type0, args);
-                    if (Term *arg = buildTerm(arena, typer, in_arg, expected_arg_type, expect_error).term)
+                    if (Term *arg = buildTerm(arena, typer, in_arg, expected_arg_type, silent_error).term)
                     {
                       args[arg_i] = arg;
                       arg_was_filled = true;
@@ -4507,7 +4579,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
                         attach("expected_arg_type", expected_arg_type);
                       }
                     }
-                    else if (Term *arg = buildTerm(arena, typer, in_arg, expected_arg_type, expect_error).term)
+                    else if (Term *arg = buildTerm(arena, typer, in_arg, expected_arg_type, silent_error).term)
                     {
                       args[arg_i] = arg;
                     }
@@ -4535,7 +4607,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
           }
           else
           {
-            if (expect_error) silentError();
+            if (silent_error) silentError();
             else
             {
               parseError(in->op, "operator must have an arrow type");
@@ -4600,7 +4672,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
             {
               if (value)
               {// ambiguous
-                if (expect_error) silentError();
+                if (silent_error) silentError();
                 else
                 {
                   tokenError(name, "not enough type information to disambiguate global name");
@@ -4616,7 +4688,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
           }
           if (!value)
           {
-            if (expect_error) silentError();
+            if (silent_error) silentError();
             else
             {
               tokenError(name, "global name does not match expected type");
@@ -5047,7 +5119,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
     {
       if (!matchType(actual, goal))
       {
-        if (expect_error)
+        if (silent_error)
         {
           silentError();
         }
@@ -5063,23 +5135,27 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error)
 
   if (ParseError *error = getError())
   {
-    setErrorFlag(ErrorTypecheck);
-    out0 = {};
-    if (!checkErrorFlag(ErrorGoalAttached))
+    if (!silent_error)
     {
-      attach("goal", goal);
+      setErrorFlag(ErrorTypecheck);
+      out0 = {};
+      if (!checkErrorFlag(ErrorGoalAttached))
+      {
+        attach("goal", goal);
 
-      StartString start = startString(error_buffer);
-      print(error_buffer, "\n");
-      print(error_buffer, typer->scope);
-      attach("scope", endString(start));
+        StartString start = startString(error_buffer);
+        print(error_buffer, "\n");
+        print(error_buffer, typer->scope);
+        attach("scope", endString(start));
 
-      start = startString(error_buffer);
-      printDataMap(error_buffer, typer);
-      attach("data_map", endString(start));
+        start = startString(error_buffer);
+        printDataMap(error_buffer, typer);
+        attach("data_map", endString(start));
 
-      setErrorFlag(ErrorGoalAttached);
+        setErrorFlag(ErrorGoalAttached);
+      }
     }
+    out0 = 0;
   }
   else
   {
@@ -5660,29 +5736,19 @@ processPolyConstructorType(ProcessPolyConstructorTypeContext *ctx, Term *in0)
 
       case Term_Composite:
       {
-        Composite *in = castTerm(in0, Composite);
-        b32 progress = false;
-
-        Term *op = in->op;
-        if (op->cat != Term_Constructor)
+        Composite *in  = castTerm(in0, Composite);
+        Composite *out = copyTerm(arena, in);
+        if (in->op->cat != Term_Constructor)
         {
-          op = processPolyConstructorType(ctx, in->op);
-          progress = progress || (op != in->op);
+          out->op = processPolyConstructorType(ctx, in->op);
         }
-
-        Term **args = pushArray(temp_arena, in->arg_count, Term *);
+        out->args = pushArray(arena, in->arg_count, Term *);
         for (i32 i=0; i < in->arg_count; i++)
         {
-          args[i] = processPolyConstructorType(ctx, in->args[i]);
-          progress = progress || (args[i] != in->args[i]);
+          out->args[i] = processPolyConstructorType(ctx, in->args[i]);
         }
-        if (progress)
-        {
-          Composite *out = copyTerm(arena, in);
-          out->op   = op;
-          out->args = copyArray(arena, in->arg_count, args);
-          out0 = &out->t;
-        }
+
+        out0 = &out->t;
       } break;
 
       case Term_Arrow:
@@ -5711,6 +5777,22 @@ processPolyConstructorType(ProcessPolyConstructorTypeContext *ctx, Term *in0)
   return out0;
 }
 
+inline i32
+getPolyParamCount(Arrow *poly_params)
+{
+  i32 param_count = 0;
+  for (i32 param_i=0; param_i < poly_params->param_count; param_i++)
+  {
+    if (checkFlag(poly_params->param_flags[param_i], ParameterFlag_Poly))
+    {
+      param_count++;
+    }
+    else
+      break;
+  }
+  return param_count;
+}
+
 forward_declare internal Term *
 buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
 {
@@ -5724,21 +5806,24 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
     uni->global_ctors = pushArray(arena, ctor_count, Term *);
   }
 
-  Arrow *poly_params = 0;
+  Arrow *uni_params = 0;
   if (in->params)
   {
     if (global_name)
     {
-      if (Term *poly_params0 = buildTerm(arena, typer, &in->params->a, holev))
+      if (Term *uni_params0 = buildTerm(arena, typer, &in->params->a, holev))
       {
-        poly_params = castTerm(poly_params0, Arrow);
-        Arrow *signature       = copyTerm(arena, poly_params);
+        uni_params = castTerm(uni_params0, Arrow);
+        Arrow *signature       = copyTerm(arena, uni_params);
         signature->output_type = rea_Type;
         uni->type = &signature->t;
       }
     }
     else
+    {
+      // :poly-union-must-be-global
       parseError(&in->params->a, "polymorphic unions has to be global");
+    }
   }
 
   if (noError())
@@ -5749,44 +5834,47 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
       addGlobalBinding(global_name, &uni->t);
     }
 
-    if (poly_params)
+    if (uni_params)
     {
-      introduceSignature(typer, poly_params, true);  // TODO: check that we don't leak non-poly params
+      introduceSignature(typer, uni_params, true);  // TODO: check that we don't leak non-poly params, by not allowing you to name them.
     }
     for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
     {
-      if (Term *struc0 = buildTerm(arena, typer, &in->structs[ctor_i]->a, holev).term)
+      Ast *ast_struc = &in->structs[ctor_i]->a;
+      if (Term *struc0 = buildTerm(arena, typer, ast_struc, holev).term)
       {
         Arrow *struc = castTerm(struc0, Arrow);
         assert(struc);
         uni->structs[ctor_i] = struc;
       }
     }
-    if (poly_params)
+    if (uni_params)
       unwindBindingsAndScope(typer);
   }
 
   if (noError() && global_name)
   {
-    if (poly_params)
+    if (uni_params)
     {
-      // i32 poly_count = getPolyParamCount(poly_params);
-      i32 poly_count = poly_params->param_count;
-      // NOTE: "output type" is actually used.
-#if 1  // bookmark: "output_type" varies now: only the poly part is the same
-      Composite *output_type = newTerm(arena, Composite, rea_Type);
-      output_type->arg_count = poly_count;
-      allocateArray(arena, poly_count, output_type->args);
-      for (i32 i=0; i < poly_count; i++)
+      i32 poly_count = getPolyParamCount(uni_params);
+      i32 non_poly_count = uni_params->param_count - poly_count;
+
+      Composite *common_ctor_output_type = 0;
+      if (non_poly_count == 0)
       {
-        Variable *var = newTerm(arena, Variable, poly_params->param_types[i]);
-        var->name  = poly_params->param_names[i];
-        var->delta = 0;
-        var->index = i;
-        output_type->args[i] = &var->t;
+        common_ctor_output_type = newTerm(arena, Composite, rea_Type);
+        common_ctor_output_type->arg_count = poly_count;
+        allocateArray(arena, poly_count, common_ctor_output_type->args);
+        for (i32 i=0; i < poly_count; i++)
+        {
+          Variable *var = newTerm(arena, Variable, uni_params->param_types[i]);
+          var->name  = uni_params->param_names[i];
+          var->delta = 0;
+          var->index = i;
+          common_ctor_output_type->args[i] = &var->t;
+        }
+        common_ctor_output_type->op = &uni->t;
       }
-      output_type->op = &uni->t;
-#endif
 
       for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
       {
@@ -5798,9 +5886,9 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
         allocateArray(arena, signature->param_count, signature->param_flags);
         for (i32 param_i=0; param_i < poly_count; param_i++)
         {
-          signature->param_names[param_i] = poly_params->param_names[param_i];
-          signature->param_types[param_i] = poly_params->param_types[param_i];
-          signature->param_flags[param_i] = poly_params->param_flags[param_i] | ParameterFlag_Inferred;  // todo actually you can't infer the union parameter in case there's no arg (f.ex nil Nat), but the compiler will complain in that case so it's fine.
+          signature->param_names[param_i] = uni_params->param_names[param_i];
+          signature->param_types[param_i] = uni_params->param_types[param_i];
+          signature->param_flags[param_i] = uni_params->param_flags[param_i] | ParameterFlag_Inferred;  // todo actually you can't infer the union parameter in case there's no arg (f.ex nil Nat), but the compiler will complain in that case so it's fine.
         }
         ProcessPolyConstructorTypeContext ctx = {.arena=arena, .poly_param_count=poly_count};
         for (i32 param_i=0; param_i < struc->param_count; param_i++)
@@ -5809,15 +5897,65 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
           signature->param_types[poly_count+param_i] = processPolyConstructorType(&ctx, struc->param_types[param_i]);
           signature->param_flags[poly_count+param_i] = struc->param_flags[param_i];
         }
-        // signature->output_type = processPolyConstructorType(&ctx, struc->output_type);
-        signature->output_type = &output_type->t;
 
-        PolyConstructor *pctor = newTerm(arena, PolyConstructor, &signature->t);
-        pctor->uni   = uni;
-        pctor->index = ctor_i;
+        Ast *ast_struc = &in->structs[ctor_i]->a;
+        // NOTE: we disallow you specifying output type if you have non-poly
+        // params, for simplicity omg.
+        if (non_poly_count)
+        {
+          if (signature->output_type)
+          {
+            b32 valid_output = false;
+            if (Composite *output_type = castTerm(signature->output_type, Composite))
+            {
+              if (Union *output_uni = castTerm(output_type->op, Union))
+              {
+                if (output_uni == uni)
+                {
+                  valid_output = true;
+                  for (i32 poly_i=0; poly_i < poly_count; poly_i++)
+                  {
+                    if (Variable *var = castTerm(output_type->args[poly_i], Variable))
+                    {
+                      b32 correct_var = (var->delta == 1 && var->index == poly_i);
+                      if (!correct_var)
+                      {
+                        valid_output = false;
+                      }
+                    }
+                  }
+                  signature->output_type = processPolyConstructorType(&ctx, struc->output_type);
+                }
+              }
+            }
+            if (!valid_output)
+            {
+              parseError(ast_struc, "constructor has to return the same union as the one being defined");
+            }
+          }
+          else
+          {
+            parseError(ast_struc, "output type required since there are non-poly parameters");
+          }
+        }
+        else if (signature->output_type)
+        {
+          parseError(ast_struc, "you can't specify the constructor's output type because there is no non-poly parameter");
+        }
+        else
+        {
+          signature->output_type = &common_ctor_output_type->t;
+        }
 
-        addGlobalBinding(&in->ctor_names[ctor_i], &pctor->t);
-        uni->global_ctors[ctor_i] = &pctor->t;
+        if (noError())
+        {
+          PolyConstructor *pctor = newTerm(arena, PolyConstructor, &signature->t);
+          pctor->uni   = uni;
+          pctor->index = ctor_i;
+
+          addGlobalBinding(&in->ctor_names[ctor_i], &pctor->t);
+          uni->global_ctors[ctor_i] = &pctor->t;
+        }
       }
     }
     else
@@ -6082,10 +6220,10 @@ parseOperand(Arena *arena)
           break;
         else
         {
-          i32 arg_id = new_operand->arg_count++;
+          i32 arg_i = new_operand->arg_count++;
           if (optionalCategory(Token_Ellipsis))
           {
-            if (arg_id == 0)
+            if (arg_i == 0)
               args[0] = newAst(arena, Ellipsis, &global_tokenizer->last_token);
             else
               parseError("ellipsis must be the only argument");
@@ -6095,7 +6233,7 @@ parseOperand(Arena *arena)
           }
           else
           {
-            if ((args[arg_id] = parseExpression(arena)))
+            if ((args[arg_i] = parseExpression(arena)))
             {
               if (!optionalChar(','))
               {

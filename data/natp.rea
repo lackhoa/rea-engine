@@ -263,7 +263,7 @@ addPreservesGt :: (a,b,c: Natp, p: a>b=true) -> a+c > b+c = true
   }
  }
 
-TotalOrder :: union (a,b: Natp)
+TotalOrder :: union ($$a,$$b: Natp)
 {eq(p: a = b),
  gt(p: a>b = true),
  lt(p: b>a = true)}
