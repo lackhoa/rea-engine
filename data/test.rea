@@ -280,30 +280,35 @@ Permute :: union($$T: Type, List(T), List(T))
  Permute(a cons l, b + (a cons c))
  }
 
-#print var_delta;
-#print var_index;
-
 ;;
 ;; PList (Populated list)
 ;;
 
-fold :: fn($A: Type, op: (a,b: A) -> A, a: A, tail: List(A)) -> A
+binaryOp :: fn(T: Type) -> Type
+#expand
+{return (a,b: T) -> T}
+
+isAssociative :: fn($T: Type, op: binaryOp(T)) -> Type
+#expand
+{return (a,b,c: T) -> (a op b) op c = a op b op c}
+
+fold :: fn($A: Type, op: binaryOp(A), a: A, tail: List(A)) -> A
 #no_print_as_binop
 {fork tail
  {nil return a,
   cons
   return a op fold(op, tail.head, tail.tail)}}
 
-foldConcat :: ($T: Type, op: (a,b: T) -> T,
-               associative: (a,b,c: T) -> (a op b) op c = a op b op c,
-               a,b: T, l,m: List(T)) -> (fold(op, a, l + (b cons m)) =
-                                         fold(op, a cons l) op fold(op, b cons m))
+foldConcat :: (($T: Type, op: binaryOp(T), assoc: isAssociative(op),
+                a,b: T, l,m: List(T))
+               -> (fold(op, a, l+(b cons m)) =
+                   fold(op, a, l) op fold(op, b, m)))
 #hint
 {fork l
- {single,
+ {nil,
   cons
-  rewrite associative(l.head, fold(op, l.tail), fold(op, m));
-  rewrite foldConcat(op, associative, l.tail, m);
+  => a op fold(op, l.head, l.tail + (b cons m)) = a op fold(op, l.head, l.tail) op fold(op, b, m) {assoc}
+  => a op fold(op, l.head, l.tail) op fold(op, b, m) = a op fold(op, l.head, l.tail) op fold(op, b, m) {foldConcat}
   }}
 
 foldPermute :: ($T: Type,
@@ -315,12 +320,13 @@ foldPermute :: ($T: Type,
 {
  fork p
  {permuteSame
-  norm p.same;
+  i := invert(p);
+  norm i;
   rewrite seek(a = b);
   rewrite seek(l = m);
   ,
 
-  ;; bookmark Please, make things better, for the children
+  ;; bookmark Please, make these equalities better, for the children
   permute
   norm p.al_destruct;
   rewrite seek(a = p.a);

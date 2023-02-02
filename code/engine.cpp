@@ -12,7 +12,7 @@
 #include "memory.h"
 #include "intrinsics.h"
 #include "engine.h"
-#include "tokenization.cpp"
+#include "lexer.cpp"
 #include "debug_config.h"
 
 global_variable Term *rea_Type;
@@ -166,7 +166,7 @@ globalNameOf(Term *term)
 }
 
 inline Term *
-newVariable(Arena *arena, Typer *typer, i32 index, i32 delta)
+newVariable(Arena *arena, Typer *typer, i32 delta, i32 index)
 {
   Scope *scope = typer->scope;
   for (i32 id=0; id < delta; id++)
@@ -177,8 +177,8 @@ newVariable(Arena *arena, Typer *typer, i32 index, i32 delta)
 
   Variable *var = newTerm(arena, Variable, type);
   var->name  = scope->head->param_names[index];
-  var->index = index;
   var->delta = delta;
+  var->index = index;
 
   return &var->t;
 }
@@ -314,6 +314,23 @@ newCompositeN_(Arena *arena, Term *op, i32 param_count, ...)
 
 #define newCompositeN(arena, op, ...) newCompositeN_(arena, op, PP_NARG(__VA_ARGS__), __VA_ARGS__)
 
+inline Term *
+newArrow(Arena *arena,
+         i32 param_count, String *param_names, Term **param_types, u32 *param_flags,
+         Term *output_type)
+{
+  if (!param_flags)
+  {
+    param_flags = pushArray(arena, param_count, u32, true);
+  }
+  Arrow *out = newTerm(arena, Arrow, rea_Type);
+  out->param_count = param_count;
+  out->param_names = param_names;
+  out->param_types = param_types;
+  out->param_flags = param_flags;
+  out->output_type = output_type;
+  return &out->t;
+}
 
 inline Term *
 reaSingle(Arena *arena, Term *head)
@@ -438,19 +455,20 @@ castUnion(Term *in0)
 inline Term **
 synthesizeMembers(Arena *arena, Term *parent, i32 ctor_id)
 {
-  auto [uni, poly_args] = castUnion(getType(parent));
+  auto [uni, args] = castUnion(getType(parent));
   Arrow *struc = uni->structs[ctor_id];
   i32 param_count = struc->param_count;
   Term **members = pushArray(temp_arena, param_count, Term *);
   for (i32 field_id=0; field_id < param_count; field_id++)
   {
     String field_name = struc->param_names[field_id];
-    Term *type = evaluate(EvaluationContext{.arena=arena, .args=members, .poly_args=poly_args},
+    // NOTE: "args" contain poly as well as non-poly args.
+    Term *type = evaluate(EvaluationContext{.arena=arena, .args=members, .poly_args=args},
                           struc->param_types[field_id]);
-    Accessor *accessor = newTerm(arena, Accessor, type);
-    accessor->record     = parent;
-    accessor->field_index   = field_id;
-    accessor->field_name = field_name;
+    Accessor *accessor    = newTerm(arena, Accessor, type);
+    accessor->record      = parent;
+    accessor->field_index = field_id;
+    accessor->field_name  = field_name;
     members[field_id] = &accessor->t;
   }
   return members;
@@ -544,7 +562,7 @@ printDataMap(Arena *buffer, Typer *typer)
 {
   for (DataMap *map = typer->map; map; map=map->tail)
   {
-    Term *root = newVariable(temp_arena, typer, map->index, getScopeDepth(typer) - map->depth);
+    Term *root = newVariable(temp_arena, typer, getScopeDepth(typer) - map->depth, map->index);
     print(buffer, castTerm(root, Variable)->name);
     print(buffer, ": ");
     Term *tree = synthesizeTree(temp_arena, root, &map->tree);
@@ -1799,59 +1817,71 @@ apply(Arena *arena, Term *op, i32 arg_count, Term **args, Term *type, String nam
 
     if (Composite *l = castTerm(l0, Composite))
     {
-      if (Constructor *lctor = castTerm(l->op, Constructor))
+      if (Composite *r = castTerm(r0, Composite))
       {
-        if (Composite *r = castTerm(r0, Composite))
+        // todo: kind of hacky?
+        b32 can_destruct = false;
+        if (Constructor *lctor = castTerm(l->op, Constructor))
         {
           if (Constructor *rctor = castTerm(r->op, Constructor))
           {
-            if (lctor->index == rctor->index)
+            can_destruct = (lctor->index == rctor->index);
+          }
+        }
+
+        if (Union *luni = castTerm(l->op, Union))
+        {
+          if (Union *runi = castTerm(r->op, Union))
+          {
+            can_destruct = (luni == runi);
+          }
+        }
+
+        if (can_destruct)
+        {
+          assert(l->arg_count == r->arg_count);
+          i32 arg_count = l->arg_count;
+          if (arg_count == 0)
+          {
+            // we can't do anything here
+          }
+          else if (arg_count == 1)
+          {
+            Term *larg = l->args[0];
+            Term *rarg = r->args[0];
+            Term **args = pushArray(arena, 3, Term*);
+            args[0] = getType(larg);
+            args[1] = larg;
+            args[2] = rarg;
+            // if we're lucky maybe it'll decompose into False
+            out0 = apply(arena, rea_equal, 3, args, type, {});
+            if (!out0)
             {
-              assert(l->arg_count == r->arg_count);
-              i32 arg_count = l->arg_count;
-              if (arg_count == 0)
-              {
-                // we can't do anything here
-              }
-              else if (arg_count == 1)
-              {
-                Term *larg = l->args[0];
-                Term *rarg = r->args[0];
-                Term **args = pushArray(arena, 3, Term*);
-                args[0] = getType(larg);
-                args[1] = larg;
-                args[2] = rarg;
-                // if we're lucky maybe it'll decompose into False
-                out0 = apply(arena, rea_equal, 3, args, type, {});
-                if (!out0)
-                {
-                  out0 = newEquality(arena, larg, rarg);
-                }
-              }
-              else
-              {
-                Union *out = newTerm(arena, Union, rea_Type);
-                out->ctor_count = 1;
-                out->structs    = pushArray(arena, 1, Arrow*);
-
-                out->structs[0] = newTerm(arena, Arrow, rea_Type);
-                Arrow *struc = out->structs[0];
-                struc->param_count = arg_count;
-                struc->param_names = pushArray(arena, arg_count, String);
-                struc->param_types = pushArray(arena, arg_count, Term *);
-                for (i32 arg_i=0; arg_i < arg_count; arg_i++)
-                {
-                  assert(arg_i < arrayCount(number_to_string));
-                  struc->param_names[arg_i] = number_to_string[arg_i];
-
-                  // todo: wish there were a way to systematize these stupid rebases.
-                  Term *larg = rebase(arena, l->args[arg_i], 1);
-                  Term *rarg = rebase(arena, r->args[arg_i], 1);
-                  struc->param_types[arg_i] = newEquality(arena, larg, rarg);
-                }
-                out0 = &out->t;
-              }
+              out0 = newEquality(arena, larg, rarg);
             }
+          }
+          else
+          {
+            Union *out = newTerm(arena, Union, rea_Type);
+            out->ctor_count = 1;
+            out->structs    = pushArray(arena, 1, Arrow*);
+
+            out->structs[0] = newTerm(arena, Arrow, rea_Type);
+            Arrow *struc = out->structs[0];
+            struc->param_count = arg_count;
+            struc->param_names = pushArray(arena, arg_count, String);
+            struc->param_types = pushArray(arena, arg_count, Term *);
+            for (i32 arg_i=0; arg_i < arg_count; arg_i++)
+            {
+              assert(arg_i < arrayCount(number_to_string));
+              struc->param_names[arg_i] = number_to_string[arg_i];
+
+              // todo: systematize these stupid rebases with term builder.
+              Term *larg = rebase(arena, l->args[arg_i], 1);
+              Term *rarg = rebase(arena, r->args[arg_i], 1);
+              struc->param_types[arg_i] = newEquality(arena, larg, rarg);
+            }
+            out0 = &out->t;
           }
         }
       }
@@ -2449,6 +2479,28 @@ lookupCurrentFrame(LocalBindings *bindings, String key, b32 add_if_missing)
   return out;
 }
 
+// todo: factoring this out might be a big mistake
+inline Term *
+normalizeVariable(Arena *arena, DataMap *data_map, i32 depth, Variable *in)
+{
+  Term *out = &in->t;
+  i32 var_depth = depth - in->delta;
+  DataTree *tree = 0;
+  for (DataMap *map = data_map; map; map=map->tail)
+  {
+    if (map->depth == var_depth && map->index == in->index)
+    {
+      tree = &map->tree;
+      break;
+    }
+  }
+  if (tree)
+  {
+    out = synthesizeTree(arena, &in->t, tree);
+  }
+  return out;
+}
+
 // todo #cleanup #leak don't allocate without progress
 internal Term *
 normalize_(NormalizeContext *ctx, Term *in0) 
@@ -2542,41 +2594,21 @@ normalize_(NormalizeContext *ctx, Term *in0)
       case Term_Variable:
       {
         Variable *in = castTerm(in0, Variable);
-        i32 var_depth = ctx->depth - in->delta;
-        DataTree *tree = 0;
-        for (DataMap *map = ctx->map; map; map=map->tail)
-        {
-          if (map->depth == var_depth && map->index == in->index)
-          {
-            tree = &map->tree;
-            break;
-          }
-        }
-        if (tree)
-          out0 = synthesizeTree(arena, in0, tree);
+        out0 = normalizeVariable(arena, ctx->map, ctx->depth, in);
       } break;
 
       case Term_Union:
       {
         Union *in  = castTerm(in0, Union);
-#if 0
-        if (isPolyInstance(in))
+        Union *out = copyTerm(arena, in);
+        allocateArray(arena, in->ctor_count, out->structs);
+        for (i32 id=0; id < in->ctor_count; id++)
         {
-          // NOTE: we could normalize the poly args here, but who cares.
+          Term *signature = &in->structs[id]->t;
+          signature = normalize_(ctx, signature);
+          out->structs[id] = castTerm(signature, Arrow);
         }
-        else
-#endif
-        {
-          Union *out = copyTerm(arena, in);
-          allocateArray(arena, in->ctor_count, out->structs);
-          for (i32 id=0; id < in->ctor_count; id++)
-          {
-            Term *signature = &in->structs[id]->t;
-            signature = normalize_(ctx, signature);
-            out->structs[id] = castTerm(signature, Arrow);
-          }
-          out0 = &out->t;
-        }
+        out0 = &out->t;
       } break;
 
       case Term_Fork:
@@ -2603,9 +2635,9 @@ normalize_(NormalizeContext *ctx, Term *in0)
 }
 
 internal Term *
-normalize(Arena *arena, Typer *env, Term *in0, String name_to_unfold)
+normalize(Arena *arena, Typer *typer, Term *in0, String name_to_unfold)
 {
-  NormalizeContext ctx = {.arena=arena, .map=(env ? env->map : 0), .depth=getScopeDepth(env), .name_to_unfold=name_to_unfold};
+  NormalizeContext ctx = {.arena=arena, .map=(typer ? typer->map : 0), .depth=getScopeDepth(typer), .name_to_unfold=name_to_unfold};
   return normalize_(&ctx, in0);
 }
 
@@ -3119,7 +3151,7 @@ newComputation_(Arena *arena, Term *lhs, Term *rhs)
 }
 
 inline Term *
-computationIfEqual(Arena *arena, Typer *typer, Term *lhs, Term *rhs)
+maybeEqualByComputation(Arena *arena, Typer *typer, Term *lhs, Term *rhs)
 {
   Term *out = 0;
   if (equal(normalize(arena, typer, lhs),
@@ -3131,9 +3163,9 @@ computationIfEqual(Arena *arena, Typer *typer, Term *lhs, Term *rhs)
 }
 
 inline Term *
-reaComputation(Arena *arena, Typer *typer, Term *lhs, Term *rhs)
+reaEqualByComputation(Arena *arena, Typer *typer, Term *lhs, Term *rhs)
 {
-  Term *out = computationIfEqual(arena, typer, lhs, rhs);
+  Term *out = maybeEqualByComputation(arena, typer, lhs, rhs);
   if (!out)
   {
     DUMP("lhs: ", lhs, " =/= rhs: ", rhs, "\n");
@@ -3167,7 +3199,7 @@ reductioAdAbsurdum(Solver *solver, Term *goal)
            (param_i < arrow->param_count) && !out;
            param_i++)
       {
-        Term *var = newVariable(solver->arena, solver->typer, param_i, delta);
+        Term *var = newVariable(solver->arena, solver->typer, delta, param_i);
         Term *var_type = getType(var);
         if (equal(var_type, rea_False))
         {
@@ -3215,7 +3247,7 @@ seekGoal(Solver *solver, Term *goal, b32 try_reductio=false)
       {
         // todo #speed we're having to rebase everything, which sucks but
         // unless we store position-independent types, that's what we gotta do.
-        Term *var = newVariable(solver->arena, solver->typer, param_i, delta);
+        Term *var = newVariable(solver->arena, solver->typer, delta, param_i);
         Term *var_type = getType(var);
         if (equal(var_type, rea_False))
         {
@@ -3303,7 +3335,7 @@ solveGoal(Solver *solver, Term *goal)
 
     if (auto [l,r] = getEqualitySides(goal, false))
     {
-      out = computationIfEqual(solver->arena, solver->typer, l, r);
+      out = maybeEqualByComputation(solver->arena, solver->typer, l, r);
     }
 
     if (!out)
@@ -4181,7 +4213,7 @@ provePermute_(Arena *arena, Typer *typer, Term *al, Term **c_bac, i32 *indexes, 
   if (count == 1)
   {
     Term *bac = toReaList(arena, c_bac, count);
-    Term *eq = reaComputation(arena, typer, al, bac);
+    Term *eq = reaEqualByComputation(arena, typer, al, bac);
     out = newCompositeN(arena, rea_permuteSame, T, al, bac, eq);
   }
   else
@@ -4210,22 +4242,22 @@ provePermute_(Arena *arena, Typer *typer, Term *al, Term **c_bac, i32 *indexes, 
     Term *al_destruct = reaIdentity(arena, al);
     if (b && c)
     {// permute
-      Term *bac_destruct = reaComputation(arena, typer, bac, reaConcat(arena, b, reaCons(arena, a, c)));
+      Term *bac_destruct = reaEqualByComputation(arena, typer, bac, reaConcat(arena, b, reaCons(arena, a, c)));
       Term *b_plus_c = reaConcat(arena, b, c);
-      Term *e = reaComputation(arena, typer, bc, b_plus_c);
+      Term *e = reaEqualByComputation(arena, typer, bc, b_plus_c);
       recurse = newCompositeN(arena, helper, T, l,bc,b_plus_c, recurse,e);
       out = newCompositeN(arena, rea_permute, T,al,bac,
                           a,l,b,c, al_destruct,bac_destruct, recurse);
     }
     else if (c)
     {// permuteFirst
-      Term *bac_destruct = reaComputation(arena, typer, bac, reaCons(arena, a, c));
+      Term *bac_destruct = reaEqualByComputation(arena, typer, bac, reaCons(arena, a, c));
       out = newCompositeN(arena, rea_permuteFirst, T,al,bac,
                           a,l,c, al_destruct,bac_destruct, recurse);
     }
     else
     {// permuteLast
-      Term *bac_destruct = reaComputation(arena, typer, bac, reaConcat(arena, b, reaSingle(arena, a)));
+      Term *bac_destruct = reaEqualByComputation(arena, typer, bac, reaConcat(arena, b, reaSingle(arena, a)));
       out = newCompositeN(arena, rea_permuteLast, T,al,bac,
                           a,l,b, al_destruct,bac_destruct, recurse);
     }
@@ -4301,7 +4333,7 @@ buildAlgebraNorm(Arena *arena, Typer *typer, CompositeAst *in)
           Term *list         = getFoldList(arena, typer, algebra, flattened);
 
           Term *folded    = newCompositeN(arena, rea_fold, algebra->type, algebra->add, list);
-          Term *eq_folded = reaComputation(arena, typer, flattened, folded);
+          Term *eq_folded = reaEqualByComputation(arena, typer, flattened, folded);
           out = eq_flattened ? eqChain(arena, eq_flattened, eq_folded) : eq_folded;
         }
       }
@@ -4353,6 +4385,45 @@ buildWithNewAsset(Arena *arena, Typer *typer, String name, Term *asset, Ast *bod
   return out;
 }
 
+internal Term *
+buildInvert(Arena *arena, Typer *typer, CompositeAst *ast)
+{
+  Term *out = 0;
+  if (ast->arg_count == 1)
+  {
+    if (Term *arg = buildTerm(arena, typer, ast->args[0], holev))
+    {
+      if (Variable *var = castTerm(arg, Variable))
+      {
+        Term *norm0 = normalizeVariable(arena, typer->map, getScopeDepth(typer), var);
+        if (Composite *norm = castRecord(norm0))
+        {
+          Constructor *ctor = castTerm(norm->op, Constructor);
+          auto [uni, _] = castUnion(getType(arg));
+          Arrow *struc = uni->structs[ctor->index];
+          Term *output_type = evaluate(arena, struc->output_type, norm->args);
+          // NOTE: we could destruct the equality, but normalize can do that so
+          // let's save the complexity here.
+          out = newComputation_(arena, getType(arg), output_type);
+        }
+        else
+        {
+          parseError(&ast->a, "variable has no constructor information");
+        }
+      }
+      else
+      {
+        parseError(&ast->a, "invert only support variables (since atm you can only fork variables anyway, and this is mean to be used in a fork)");
+      }
+    }
+  }
+  else
+  {
+    parseError(&ast->a, "we can only invert one thing at a time!");
+  }
+  return out;
+}
+
 internal BuildTerm
 buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 silent_error)
 {
@@ -4394,6 +4465,10 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 silent_error)
       {
         // macro interception
         out0 = buildAlgebraNorm(arena, typer, in);
+      }
+      else if (equal(in->op->token, "invert"))
+      {
+        out0 = buildInvert(arena, typer, in);
       }
       else
       {
@@ -4665,7 +4740,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 silent_error)
       Token *name = &in0->token;
       if (LookupLocalName local = lookupLocalName(typer, name))
       {
-        out0 = newVariable(arena, typer, local.var_index, local.stack_delta);
+        out0 = newVariable(arena, typer, local.stack_delta, local.var_index);
       }
       else
       {
@@ -5813,7 +5888,9 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
     uni->global_ctors = pushArray(arena, ctor_count, Term *);
   }
 
-  Arrow *uni_params = 0;
+  Arrow *uni_params     = 0;
+  i32    poly_count     = 0;
+  i32    non_poly_count = 0;
   if (in->params)
   {
     if (global_name)
@@ -5824,6 +5901,8 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
         Arrow *signature       = copyTerm(arena, uni_params);
         signature->output_type = rea_Type;
         uni->type = &signature->t;
+        poly_count     = getPolyParamCount(uni_params);
+        non_poly_count = uni_params->param_count - poly_count;
       }
     }
     else
@@ -5853,6 +5932,52 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
         Arrow *struc = castTerm(struc0, Arrow);
         assert(struc);
         uni->structs[ctor_i] = struc;
+
+        if (uni_params)
+        {
+          // NOTE: we disallow you specifying output type if you have non-poly
+          // params, for simplicity omg.
+          if (non_poly_count)
+          {
+            if (struc->output_type)
+            {
+              b32 valid_output = false;
+              if (Composite *output_type = castTerm(struc->output_type, Composite))
+              {
+                if (Union *output_uni = castTerm(output_type->op, Union))
+                {
+                  if (output_uni == uni)
+                  {
+                    valid_output = true;
+                    for (i32 poly_i=0; poly_i < poly_count; poly_i++)
+                    {
+                      if (Variable *var = castTerm(output_type->args[poly_i], Variable))
+                      {
+                        b32 correct_var = (var->delta == 1 && var->index == poly_i);
+                        if (!correct_var)
+                        {
+                          valid_output = false;
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+              if (!valid_output)
+              {
+                parseError(ast_struc, "constructor has to return the same union as the one being defined");
+              }
+            }
+            else
+            {
+              parseError(ast_struc, "output type required since there are non-poly parameters");
+            }
+          }
+          else if (struc->output_type)
+          {
+            parseError(ast_struc, "you can't specify the constructor's output type because there is no non-poly parameter");
+          }
+        }
       }
     }
     if (uni_params)
@@ -5863,25 +5988,22 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
   {
     if (uni_params)
     {
-      i32 poly_count = getPolyParamCount(uni_params);
-      i32 non_poly_count = uni_params->param_count - poly_count;
-
-      Composite *common_ctor_output_type = 0;
-      if (non_poly_count == 0)
+      i32 uni_param_count = uni_params->param_count;
+      Composite *common_ctor_output_type = newTerm(arena, Composite, rea_Type);
+      common_ctor_output_type->arg_count = uni_param_count;
+      allocateArray(arena, uni_param_count, common_ctor_output_type->args);
+      for (i32 i=0; i < uni_param_count; i++)
       {
-        common_ctor_output_type = newTerm(arena, Composite, rea_Type);
-        common_ctor_output_type->arg_count = poly_count;
-        allocateArray(arena, poly_count, common_ctor_output_type->args);
-        for (i32 i=0; i < poly_count; i++)
-        {
-          Variable *var = newTerm(arena, Variable, uni_params->param_types[i]);
-          var->name  = uni_params->param_names[i];
-          var->delta = 0;
-          var->index = i;
-          common_ctor_output_type->args[i] = &var->t;
-        }
-        common_ctor_output_type->op = &uni->t;
+        // NOTE: this output type patching is kinda gross but idk what we can
+        // do, we don't know the poly constructor type yet, and even if we knew
+        // there's no way to iterate over it in a sane way.
+        Variable *var = newTerm(arena, Variable, uni_params->param_types[i]);
+        var->name  = uni_params->param_names[i];
+        var->delta = 0;
+        var->index = i;
+        common_ctor_output_type->args[i] = &var->t;
       }
+      common_ctor_output_type->op = &uni->t;
 
       for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
       {
@@ -5905,49 +6027,9 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
           signature->param_flags[poly_count+param_i] = struc->param_flags[param_i];
         }
 
-        Ast *ast_struc = &in->structs[ctor_i]->a;
-        // NOTE: we disallow you specifying output type if you have non-poly
-        // params, for simplicity omg.
         if (non_poly_count)
         {
-          if (signature->output_type)
-          {
-            b32 valid_output = false;
-            if (Composite *output_type = castTerm(signature->output_type, Composite))
-            {
-              if (Union *output_uni = castTerm(output_type->op, Union))
-              {
-                if (output_uni == uni)
-                {
-                  valid_output = true;
-                  for (i32 poly_i=0; poly_i < poly_count; poly_i++)
-                  {
-                    if (Variable *var = castTerm(output_type->args[poly_i], Variable))
-                    {
-                      b32 correct_var = (var->delta == 1 && var->index == poly_i);
-                      if (!correct_var)
-                      {
-                        valid_output = false;
-                      }
-                    }
-                  }
-                  signature->output_type = processPolyConstructorType(&ctx, struc->output_type);
-                }
-              }
-            }
-            if (!valid_output)
-            {
-              parseError(ast_struc, "constructor has to return the same union as the one being defined");
-            }
-          }
-          else
-          {
-            parseError(ast_struc, "output type required since there are non-poly parameters");
-          }
-        }
-        else if (signature->output_type)
-        {
-          parseError(ast_struc, "you can't specify the constructor's output type because there is no non-poly parameter");
+          signature->output_type = processPolyConstructorType(&ctx, struc->output_type);
         }
         else
         {
@@ -5963,10 +6045,51 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
           addGlobalBinding(&in->ctor_names[ctor_i], &pctor->t);
           uni->global_ctors[ctor_i] = &pctor->t;
         }
+
+#if 0
+        if (noError() && non_poly_count)
+        {
+          // building the inverts
+          i32 param_count = uni_param_count+2;
+
+          TermBuilder builder_ = {.arena=arena, typer=typer};
+          auto builder = &builder;
+          beginFunction(builder);
+          {
+            beginSignature(builder, param_count);
+            for (i32 i=0; i < uni_param_count; i++)
+            {
+              addParameter(builder, uni_params->param_names[i], uni_params->param_types[i]);
+            }
+            i32 p_index = addParameter(builder, toString("p"), &common_ctor_output_type->t);  // todo Avoid name collision
+            addParameter(builder, {},
+                         newCompositeB(builder, rea_ctor_is,
+                                       newVariable(builder, 0, param_count-2),
+                                       newPrimitiveI32(builder, ctor_i)));
+
+            beginConjunction(builder);
+            addConjunct(builder, newEquality(builder, newAccessor(builder, newVariable(builder, 0, p_index))));
+            Term *output = endConjunction(builder);
+
+            setOutput(builder, output);
+            endSignature(builder);
+          }
+          Term *fun = endFunction(builder);
+
+          Union *output_type = newTerm(arena, Union, rea_Type);
+          output_type->ctor_count = 1;
+          output_type->structs    = pushArray(arena, 1, Arrow *);
+          output_type->structs[0] = output_struc;
+
+          Arrow *signature = newArrow(arena, param_count, param_names, param_types, 0, &output_type->t);
+        }
+#endif
       }
+
     }
     else
     {
+      // no union parameters
       for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
       {
         Arrow *struc = uni->structs[ctor_i];
@@ -5986,6 +6109,7 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
         uni->global_ctors[ctor_i] = term_to_bind;
       }
     }
+
   }
 
   NULL_WHEN_ERROR(uni);

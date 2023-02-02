@@ -4,7 +4,7 @@
 #include "platform.h"
 #include "utils.h"
 #include "memory.h"
-#include "tokenization.h"
+#include "lexer.h"
 
 // NOTE: This should work like the function stack, we'll clean it after every top-level form.
 global_variable Arena  temp_arena_;
@@ -247,9 +247,9 @@ struct PolyConstructor {
 
 struct Union {
   embed_Term(t);
-  i32      ctor_count;
-  Term **global_ctors;          // NOTE: could be poly constructors (or even composites in case of atomic constructors???)
-  Arrow  **structs;
+  i32     ctor_count;
+  Term  **global_ctors;         // NOTE: could be poly constructors (or even composites in case of atomic constructors)
+  Arrow **structs;
 };
 
 struct Function {

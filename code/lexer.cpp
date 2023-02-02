@@ -1,7 +1,7 @@
 #include "utils.h"
 #include "memory.h"
 #include "engine.h"
-#include "tokenization.h"
+#include "lexer.h"
 
 inline Token
 newToken(String text)
