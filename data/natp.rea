@@ -273,12 +273,12 @@ totalOrder :: (a,b: Natp) -> TotalOrder(a,b)
  {1 fork b {1  return eq(_),
             ++ return lt(_)},
   ++ fork b
-  {1 return ctor[1](_),
+  {1 return gt(_),
    ++
    ind := totalOrder(a.p, b.p);
-   fork ind {eq return ctor[0](prove{rewrite ind.p}),
-             gt return ctor[1](prove{norm; return ind.p}),
-             lt return ctor[2](prove{norm; return ind.p})}}}}
+   fork ind {eq return eq(prove{rewrite ind.p}),
+             gt return gt(prove{norm; return ind.p}),
+             lt return lt(prove{norm; return ind.p})}}}}
 
 differentFromPlus :: (a: Natp, b: Natp, p: a = a+b) -> False
 #norm(p)

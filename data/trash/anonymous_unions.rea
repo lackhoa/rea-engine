@@ -1,0 +1,10 @@
+foo :: (a: Bool) -> union {(p: a=false), (p: a=true)}
+{fork a
+ {false return ctor[0](_),
+  true  return ctor[1](_),}}
+
+unionRebasing :: (a: Nat) -> union {(a = a)}
+{return ctor[0](prove(a=a) {})}
+
+testStructAsHint :: (u: union {(v: true=false)}) -> true=false
+{}

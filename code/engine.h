@@ -54,7 +54,7 @@ enum AstCategory {
 
 enum TermCategory {
   Term_Hole = 1,
-  Term_PolyConstructor,
+  // Term_PolyConstructor,
 
   Term_Primitive,
   Term_Union,
@@ -187,10 +187,14 @@ struct Stack {
   Arena *unification_arena;
 };
 
+typedef Term Value;
+
 struct Scope {
-  Arrow *head;
-  Scope *outer;
-  i32    depth;
+  Arrow  *head;
+  Scope  *outer;
+  i32     depth;
+
+  Value **values;  // TODO: experimental step towards "real" values
 };
 
 struct Typer
@@ -198,7 +202,7 @@ struct Typer
   Arena *build_arena;
   LocalBindings *bindings;
   Scope         *scope;
-  Arrow         *poly_params;
+  // Arrow         *poly_params;
   DataMap           *map;
   DataMapAddHistory *add_history;
   b32 try_reductio;
@@ -234,22 +238,24 @@ initTerm(Term *in, TermCategory cat, Term *type)
 
 struct Constructor {
   embed_Term(t);
-  Term *uni;  // can be thought of as "output_type", minus the stupid rebase
-  i32   index;
+  String name;
+  i32    index;
 };
 
+#if 0
 // NOTE: does not appear in expression.
 struct PolyConstructor {
   embed_Term(t);
   Union *uni;                   // poly union
   i32    index;
 };
+#endif
 
 struct Union {
   embed_Term(t);
-  i32     ctor_count;
-  Term  **global_ctors;         // NOTE: could be poly constructors (or even composites in case of atomic constructors)
-  Arrow **structs;
+  i32           ctor_count;
+  Constructor **constructors;
+  Arrow       **structs;
 };
 
 struct Function {
@@ -506,10 +512,9 @@ const u32 EvaluationFlag_AlwaysApply = 1 << 0;
 
 struct EvaluationContext {
   Arena  *arena;
-  Term        **args;
-  Term        **poly_args;
-  i32           offset;
-  u32           flags;
+  Term **args;
+  i32    offset;
+  u32    flags;
 };
 
 struct UnionAst {

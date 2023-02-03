@@ -183,6 +183,7 @@ newVariable(Arena *arena, Typer *typer, i32 delta, i32 index)
   return &var->t;
 }
 
+#if 0
 inline Arrow *
 getParameterTypes(Term *op)
 {
@@ -204,29 +205,31 @@ getParameterTypes(Term *op)
   }
   invalidCodePath;
 }
+#endif
+
+inline Arrow *
+getSignature(Term *op)
+{
+  return castTerm(getType(op), Arrow);
+}
 
 inline Term *
 getOutputType(Arena *arena, Term *op, Term **args)
 {
   Term *out = 0;
-  if (Constructor *ctor = castTerm(op, Constructor))
-  {
-    out = ctor->uni;
-  }
-  else
-  {
-    out = evaluate(arena, castTerm(getType(op), Arrow)->output_type, args);
-  }
+  Arrow *signature = castTerm(getType(op), Arrow);
+  out = evaluate(arena, signature->output_type, args);
   return out;
 }
 
 inline i32
 getParameterCount(Term *in)
 {
-  Arrow *signature = getParameterTypes(in);
+  Arrow *signature = castTerm(getType(in), Arrow);
   return signature->param_count;
 }
 
+#if 0
 inline Term *
 newConstructor(Arena *arena, Term *uni, i32 index)
 {
@@ -236,6 +239,7 @@ newConstructor(Arena *arena, Term *uni, i32 index)
   ctor->uni   = uni;
   return &ctor->t;
 }
+#endif
 
 #if REA_INTERNAL
 inline void
@@ -266,7 +270,7 @@ inline Term *
 newComposite(Arena *arena, Term *op, i32 arg_count, Term **args)
 {
   Term *out0 = 0;
-  Arrow *signature = getParameterTypes(op);
+  Arrow *signature = castTerm(getType(op), Arrow);
   Term  *type      = getOutputType(arena, op, args);
 
   assert(signature->param_count == arg_count);
@@ -277,6 +281,7 @@ newComposite(Arena *arena, Term *op, i32 arg_count, Term **args)
     assertEqual(actual_type, expected_type);
   }
 
+#if 0
   if (PolyConstructor *pctor = castTerm(op, PolyConstructor))
   {
     i32 poly_param_count = getParameterCount(&pctor->uni->t);
@@ -286,6 +291,8 @@ newComposite(Arena *arena, Term *op, i32 arg_count, Term **args)
     arg_count = arg_count - poly_param_count;
     args      = args + poly_param_count;
   }
+#endif
+
   Composite *out = newTerm(arena, Composite, type);
   out->op        = op;
   out->arg_count = arg_count;
@@ -452,6 +459,38 @@ castUnion(Term *in0)
   return {};
 }
 
+inline i32
+getPolyParamCount(Arrow *params)
+{
+  i32 param_count = 0;
+  for (i32 param_i=0; param_i < params->param_count; param_i++)
+  {
+    if (checkFlag(params->param_flags[param_i], ParameterFlag_Poly))
+    {
+      param_count++;
+    }
+    else
+      break;
+  }
+  return param_count;
+}
+
+inline i32
+getPolyParamCount(ArrowAst *params)
+{
+  i32 param_count = 0;
+  for (i32 param_i=0; param_i < params->param_count; param_i++)
+  {
+    if (checkFlag(params->param_flags[param_i], ParameterFlag_Poly))
+    {
+      param_count++;
+    }
+    else
+      break;
+  }
+  return param_count;
+}
+
 inline Term **
 synthesizeMembers(Arena *arena, Term *parent, i32 ctor_id)
 {
@@ -459,17 +498,24 @@ synthesizeMembers(Arena *arena, Term *parent, i32 ctor_id)
   Arrow *struc = uni->structs[ctor_id];
   i32 param_count = struc->param_count;
   Term **members = pushArray(temp_arena, param_count, Term *);
-  for (i32 field_id=0; field_id < param_count; field_id++)
+  i32 poly_count = 0;
+  if (Arrow *uni_params = castTerm(getType(&uni->t), Arrow))
   {
-    String field_name = struc->param_names[field_id];
-    // NOTE: "args" contain poly as well as non-poly args.
-    Term *type = evaluate(EvaluationContext{.arena=arena, .args=members, .poly_args=args},
-                          struc->param_types[field_id]);
+    poly_count = getPolyParamCount(uni_params);
+  }
+  for (i32 field_i=0; field_i < poly_count; field_i++)
+  {
+    members[field_i] = args[field_i];
+  }
+  for (i32 field_i=poly_count; field_i < param_count; field_i++)
+  {
+    String field_name = struc->param_names[field_i];
+    Term *type = evaluate({.arena=arena, .args=members}, struc->param_types[field_i]);
     Accessor *accessor    = newTerm(arena, Accessor, type);
     accessor->record      = parent;
-    accessor->field_index = field_id;
+    accessor->field_index = field_i;
     accessor->field_name  = field_name;
-    members[field_id] = &accessor->t;
+    members[field_i] = &accessor->t;
   }
   return members;
 }
@@ -480,10 +526,10 @@ synthesizeTree(Arena *arena, Term *parent, DataTree *tree)
   Composite *record = 0;
   auto [uni, poly_args] = castUnion(getType(parent));
   Arrow *struc = uni->structs[tree->ctor_i];
-  Term *ctor = newConstructor(arena, getType(parent), tree->ctor_i);
+  Constructor *ctor = uni->constructors[tree->ctor_i];
   i32 param_count = struc->param_count;
   record = newTerm(arena, Composite, parent->type);
-  record->op        = ctor;
+  record->op        = &ctor->t;
   record->arg_count = param_count;
   record->args      = pushArray(arena, param_count, Term *);
   Term **members = synthesizeMembers(arena, parent, tree->ctor_i);
@@ -522,7 +568,7 @@ getConstructorName(Union *uni, i32 ctor_index)
   if (isGlobalValue(&uni->t))
   {
     assert(ctor_index < uni->ctor_count);
-    out = uni->global_ctors[ctor_index]->global_name->string;
+    out = uni->constructors[ctor_index]->name;
   }
   else
   {
@@ -930,15 +976,7 @@ printComposite(Arena *buffer, Composite *in, b32 is_term, PrintOptions opt)
     no_print_as_binop = checkFlag(fun->function_flags, FunctionFlag_no_print_as_binop);
   }
 
-  if (ctor)
-  {
-    op_signature = castUnionOrPolyUnion(type0)->structs[ctor->index];
-  }
-  else
-  {
-    op_signature = getParameterTypes(in->op);
-  }
-  assert(op_signature);
+  op_signature = castTerm(getType(in->op), Arrow);
 
   String op_name = {};
   if (Token *global_name = in->op->global_name)
@@ -1306,6 +1344,7 @@ printTermsInParentheses(Arena *buffer, i32 count, Term **terms, PrintOptions opt
   print(buffer, ")");
 }
 
+#if 0
 inline String
 getConstructorName(Constructor *ctor)
 {
@@ -1321,6 +1360,7 @@ getConstructorName(Constructor *ctor)
   }
   invalidCodePath;
 }
+#endif
 
 forward_declare internal void
 print(Arena *buffer, Term *in0, PrintOptions opt)
@@ -1451,7 +1491,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
         case Term_Constructor:
         {
           Constructor *in = castTerm(in0, Constructor);
-          print(buffer, getConstructorName(in));
+          print(buffer, in->name);
           if (!in->type) skip_print_type = true;
         } break;
 
@@ -1521,11 +1561,13 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
           print(buffer, "}");
         } break;
 
+#if 0
         case Term_PolyConstructor:
         {
           PolyConstructor *in = castTerm(in0, PolyConstructor);
           print(buffer, getConstructorName(in->uni, in->index));
         } break;
+#endif
 
         default:
         {
@@ -1590,13 +1632,115 @@ print(Arena *buffer, void *in0, b32 is_absolute, PrintOptions opt)
     return print(buffer, (Ast*)in0, opt);
 }
 
+struct Evaluate2Context {
+  Scope *scope;
+  i32    offset;
+  operator Evaluate2Context*() {return this;};
+};
+
+internal Value *
+evaluate2_(Evaluate2Context *ctx, Term *in0)
+{
+  Term *out0 = 0;
+#if 0
+  Arena *arena = temp_arena;
+  if (isGlobalValue(in0))
+  {
+    out0 = in0;
+  }
+  else
+  {
+    switch (in0->cat)
+    {
+      case Term_Variable:
+      {
+        Variable *in = castTerm(in0, Variable);
+        i32 delta = in->delta - ctx->offset;
+        Scope *scope = ctx->scope;
+        if (delta > 0)
+        {
+          for (i32 i=0; i < delta; i++)
+          {
+            scope = scope->outer;
+          }
+          out0 = scope->values[in->index];
+        }
+        else
+        {
+          out0 = in0;
+        }
+      } break;
+
+      case Term_Composite:
+      {
+        Composite *in = castTerm(in0, Composite);
+        Composite *out = copyTerm(arena, in);
+        allocateArray(arena, in->arg_count, out->args);
+        if (in->op->cat != Term_Constructor)
+        {
+          out->op = evaluate2_(ctx, in->op);
+        }
+        for (i32 i=0; i < in->arg_count; i++)
+        {
+          out->args[i] = evaluate2_(ctx, in->args[i]);
+        }
+
+        Term *op_type = getType(out->op);
+        Arrow *signature = castTerm(op_type, Arrow);
+        Scope *scope  = pushStruct(temp_arena, Scope, true);
+        scope->outer  = ctx->scope;
+        scope->depth  = scope->depth+1;
+        scope->values = out->args;
+        ctx->scope = scope;
+        out->type = evaluate2_(ctx, signature->output_type);
+        ctx->scope = scope->outer;
+
+        out0 = &out->t;
+      } break;
+
+      case Term_Arrow:
+      {
+        Arrow *in  = castTerm(in0, Arrow);
+        Arrow *out = copyTerm(arena, in);
+        allocateArray(arena, out->param_count, out->param_types);
+        ctx->offset++;
+        for (i32 i=0; i < out->param_count; i++)
+        {
+          out->param_types[i] = evaluate2_(ctx, in->param_types[i]);
+        }
+        out->output_type = evaluate2_(ctx, in->output_type);
+        ctx->offset--;
+        out0 = &out->t;
+      } break;
+
+      case Term_Constructor:
+      {
+        invalidCodePath;
+      } break;
+
+      default:
+        todoIncomplete;
+    }
+  }
+#endif
+  return out0;
+}
+
+internal Value *
+evaluate2(Scope *scope, Term *in0)
+{
+  Evaluate2Context ctx = {.scope=scope};
+  return evaluate2_(&ctx, in0);
+}
+
 forward_declare inline Scope *
 newScope(Scope *outer, Arrow *signature)
 {
   Scope *scope = pushStruct(temp_arena, Scope, true);
-  scope->outer = outer;
-  scope->head = signature;
-  scope->depth = outer ? outer->depth+1 : 1;
+  scope->outer  = outer;
+  scope->head   = signature;
+  scope->depth  = outer ? outer->depth+1 : 1;
+  allocateArray(temp_arena, signature->param_count, scope->values);
   return scope;
 }
 
@@ -1638,7 +1782,7 @@ isGround(Term *in0)
       return true;
     } break;
 
-    case Term_PolyConstructor:
+    // case Term_PolyConstructor:
     case Term_Primitive:
     {return true;} break;
 
@@ -1946,6 +2090,7 @@ evaluate_(EvaluationContext *ctx, Term *in0)
         }
         else if (in->delta > ctx->offset)
         {
+#if 0
           if (ctx->poly_args)
           {
             // NOTE: assert the poly union is in global context.
@@ -1953,6 +2098,7 @@ evaluate_(EvaluationContext *ctx, Term *in0)
             out0 = rebase(arena, ctx->poly_args[in->index], ctx->offset);
           }
           else
+#endif
           {
             out0 = rebase(arena, in0, -1);
           }
@@ -2103,33 +2249,14 @@ evaluate_(EvaluationContext *ctx, Term *in0)
       case Term_Union:
       {
         Union *in  = castTerm(in0, Union);
-#if 0
-        if (isPolyInstance(in))
+        Union *out = copyTerm(arena, in);
+        allocateArray(arena, in->ctor_count, out->structs);
+        for (i32 id=0; id < in->ctor_count; id++)
         {
-          // NOTE: assuming that if it's a poly instance, the "abstract" part it
-          // must be global. All we have to do is replace the poly variable.
-          Union *out = copyTerm(arena, in);
-          // out->poly_args = ctx->poly_args;  // wrong
-          i32 poly_param_count = getPolyArgCount(in);
-          allocateArray(arena, poly_param_count, out->poly_args);
-          for (i32 i=0; i < poly_param_count; i++)
-          {
-            out->poly_args[i] = evaluateMain(ctx, in->poly_args[i]);
-          }
-          out0 = &out->t;
+          Term *struc = evaluate_(ctx, &in->structs[id]->t);
+          out->structs[id] = castTerm(struc, Arrow);
         }
-        else
-#endif
-        {
-          Union *out = copyTerm(arena, in);
-          allocateArray(arena, in->ctor_count, out->structs);
-          for (i32 id=0; id < in->ctor_count; id++)
-          {
-            Term *struc = evaluate_(ctx, &in->structs[id]->t);
-            out->structs[id] = castTerm(struc, Arrow);
-          }
-          out0 = &out->t;
-        }
+        out0 = &out->t;
       } break;
 
       case Term_Primitive:
@@ -2665,7 +2792,11 @@ forward_declare inline void
 introduceSignature(Typer *typer, Arrow *signature, b32 add_bindings)
 {
   i32 param_count = signature->param_count;
-  typer->scope = newScope(typer->scope, signature);
+  Scope *scope = typer->scope = newScope(typer->scope, signature);
+  for (i32 i=0; i < signature->param_count; i++)
+  {
+    scope->values[i] = evaluate2(scope, signature->param_types[i]);
+  }
   if (add_bindings)
   {
     extendBindings(temp_arena, typer);
@@ -3865,16 +3996,7 @@ buildCtorAst(Arena *arena, CtorAst *in, Term *output_type)
   {
     if (in->ctor_i < uni->ctor_count)
     {
-      if (isGlobalValue(&uni->t))
-      {
-        out = uni->global_ctors[in->ctor_i];
-      }
-      else
-      {
-        // anonymous union in the output
-        assert(output_type->cat == Term_Union);
-        out = newConstructor(arena, output_type, in->ctor_i);
-      }
+      out = &uni->constructors[in->ctor_i]->t;
     }
     else
       parseError(&in->a, "union only has %d constructors", uni->ctor_count);
@@ -4515,7 +4637,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 silent_error)
              attempt++)
         {
           Term *op = op_list.items[attempt];
-          if (Arrow *signature = getParameterTypes(op))
+          if (Arrow *signature = getSignature(op))
           {
             i32 param_count = signature->param_count;
             Ast **expanded_args = in->args;
@@ -4805,19 +4927,20 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 silent_error)
       Arrow *out = newTerm(arena, Arrow, rea_Type);
       i32 param_count = in->param_count;
       out->param_count = param_count;
-      out->param_names = copyArray(arena, param_count, in->param_names); // todo copy festival
+      out->param_names = copyArray(arena, param_count, in->param_names);
       out->param_flags = copyArray(arena, param_count, in->param_flags);
       allocateArray(arena, param_count, out->param_types);
       {
-        typer->scope = newScope(typer->scope, out);
+        Scope *scope = typer->scope = newScope(typer->scope, out);
         extendBindings(temp_arena, typer);
-        for (i32 index=0; index < param_count && noError(); index++)
+        for (i32 i=0; i < param_count && noError(); i++)
         {
-          if (Term *param_type = buildTerm(arena, typer, in->param_types[index], holev))
+          if (Term *param_type = buildTerm(arena, typer, in->param_types[i], holev))
           {
-            out->param_types[index] = param_type;
-            String name = in->param_names[index];
-            addLocalBinding(typer, name, index);
+            out->param_types[i] = param_type;
+            scope->values[i] = evaluate2(scope, param_type);
+            String name = in->param_names[i];
+            addLocalBinding(typer, name, i);
           }
         }
 
@@ -5157,7 +5280,9 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 silent_error)
       SeekAst *in = castAst(in0, SeekAst);
       Term *proposition = goal;
       if (in->proposition)
+      {
         proposition = buildTerm(temp_arena, typer, in->proposition, holev).term;
+      }
 
       if (noError())
       {
@@ -5733,13 +5858,15 @@ eitherOrChar(char optional, char require)
 }
 
 internal UnionAst *
-parseUnion(Arena *arena, Token *global_name=0)
+parseUnion(Arena *arena, Token *global_name)
 {
   UnionAst *uni = newAst(arena, UnionAst, lastToken());
 
+  i32 poly_count = 0;
   if (peekChar() == ('('))
   {
     uni->params = parseArrowType(arena, true);
+    poly_count = getPolyParamCount(uni->params);
   }
 
   if (requireChar('{'))
@@ -5761,15 +5888,34 @@ parseUnion(Arena *arena, Token *global_name=0)
           uni->ctor_names[ctor_i] = ctor_name;
           if (isIdentifier(&ctor_name))
           {
+            ArrowAst *struc = 0;
             if (peekChar() == '(')
             {// subtype
-              uni->structs[ctor_i] = parseArrowType(arena, true);
+              struc = uni->structs[ctor_i] = parseArrowType(arena, true);
             }
             else
             {// atomic constructor
-              ArrowAst *signature = newAst(arena, ArrowAst, &ctor_name);
-              uni->structs[ctor_i] = signature;  // empty arrow: no parameter, no output.
+              struc = newAst(arena, ArrowAst, &ctor_name);
+              uni->structs[ctor_i] = struc;
+              allocateArray(arena, poly_count, struc->param_names);
+              allocateArray(arena, poly_count, struc->param_types);
+              allocateArray(arena, poly_count, struc->param_flags);
             }
+            // syntactic modification to add poly variables
+            assert((struc->param_count + poly_count) < DEFAULT_MAX_LIST_LENGTH);
+            for (i32 i = struc->param_count-1; i >= 0; i--)
+            {
+              struc->param_names[i+poly_count] = struc->param_names[i];
+              struc->param_types[i+poly_count] = struc->param_types[i];
+              struc->param_flags[i+poly_count] = struc->param_flags[i];
+            }
+            for (i32 i=0; i < poly_count; i++)
+            {
+              struc->param_names[i] = uni->params->param_names[i];
+              struc->param_types[i] = uni->params->param_types[i];
+              struc->param_flags[i] = uni->params->param_flags[i];
+            }
+            struc->param_count += poly_count;
           }
           else
             tokenError("expected an identifier as constructor name");
@@ -5787,6 +5933,7 @@ parseUnion(Arena *arena, Token *global_name=0)
   return uni;
 }
 
+#if 0
 struct ProcessPolyConstructorTypeContext {
   Arena *arena;
   i32    poly_param_count;
@@ -5864,34 +6011,20 @@ processPolyConstructorType(ProcessPolyConstructorTypeContext *ctx, Term *in0)
   assert(out0);
   return out0;
 }
-
-inline i32
-getPolyParamCount(Arrow *poly_params)
-{
-  i32 param_count = 0;
-  for (i32 param_i=0; param_i < poly_params->param_count; param_i++)
-  {
-    if (checkFlag(poly_params->param_flags[param_i], ParameterFlag_Poly))
-    {
-      param_count++;
-    }
-    else
-      break;
-  }
-  return param_count;
-}
+#endif
 
 forward_declare internal Term *
 buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
 {
   Union *uni = newTerm(arena, Union, rea_Type);
+  b32 UNUSED_VAR serial = DEBUG_SERIAL++;
 
   i32 ctor_count = in->ctor_count;
   uni->ctor_count = ctor_count;
   uni->structs    = pushArray(arena, ctor_count, Arrow *);
   if (global_name)
   {
-    uni->global_ctors = pushArray(arena, ctor_count, Term *);
+    uni->constructors = pushArray(arena, ctor_count, Constructor *);
   }
 
   Arrow *uni_params     = 0;
@@ -5926,10 +6059,12 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
       addGlobalBinding(global_name, &uni->t);
     }
 
+#if 0
     if (uni_params)
     {
       introduceSignature(typer, uni_params, true);  // TODO: check that we don't leak non-poly params, by not allowing you to name them.
     }
+#endif
     for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
     {
       Ast *ast_struc = &in->structs[ctor_i]->a;
@@ -5959,7 +6094,7 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
                     {
                       if (Variable *var = castTerm(output_type->args[poly_i], Variable))
                       {
-                        b32 correct_var = (var->delta == 1 && var->index == poly_i);
+                        b32 correct_var = (var->delta == 0 && var->index == poly_i);
                         if (!correct_var)
                         {
                           valid_output = false;
@@ -5972,6 +6107,7 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
               if (!valid_output)
               {
                 parseError(ast_struc, "constructor has to return the same union as the one being defined");
+                attach("output_type", struc->output_type);
               }
             }
             else
@@ -5986,8 +6122,10 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
         }
       }
     }
+#if 0
     if (uni_params)
       unwindBindingsAndScope(typer);
+#endif
   }
 
   if (noError() && global_name)
@@ -6014,7 +6152,18 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
       for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
       {
         Arrow *struc = uni->structs[ctor_i];
-        Arrow *signature        = copyTerm(arena, struc);
+        if (non_poly_count == 0)
+        {
+          struc->output_type = &common_ctor_output_type->t;  // bookmark just maybe this is fine?
+        }
+
+        Constructor *ctor = newTerm(arena, Constructor, &struc->t);
+        ctor->index = ctor_i;
+        ctor->name  = in->ctor_names[ctor_i];
+        addGlobalBinding(&in->ctor_names[ctor_i], &ctor->t);
+        uni->constructors[ctor_i] = ctor;
+
+#if 0
         signature->param_count += poly_count;
         allocateArray(arena, signature->param_count, signature->param_names);
         allocateArray(arena, signature->param_count, signature->param_types);
@@ -6047,10 +6196,10 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
           PolyConstructor *pctor = newTerm(arena, PolyConstructor, &signature->t);
           pctor->uni   = uni;
           pctor->index = ctor_i;
-
           addGlobalBinding(&in->ctor_names[ctor_i], &pctor->t);
           uni->global_ctors[ctor_i] = &pctor->t;
         }
+#endif
 
 #if 0
         if (noError() && non_poly_count)
@@ -6099,11 +6248,10 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
       for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
       {
         Arrow *struc = uni->structs[ctor_i];
-        Arrow *signature = copyTerm(arena, struc);
-        signature->output_type = &uni->t;
-        Constructor *ctor = newTerm(arena, Constructor, &signature->t);
-        ctor->uni   = &uni->t;
+        struc->output_type = &uni->t;
+        Constructor *ctor = newTerm(arena, Constructor, &struc->t);
         ctor->index = ctor_i;
+        ctor->name  = in->ctor_names[ctor_i];
 
         Term *term_to_bind = &ctor->t;
         if (struc->param_count == 0)
@@ -6112,7 +6260,7 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
           term_to_bind = newComposite(arena, &ctor->t, 0, 0);
         }
         addGlobalBinding(&in->ctor_names[ctor_i], term_to_bind);
-        uni->global_ctors[ctor_i] = term_to_bind;
+        uni->constructors[ctor_i] = ctor;
       }
     }
 
@@ -6316,7 +6464,7 @@ parseOperand(Arena *arena)
 
     case Token_Keyword_union:
     {
-      operand = &parseUnion(arena)->a;
+      parseError(&token, "anonymous union deprecated");
     } break;
 
     case Token_Keyword_ctor:
@@ -6952,8 +7100,7 @@ beginInterpreterSession(Arena *top_level_arena, FilePath input_path)
     rea_equal = &newTerm(arena, Primitive, equal_type)->t;
     addBuiltinGlobalBinding("=", rea_equal);
 
-    builtin_tk.at = "union {}";
-    rea_False = parseExpressionAndBuild(arena).term;
+    rea_False = &newTerm(arena, Union, rea_Type)->t;  // NOTE: "union {}"
     assert(noError());
     addBuiltinGlobalBinding("False", rea_False);
 
@@ -7029,10 +7176,10 @@ int engineMain()
   temp_arena_ = newArena(temp_arena_size, temp_arena_base);
 
   char *files[] = {
-    "list.rea",
     "../data/test.rea",
     "../data/z.rea",
     "../data/z-slider.rea",
+    "list.rea",
   };
   for (i32 file_id=0; file_id < arrayCount(files); file_id++)
   {

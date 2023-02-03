@@ -27,6 +27,9 @@ concatNonEmpty :: (T:Type, l,m: List(T), nonEmpty(l), nonEmpty(m)) -> nonEmpty(l
 ;;  Permute(a cons l, b + (a cons c))
 ;;  }
 
+#print all_args
+#print var_delta
+
 Permute :: union($$T: Type, List(T), List(T))
 {
  permuteNil() -> Permute(nil(T), nil(T))
