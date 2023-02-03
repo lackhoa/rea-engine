@@ -54,12 +54,10 @@ enum AstCategory {
 
 enum TermCategory {
   Term_Hole = 1,
-  // Term_PolyConstructor,
 
   Term_Primitive,
   Term_Union,
   Term_Constructor,
-  // Term_PolyUnion,
   Term_Function,
   Term_Fork,
   Term_Variable,
@@ -68,6 +66,8 @@ enum TermCategory {
   Term_Composite,
   Term_Arrow,
   Term_Rewrite,
+
+  Term_Pointer,
 };
 
 const u32 AstFlag_Generated = 1 << 0;
@@ -194,7 +194,7 @@ struct Scope {
   Scope  *outer;
   i32     depth;
 
-  Value **values;  // TODO: experimental step towards "real" values
+  Value **stack;  // TODO: experimental step towards "real" values
 };
 
 struct Typer
@@ -242,20 +242,10 @@ struct Constructor {
   i32    index;
 };
 
-#if 0
-// NOTE: does not appear in expression.
-struct PolyConstructor {
-  embed_Term(t);
-  Union *uni;                   // poly union
-  i32    index;
-};
-#endif
-
 struct Union {
   embed_Term(t);
   i32           ctor_count;
   Constructor **constructors;
-  Arrow       **structs;
 };
 
 struct Function {
@@ -310,7 +300,17 @@ struct Accessor {
   embed_Term(t);
   Term   *record;
   i32     field_index;
-  String  field_name;           // #todo #debug_only
+  String  debug_field_name;
+};
+
+struct Pointer {
+  embed_Term(v);
+  String   name;
+  i32      depth;
+  i32      index;
+  TreePath path;  // For accessors maybe idk
+
+  Value *ref;  // todo: not sure how this works
 };
 
 struct CompositeAst {
@@ -521,7 +521,7 @@ struct UnionAst {
   embed_Ast(a);
   i32        ctor_count;
   Token     *ctor_names;
-  ArrowAst **structs;
+  ArrowAst **ctor_signatures;
   ArrowAst  *params;
 };
 

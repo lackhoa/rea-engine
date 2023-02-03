@@ -56,6 +56,8 @@ _newTerm(Arena *arena, TermCategory cat, Term *type, size_t size)
 #define newTerm(arena, cat, type)              \
   ((cat *) _newTerm(arena, Term_##cat, type, sizeof(cat)))
 
+#define newValue newTerm
+
 inline Term *
 _copyTerm(Arena *arena, void *src, size_t size)
 {
@@ -211,6 +213,13 @@ inline Arrow *
 getSignature(Term *op)
 {
   return castTerm(getType(op), Arrow);
+}
+
+inline Arrow *
+getConstructorSignature(Union *uni, i32 ctor_index)
+{
+  assert(ctor_index < uni->ctor_count);
+  return getSignature(&uni->constructors[ctor_index]->t);
 }
 
 inline Term *
@@ -492,10 +501,10 @@ getPolyParamCount(ArrowAst *params)
 }
 
 inline Term **
-synthesizeMembers(Arena *arena, Term *parent, i32 ctor_id)
+synthesizeMembers(Arena *arena, Term *parent, i32 ctor_index)
 {
   auto [uni, args] = castUnion(getType(parent));
-  Arrow *struc = uni->structs[ctor_id];
+  Arrow *struc = getConstructorSignature(uni, ctor_index);
   i32 param_count = struc->param_count;
   Term **members = pushArray(temp_arena, param_count, Term *);
   i32 poly_count = 0;
@@ -514,7 +523,7 @@ synthesizeMembers(Arena *arena, Term *parent, i32 ctor_id)
     Accessor *accessor    = newTerm(arena, Accessor, type);
     accessor->record      = parent;
     accessor->field_index = field_i;
-    accessor->field_name  = field_name;
+    accessor->debug_field_name  = field_name;
     members[field_i] = &accessor->t;
   }
   return members;
@@ -525,7 +534,7 @@ synthesizeTree(Arena *arena, Term *parent, DataTree *tree)
 {
   Composite *record = 0;
   auto [uni, poly_args] = castUnion(getType(parent));
-  Arrow *struc = uni->structs[tree->ctor_i];
+  Arrow *struc = getConstructorSignature(uni, tree->ctor_i);
   Constructor *ctor = uni->constructors[tree->ctor_i];
   i32 param_count = struc->param_count;
   record = newTerm(arena, Composite, parent->type);
@@ -669,7 +678,7 @@ inline void
 initDataTree(Arena *arena, DataTree *tree, Term *uni0, i32 ctor_id)
 {
   Union *uni = castUnionOrPolyUnion(uni0);
-  i32 ctor_arg_count = uni->structs[ctor_id]->param_count;
+  i32 ctor_arg_count = getConstructorSignature(uni, ctor_id)->param_count;
   tree->debug_uni    = uni;
   tree->ctor_i       = ctor_id;
   tree->member_count = ctor_arg_count;
@@ -1429,7 +1438,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
             unsetFlag(&new_opt.flags, PrintFlag_Detailed);
             for (i32 ctor_id = 0; ctor_id < in->ctor_count; ctor_id++)
             {
-              print(buffer, &in->structs[ctor_id]->t, new_opt);
+              print(buffer, &getConstructorSignature(in, ctor_id)->t, new_opt);
               if (ctor_id != in->ctor_count-1)
                 print(buffer, ", ");
             }
@@ -1534,7 +1543,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
           Accessor *in = castTerm(in0, Accessor);
           print(buffer, in->record, new_opt);
           print(buffer, ".");
-          print(buffer, in->field_name);
+          print(buffer, in->debug_field_name);
         } break;
 
         case Term_Fork:
@@ -1642,7 +1651,6 @@ internal Value *
 evaluate2_(Evaluate2Context *ctx, Term *in0)
 {
   Term *out0 = 0;
-#if 0
   Arena *arena = temp_arena;
   if (isGlobalValue(in0))
   {
@@ -1663,7 +1671,7 @@ evaluate2_(Evaluate2Context *ctx, Term *in0)
           {
             scope = scope->outer;
           }
-          out0 = scope->values[in->index];
+          out0 = scope->stack[in->index];
         }
         else
         {
@@ -1676,10 +1684,6 @@ evaluate2_(Evaluate2Context *ctx, Term *in0)
         Composite *in = castTerm(in0, Composite);
         Composite *out = copyTerm(arena, in);
         allocateArray(arena, in->arg_count, out->args);
-        if (in->op->cat != Term_Constructor)
-        {
-          out->op = evaluate2_(ctx, in->op);
-        }
         for (i32 i=0; i < in->arg_count; i++)
         {
           out->args[i] = evaluate2_(ctx, in->args[i]);
@@ -1690,7 +1694,7 @@ evaluate2_(Evaluate2Context *ctx, Term *in0)
         Scope *scope  = pushStruct(temp_arena, Scope, true);
         scope->outer  = ctx->scope;
         scope->depth  = scope->depth+1;
-        scope->values = out->args;
+        scope->stack = out->args;
         ctx->scope = scope;
         out->type = evaluate2_(ctx, signature->output_type);
         ctx->scope = scope->outer;
@@ -1713,6 +1717,14 @@ evaluate2_(Evaluate2Context *ctx, Term *in0)
         out0 = &out->t;
       } break;
 
+      case Term_Accessor:
+      {
+        Accessor *in  = castTerm(in0, Accessor);
+        Accessor *out = copyTerm(arena, in);
+        out->record = evaluate2_(ctx, in->record);
+        out0 = &out->t;
+      } break;
+
       case Term_Constructor:
       {
         invalidCodePath;
@@ -1722,7 +1734,7 @@ evaluate2_(Evaluate2Context *ctx, Term *in0)
         todoIncomplete;
     }
   }
-#endif
+  assert(out0);
   return out0;
 }
 
@@ -1740,7 +1752,7 @@ newScope(Scope *outer, Arrow *signature)
   scope->outer  = outer;
   scope->head   = signature;
   scope->depth  = outer ? outer->depth+1 : 1;
-  allocateArray(temp_arena, signature->param_count, scope->values);
+  allocateArray(temp_arena, signature->param_count, scope->stack);
   return scope;
 }
 
@@ -1797,6 +1809,9 @@ isGround(Term *in0)
     case Term_Union:
     case Term_Constructor:
     {return false;} break;
+
+    default:
+      todoIncomplete;
   }
 }
 
@@ -1888,6 +1903,7 @@ rebase_(Arena *arena, Term *in0, i32 delta, i32 offset)
         out0 = &out->t;
       } break;
 
+#if 0
       case Term_Union:
       {
         Union *in  = castTerm(in0, Union);
@@ -1900,6 +1916,7 @@ rebase_(Arena *arena, Term *in0, i32 delta, i32 offset)
         }
         out0 = &out->t;
       } break;
+#endif
 
       case Term_Constructor:
       {
@@ -1927,6 +1944,7 @@ rebase(Arena *arena, Term *in0, i32 delta)
   return rebase_(arena, in0, delta, 0);
 }
 
+#if 0
 inline Term *
 newConjunctionN(Arena *arena, i32 count, Term **conjuncts)
 {
@@ -1958,6 +1976,7 @@ newConjunctionN(Arena *arena, i32 count, Term **conjuncts)
   }
   return out0;
 }
+#endif
 
 internal Term *
 apply(Arena *arena, Term *op, i32 arg_count, Term **args, String name_to_unfold)
@@ -2021,8 +2040,22 @@ apply(Arena *arena, Term *op, i32 arg_count, Term **args, String name_to_unfold)
           {
             // since we can't return "True", nothing to do here
           }
+          else if (arg_count == 1)
+          {
+            i32 arg_i = 0;
+            Term *conjunct = newEquality(arena, l->args[arg_i], r->args[arg_i]);
+            Composite *composite = castTerm(conjunct, Composite);
+            if (Term *more = apply(arena, composite->op, composite->arg_count, composite->args, name_to_unfold))
+            {
+              conjunct = more;
+            }
+
+            out0 = conjunct;
+          }
           else
           {
+            todoIncomplete;
+#if 0
             Term **conjuncts = pushArray(temp_arena, arg_count, Term *);
             for (i32 arg_i=0; arg_i < arg_count; arg_i++)
             {
@@ -2037,6 +2070,7 @@ apply(Arena *arena, Term *op, i32 arg_count, Term **args, String name_to_unfold)
               conjuncts[arg_i] = conjunct;
             }
             out0 = newConjunctionN(arena, arg_count, conjuncts);
+#endif
           }
         }
       }
@@ -2090,18 +2124,7 @@ evaluate_(EvaluationContext *ctx, Term *in0)
         }
         else if (in->delta > ctx->offset)
         {
-#if 0
-          if (ctx->poly_args)
-          {
-            // NOTE: assert the poly union is in global context.
-            assert(in->delta == ctx->offset+1);
-            out0 = rebase(arena, ctx->poly_args[in->index], ctx->offset);
-          }
-          else
-#endif
-          {
-            out0 = rebase(arena, in0, -1);
-          }
+          out0 = rebase(arena, in0, -1);
         }
         else
         {
@@ -2246,6 +2269,7 @@ evaluate_(EvaluationContext *ctx, Term *in0)
         }
       } break;
 
+#if 0
       case Term_Union:
       {
         Union *in  = castTerm(in0, Union);
@@ -2258,6 +2282,7 @@ evaluate_(EvaluationContext *ctx, Term *in0)
         }
         out0 = &out->t;
       } break;
+#endif
 
       case Term_Primitive:
       case Term_Hole:
@@ -2391,16 +2416,7 @@ compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
 
         if (op_equal)
         {
-          Arrow *arrow = 0;
-          if (Constructor *ctor = castTerm(l->op, Constructor))
-          {
-            Union *uni = castUnionOrPolyUnion(getType(l0));
-            arrow = uni->structs[ctor->index];
-          }
-          else
-          {
-            arrow = castTerm(getType(l->op), Arrow);
-          }
+          Arrow *arrow = getSignature(l->op);
 
           i32 count = l->arg_count;
           assert(l->arg_count == r->arg_count);
@@ -2471,6 +2487,7 @@ compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
         out.result = toTrinary(l0 == r0);
       } break;
 
+#if 0
       case Term_Union:
       {
         if (!isGlobalValue(l0) && !isGlobalValue(r0))
@@ -2494,7 +2511,9 @@ compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
           }
         }
       } break;
+#endif
 
+      case Term_Union:
       case Term_Function:
       case Term_Hole:
       case Term_Rewrite:
@@ -2730,6 +2749,7 @@ normalize_(NormalizeContext *ctx, Term *in0)
         out0 = normalizeVariable(arena, ctx->map, ctx->depth, in);
       } break;
 
+#if 0
       case Term_Union:
       {
         Union *in  = castTerm(in0, Union);
@@ -2743,6 +2763,7 @@ normalize_(NormalizeContext *ctx, Term *in0)
         }
         out0 = &out->t;
       } break;
+#endif
 
       case Term_Fork:
       case Term_Hole:
@@ -2788,6 +2809,16 @@ addLocalBinding(Typer *env, String key, i32 var_id)
   lookup.slot->var_id = var_id;
 }
 
+inline Value *
+newPointer(Scope *scope, String name, i32 index, Value *type)
+{
+  Pointer *out = newValue(temp_arena, Pointer, type);
+  out->name  = name;
+  out->depth = getScopeDepth(scope);
+  out->index = index;
+  return &out->v;
+}
+
 forward_declare inline void
 introduceSignature(Typer *typer, Arrow *signature, b32 add_bindings)
 {
@@ -2795,7 +2826,8 @@ introduceSignature(Typer *typer, Arrow *signature, b32 add_bindings)
   Scope *scope = typer->scope = newScope(typer->scope, signature);
   for (i32 i=0; i < signature->param_count; i++)
   {
-    scope->values[i] = evaluate2(scope, signature->param_types[i]);
+    Value *type = evaluate2(scope, signature->param_types[i]);
+    scope->stack[i] = newPointer(scope, signature->param_names[i], i, type);
   }
   if (add_bindings)
   {
@@ -3191,6 +3223,7 @@ unify(Stack *stack, b32 same_type, Term *in0, Term *goal0)
         }
       } break;
 
+#if 0
       case Term_Union:
       {
         // NOTE: "equal" wouldn't work, because :variable-comparison-is-different.
@@ -3205,6 +3238,12 @@ unify(Stack *stack, b32 same_type, Term *in0, Term *goal0)
             }
           }
         }
+      } break;
+#endif
+
+      case Term_Union:
+      {
+        invalidCodePath;
       } break;
 
       case Term_Constructor:
@@ -3400,7 +3439,7 @@ seekGoal(Solver *solver, Term *goal, b32 try_reductio=false)
           if (ctor_i >= 0)
           {
             Union *uni = castUnionOrPolyUnion(var_type);
-            Arrow *struc = uni->structs[ctor_i];
+            Arrow *struc = getConstructorSignature(uni, ctor_i);
             Term **members = synthesizeMembers(solver->arena, var, ctor_i);
             for (i32 member_i = 0; member_i < struc->param_count && !out; member_i++)
             {
@@ -4517,6 +4556,8 @@ internal Term *
 buildInvert(Arena *arena, Typer *typer, CompositeAst *ast)
 {
   Term *out = 0;
+  todoIncomplete;
+#if 0
   if (ast->arg_count == 1)
   {
     if (Term *arg = buildTerm(arena, typer, ast->args[0], holev))
@@ -4549,6 +4590,7 @@ buildInvert(Arena *arena, Typer *typer, CompositeAst *ast)
   {
     parseError(&ast->a, "we can only invert one thing at a time!");
   }
+#endif
   return out;
 }
 
@@ -4938,7 +4980,8 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 silent_error)
           if (Term *param_type = buildTerm(arena, typer, in->param_types[i], holev))
           {
             out->param_types[i] = param_type;
-            scope->values[i] = evaluate2(scope, param_type);
+            Value *type = evaluate2(scope, param_type);
+            scope->stack[i] = newPointer(scope, out->param_names[i], i, type);
             String name = in->param_names[i];
             addLocalBinding(typer, name, i);
           }
@@ -4966,7 +5009,7 @@ buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 silent_error)
         if (ctor_i >= 0)
         {
           Union *uni = castUnionOrPolyUnion(getType(record0));
-          Arrow *struc = uni->structs[ctor_i];
+          Arrow *struc = getConstructorSignature(uni, ctor_i);
           i32 param_count = struc->param_count;
           b32 valid_param_name = false;
           i32 field_i = -1;
@@ -5871,7 +5914,7 @@ parseUnion(Arena *arena, Token *global_name)
 
   if (requireChar('{'))
   {
-    allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, uni->structs);
+    allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, uni->ctor_signatures);
     if (global_name)
     {
       allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, uni->ctor_names);
@@ -5891,12 +5934,12 @@ parseUnion(Arena *arena, Token *global_name)
             ArrowAst *struc = 0;
             if (peekChar() == '(')
             {// subtype
-              struc = uni->structs[ctor_i] = parseArrowType(arena, true);
+              struc = uni->ctor_signatures[ctor_i] = parseArrowType(arena, true);
             }
             else
             {// atomic constructor
               struc = newAst(arena, ArrowAst, &ctor_name);
-              uni->structs[ctor_i] = struc;
+              uni->ctor_signatures[ctor_i] = struc;
               allocateArray(arena, poly_count, struc->param_names);
               allocateArray(arena, poly_count, struc->param_types);
               allocateArray(arena, poly_count, struc->param_flags);
@@ -5922,7 +5965,7 @@ parseUnion(Arena *arena, Token *global_name)
         }
         else
         {
-          uni->structs[ctor_i] = parseArrowType(arena, true);
+          uni->ctor_signatures[ctor_i] = parseArrowType(arena, true);
         }
 
         stop = eitherOrChar(',', '}');
@@ -6021,7 +6064,7 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
 
   i32 ctor_count = in->ctor_count;
   uni->ctor_count = ctor_count;
-  uni->structs    = pushArray(arena, ctor_count, Arrow *);
+  Arrow **ctor_signatures = pushArray(arena, ctor_count, Arrow *);
   if (global_name)
   {
     uni->constructors = pushArray(arena, ctor_count, Constructor *);
@@ -6067,12 +6110,11 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
 #endif
     for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
     {
-      Ast *ast_struc = &in->structs[ctor_i]->a;
+      Ast *ast_struc = &in->ctor_signatures[ctor_i]->a;
       if (Term *struc0 = buildTerm(arena, typer, ast_struc, holev).term)
       {
-        Arrow *struc = castTerm(struc0, Arrow);
+        Arrow *struc = ctor_signatures[ctor_i] = castTerm(struc0, Arrow);
         assert(struc);
-        uni->structs[ctor_i] = struc;
 
         if (uni_params)
         {
@@ -6151,7 +6193,7 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
 
       for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
       {
-        Arrow *struc = uni->structs[ctor_i];
+        Arrow *struc = ctor_signatures[ctor_i];
         if (non_poly_count == 0)
         {
           struc->output_type = &common_ctor_output_type->t;  // bookmark just maybe this is fine?
@@ -6247,7 +6289,7 @@ buildUnion(Arena *arena, Typer *typer, UnionAst *in, Token *global_name)
       // no union parameters
       for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
       {
-        Arrow *struc = uni->structs[ctor_i];
+        Arrow *struc = ctor_signatures[ctor_i];
         struc->output_type = &uni->t;
         Constructor *ctor = newTerm(arena, Constructor, &struc->t);
         ctor->index = ctor_i;
@@ -7179,7 +7221,7 @@ int engineMain()
     "../data/test.rea",
     "../data/z.rea",
     "../data/z-slider.rea",
-    "list.rea",
+    // "list.rea",
   };
   for (i32 file_id=0; file_id < arrayCount(files); file_id++)
   {
