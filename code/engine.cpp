@@ -1783,6 +1783,38 @@ rebase(Arena *arena, Term *in0, i32 delta)
   return rebase_(arena, in0, delta, 0);
 }
 
+inline Term *
+newConjunctionN(Arena *arena, i32 count, Term **conjuncts)
+{
+  Term *out0 = 0;
+  assert(count != 0);  // return True? :>
+  if (count == 1)
+  {
+    out0 = conjuncts[0];
+  }
+  else
+  {
+    Arrow *struc = newTerm(arena, Arrow, rea_Type);
+    struc->param_count = count;
+    struc->param_names = pushArray(arena, count, String);
+    struc->param_types = pushArray(arena, count, Term *);
+
+    for (i32 i=0; i < count; i++)
+    {
+      assert(i < arrayCount(number_to_string));
+      struc->param_names[i] = number_to_string[i];
+      struc->param_types[i] = rebase(arena, conjuncts[i], 1);
+    }
+
+    Union *out = newTerm(arena, Union, rea_Type);
+    out->ctor_count = 1;
+    out->structs    = pushArray(arena, 1, Arrow*);
+    out->structs[0] = struc;
+    out0 = &out->t;
+  }
+  return out0;
+}
+
 internal Term *
 apply(Arena *arena, Term *op, i32 arg_count, Term **args, Term *type, String name_to_unfold)
 {
@@ -1844,44 +1876,30 @@ apply(Arena *arena, Term *op, i32 arg_count, Term **args, Term *type, String nam
           if (arg_count == 0)
           {
             // we can't do anything here
-          }
-          else if (arg_count == 1)
-          {
-            Term *larg = l->args[0];
-            Term *rarg = r->args[0];
-            Term **args = pushArray(arena, 3, Term*);
-            args[0] = getType(larg);
-            args[1] = larg;
-            args[2] = rarg;
-            // if we're lucky maybe it'll decompose into False
-            out0 = apply(arena, rea_equal, 3, args, type, {});
-            if (!out0)
-            {
-              out0 = newEquality(arena, larg, rarg);
-            }
+            // bookmark seriously how does this stuff work?
           }
           else
           {
-            Union *out = newTerm(arena, Union, rea_Type);
-            out->ctor_count = 1;
-            out->structs    = pushArray(arena, 1, Arrow*);
-
-            out->structs[0] = newTerm(arena, Arrow, rea_Type);
-            Arrow *struc = out->structs[0];
-            struc->param_count = arg_count;
-            struc->param_names = pushArray(arena, arg_count, String);
-            struc->param_types = pushArray(arena, arg_count, Term *);
+            Term **conjuncts = pushArray(temp_arena, arg_count, Term *);
             for (i32 arg_i=0; arg_i < arg_count; arg_i++)
             {
-              assert(arg_i < arrayCount(number_to_string));
-              struc->param_names[arg_i] = number_to_string[arg_i];
+              Term *larg = l->args[arg_i];
+              Term *rarg = r->args[arg_i];
+              Term **args = pushArray(arena, 3, Term*);
+              args[0] = type;  // todo: omg what is this nightmare?
+              args[1] = larg;
+              args[2] = rarg;
+              // if we're lucky maybe it'll decompose into False
+              Term *conjunct = apply(arena, rea_equal, 3, args, type, {});
+              if (!conjunct)
+              {
+                conjunct = newEquality(arena, larg, rarg);
+              }
 
-              // todo: systematize these stupid rebases with term builder.
-              Term *larg = rebase(arena, l->args[arg_i], 1);
-              Term *rarg = rebase(arena, r->args[arg_i], 1);
-              struc->param_types[arg_i] = newEquality(arena, larg, rarg);
+              // todo #leak the conjuncts are gonna be rebased anyway, haizz
+              conjuncts[arg_i] = conjunct;
             }
-            out0 = &out->t;
+            out0 = newConjunctionN(arena, arg_count, conjuncts);
           }
         }
       }
@@ -1894,6 +1912,7 @@ apply(Arena *arena, Term *op, i32 arg_count, Term **args, Term *type, String nam
   }
   else if (op->cat == Term_Constructor)
   {
+    // todo bookmark Why do we gotta do this? Urgh!
     Composite *out = newTerm(arena, Composite, type);
     out->op        = op;
     out->arg_count = arg_count;
@@ -7022,18 +7041,8 @@ int engineMain()
   temp_arena_base = platformVirtualAlloc(temp_arena_base, top_level_arena_size);
   temp_arena_ = newArena(temp_arena_size, temp_arena_base);
 
-#if 0
-  i32 in[] = {7, 7, 2, 5, 3, 7, 3, 4, 6, 1, 6, 4, 5, 4, 8};
-  i32 in1[] = {};
-  i32 in2[] = {2};
-  i32 in3[] = {37, 12, 94, 67, 51,};
-  testSort(in, arrayCount(in));
-  testSort(in1, arrayCount(in1));
-  testSort(in2, arrayCount(in2));
-  testSort(in3, arrayCount(in3));
-#endif
-
   char *files[] = {
+    "list.rea",
     "../data/test.rea",
     "../data/z.rea",
     "../data/z-slider.rea",

@@ -1,0 +1,50 @@
+foldPermute :: ($T: Type,
+                op: (a,b: T) -> T,
+                associative: (a,b,c: T) -> (a op b) op c = a op b op c,
+                commutative: (a,b: T) -> a op b = b op a,
+                a,b: T, l,m: List(T),
+                p: Permute(a cons l, b cons m)) -> fold(op, a, l) = fold(op, b, m)
+{
+ fork p
+ {permuteSame
+  i := invert(p);
+  norm i;
+  rewrite seek(a = b);
+  rewrite seek(l = m);
+  ,
+
+  ;; bookmark Please, make these equalities better, for the children
+  permute
+  norm p.al_destruct;
+  rewrite seek(a = p.a);
+  rewrite seek(l = p.l);
+  fork p.b
+  {nil
+   norm p.bac_destruct;
+   rewrite seek(b=p.a);
+   rewrite seek(m=p.c);
+   norm p.recurse;
+
+   prove (p.a cons p.l) Permute (p.a cons p.c)
+   {prove (p.a cons p.l = p.a cons p.l) {} as x;
+    prove (p.a cons p.c = (nil(T) + (p.a cons p.c))) {} as y;
+    prove (Permute(p.l, nil(T) + p.c)) {norm;} as z;
+    return permute(x, y, z)}
+
+   return foldPermute(...)
+   ,
+
+   cons
+   }
+  ;; norm;
+  ;; p.a op fold(op, p.l) = fold(op, p.b + (p.a cons p.c))
+  ;; => p.a op fold(op, p.l) = fold(op, p.b) op fold(op, p.a cons p.c) {foldConcat}
+  ;; => p.a op fold(op, p.l) = fold(op, p.b) op p.a op fold(op, p.c)
+  ;; => p.a op fold(op, p.l) = (p.a op fold(op, p.c)) op fold(op, p.b) {commutative}
+  ;; => p.a op fold(op, p.l) = p.a op fold(op, p.c) op fold(op, p.b) {associative}
+  ;; => p.a op fold(op, p.l) = p.a op fold(op, p.b) op fold(op, p.c) {commutative}
+  ;; => p.a op fold(op, p.l) = p.a op fold(op, p.b + p.c);
+  ;; prove fold(op, p.l) = fold(op, p.b + p.c) {return foldPermute(...)} as e;
+  ;; rewrite e,
+  }
+ }
