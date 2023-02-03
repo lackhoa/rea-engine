@@ -1816,7 +1816,7 @@ newConjunctionN(Arena *arena, i32 count, Term **conjuncts)
 }
 
 internal Term *
-apply(Arena *arena, Term *op, i32 arg_count, Term **args, Term *type, String name_to_unfold)
+apply(Arena *arena, Term *op, i32 arg_count, Term **args, String name_to_unfold)
 {
   Term *out0 = 0;
 
@@ -1831,11 +1831,12 @@ apply(Arena *arena, Term *op, i32 arg_count, Term **args, Term *type, String nam
   {// Function application
     b32 should_apply_function = true;
     if (fun->body == &dummy_function_being_built)
+    {
       should_apply_function = false;
+    }
     if (checkFlag(fun->function_flags, FunctionFlag_no_apply))
     {
-      should_apply_function = (name_to_unfold.chars &&
-                               equal(fun->global_name->string, name_to_unfold));
+      should_apply_function = (name_to_unfold.chars && equal(fun->global_name->string, name_to_unfold));
     }
 
     if (should_apply_function)
@@ -1847,12 +1848,11 @@ apply(Arena *arena, Term *op, i32 arg_count, Term **args, Term *type, String nam
     Term *l0 = args[1];
     Term *r0 = args[2];
 
+    b32 can_destruct = false;
     if (Composite *l = castTerm(l0, Composite))
     {
       if (Composite *r = castTerm(r0, Composite))
       {
-        // todo: kind of hacky?
-        b32 can_destruct = false;
         if (Constructor *lctor = castTerm(l->op, Constructor))
         {
           if (Constructor *rctor = castTerm(r->op, Constructor))
@@ -1875,25 +1875,18 @@ apply(Arena *arena, Term *op, i32 arg_count, Term **args, Term *type, String nam
           i32 arg_count = l->arg_count;
           if (arg_count == 0)
           {
-            // we can't do anything here
-            // bookmark seriously how does this stuff work?
+            // since we can't return "True", nothing to do here
           }
           else
           {
             Term **conjuncts = pushArray(temp_arena, arg_count, Term *);
             for (i32 arg_i=0; arg_i < arg_count; arg_i++)
             {
-              Term *larg = l->args[arg_i];
-              Term *rarg = r->args[arg_i];
-              Term **args = pushArray(arena, 3, Term*);
-              args[0] = type;  // todo: omg what is this nightmare?
-              args[1] = larg;
-              args[2] = rarg;
-              // if we're lucky maybe it'll decompose into False
-              Term *conjunct = apply(arena, rea_equal, 3, args, type, {});
-              if (!conjunct)
+              Term *conjunct = newEquality(arena, l->args[arg_i], r->args[arg_i]);
+              Composite *composite = castTerm(conjunct, Composite);
+              if (Term *more = apply(arena, composite->op, composite->arg_count, composite->args, name_to_unfold))
               {
-                conjunct = newEquality(arena, larg, rarg);
+                conjunct = more;
               }
 
               // todo #leak the conjuncts are gonna be rebased anyway, haizz
@@ -1905,19 +1898,13 @@ apply(Arena *arena, Term *op, i32 arg_count, Term **args, Term *type, String nam
       }
     }
 
-    Trinary compare = equalTrinary(l0, r0);
-    // #hack to handle inconsistency
-    if (compare == Trinary_False)
-      out0 = rea_False;
-  }
-  else if (op->cat == Term_Constructor)
-  {
-    // todo bookmark Why do we gotta do this? Urgh!
-    Composite *out = newTerm(arena, Composite, type);
-    out->op        = op;
-    out->arg_count = arg_count;
-    out->args      = args;
-    out0 = &out->t;
+    if (!can_destruct)
+    {
+      Trinary compare = equalTrinary(l0, r0);
+      // #hack to handle inconsistency
+      if (compare == Trinary_False)
+        out0 = rea_False;
+    }
   }
 
   if(DEBUG_LOG_apply)
@@ -1996,7 +1983,7 @@ evaluate_(EvaluationContext *ctx, Term *in0)
         Term *type = evaluate_(ctx, getType(in0));  // :eval-type
         if (checkFlag(ctx->flags, EvaluationFlag_AlwaysApply))
         {
-          out0 = apply(arena, op, in->arg_count, args, type, {});
+          out0 = apply(arena, op, in->arg_count, args, {});
         }
 
         if (!out0)
@@ -2555,7 +2542,7 @@ normalize_(NormalizeContext *ctx, Term *in0)
         Term *norm_op = normalize_(ctx, in->op);
         progressed = progressed || (norm_op != in->op);
 
-        out0 = apply(arena, norm_op, in->arg_count, norm_args, getType(in0), ctx->name_to_unfold);
+        out0 = apply(arena, norm_op, in->arg_count, norm_args, ctx->name_to_unfold);
 
         if (!out0)
         {

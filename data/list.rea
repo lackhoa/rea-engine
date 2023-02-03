@@ -81,6 +81,7 @@ foldPermute :: ($T: Type,
   permuteNil
   i := invert(p);
   norm i;
+  reductio;
   ,
   permuteSkip
   ,
