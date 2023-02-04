@@ -34,7 +34,7 @@ Permute :: union($$T: Type, List(T), List(T))
 {
  permuteNil() -> Permute(nil(T), nil(T))
  ,
- permuteSkip(a: T, l,l': List(T), Permute(l, l')) -> Permute(a cons l, a cons l')
+ permuteSkip(a: T, l,l1: List(T), Permute(l, l1)) -> Permute(a cons l, a cons l1)
  ,
  permuteSwap(a,b: T, l: List(T)) -> Permute(a cons b cons l, b cons a cons l)
  ,

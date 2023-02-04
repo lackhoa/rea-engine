@@ -363,9 +363,9 @@ struct GlobalBindings  // :global-bindings-zero-at-startup
 
 struct BuildTerm
 {
-  Term *term;
+  Term  *term;
+  Value *value;
   operator bool() { return term; }
-  operator Term*() { return term; }
 };
 
 struct RewriteAst
