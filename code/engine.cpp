@@ -36,7 +36,7 @@ global_variable Term *rea_permuteLast;
 global_variable Term *rea_falseImpliesAll;
 
 global_variable Term dummy_function_being_built;
-global_variable Term  holev_ = {.cat = Term_Hole};
+global_variable Term  holev_ = {.kind = Term_Hole};
 global_variable Term *holev = &holev_;
 
 global_variable EngineState global_state;
@@ -44,8 +44,15 @@ global_variable EngineState global_state;
 #define DEBUG_ON  {DEBUG_MODE = true; setvbuf(stdout, NULL, _IONBF, 0);}
 #define DEBUG_OFF {DEBUG_MODE = false; setvbuf(stdout, NULL, _IONBF, BUFSIZ);}
 
+inline void
+initTerm(Term *in, TermKind cat, Term *type)
+{
+  in->kind  = cat;
+  in->type = type;
+}
+
 inline Term *
-_newTerm(Arena *arena, TermCategory cat, Term *type, size_t size)
+_newTerm(Arena *arena, TermKind cat, Term *type, size_t size)
 {
   Term *out = (Term *)pushSize(arena, size, true);
   initTerm(out, cat, type);
@@ -93,13 +100,13 @@ inline b32
 isGlobalValue(Term *in0)
 {
   // :atomic-constructors-dont-have-global-names
-  return (b32)in0->global_name || in0->cat == Term_Constructor;
+  return (b32)in0->global_name || in0->kind == Term_Constructor;
 }
 
 inline b32
 isPolyUnion(Union *in)
 {
-  return getType(&in->t)->cat == Term_Arrow;
+  return getType(in)->kind == Term_Arrow;
 }
 
 inline void
@@ -189,7 +196,7 @@ inline Arrow *
 getConstructorSignature(Union *uni, i32 ctor_index)
 {
   assert(ctor_index < uni->ctor_count);
-  return getSignature(&uni->constructors[ctor_index]->t);
+  return getSignature(uni->constructors[ctor_index]);
 }
 
 inline i32
@@ -230,7 +237,7 @@ newArrow(Arena *arena,
   out->param_types = param_types;
   out->param_flags = param_flags;
   out->output_type = output_type;
-  return &out->t;
+  return out;
 }
 
 inline Term *
@@ -267,7 +274,7 @@ inline b32
 isSequenced(Ast *ast)
 {
   b32 out = false;
-  switch (ast->cat)
+  switch (ast->kind)
   {
     case Ast_RewriteAst:
     case Ast_Let:
@@ -282,7 +289,7 @@ inline b32
 isSequenced(Term *term)
 {
   b32 out = false;
-  switch (term->cat)
+  switch (term->kind)
   {
     case Term_Rewrite:
     case Term_Fork:
@@ -434,7 +441,7 @@ rewriteTerm(Arena *arena, Term *from, Term *to, TreePath *path, Term *in0)
           out->args[arg_i] = in->args[arg_i];
       }
     }
-    out0 = &out->t;
+    out0 = out;
   }
   else
   {
@@ -744,7 +751,7 @@ printComposite(Arena *buffer, Composite *in, b32 is_term, PrintOptions opt)
   b32 no_print_as_binop = false;
   op_signature = 0;
   arg_count    = in->arg_count;
-  Term *type0 = getType(&in->t);
+  Term *type0 = getType(in);
 
   Constructor *ctor = castTerm(in->op, Constructor);
 
@@ -990,7 +997,7 @@ print(Arena *buffer, Ast *in0, PrintOptions opt)
     unsetFlag(&new_opt.flags, PrintFlag_Detailed);
     new_opt.indentation += 1;
 
-    switch (in0->cat)
+    switch (in0->kind)
     {
       case Ast_Hole:
       {print(buffer, "_");} break;
@@ -1170,7 +1177,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
       }
       new_opt.indentation = opt.indentation + 1;
 
-      switch (in0->cat)
+      switch (in0->kind)
       {
         case Term_Variable:
         {
@@ -1214,7 +1221,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
             unsetFlag(&new_opt.flags, PrintFlag_Detailed);
             for (i32 ctor_id = 0; ctor_id < in->ctor_count; ctor_id++)
             {
-              print(buffer, &getConstructorSignature(in, ctor_id)->t, new_opt);
+              print(buffer, getConstructorSignature(in, ctor_id), new_opt);
               if (ctor_id != in->ctor_count-1)
                 print(buffer, ", ");
             }
@@ -1283,7 +1290,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
         case Term_Rewrite:
         {
           Rewrite *rewrite = castTerm(in0, Rewrite);
-          print(buffer, getType(&rewrite->t), new_opt);
+          print(buffer, getType(rewrite), new_opt);
           skip_print_type = true;
           print(buffer, " <=>");
           newlineAndIndent(buffer, opt.indentation);
@@ -1293,7 +1300,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
           print(buffer, "rewrite");
           if (rewrite->right_to_left) print(buffer, "<-");
           print(buffer, rewrite->path);
-          if (rewrite->eq_proof->cat != Term_Computation)
+          if (rewrite->eq_proof->kind != Term_Computation)
           {
             print(buffer, " justification: ");
             newlineAndIndent(buffer, new_opt.indentation);
@@ -1472,7 +1479,7 @@ evaluate_(EvaluateContext *ctx, Term *in0)
   }
   else
   {
-    switch (in0->cat)
+    switch (in0->kind)
     {
       case Term_Variable:
       {
@@ -1492,7 +1499,7 @@ evaluate_(EvaluateContext *ctx, Term *in0)
         {
           // copy so we can evaluate the type.
           Variable *out = copyTerm(arena, in);
-          out0 = &out->t;
+          out0 = out;
         }
       } break;
 
@@ -1518,7 +1525,7 @@ evaluate_(EvaluateContext *ctx, Term *in0)
           Composite *out = copyTerm(arena, in);
           out->op   = op;
           out->args = args;
-          out0 = &out->t;
+          out0 = out;
         }
       } break;
 
@@ -1537,14 +1544,14 @@ evaluate_(EvaluateContext *ctx, Term *in0)
           out->output_type = evaluate_(ctx, in->output_type);
         }
         ctx->offset--;
-        out0 = &out->t;
+        out0 = out;
       } break;
 
       case Term_Accessor:
       {
         todoIncomplete;
         // Accessor *in  = castTerm(in0, Accessor);
-        // out0 = &out->t;
+        // out0 = out;
       } break;
 
       case Term_Rewrite:
@@ -1553,7 +1560,7 @@ evaluate_(EvaluateContext *ctx, Term *in0)
         Rewrite *out = copyTerm(arena, in);
         out->eq_proof = evaluate_(ctx, in->eq_proof);
         out->body     = evaluate_(ctx, in->body);
-        out0 = &out->t;
+        out0 = out;
       } break;
 
       case Term_Function:
@@ -1563,7 +1570,7 @@ evaluate_(EvaluateContext *ctx, Term *in0)
         ctx->offset++;
         out->body = evaluate_(ctx, in->body);
         ctx->offset--;
-        out0 = &out->t;
+        out0 = out;
       } break;
 
       case Term_Fork:
@@ -1576,7 +1583,7 @@ evaluate_(EvaluateContext *ctx, Term *in0)
         {
           out->bodies[i] = evaluate_(ctx, in->bodies[i]);
         }
-        out0 = &out->t;
+        out0 = out;
       } break;
 
       case Term_Computation:
@@ -1633,7 +1640,7 @@ inline b32
 isCompositeConstructor(Term *in0)
 {
   if (Composite *in = castTerm(in0, Composite))
-    return in->op->cat == Term_Constructor;
+    return in->op->kind == Term_Constructor;
   else
     return false;
 }
@@ -1644,7 +1651,7 @@ isGround(Term *in0)
   if (isGlobalValue(in0))
     return true;
 
-  switch (in0->cat)
+  switch (in0->kind)
   {
     case Term_Composite:
     {
@@ -1689,7 +1696,7 @@ rebase_(Arena *arena, Term *in0, i32 delta, i32 offset)
   Term *out0 = 0;
   if (!isGround(in0) && (delta != 0))
   {
-    switch (in0->cat)
+    switch (in0->kind)
     {
       case Term_Variable:
       {
@@ -1698,7 +1705,7 @@ rebase_(Arena *arena, Term *in0, i32 delta, i32 offset)
         {
           Variable *out = copyTerm(arena, in);
           out->delta += delta; assert(out->delta >= 0);
-          out0 = &out->t;
+          out0 = out;
         }
         else
           out0 = in0;
@@ -1708,7 +1715,7 @@ rebase_(Arena *arena, Term *in0, i32 delta, i32 offset)
       {
         Composite *in  = castTerm(in0, Composite);
         Composite *out = copyTerm(arena, in);
-        if (in->op->cat == Term_Constructor)
+        if (in->op->kind == Term_Constructor)
         {
           // we copied the constructor index, and that's enough.
         }
@@ -1721,7 +1728,7 @@ rebase_(Arena *arena, Term *in0, i32 delta, i32 offset)
         {
           out->args[id] = rebase_(arena, in->args[id], delta, offset);
         }
-        out0 = &out->t;
+        out0 = out;
       } break;
 
       case Term_Arrow:
@@ -1735,7 +1742,7 @@ rebase_(Arena *arena, Term *in0, i32 delta, i32 offset)
         {
           out->output_type = rebase_(arena, in->output_type, delta, offset+1);
         }
-        out0 = &out->t;
+        out0 = out;
       } break;
 
       case Term_Accessor:
@@ -1743,7 +1750,7 @@ rebase_(Arena *arena, Term *in0, i32 delta, i32 offset)
         Accessor *in  = castTerm(in0, Accessor);
         Accessor *out = copyTerm(arena, in);
         out->record = rebase_(arena, in->record, delta, offset);
-        out0 = &out->t;
+        out0 = out;
       } break;
 
       case Term_Rewrite:
@@ -1752,7 +1759,7 @@ rebase_(Arena *arena, Term *in0, i32 delta, i32 offset)
         Rewrite *out = copyTerm(arena, in);
         out->eq_proof = rebase_(arena, in->eq_proof, delta, offset);
         out->body     = rebase_(arena, in->body, delta, offset);
-        out0 = &out->t;
+        out0 = out;
       } break;
 
       case Term_Computation:
@@ -1767,7 +1774,7 @@ rebase_(Arena *arena, Term *in0, i32 delta, i32 offset)
         Function *in  = castTerm(in0, Function);
         Function *out = copyTerm(arena, in);
         out->body = rebase_(arena, in->body, delta, offset+1);
-        out0 = &out->t;
+        out0 = out;
       } break;
 
 #if 0
@@ -1781,7 +1788,7 @@ rebase_(Arena *arena, Term *in0, i32 delta, i32 offset)
           Term *rebased = rebase_(arena, &in->structs[i]->t, delta, offset);
           out->structs[i] = castTerm(rebased, Arrow);
         }
-        out0 = &out->t;
+        out0 = out;
       } break;
 #endif
 
@@ -1839,7 +1846,7 @@ newConjunctionN(Arena *arena, i32 count, Term **conjuncts)
     out->ctor_count = 1;
     out->structs    = pushArray(arena, 1, Arrow*);
     out->structs[0] = struc;
-    out0 = &out->t;
+    out0 = out;
   }
   return out0;
 }
@@ -2001,7 +2008,7 @@ newCompositeN_(Arena *arena, Term *op, i32 param_count, ...)
   }
   __crt_va_end(arg_list);
 
-  return &newComposite(arena, op, param_count, args)->t;
+  return newComposite(arena, op, param_count, args);
 }
 
 #define newCompositeN(arena, op, ...) newCompositeN_(arena, op, PP_NARG(__VA_ARGS__), __VA_ARGS__)
@@ -2057,9 +2064,9 @@ compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
   {
     out.result = {Trinary_True};
   }
-  else if (l0->cat == r0->cat)
+  else if (l0->kind == r0->kind)
   {
-    switch (l0->cat)
+    switch (l0->kind)
     {
       case Term_Pointer:
       {
@@ -2181,8 +2188,8 @@ compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
           if (mismatch_count > 0)
           {
             out.result = Trinary_Unknown;
-            if ((l->op->cat == Term_Constructor) &&
-                (r->op->cat == Term_Constructor) &&
+            if ((l->op->kind == Term_Constructor) &&
+                (r->op->kind == Term_Constructor) &&
                 (false_count > 0))
             {
               out.result = Trinary_False;
@@ -2390,7 +2397,7 @@ toAbstractTerm_(AbstractContext *ctx, Term *in0)
   }
   else
   {
-    switch (in0->cat)
+    switch (in0->kind)
     {
       case Term_Pointer:
       {
@@ -2406,7 +2413,7 @@ toAbstractTerm_(AbstractContext *ctx, Term *in0)
               out->delta = ctx->zero_depth - in->var_depth;
               out->index = in->var_index;
               assert(out->delta >= 0);
-              out0 = &out->t;
+              out0 = out;
             }
             else
             {
@@ -2423,7 +2430,7 @@ toAbstractTerm_(AbstractContext *ctx, Term *in0)
               out->record           = record;
               out->field_index      = in->field_index;
               out->debug_field_name = in->debug_field_name;
-              out0 = &out->t;
+              out0 = out;
             }
             else
             {
@@ -2444,7 +2451,7 @@ toAbstractTerm_(AbstractContext *ctx, Term *in0)
         {
           out->args[i] = toAbstractTerm_(ctx, in->args[i]);
         }
-        out0 = &out->t;
+        out0 = out;
       } break;
 
       case Term_Arrow:
@@ -2459,7 +2466,7 @@ toAbstractTerm_(AbstractContext *ctx, Term *in0)
         }
         out->output_type = toAbstractTerm_(ctx, in->output_type);
         ctx->zero_depth--;
-        out0 = &out->t;
+        out0 = out;
       } break;
 
       case Term_Variable:
@@ -2467,7 +2474,7 @@ toAbstractTerm_(AbstractContext *ctx, Term *in0)
         // copy to change type (also arena)
         Variable *in  = castTerm(in0, Variable);
         Variable *out = copyTerm(arena, in);
-        out0 = &out->t;
+        out0 = out;
       } break;
 
       case Term_Rewrite:
@@ -2476,7 +2483,7 @@ toAbstractTerm_(AbstractContext *ctx, Term *in0)
         Rewrite *out = copyTerm(arena, in);
         out->eq_proof = toAbstractTerm_(ctx, in->eq_proof);
         out->body     = toAbstractTerm_(ctx, in->body);
-        out0 = &out->t;
+        out0 = out;
       } break;
 
       case Term_Fork:
@@ -2489,7 +2496,7 @@ toAbstractTerm_(AbstractContext *ctx, Term *in0)
         {
           out->bodies[i] = toAbstractTerm_(ctx, in->bodies[i]);
         }
-        out0 = &out->t;
+        out0 = out;
       } break;
 
       case Term_Function:
@@ -2497,7 +2504,7 @@ toAbstractTerm_(AbstractContext *ctx, Term *in0)
         Function *in  = castTerm(in0, Function);
         Function *out = copyTerm(arena, in);
         out->body = toAbstractTerm_(ctx, in->body);
-        out0 = &out->t;
+        out0 = out;
       } break;
 
       default:
@@ -2534,7 +2541,7 @@ newStackPointer(String name, i32 depth, i32 index, Term *type)
   out->var_name  = name;
   out->var_depth = depth;
   out->var_index = index;
-  return &out->t;
+  return out;
 }
 
 struct NormalizeContext {
@@ -2556,7 +2563,7 @@ normalize_(NormalizeContext *ctx, Term *in0)
 
   if (!isGlobalValue(in0))
   {
-    switch (in0->cat)
+    switch (in0->kind)
     {
       case Term_Composite:
       {
@@ -2582,7 +2589,7 @@ normalize_(NormalizeContext *ctx, Term *in0)
           Composite *out = copyTerm(arena, in);
           out->op   = norm_op;
           out->args = norm_args;
-          out0 = &out->t;
+          out0 = out;
         }
       } break;
 
@@ -2623,7 +2630,7 @@ normalize_(NormalizeContext *ctx, Term *in0)
           out->output_type = toAbstractTerm(arena, output_type, ctx->depth);
         }
 
-        out0 = &out->t;
+        out0 = out;
       } break;
 
       case Term_Rewrite:
@@ -2636,7 +2643,7 @@ normalize_(NormalizeContext *ctx, Term *in0)
           Rewrite *out = copyTerm(arena, in);
           out->eq_proof = eq_proof;
           out->body     = body;
-          out0 = &out->t;
+          out0 = out;
         }
       } break;
 
@@ -2652,7 +2659,7 @@ normalize_(NormalizeContext *ctx, Term *in0)
         {
           Accessor *out = copyTerm(arena, in);
           out->record = record0;
-          out0 = &out->t;
+          out0 = out;
         }
       } break;
 
@@ -2798,12 +2805,12 @@ requireChar(char c, char *reason=0, Tokenizer *tk=global_tokenizer)
 }
 
 inline b32
-requireCategory(TokenCategory tc, char *message=0, Tokenizer *tk=global_tokenizer)
+requireKind(TokenKind tc, char *message=0, Tokenizer *tk=global_tokenizer)
 {
   b32 out = false;
   if (hasMore())
   {
-    if (nextToken(tk).cat == tc) out = true;
+    if (nextToken(tk).kind == tc) out = true;
     else tokenError(message, tk);
   }
   return out;
@@ -2823,11 +2830,11 @@ requireIdentifier(char *message=0, Tokenizer *tk=global_tokenizer)
 }
 
 inline b32
-optionalCategory(TokenCategory tc, Tokenizer *tk = global_tokenizer)
+optionalKind(TokenKind tc, Tokenizer *tk = global_tokenizer)
 {
   b32 out = false;
   if (hasMore())
-    if (peekToken(tk).cat == tc)
+    if (peekToken(tk).kind == tc)
     {
       out = true;
       nextToken();
@@ -2877,10 +2884,10 @@ isExpressionEndMarker(Token *token)
   if (inString(")]}{,;:", token))
     return true;
 
-  if (token->cat > Token_Directive_START && token->cat < Token_Directive_END)
+  if (token->kind > Token_Directive_START && token->kind < Token_Directive_END)
     return true;
 
-  switch (token->cat)
+  switch (token->kind)
   {
     case Token_DoubleColon:
     case Token_ColonEqual:
@@ -2907,7 +2914,7 @@ subExpressionAtPath(Term *in, TreePath *path)
 {
   if (path)
   {
-    switch (in->cat)
+    switch (in->kind)
     {
       case Term_Composite:
       {
@@ -2951,7 +2958,7 @@ inline b32
 matchType(Term *actual, Term *goal)
 {
   b32 out = false;
-  if (goal->cat == Term_Hole)
+  if (goal->kind == Term_Hole)
     out = true;
   else
   {
@@ -2964,7 +2971,7 @@ matchType(Term *actual, Term *goal)
 inline b32
 isGrounded(Term *in0)
 {
-  return isGlobalValue(in0) || (in0->cat == Term_Pointer);
+  return isGlobalValue(in0) || (in0->kind == Term_Pointer);
 }
 
 internal b32
@@ -2986,7 +2993,7 @@ unify(UnifyContext *ctx, Term *in0, Term *goal0)
   }
   else
   {
-    switch (in0->cat)
+    switch (in0->kind)
     {
       case Term_Variable:
       {
@@ -3288,7 +3295,7 @@ seekGoal(Solver *solver, Term *goal, b32 try_reductio=false)
               SolveArgs solve_args = solveArgs(solver, value, rea_False);
               if (solve_args.args)
               {
-                Term *f = &newComposite(solver->arena, value, solve_args.arg_count, solve_args.args)->t;
+                Term *f = newComposite(solver->arena, value, solve_args.arg_count, solve_args.args);
                 out = newCompositeN(solver->arena, rea_falseImpliesAll, f, goal);
               }
             }
@@ -3312,7 +3319,7 @@ solveGoal(Solver *solver, Term *goal)
   b32 should_attempt = true;
   if (solver->depth > MAX_SOLVE_DEPTH ||
       goal == rea_Type ||
-      goal->cat == Term_Hole)
+      goal->kind == Term_Hole)
   {
     should_attempt = false;
   }
@@ -3357,12 +3364,12 @@ solveGoal(Solver *solver, Term *goal)
         if (hints)
         {
           Term *hint = hints->head;
-          if (getType(hint)->cat == Term_Arrow)
+          if (getType(hint)->kind == Term_Arrow)
           {
             SolveArgs solve_args = solveArgs(solver, hint, goal);
             if (solve_args.args)
             {
-              out = &newComposite(solver->arena, hint, solve_args.arg_count, solve_args.args)->t;
+              out = newComposite(solver->arena, hint, solve_args.arg_count, solve_args.args);
             }
           }
           else if (equal(getType(hint), goal))
@@ -3402,7 +3409,7 @@ getFunctionOverloads(Scope *scope, Identifier *ident, Term *goal0, b32 expect_er
   TermArray out = {};
   if (GlobalBinding *slot = lookupGlobalNameSlot(ident, false))
   {
-    if (goal0->cat == Term_Hole)
+    if (goal0->kind == Term_Hole)
     {
       // bypass typechecking.
       out.items = slot->items;
@@ -3458,7 +3465,7 @@ fillInEllipsis(Arena *arena, Typer *typer, Identifier *op_ident, Term *goal)
   pushContext(__func__);
   i32 serial = DEBUG_SERIAL++;
 
-  if (goal->cat == Term_Hole)
+  if (goal->kind == Term_Hole)
   {
     parseError(&op_ident->a, "cannot solve for arguments since we do know what the output type of this function should be");
   }
@@ -3479,7 +3486,7 @@ fillInEllipsis(Arena *arena, Typer *typer, Identifier *op_ident, Term *goal)
         // NOTE: we don't care which function matches, just grab whichever
         // matches first.
         Term **args = copyArray(arena, solution.arg_count, solution.args);
-        out = &newComposite(arena, slot->items[slot_i], solution.arg_count, args)->t;
+        out = newComposite(arena, slot->items[slot_i], solution.arg_count, args);
         assert(equal(getType(out), goal));
       }
     }
@@ -3509,7 +3516,7 @@ searchExpression(Arena *arena, Typer *env, Term *lhs, Term* in0)
     out.found = true;
   else
   {
-    switch (in0->cat)
+    switch (in0->kind)
     {
       case Term_Composite:
       {
@@ -3616,7 +3623,7 @@ parseSequence(Arena *arena, b32 require_braces=true)
             let->rhs  = expression;
             let->type = &ast_goal->a;
             ast0 = &let->a;
-            if (expression->cat == Ast_Identifier)
+            if (expression->kind == Ast_Identifier)
             {
               // borrow the name if the expression is an identifier 
               let->lhs  = expression->token.string;
@@ -3640,7 +3647,7 @@ parseSequence(Arena *arena, b32 require_braces=true)
           rewrite->right_to_left = true;
         }
         rewrite->eq_proof = parseExpression(arena);
-        if (optionalCategory(Token_Keyword_in))
+        if (optionalKind(Token_Keyword_in))
         {
           rewrite->in_expression = parseExpression(arena);
         }
@@ -3653,7 +3660,7 @@ parseSequence(Arena *arena, b32 require_braces=true)
         pushContext("Goal transform: => NEW_GOAL [{ EQ_PROOF_HINT }]; ...");
         GoalTransform *ast = newAst(arena, GoalTransform, &token);
         ast0 = &ast->a;
-        if (optionalCategory(Token_Directive_print_proof))
+        if (optionalKind(Token_Directive_print_proof))
         {
           ast->print_proof = true;
         }
@@ -3738,7 +3745,7 @@ parseSequence(Arena *arena, b32 require_braces=true)
           // NOTE: identifiers can't be tactics, but I don't think that's a concern.
           Token *name = &token;
           Token after_name = nextToken();
-          switch (after_name.cat)
+          switch (after_name.kind)
           {
             case Token_ColonEqual:
             {
@@ -3758,7 +3765,7 @@ parseSequence(Arena *arena, b32 require_braces=true)
               pushContext("typed let: NAME : TYPE := VALUE");
               if (Ast *type = parseExpression(arena))
               {
-                if (requireCategory(Token_ColonEqual, ""))
+                if (requireKind(Token_ColonEqual, ""))
                 {
                   if (Ast *rhs = parseExpression(arena))
                   {
@@ -3857,7 +3864,7 @@ buildCtorAst(Arena *arena, CtorAst *in, Term *output_type)
   {
     if (in->ctor_i < uni->ctor_count)
     {
-      out = &uni->constructors[in->ctor_i]->t;
+      out = uni->constructors[in->ctor_i];
     }
     else
       parseError(&in->a, "union only has %d constructors", uni->ctor_count);
@@ -3882,7 +3889,7 @@ inline Term *
 getOverloadFromDistinguisher(GlobalBinding *lookup, Term *distinguisher)
 {
   Term *out = 0;
-  if (distinguisher->cat != Term_Union)
+  if (distinguisher->kind != Term_Union)
   {
     todoIncomplete;
   }
@@ -3958,7 +3965,7 @@ algebraLessThan(Term *a0, Term *b0)
   }
   else
   {
-    switch (a0->cat)
+    switch (a0->kind)
     {
       case Term_Variable:
       {
@@ -4343,13 +4350,13 @@ buildFunctionGivenSignature(Typer *typer, Arrow *signature, Ast *in_body,
 {
   i32 unused_var serial = DEBUG_SERIAL;
   Arena *arena = temp_arena;
-  Function *out = newTerm(arena, Function, &signature->t);
+  Function *out = newTerm(arena, Function, signature);
   out->body = &dummy_function_being_built;
   out->function_flags = function_flags;
   if (global_name)
   {
     // NOTE: add binding first to support recursion
-    addGlobalBinding(global_name, &out->t);
+    addGlobalBinding(global_name, out);
   }
 
   Term *body = 0;
@@ -4391,7 +4398,7 @@ buildWithNewAsset(Typer *typer, String name, Term *asset, Ast *body, Term *goal)
 
   if (Function *fun = buildFunctionGivenSignature(typer, signature, body))
   {
-    out = newCompositeN(arena, &fun->t, asset);
+    out = newCompositeN(arena, fun, asset);
   }
 
   return out;
@@ -4458,14 +4465,14 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
     typer->try_reductio = false;
   }
 
-  switch (in0->cat)
+  switch (in0->kind)
   {
     case Ast_CompositeAst:
     {
       CompositeAst *in  = castAst(in0, CompositeAst);
 
       if (in->arg_count == 1 &&
-          in->args[0]->cat == Ast_Ellipsis)
+          in->args[0]->kind == Ast_Ellipsis)
       {
         // Solve all arguments.
         todoIncomplete;
@@ -4576,7 +4583,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
               Term **args = ctx->values;
               b32 stack_has_hole = false;  // This var is an optimization: in case we can just solve all the args in one pass.
 
-              if (goal->cat != Term_Hole)
+              if (goal->kind != Term_Hole)
               {
                 b32 ouput_unify = unify(ctx, signature->output_type, goal);
                 if (!ouput_unify)
@@ -4602,7 +4609,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
                 if (args[arg_i])
                 {
                   arg_was_filled = true;
-                  if (in_arg->cat != Ast_Hole)
+                  if (in_arg->kind != Ast_Hole)
                   {
                     Term *already_filled_arg_type = args[arg_i]->type;
                     if (Term *arg = buildTerm(typer, in_arg, already_filled_arg_type).value)
@@ -4616,7 +4623,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
                     }
                   }
                 }
-                else if (in_arg->cat != Ast_Hole)
+                else if (in_arg->kind != Ast_Hole)
                 {
                   if (stack_has_hole)
                   {
@@ -4668,7 +4675,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
                     Ast *in_arg = expanded_args[arg_i];
                     Term *param_type0 = signature->param_types[arg_i];
                     Term *expected_arg_type = evaluate(param_type0, param_count, args);
-                    if (in_arg->cat == Ast_Hole)
+                    if (in_arg->kind == Ast_Hole)
                     {
                       if (Term *fill = solveGoal(Solver{.arena=arena, .typer=typer, .use_global_hints=true}, expected_arg_type))
                       {
@@ -4701,7 +4708,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
                 if (!value)
                 {
                   args = copyArray(arena, param_count, args);
-                  value = &newComposite(arena, op, param_count, args)->t;
+                  value = newComposite(arena, op, param_count, args);
                 }
               }
             }
@@ -4835,7 +4842,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
 
         if (noError())
         {
-          value = &out->t;
+          value = out;
           if (in->output_type)
           {
             if (Term *output_type = buildTerm(typer, in->output_type, holev).value)
@@ -4918,7 +4925,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
         if (Arrow *signature = castTerm(type, Arrow))
         {
           Function *fun = buildFunctionGivenSignature(typer, signature, in->body, in->function_flags);
-          value = &fun->t;
+          value = fun;
         }
         else
         {
@@ -4931,7 +4938,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
     case Ast_RewriteAst:
     {
       // should_check_type = false;
-      if (goal->cat == Term_Hole)
+      if (goal->kind == Term_Hole)
       {
         parseError(in0, "we do not know what the goal is, so nothing to rewrite");
       }
@@ -5112,7 +5119,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
     {
       Let  *in = castAst(in0, Let);
       Term *type_hint = holev;
-      if (in->type && in->type->cat != Ast_NormalizeMeAst)
+      if (in->type && in->type->kind != Ast_NormalizeMeAst)
       {
         if (Term *type = buildTerm(typer, in->type, holev).value)
         {
@@ -5123,7 +5130,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
       {
         if (Term *rhs = buildTerm(typer, in->rhs, type_hint).value)
         {
-          Term *rhs_type = (type_hint->cat == Term_Hole) ? getType(rhs) : type_hint;
+          Term *rhs_type = (type_hint->kind == Term_Hole) ? getType(rhs) : type_hint;
 
           if (in->type)
           {// type coercion
@@ -5275,13 +5282,13 @@ copyToGlobalArena(Term *in0)
   }
   else
   {
-    switch (in0->cat)
+    switch (in0->kind)
     {
       case Term_Variable:
       {
         Variable *in  = castTerm(in0, Variable);
         Variable *out = copyTerm(arena, in);
-        out0 = &out->t;
+        out0 = out;
       } break;
 
       case Term_Composite:
@@ -5293,7 +5300,7 @@ copyToGlobalArena(Term *in0)
         {
           out->args[i] = copyToGlobalArena(in->args[i]);
         }
-        out0 = &out->t;
+        out0 = out;
       } break;
 
       case Term_Arrow:
@@ -5309,7 +5316,7 @@ copyToGlobalArena(Term *in0)
         {
           out->output_type = copyToGlobalArena(in->output_type);
         }
-        out0 = &out->t;
+        out0 = out;
       } break;
 
       case Term_Function:
@@ -5317,7 +5324,7 @@ copyToGlobalArena(Term *in0)
         Function *in  = castTerm(in0, Function);
         Function *out = copyTerm(arena, in);
         out->body = copyToGlobalArena(in->body);
-        out0 = &out->t;
+        out0 = out;
       } break;
 
       case Term_Fork:
@@ -5329,7 +5336,7 @@ copyToGlobalArena(Term *in0)
         {
           out->bodies[i] = copyToGlobalArena(in->bodies[i]);
         }
-        out0 = &out->t;
+        out0 = out;
       } break;
 
       case Term_Rewrite:
@@ -5338,7 +5345,7 @@ copyToGlobalArena(Term *in0)
         Rewrite *out = copyTerm(arena, in);
         out->eq_proof = copyToGlobalArena(in->eq_proof);
         out->body     = copyToGlobalArena(in->body);
-        out0 = &out->t;
+        out0 = out;
       } break;
 
       case Term_Computation:
@@ -5354,7 +5361,7 @@ copyToGlobalArena(Term *in0)
         Accessor *in = castTerm(in0, Accessor);
         Accessor *out = copyTerm(arena, in);
         out->record = copyToGlobalArena(in->record);
-        out0 = &out->t;
+        out0 = out;
       } break;
 
       invalidDefaultCase;
@@ -5386,7 +5393,7 @@ instantiate(Typer *typer, Term *in0, i32 ctor_i)
     if (!pointer->ref)
     {
       Constructor *ctor = uni->constructors[ctor_i];
-      Arrow *signature = getSignature(&ctor->t);
+      Arrow *signature = getSignature(ctor);
       i32 member_count = signature->param_count;
       Term **members = pushArray(arena, member_count, Term *);
       for (i32 i=0; i < member_count; i++)
@@ -5397,9 +5404,9 @@ instantiate(Typer *typer, Term *in0, i32 ctor_i)
         member->record           = in0;
         member->field_index      = i;
         member->debug_field_name = signature->param_names[i];
-        members[i] = &member->t;
+        members[i] = member;
       }
-      pointer->ref = newComposite(arena, &ctor->t, member_count, members);
+      pointer->ref = newComposite(arena, ctor, member_count, members);
     }
   }
   return added;
@@ -5409,7 +5416,7 @@ forward_declare internal Term *
 buildFork(Typer *typer, ForkAst *in, Term *goal)
 {
   Arena *arena = temp_arena;
-  if (goal->cat == Term_Hole)
+  if (goal->kind == Term_Hole)
   {
     parseError(&in->a, "fork expressions require a goal, please provide one (f.ex instead of writing \"a := b\", write \"a: A := b\")");
   }
@@ -5471,7 +5478,7 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
           else
           {
             tokenError(ctor_name, "not a valid constructor");  // todo print them out
-            attach("union", &uni->t);
+            attach("union", uni);
 
             StartString ctor_names = startString(error_buffer);
             for (i32 id=0; id < uni->ctor_count; id++)
@@ -5502,7 +5509,7 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
       assert(in->bodies[id]);
   }
   NULL_WHEN_ERROR(out);
-  return &out->t;
+  return out;
 }
 
 forward_declare inline Term *
@@ -5518,7 +5525,7 @@ newRewrite(Arena *arena, Term *eq_proof, Term *body, TreePath *path, b32 right_t
   out->body          = body;
   out->path          = path;
   out->right_to_left = right_to_left;
-  return &out->t;
+  return out;
 }
 
 inline Term *
@@ -5555,7 +5562,7 @@ struct NormList {
 inline void
 insertAutoNormalizations(Arena *arena, NormList norm_list, Ast *in0)
 {
-  switch (in0->cat)
+  switch (in0->kind)
   {
     case Ast_ForkAst:
     {
@@ -5615,8 +5622,8 @@ parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
     {
       while (true)
       {
-        // todo #speed calling "optionalCategory" repeatedly is slow
-        if (optionalCategory(Token_Directive_norm))
+        // todo #speed calling "optionalKind" repeatedly is slow
+        if (optionalKind(Token_Directive_norm))
         {
           pushContext("auto normalization: #norm(IDENTIFIER...)");
           if (requireChar('('))
@@ -5644,20 +5651,20 @@ parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
           }
           popContext();
         }
-        else if (optionalCategory(Token_Directive_hint))
+        else if (optionalKind(Token_Directive_hint))
         {
           setFlag(&out->function_flags, FunctionFlag_is_global_hint);
         }
-        else if (optionalCategory(Token_Directive_no_apply))
+        else if (optionalKind(Token_Directive_no_apply))
         {
           // todo: we can automatically infer this!
           setFlag(&out->function_flags, FunctionFlag_no_apply);
         }
-        else if (optionalCategory(Token_Directive_no_print_as_binop))
+        else if (optionalKind(Token_Directive_no_print_as_binop))
         {
           setFlag(&out->function_flags, FunctionFlag_no_print_as_binop);
         }
-        else if (optionalCategory(Token_Directive_expand))
+        else if (optionalKind(Token_Directive_expand))
         {
           setFlag(&out->function_flags, FunctionFlag_expand);
         }
@@ -5766,7 +5773,7 @@ parseArrowType(Arena *arena, b32 is_struct)
         i32 param_i = param_count++;
         assert(param_i < DEFAULT_MAX_LIST_LENGTH);
 
-        if (optionalCategory(Token_Directive_unused))
+        if (optionalKind(Token_Directive_unused))
         {
           setFlag(&param_flags[param_i], ParameterFlag_Unused);
         }
@@ -5860,7 +5867,7 @@ parseArrowType(Arena *arena, b32 is_struct)
     out->param_types = param_types;
     out->param_flags = param_flags;
 
-    if (optionalCategory(Token_Arrow))
+    if (optionalKind(Token_Arrow))
     {
       if (Ast *return_type = parseExpression(arena))
         out->output_type = return_type;
@@ -5989,7 +5996,7 @@ buildUnion(Typer *typer, UnionAst *in, Token *global_name)
     {
       uni_signature              = castTerm(uni_params0, Arrow);
       uni_signature->output_type = rea_Type;
-      uni->type = &uni_signature->t;
+      uni->type = uni_signature;
       poly_count     = getPolyParamCount(uni_signature);
       non_poly_count = uni_signature->param_count - poly_count;
     }
@@ -5998,7 +6005,7 @@ buildUnion(Typer *typer, UnionAst *in, Token *global_name)
   if (noError())
   {
     // NOTE: bind the name first to support recursive data structure.
-    addGlobalBinding(global_name, &uni->t);
+    addGlobalBinding(global_name, uni);
 
     for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
     {
@@ -6073,22 +6080,22 @@ buildUnion(Typer *typer, UnionAst *in, Token *global_name)
         var->name  = uni_signature->param_names[i];
         var->delta = 0;
         var->index = i;
-        common_ctor_output_type->args[i] = &var->t;
+        common_ctor_output_type->args[i] = var;
       }
-      common_ctor_output_type->op = &uni->t;
+      common_ctor_output_type->op = uni;
 
       for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
       {
         Arrow *struc = ctor_signatures[ctor_i];
         if (non_poly_count == 0)
         {
-          struc->output_type = &common_ctor_output_type->t;
+          struc->output_type = common_ctor_output_type;
         }
 
-        Constructor *ctor = newTerm(arena, Constructor, &struc->t);
+        Constructor *ctor = newTerm(arena, Constructor, struc);
         ctor->index = ctor_i;
         ctor->name  = in->ctor_names[ctor_i];
-        addGlobalBinding(&in->ctor_names[ctor_i], &ctor->t);
+        addGlobalBinding(&in->ctor_names[ctor_i], ctor);
         uni->constructors[ctor_i] = ctor;
       }
     }
@@ -6098,16 +6105,16 @@ buildUnion(Typer *typer, UnionAst *in, Token *global_name)
       for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
       {
         Arrow *struc = ctor_signatures[ctor_i];
-        struc->output_type = &uni->t;
-        Constructor *ctor = newTerm(arena, Constructor, &struc->t);
+        struc->output_type = uni;
+        Constructor *ctor = newTerm(arena, Constructor, struc);
         ctor->index = ctor_i;
         ctor->name  = in->ctor_names[ctor_i];
 
-        Term *term_to_bind = &ctor->t;
+        Term *term_to_bind = ctor;
         if (struc->param_count == 0)
         {
           // todo: need to rethink "no-arg composite" thing
-          term_to_bind = &newComposite(arena, &ctor->t, 0, 0)->t;
+          term_to_bind = newComposite(arena, ctor, 0, 0);
         }
         addGlobalBinding(&in->ctor_names[ctor_i], term_to_bind);
         uni->constructors[ctor_i] = ctor;
@@ -6116,7 +6123,7 @@ buildUnion(Typer *typer, UnionAst *in, Token *global_name)
   }
 
   NULL_WHEN_ERROR(uni);
-  return &uni->t;
+  return uni;
 }
 
 inline CtorAst *
@@ -6210,7 +6217,7 @@ parseList(Arena *arena)
 
     if (!optionalChar(','))
     {
-      if (optionalCategory(Token_DoubleDot))
+      if (optionalKind(Token_DoubleDot))
       {
         todoIncomplete;
         tail = parseExpression(arena);
@@ -6257,7 +6264,7 @@ parseOperand(Arena *arena)
 {
   Ast *operand = 0;
   Token token = nextToken();
-  switch (token.cat)
+  switch (token.kind)
   {
     case '_':
     {
@@ -6355,7 +6362,7 @@ parseOperand(Arena *arena)
         else
         {
           i32 arg_i = new_operand->arg_count++;
-          if (optionalCategory(Token_Ellipsis))
+          if (optionalKind(Token_Ellipsis))
           {
             if (arg_i == 0)
               args[0] = newAst(arena, Ellipsis, &global_tokenizer->last_token);
@@ -6403,7 +6410,7 @@ seesArrowExpression()
   Tokenizer *tk = &tk_;
   if (equal(nextToken(tk), '('))
     if (eatUntilMatchingPair(tk))
-      out = (nextToken(tk).cat == Token_Arrow);
+      out = (nextToken(tk).kind == Token_Arrow);
   return out;
 }
 
@@ -6482,7 +6489,7 @@ inline void
 addGlobalHint(Function *fun)
 {
   HintDatabase *new_hint = pushStruct(global_state.top_level_arena, HintDatabase);
-  new_hint->head = &fun->t;
+  new_hint->head = fun;
   new_hint->tail = global_state.hints;
   global_state.hints = new_hint;
 }
@@ -6503,7 +6510,7 @@ buildGlobalFunction(Arena *arena, FunctionAst *in)
                                         in->function_flags, &in->token);
       if (out)
       {
-        out = castTerm(copyToGlobalArena(&out->t), Function);
+        out = castTerm(copyToGlobalArena(out), Function);
         if (checkFlag(in->function_flags, FunctionFlag_is_global_hint))
         {
           addGlobalHint(out);
@@ -6540,13 +6547,13 @@ parseTopLevel(EngineState *state)
     Typer  empty_typer_ = {};
     Typer *empty_typer  = &empty_typer_;
 
-    switch (token_.cat)
+    switch (token_.kind)
     {
       case Token_Directive_load:
       {
         pushContext("load");
         Token file = nextToken();
-        if (file.cat != Token_StringLiteral)
+        if (file.kind != Token_StringLiteral)
           tokenError("expect \"FILENAME\"");
         else
         {
@@ -6746,7 +6753,7 @@ parseTopLevel(EngineState *state)
             after_name = nextToken();
           }
 
-          switch (after_name.cat)
+          switch (after_name.kind)
           {
             case Token_ColonEqual:
             {
@@ -6761,7 +6768,7 @@ parseTopLevel(EngineState *state)
             case Token_DoubleColon:
             {
               Token after_dcolon = peekToken();
-              if (after_dcolon.cat == Token_Keyword_union)
+              if (after_dcolon.kind == Token_Keyword_union)
               {
                 nextToken();
                 if (UnionAst *ast = parseUnion(arena, token))
@@ -6772,7 +6779,7 @@ parseTopLevel(EngineState *state)
               else
               {
                 b32 is_theorem;
-                if (after_dcolon.cat == Token_Keyword_fn)
+                if (after_dcolon.kind == Token_Keyword_fn)
                 {
                   is_theorem = false;
                   nextToken();
@@ -6789,7 +6796,7 @@ parseTopLevel(EngineState *state)
             {
               if (Term *type = parseAndBuild())
               {
-                if (requireCategory(Token_ColonEqual, "require :=, syntax: name : type := value"))
+                if (requireKind(Token_ColonEqual, "require :=, syntax: name : type := value"))
                 {
                   if (Term *rhs = parseAndBuild(type))
                   {
@@ -6938,7 +6945,7 @@ beginInterpreterSession(Arena *top_level_arena, FilePath input_path)
   // aren't many sessions, this redundancy is fine, just ugly.
   {
     error_buffer_ = subArena(temp_arena, 2048);
-    rea_Type       = &newTerm(arena, Primitive, 0)->t;
+    rea_Type       = newTerm(arena, Primitive, 0);
     rea_Type->type = rea_Type; // NOTE: circular types
     addBuiltinGlobalBinding("Type", rea_Type);
 
@@ -6946,10 +6953,10 @@ beginInterpreterSession(Arena *top_level_arena, FilePath input_path)
     global_tokenizer = &builtin_tk;
     builtin_tk.at = "($A: Type, a,b: A) -> Type";
     Term *equal_type = parseAndBuildGlobal(holev, true); 
-    rea_equal = &newTerm(arena, Primitive, equal_type)->t;
+    rea_equal = newTerm(arena, Primitive, equal_type);
     addBuiltinGlobalBinding("=", rea_equal);
 
-    rea_False = &newTerm(arena, Union, rea_Type)->t;  // NOTE: "union {}"
+    rea_False = newTerm(arena, Union, rea_Type);  // NOTE: "union {}"
     addBuiltinGlobalBinding("False", rea_False);
 
     builtin_tk.at = "fn ($A: Type, $a,$b,$c: A, a=b, b=c) -> a=c {=> b = c {seek(a=b)} seek}";

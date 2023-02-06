@@ -10,7 +10,7 @@ newToken(String text)
   out.string = text;
   out.line   = 0;
   out.column = 0;
-  out.cat    = Token_Alphanumeric;
+  out.kind    = Token_Alphanumeric;
   return out;
 }
 
@@ -339,7 +339,7 @@ eatToken(Tokenizer *tk = global_tokenizer)
     case '#':
     {
       out.string.chars++; // advance past the hash
-      out.cat = Token_Directive_START;
+      out.kind = Token_Directive_START;
       while (isAlphaNumeric(*tk->at))
         nextChar(tk);
     } break;
@@ -347,7 +347,7 @@ eatToken(Tokenizer *tk = global_tokenizer)
     case '"':
     {
       out.string.chars++; // advance past the opening double quote
-      out.cat = Token_StringLiteral;
+      out.kind = Token_StringLiteral;
       while (*tk->at != '"')
         nextChar(tk);
       // handle the closing double quote
@@ -361,15 +361,15 @@ eatToken(Tokenizer *tk = global_tokenizer)
       {
         nextChar(tk);
         nextChar(tk);
-        out.cat = Token_Ellipsis;
+        out.kind = Token_Ellipsis;
       }
       else if (*tk->at == '.')
       {
         nextChar(tk);
-        out.cat = Token_DoubleDot;
+        out.kind = Token_DoubleDot;
       }
       else
-        out.cat = (TokenCategory)'.';
+        out.kind = (TokenKind)'.';
     } break;
 
     case '=':
@@ -378,13 +378,13 @@ eatToken(Tokenizer *tk = global_tokenizer)
       {
         case '>':
         {
-          out.cat = Token_StrongArrow;
+          out.kind = Token_StrongArrow;
           nextChar(tk);
         } break;
 
         default:
         {
-          out.cat = Token_Special;
+          out.kind = Token_Special;
           while (isSpecial(*tk->at))
             nextChar(tk);
         } break;
@@ -397,19 +397,19 @@ eatToken(Tokenizer *tk = global_tokenizer)
       {
         case '-':
         {
-          out.cat = Token_DoubleDash;
+          out.kind = Token_DoubleDash;
           nextChar(tk);
         } break;
 
         case '>':
         {
-          out.cat = Token_Arrow;
+          out.kind = Token_Arrow;
           nextChar(tk);
         } break;
 
         default:
         {
-          out.cat = Token_Special;
+          out.kind = Token_Special;
           while (isSpecial(*tk->at))
             nextChar(tk);
         } break;
@@ -422,26 +422,26 @@ eatToken(Tokenizer *tk = global_tokenizer)
       {
         case ':':
         {
-          out.cat = Token_DoubleColon;
+          out.kind = Token_DoubleColon;
           nextChar(tk);
         } break;
 
         case '=':
         {
-          out.cat = Token_ColonEqual;
+          out.kind = Token_ColonEqual;
           nextChar(tk);
         } break;
 
         default:
         {
-          out.cat = (TokenCategory)':';
+          out.kind = (TokenKind)':';
         } break;
       }
     } break;
 
     case '_':
     {
-      out.cat = Token_Alphanumeric;
+      out.kind = Token_Alphanumeric;
       b32 advanced = false;
       while (isAlphaNumeric(*tk->at))
       {
@@ -449,35 +449,35 @@ eatToken(Tokenizer *tk = global_tokenizer)
         advanced = true;
       }
       if (!advanced)
-        out.cat = (TokenCategory)'_';  // todo: why is the underscore special?
+        out.kind = (TokenKind)'_';  // todo: why is the underscore special?
     } break;
 
     default:
     {
       if (isAlphaNumeric(first_char))
       {
-        out.cat = Token_Alphanumeric;
+        out.kind = Token_Alphanumeric;
         while (isAlphaNumeric(*tk->at))
           nextChar(tk);
       }
       else if (isSpecial(first_char))
       {
-        out.cat = Token_Special;
+        out.kind = Token_Special;
         while (isSpecial(*tk->at))
           nextChar(tk);
       }
       else
-        out.cat = (TokenCategory)first_char;
+        out.kind = (TokenKind)first_char;
     } break;
   }
 
-  if (out.cat)
+  if (out.kind)
   {
     if (!out.string.length)
       out.string.length = (i32)(tk->at - out.string.chars);
     assert(out.string.length);
 
-    switch (out.cat)
+    switch (out.kind)
     {
       case Token_Alphanumeric:
       {
@@ -486,7 +486,7 @@ eatToken(Tokenizer *tk = global_tokenizer)
         {
           if (equal(out.string, language_keywords[id]))
           {
-            out.cat = (TokenCategory)((int)Token_Keyword_START + id);
+            out.kind = (TokenKind)((int)Token_Keyword_START + id);
             break;
           }
         }
@@ -499,7 +499,7 @@ eatToken(Tokenizer *tk = global_tokenizer)
         {
           if (equal(out.string, meta_directives[id]))
           {
-            out.cat = (TokenCategory)((int)Token_Directive_START + id);
+            out.kind = (TokenKind)((int)Token_Directive_START + id);
             found = true;
             break;
           }
@@ -583,8 +583,8 @@ stringHash(String string)
 inline b32
 isIdentifier(Token *token)
 {
-    return ((token->cat == Token_Alphanumeric)
-            || (token->cat == Token_Special));
+    return ((token->kind == Token_Alphanumeric)
+            || (token->kind == Token_Special));
 }
 
 inline b32

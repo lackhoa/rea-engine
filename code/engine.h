@@ -25,7 +25,7 @@ struct ArrowAst;
 struct LocalBindings;
 struct DataMap;
 
-enum AstCategory {
+enum AstKind {
   Ast_Hole = 1,                 // hole left in for type-checking
   Ast_NormalizeMeAst,
   Ast_Ellipsis,
@@ -52,7 +52,7 @@ enum AstCategory {
   Ast_GoalTransform,
 };
 
-enum TermCategory {
+enum TermKind {
   Term_Hole = 1,
 
   Term_Primitive,
@@ -73,7 +73,7 @@ enum TermCategory {
 const u32 AstFlag_Generated = 1 << 0;
 
 embed_struct struct Ast {
-  AstCategory cat;
+  AstKind kind;
   Token       token;
   u32         flags;
 };
@@ -85,14 +85,14 @@ toAsts(Term **values)
 }
 
 inline void
-initAst(Ast *in, AstCategory cat, Token *token)
+initAst(Ast *in, AstKind cat, Token *token)
 {
-  in->cat   = cat;
+  in->kind   = cat;
   in->token = *token;
 }
 
 inline Ast *
-newAst_(Arena *arena, AstCategory cat, Token *token, size_t size)
+newAst_(Arena *arena, AstKind cat, Token *token, size_t size)
 {
   Ast *out = (Ast *)pushSize(arena, size, true);
   initAst(out, cat, token);
@@ -102,10 +102,8 @@ newAst_(Arena *arena, AstCategory cat, Token *token, size_t size)
 #define newAst(arena, cat, token)        \
   ((cat *) newAst_(arena, Ast_##cat, token, sizeof(cat)))
 
-#define castAst(exp, Cat) ((exp)->cat == Ast_##Cat ? (Cat*)(exp) : 0)
-#define polyAst(exp, Cat, Cat2) (((exp)->cat == Ast_##Cat || (exp)->cat == Ast_##Cat2) ? (Cat*)(exp) : 0)
-
-#define castTerm(exp, Cat) ((exp)->cat == Term_##Cat ? (Cat*)(exp) : 0)
+#define castAst(exp, Cat) ((exp)->kind == Ast_##Cat ? (Cat*)(exp) : 0)
+#define castTerm(exp, Cat) ((exp)->kind == Term_##Cat ? (Cat*)(exp) : 0)
 
 struct Identifier {
   embed_Ast(a);
@@ -217,36 +215,28 @@ struct TermList
   TermList *tail;
 };
 
-embed_struct struct Term {
-  TermCategory  cat;
+struct Term {
+  TermKind  kind;
   i32           serial;
   Term         *type;
   Token        *global_name;
 };
 
-struct Primitive {embed_Term(t);};
+struct Primitive : Term {};
 
-inline void
-initTerm(Term *in, TermCategory cat, Term *type)
-{
-  in->cat  = cat;
-  in->type = type;
-}
-
-struct Constructor {
-  embed_Term(t);
+struct Constructor : Term {
   String name;  // :atomic-constructors-dont-have-global-names
   i32    index;
 };
 
-struct Union {
-  embed_Term(t);
+#pragma pack(push, 1)
+struct Union : Term {
   i32           ctor_count;
   Constructor **constructors;
 };
+#pragma pack(pop)
 
-struct Function {
-  embed_Term(t);
+struct Function : Term {
   Term *body;
   u32   function_flags;
 };
@@ -281,8 +271,7 @@ struct LocalBindings
   LocalBindings *tail;
 };
 
-struct Variable {
-  embed_Term(t);
+struct Variable : Term {
   String name;
   i32    delta;
   i32    index;
@@ -293,8 +282,7 @@ struct TreePath {
   TreePath *tail;
 };
 
-struct Accessor {
-  embed_Term(t);
+struct Accessor : Term {
   Term   *record;
   i32     field_index;
   String  debug_field_name;
@@ -302,9 +290,7 @@ struct Accessor {
 
 enum PointerKind {Pointer_Stack = 1, Pointer_Heap = 2,};
 
-struct Pointer {
-  embed_Term(t);
-
+struct Pointer : Term {
   PointerKind kind;
   union {
     struct {
@@ -329,8 +315,7 @@ struct CompositeAst {
   Ast **args;
 };
 
-struct Composite {
-  embed_Term(t);
+struct Composite : Term {
   Term  *op;
   i32    arg_count;
   Term **args;
@@ -349,8 +334,7 @@ struct ArrowAst {
   Ast    *output_type;
 };
 
-struct Arrow {
-  embed_Term(t);
+struct Arrow : Term {
   i32     param_count;
   String *param_names;
   Term  **param_types;
@@ -433,32 +417,6 @@ printOptionPrintType(PrintOptions options={})
   return options;
 }
 
-enum MatcherCategory {
-  MC_Unknown,
-  MC_Exact,
-  MC_OutputType,
-};
-
-struct Matcher {
-  MatcherCategory cat;
-  union
-  {
-    Term *Exact;
-    Term *Output;
-  };
-  operator bool() { return (cat == MC_Exact) && (Exact == 0); }
-};
-
-inline Matcher exactMatcher(Term *value)
-{
-  return Matcher{.cat=MC_Exact, .Exact=value};
-}
-
-inline Matcher outputMatcher(Term *value)
-{
-  return Matcher{.cat=MC_Exact, .Output=value};
-}
-
 struct TermArray {
   i32    count;
   Term **items;
@@ -470,8 +428,7 @@ struct AstArray {
 };
 
 // NOTE: Rewrite is done on the type of the whole expression, resulting in the type of the body.
-struct Rewrite {
-  embed_Term(t);
+struct Rewrite : Term {
   TreePath *path;
   b32       right_to_left;
   Term     *eq_proof;
@@ -503,8 +460,7 @@ struct TermPair
   operator bool() {return lhs && rhs;};
 };
 
-struct Fork {
-  embed_Term(t);
+struct Fork : Term {
   Term   *subject;
   i32     case_count;
   Term  **bodies;

@@ -2,7 +2,7 @@
 
 #include "utils.h"
 
-enum TokenCategory
+enum TokenKind
 {
   Token_Colon   = ':',
   // 0-255 reserved for single-char ASCII types.
@@ -79,7 +79,7 @@ struct Token
   String        string;
   i32           line;
   i32           column;
-  TokenCategory cat;
+  TokenKind kind;
   operator String() {return string;};
 };
 
