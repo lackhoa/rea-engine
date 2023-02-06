@@ -454,6 +454,7 @@ isSubstring(String full, String sub, b32 case_sensitive=true)
 inline void dump() {printf("\n");}
 inline void dump(int d) {printf("%d", d);}
 inline void dump(char *c) {printf("%s", c);}
+inline void dump(String s) {print(0, s);}
 
 inline b32
 inArena(Arena *arena, void *p)

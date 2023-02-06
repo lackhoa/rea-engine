@@ -180,21 +180,19 @@ struct DataMap {
   DataMap  *tail;
 };
 
-struct Stack {
-  i32     count;
-  Term  **items;
-  Stack  *outer;
-  Arena *unification_arena;
+struct UnifyContext {
+  i32            count;
+  Term         **values;
+  Arrow         *signature;
+  i32            depth;
+  UnifyContext  *outer;
 };
 
-typedef Term Value;
-
 struct Scope {
-  Arrow  *head;
   Scope  *outer;
   i32     depth;
-
-  Value **stack;  // TODO: experimental step towards "real" values
+  i32     param_count;
+  Term  **values;
 };
 
 struct Typer
@@ -202,7 +200,6 @@ struct Typer
   Arena *build_arena;
   LocalBindings *bindings;
   Scope         *scope;
-  // Arrow         *poly_params;
   DataMap           *map;
   DataMapAddHistory *add_history;
   b32 try_reductio;
@@ -238,7 +235,7 @@ initTerm(Term *in, TermCategory cat, Term *type)
 
 struct Constructor {
   embed_Term(t);
-  String name;
+  String name;  // :atomic-constructors-dont-have-global-names
   i32    index;
 };
 
@@ -292,7 +289,7 @@ struct Variable {
 };
 
 struct TreePath {
-  i32       head;  // -1 for op
+  i32       head;  // -1 for op (TODO: change to u8 so we can hack this on the stack)
   TreePath *tail;
 };
 
@@ -303,14 +300,26 @@ struct Accessor {
   String  debug_field_name;
 };
 
-struct Pointer {
-  embed_Term(v);
-  String   name;
-  i32      depth;
-  i32      index;
-  TreePath path;  // For accessors maybe idk
+enum PointerKind {Pointer_Stack = 1, Pointer_Heap = 2,};
 
-  Value *ref;  // todo: not sure how this works
+struct Pointer {
+  embed_Term(t);
+
+  PointerKind kind;
+  union {
+    struct {
+      String var_name;
+      i32    var_depth;
+      i32    var_index;
+    };
+    struct {
+      Term   *record;
+      i32     field_index;
+      String  debug_field_name;
+    };
+  };
+
+  Composite *ref;
 };
 
 struct CompositeAst {
@@ -363,9 +372,9 @@ struct GlobalBindings  // :global-bindings-zero-at-startup
 
 struct BuildTerm
 {
-  Term  *term;
-  Value *value;
-  operator bool() { return term; }
+  Term *value;
+  operator bool()   { return value; }
+  operator Term*() { return value; }
 };
 
 struct RewriteAst
@@ -391,7 +400,7 @@ struct AccessorAst
 {
   Ast    a;
 
-  Ast   *record;                // in parse phase we can't tell if the op is a constructor
+  Ast   *record;
   Token  field_name;           // parsing info
 };
 
@@ -403,8 +412,6 @@ struct FileList {
 
 // todo better hint lookup
 struct HintDatabase {
-  // wip: we probably only want functions in here, but let's store term to make
-  // it play nice with the rest.
   Term         *head;
   HintDatabase *tail;
 };
@@ -508,14 +515,7 @@ struct SyntheticAst {
   Term *term;
 };
 
-const u32 EvaluationFlag_AlwaysApply = 1 << 0;
-
-struct EvaluationContext {
-  Arena  *arena;
-  Term **args;
-  i32    offset;
-  u32    flags;
-};
+const u32 EvalFlag_TryApply = 1 << 0;
 
 struct UnionAst {
   embed_Ast(a);
@@ -536,10 +536,12 @@ struct CtorAst {
   i32  ctor_i;
 };
 
+#if 0
 struct AddDataTree {
   DataTree *tree;
   b32       added;
 };
+#endif
 
 struct SeekAst {
   embed_Ast(a);
@@ -596,13 +598,6 @@ struct TreePathList {
   TreePathList *tail;
 };
 
-struct NormalizeContext {
-  Arena *arena;
-  DataMap     *map;
-  i32          depth;
-  String       name_to_unfold;
-};
-
 struct LookupPolyParameter {
   b32 found;
   i32 index;
@@ -618,7 +613,7 @@ struct TypedExpression {
 #define DEFAULT_MAX_LIST_LENGTH 64
 
 internal BuildTerm
-buildTerm(Arena *arena, Typer *typer, Ast *in0, Term *goal, b32 expect_error=false);
+buildTerm(Typer *typer, Ast *in0, Term *goal, b32 expect_error=false);
 
 String number_to_string[] = {
   toString("0"), toString("1"), toString("2"), toString("3"),
