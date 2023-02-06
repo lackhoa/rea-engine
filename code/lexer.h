@@ -85,32 +85,26 @@ struct Token
 
 struct ErrorAttachment { char *key; String value; };
 
-// 1 << 0 is unused
-u32 ErrorTypecheck     = 1 << 1;
-// u32 ErrorUnrecoverable   = 1 << 2;
-// u32 ErrorAmbiguousName = 1 << 3;
-u32 ErrorGoalAttached  = 1 << 4;
+struct InterpContext { String first; InterpContext *next; b32 is_important; };
 
-struct ParseContext { String first; ParseContext *next; b32 is_important; };
-
-struct ParseError
+struct InterpError
 {
-  String        message;
-  i32           line;
-  i32           column;
-  ParseContext *context;
-  u32           flags; 
+  String         message;
+  i32            line;
+  i32            column;
+  InterpContext *context;
+  b32            goal_attached;
 
   i32             attachment_count;
   ErrorAttachment attachments[16];
 };
 
-// note: the tokenizer also doubles as our error tracker, which may sound weird
-// but so far it doesn't pose any problem.
+// TODO: atm the tokenizer also doubles as our error tracker, which is annoying
+// to think about because errors also come from the typechecker.
 struct Tokenizer
 {
-  ParseError   *error;
-  ParseContext *context;
+  InterpError   *error;
+  InterpContext *context;
 
   char  *at;
   Token  last_token;

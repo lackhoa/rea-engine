@@ -411,3 +411,160 @@ normalizeVariable(Arena *arena, DataMap *data_map, i32 depth, Variable *in)
 }
 #endif
 
+#if 0
+internal AddDataTree
+getOrAddDataTree(Arena *arena, Typer *typer, Term *in0, i32 ctor_i)
+{
+  DataTree *tree = 0;
+  b32 added = false;
+  i32 scope_depth = getScopeDepth(typer);
+
+  Variable *in_root = 0;
+  i32    path_length = 0;
+  Term *reverse_unions[32];
+  u8    reverse_path[32];
+  Term *iter0 = in0;
+  Term *root_union = 0;
+  for (b32 stop = false ;!stop;)
+  {
+    Term *uni = getType(iter0);
+    switch (iter0->cat)
+    {
+      case Term_Variable:
+      {
+        in_root = castTerm(iter0, Variable);
+        root_union = uni;
+        stop = true;
+      } break;
+
+      case Term_Accessor:
+      {
+        Accessor *iter = castTerm(iter0, Accessor);
+        i32 path_id = path_length++;
+        assert(path_length < arrayCount(reverse_path));
+        reverse_unions[path_id] = uni;
+        reverse_path[path_id]   = iter->field_index;
+        iter0 = iter->record;
+      } break;
+
+      default:
+      {
+        stop = true;
+      } break;
+    }
+  }
+
+  i32 in_root_depth = scope_depth - in_root->delta;
+  for (DataMap *map = typer->map; map; map=map->tail)
+  {
+    if (map->depth == in_root_depth && map->index == in_root->index)
+    {
+      tree = &map->tree;
+      break;
+    }
+  }
+  if (!tree)
+  {
+    if (path_length == 0)
+    {
+      if (ctor_i != -1)
+      {
+        DataMap *map = pushStruct(arena, DataMap, true);
+        map->depth   = in_root_depth;
+        map->index   = in_root->index;
+        initDataTree(arena, &map->tree, root_union, ctor_i);
+        tree = &map->tree;
+        map->tail    = typer->map;
+        typer->map     = map;
+
+        DataMapAddHistory *history = pushStruct(temp_arena, DataMapAddHistory, true);
+        history->previous_map = map->tail;
+        history->previous     = typer->add_history;
+        typer->add_history = history;
+        added = true;
+      }
+    }
+    else 
+    {
+      assert(castUnionOrPolyUnion(root_union)->ctor_count == 1);
+      DataMap *map = pushStruct(arena, DataMap, true);
+      map->depth   = in_root_depth;
+      map->index   = in_root->index;
+      initDataTree(arena, &map->tree, root_union, 0);
+      tree = &map->tree;
+      map->tail = typer->map;
+      typer->map = map;
+    }
+  }
+
+  for (i32 path_index=0; path_index < path_length; path_index++)
+  {
+    i32   reverse_index = path_length-1-path_index;
+    i32   field_index   = reverse_path[reverse_index];
+    Term *uni           = reverse_unions[reverse_index];
+    DataTree *parent = tree;
+    tree = tree->members[field_index];
+    if (!tree)
+    {
+      if (path_index == path_length-1)
+      {
+        if (ctor_i != -1)
+        {
+          DataTree *new_tree = pushStruct(arena, DataTree, true);
+          initDataTree(arena, new_tree, uni, ctor_i);
+          parent->members[field_index] = new_tree;
+          tree = new_tree;
+
+          DataMapAddHistory *history = pushStruct(temp_arena, DataMapAddHistory, true);
+          history->parent      = parent;
+          history->field_index = field_index;
+          history->previous = typer->add_history;
+          typer->add_history = history;
+          added = true;
+        }
+      }
+      else
+      {
+        assert(castUnionOrPolyUnion(uni)->ctor_count == 1);
+        DataTree *new_tree = pushStruct(arena, DataTree, true);
+        initDataTree(arena, new_tree, uni, 0);
+        parent->members[field_index] = new_tree;
+        tree = new_tree;
+      }
+    }
+  }
+  
+  return AddDataTree{.tree=tree, .added=added};
+}
+
+internal DataTree *
+getDataTree(Typer *env, Term *in0)
+{
+  return getOrAddDataTree(0, env, in0, -1).tree;
+}
+#endif
+
+struct DataTree {
+  i32        ctor_i;
+  i32        member_count;
+  DataTree **members;
+  Union     *debug_uni;
+};
+
+struct DataMapAddHistory {
+  // option A: root 
+  DataMap      *previous_map;
+  // option B: branch
+  DataTree     *parent;
+  i32           field_index;
+
+  DataMapAddHistory *previous;
+};
+
+struct DataMap {
+  i32       depth;
+  i32       index;
+  DataTree  tree;
+  DataMap  *tail;
+};
+

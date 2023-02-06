@@ -44,6 +44,16 @@ global_variable EngineState global_state;
 #define DEBUG_ON  {DEBUG_MODE = true; setvbuf(stdout, NULL, _IONBF, 0);}
 #define DEBUG_OFF {DEBUG_MODE = false; setvbuf(stdout, NULL, _IONBF, BUFSIZ);}
 
+inline Pointer *
+castPointer(Term *in0)
+{
+  if (StackPointer *in = castTerm(in0, StackPointer))
+    return in;
+  if (HeapPointer *in = castTerm(in0, HeapPointer))
+    return in;
+  return 0;
+}
+
 inline void
 initTerm(Term *in, TermKind cat, Term *type)
 {
@@ -112,7 +122,7 @@ isPolyUnion(Union *in)
 inline void
 attach(char *key, String value, Tokenizer *tk=global_tokenizer)
 {
-  ParseError *error = tk->error;
+  InterpError *error = tk->error;
   assert(error->attachment_count < arrayCount(error->attachments));
   error->attachments[error->attachment_count++] = {key, value};
 }
@@ -382,40 +392,16 @@ getConstructorName(Union *uni, i32 ctor_index)
   return uni->constructors[ctor_index]->name;
 }
 
-internal void
-print(Arena *buffer, DataTree *tree)
-{
-  if (tree)
-  {
-    print(buffer, getConstructorName(tree->debug_uni, tree->ctor_i));
-    if (tree->member_count)
-    {
-      print(buffer, "(");
-      for (i32 id=0; id < tree->member_count; id++)
-      {
-        print(buffer, tree->members[id]);
-        if (id != tree->member_count-1)
-          print(buffer, ", ");
-      }
-      print(buffer, ")");
-    }
-  }
-  else
-    print(buffer, "?");
-}
-
 inline i32 getScopeDepth(Scope *scope) {return scope ? scope->depth : 0;}
 inline i32 getScopeDepth(Typer *env)   {return (env && env->scope) ? env->scope->depth : 0;}
 
-struct CastRecord {Composite *record; Constructor *ctor; operator bool() {return record;}};
-
-inline CastRecord
+inline Composite *
 castRecord(Term *term)
 {
-  CastRecord out = {};
+  Composite *out = {};
   if (Composite *record = castTerm(term, Composite))
     if (Constructor *ctor = castTerm(record->op, Constructor))
-      out = {.record=record, .ctor=ctor};
+      out = record;
   return out;
 }
 
@@ -454,195 +440,6 @@ rewriteTerm(Arena *arena, Term *from, Term *to, TreePath *path, Term *in0)
   }
   return out0;
 }
-
-inline void
-initDataTree(Arena *arena, DataTree *tree, Term *uni0, i32 ctor_id)
-{
-  Union *uni = castUnionOrPolyUnion(uni0);
-  i32 ctor_arg_count = getConstructorSignature(uni, ctor_id)->param_count;
-  tree->debug_uni    = uni;
-  tree->ctor_i       = ctor_id;
-  tree->member_count = ctor_arg_count;
-  tree->members      = pushArray(arena, ctor_arg_count, DataTree*, true);
-}
-
-#if 0
-internal AddDataTree
-getOrAddDataTree(Arena *arena, Typer *typer, Term *in0, i32 ctor_i)
-{
-  DataTree *tree = 0;
-  b32 added = false;
-  i32 scope_depth = getScopeDepth(typer);
-
-  Variable *in_root = 0;
-  i32    path_length = 0;
-  Term *reverse_unions[32];
-  u8    reverse_path[32];
-  Term *iter0 = in0;
-  Term *root_union = 0;
-  for (b32 stop = false ;!stop;)
-  {
-    Term *uni = getType(iter0);
-    switch (iter0->cat)
-    {
-      case Term_Variable:
-      {
-        in_root = castTerm(iter0, Variable);
-        root_union = uni;
-        stop = true;
-      } break;
-
-      case Term_Accessor:
-      {
-        Accessor *iter = castTerm(iter0, Accessor);
-        i32 path_id = path_length++;
-        assert(path_length < arrayCount(reverse_path));
-        reverse_unions[path_id] = uni;
-        reverse_path[path_id]   = iter->field_index;
-        iter0 = iter->record;
-      } break;
-
-      default:
-      {
-        stop = true;
-      } break;
-    }
-  }
-
-  i32 in_root_depth = scope_depth - in_root->delta;
-  for (DataMap *map = typer->map; map; map=map->tail)
-  {
-    if (map->depth == in_root_depth && map->index == in_root->index)
-    {
-      tree = &map->tree;
-      break;
-    }
-  }
-  if (!tree)
-  {
-    if (path_length == 0)
-    {
-      if (ctor_i != -1)
-      {
-        DataMap *map = pushStruct(arena, DataMap, true);
-        map->depth   = in_root_depth;
-        map->index   = in_root->index;
-        initDataTree(arena, &map->tree, root_union, ctor_i);
-        tree = &map->tree;
-        map->tail    = typer->map;
-        typer->map     = map;
-
-        DataMapAddHistory *history = pushStruct(temp_arena, DataMapAddHistory, true);
-        history->previous_map = map->tail;
-        history->previous     = typer->add_history;
-        typer->add_history = history;
-        added = true;
-      }
-    }
-    else 
-    {
-      assert(castUnionOrPolyUnion(root_union)->ctor_count == 1);
-      DataMap *map = pushStruct(arena, DataMap, true);
-      map->depth   = in_root_depth;
-      map->index   = in_root->index;
-      initDataTree(arena, &map->tree, root_union, 0);
-      tree = &map->tree;
-      map->tail = typer->map;
-      typer->map = map;
-    }
-  }
-
-  for (i32 path_index=0; path_index < path_length; path_index++)
-  {
-    i32   reverse_index = path_length-1-path_index;
-    i32   field_index   = reverse_path[reverse_index];
-    Term *uni           = reverse_unions[reverse_index];
-    DataTree *parent = tree;
-    tree = tree->members[field_index];
-    if (!tree)
-    {
-      if (path_index == path_length-1)
-      {
-        if (ctor_i != -1)
-        {
-          DataTree *new_tree = pushStruct(arena, DataTree, true);
-          initDataTree(arena, new_tree, uni, ctor_i);
-          parent->members[field_index] = new_tree;
-          tree = new_tree;
-
-          DataMapAddHistory *history = pushStruct(temp_arena, DataMapAddHistory, true);
-          history->parent      = parent;
-          history->field_index = field_index;
-          history->previous = typer->add_history;
-          typer->add_history = history;
-          added = true;
-        }
-      }
-      else
-      {
-        assert(castUnionOrPolyUnion(uni)->ctor_count == 1);
-        DataTree *new_tree = pushStruct(arena, DataTree, true);
-        initDataTree(arena, new_tree, uni, 0);
-        parent->members[field_index] = new_tree;
-        tree = new_tree;
-      }
-    }
-  }
-  
-  return AddDataTree{.tree=tree, .added=added};
-}
-
-internal DataTree *
-getDataTree(Typer *env, Term *in0)
-{
-  return getOrAddDataTree(0, env, in0, -1).tree;
-}
-#endif
-
-inline void
-undoDataMap(Typer *env)
-{
-  DataMapAddHistory *history = env->add_history;
-  if (history->parent)
-    history->parent->members[history->field_index] = 0;
-  else
-    env->map = history->previous_map;
-
-  env->add_history = history->previous;
-}
-
-#if 0
-internal i32
-getConstructorIndex(Typer *typer, Term *in0)
-{
-  i32 out = -1;
-  b32 is_record = false;
-  if (Composite *in = castTerm(in0, Composite))
-  {
-    if (Constructor *ctor = castTerm(in->op, Constructor))
-    {
-      is_record = true;
-      out = ctor->index;
-    }
-  }
-  if (!is_record)
-  {
-    if (Union *uni = castUnionOrPolyUnion(getType(in0)))
-    {
-      if (uni->ctor_count == 1)
-      {
-        out = 0;
-      }
-      else
-      {
-        if (DataTree *tree = getDataTree(typer, in0))
-          out = tree->ctor_i;
-      }
-    }
-  }
-  return out;
-}
-#endif
 
 forward_declare inline Term *
 getType(Term *in0)
@@ -1329,6 +1126,15 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
           print(buffer, in->debug_field_name);
         } break;
 
+        case Term_HeapPointer:
+        {
+          // cutnpaste from "accessor"
+          HeapPointer *in = castTerm(in0, HeapPointer);
+          print(buffer, in->record, new_opt);
+          print(buffer, ".");
+          print(buffer, in->debug_field_name);
+        } break;
+
         case Term_Fork:
         {
           Fork *in = castTerm(in0, Fork);
@@ -1353,13 +1159,13 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
           print(buffer, "}");
         } break;
 
-        case Term_Pointer:
+        case Term_StackPointer:
         {
           // cutnpaste from variable
-          Pointer *in = castTerm(in0, Pointer);
-          bool has_name = in->var_name.chars;
+          StackPointer *in = castTerm(in0, StackPointer);
+          bool has_name = in->name.chars;
           if (has_name)
-            print(buffer, in->var_name);
+            print(buffer, in->name);
           else
             print(buffer, "anon");
 
@@ -1368,11 +1174,11 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
             print(buffer, "<");
             if (!has_name || print_var_delta)
             {
-              print(buffer, "%d", in->var_depth);
+              print(buffer, "%d", in->depth);
             }
             if (!has_name || print_var_index)
             {
-              print(buffer, ",%d", in->var_index);
+              print(buffer, ",%d", in->index);
             }
             print(buffer, ">");
           }
@@ -1549,9 +1355,10 @@ evaluate_(EvaluateContext *ctx, Term *in0)
 
       case Term_Accessor:
       {
-        todoIncomplete;
-        // Accessor *in  = castTerm(in0, Accessor);
-        // out0 = out;
+        Accessor *in  = castTerm(in0, Accessor);
+        Term *record0 = evaluate_(ctx, in->record);
+        Composite *record = castRecord(record0);
+        out0 = record->members[in->index];
       } break;
 
       case Term_Rewrite:
@@ -1593,7 +1400,8 @@ evaluate_(EvaluateContext *ctx, Term *in0)
         out0 = out;
       } break;
 
-      case Term_Pointer:
+      case Term_StackPointer:
+      case Term_HeapPointer:
       {
         out0 = in0;
       } break;
@@ -2068,11 +1876,21 @@ compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
   {
     switch (l0->kind)
     {
-      case Term_Pointer:
+      case Term_StackPointer:
       {
-        Pointer *l = castTerm(l0, Pointer);
-        Pointer *r = castTerm(r0, Pointer);
-        if (l->var_depth == r->var_depth && l->var_index == r->var_index)
+        StackPointer *l = castTerm(l0, StackPointer);
+        StackPointer *r = castTerm(r0, StackPointer);
+        if (l->depth == r->depth && l->index == r->index)
+        {
+          out.result = Trinary_True;
+        }
+      } break;
+
+      case Term_HeapPointer:
+      {
+        HeapPointer *l = castTerm(l0, HeapPointer);
+        HeapPointer *r = castTerm(r0, HeapPointer);
+        if (equal(l->record, r->record) && (l->index == r->index))
         {
           out.result = Trinary_True;
         }
@@ -2213,7 +2031,7 @@ compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
       {
         Accessor *lhs = castTerm(l0, Accessor);
         Accessor *rhs = castTerm(r0, Accessor);
-        if (lhs->field_index == rhs->field_index)
+        if (lhs->index == rhs->index)
         {
           if (equal(lhs->record, rhs->record))
           {
@@ -2378,6 +2196,7 @@ struct AbstractContext
   i32    zero_depth;
 };
 
+// NOTE: Guaranteed copy (unless the value is temporary). :persistent-global-function
 inline Term *
 toAbstractTerm_(AbstractContext *ctx, Term *in0)
 {
@@ -2399,46 +2218,39 @@ toAbstractTerm_(AbstractContext *ctx, Term *in0)
   {
     switch (in0->kind)
     {
-      case Term_Pointer:
+      case Term_StackPointer:
       {
-        Pointer *in = castTerm(in0, Pointer);
-        switch (in->kind)
+        StackPointer *in = castTerm(in0, StackPointer);
+        if (in->depth > ctx->env_depth)
         {
-          case Pointer_Stack:
-          {
-            if (in->var_depth > ctx->env_depth)
-            {
-              Variable *out = newTerm(arena, Variable, 0);
-              out->name  = in->var_name;
-              out->delta = ctx->zero_depth - in->var_depth;
-              out->index = in->var_index;
-              assert(out->delta >= 0);
-              out0 = out;
-            }
-            else
-            {
-              out0 = in0;
-            }
-          } break;
+          Variable *out = newTerm(arena, Variable, 0);
+          out->name  = in->name;
+          out->delta = ctx->zero_depth - in->depth;
+          out->index = in->index;
+          assert(out->delta >= 0);
+          out0 = out;
+        }
+        else
+        {
+          out0 = in0;
+        }
+      } break;
 
-          case Pointer_Heap:
-          {
-            Term *record = toAbstractTerm_(ctx, in->record);
-            if (record != in->record)
-            {
-              Accessor *out = newTerm(arena, Accessor, 0);
-              out->record           = record;
-              out->field_index      = in->field_index;
-              out->debug_field_name = in->debug_field_name;
-              out0 = out;
-            }
-            else
-            {
-              out0 = in0;
-            }
-          } break;
-
-          invalidDefaultCase;
+      case Term_HeapPointer:
+      {
+        HeapPointer *in = castTerm(in0, HeapPointer);
+        Term *record = toAbstractTerm_(ctx, in->record);
+        if (record != in->record)
+        {
+          Accessor *out = newTerm(arena, Accessor, 0);
+          out->record           = record;
+          out->index            = in->index;
+          out->debug_field_name = in->debug_field_name;
+          out0 = out;
+        }
+        else
+        {
+          out0 = in0;
         }
       } break;
 
@@ -2532,15 +2344,14 @@ toAbstractTerm(Arena *arena, Term *value, b32 env_depth)
   return toAbstractTerm_(&ctx, value);
 }
 
-inline Term *
+inline StackPointer *
 newStackPointer(String name, i32 depth, i32 index, Term *type)
 {
   assert(depth);
-  Pointer *out = newTerm(temp_arena, Pointer, type);
-  out->kind      = Pointer_Stack;
-  out->var_name  = name;
-  out->var_depth = depth;
-  out->var_index = index;
+  StackPointer *out = newTerm(temp_arena, StackPointer, type);
+  out->name  = name;
+  out->depth = depth;
+  out->index = index;
   return out;
 }
 
@@ -2651,9 +2462,9 @@ normalize_(NormalizeContext *ctx, Term *in0)
       {
         Accessor *in = castTerm(in0, Accessor);
         Term *record0 = normalize_(ctx, in->record);
-        if (auto [record, _] = castRecord(record0))
+        if (Composite *record = castRecord(record0))
         {
-          out0 = record->args[in->field_index];
+          out0 = record->args[in->index];
         }
         else if (record0 != in->record)
         {
@@ -2799,7 +2610,7 @@ requireChar(char c, char *reason=0, Tokenizer *tk=global_tokenizer)
     if (token.string.length == 1 && token.string.chars[0] == c)
       out = true;
     else
-      parseError(tk, &token, "expected character '%c' (%s)", c, reason);
+      reportError(tk, &token, "expected character '%c' (%s)", c, reason);
   }
   return out;
 }
@@ -2971,7 +2782,7 @@ matchType(Term *actual, Term *goal)
 inline b32
 isGrounded(Term *in0)
 {
-  return isGlobalValue(in0) || (in0->kind == Term_Pointer);
+  return isGlobalValue(in0) || (in0->kind == Term_StackPointer) || (in0->kind == Term_HeapPointer);
 }
 
 internal b32
@@ -2983,8 +2794,7 @@ unify(UnifyContext *ctx, Term *in0, Term *goal0)
   i32 UNUSED_VAR serial = DEBUG_SERIAL++;
   if (DEBUG_LOG_unify)
   {
-    if (DEBUG_MODE)
-    {DEBUG_INDENT(); DUMP("unify(", serial, ") ", in0, " with ", goal0, "\n");}
+    DEBUG_INDENT(); DUMP("unify(", serial, ") ", in0, " with ", goal0, "\n");
   }
 
   if (isGrounded(in0))
@@ -3057,7 +2867,7 @@ unify(UnifyContext *ctx, Term *in0, Term *goal0)
         Accessor *in = castTerm(in0, Accessor);
         if (Accessor *goal = castTerm(goal0, Accessor))
         {
-          if (in->field_index == goal->field_index)
+          if (in->index == goal->index)
           {
             success = unify(ctx, in->record, goal->record);
           }
@@ -3108,8 +2918,7 @@ unify(UnifyContext *ctx, Term *in0, Term *goal0)
 
   if (DEBUG_LOG_unify)
   {
-    if (DEBUG_MODE)
-    {DEBUG_DEDENT(); DUMP("=>(", serial, ") ", ((char *)(success ? "true\n" : "false\n")));}
+    DEBUG_DEDENT(); DUMP("=>(", serial, ") ", ((char *)(success ? "true\n" : "false\n")));
   }
 
   return success;
@@ -3146,7 +2955,7 @@ solveArgs(Solver *solver, Term *op, Term *goal0, Token *blame_token=0)
           {
             if (blame_token)
             {
-              parseError(blame_token, "failed to solve arg %d", arg_i);
+              reportError(blame_token, "failed to solve arg %d", arg_i);
               // :solveArgs-only-error-if-unification-succeeds
               attach("arg_type", type);
               attach("serial", serial);
@@ -3275,7 +3084,7 @@ seekGoal(Solver *solver, Term *goal, b32 try_reductio=false)
         {
           out = value;
         }
-        else if (auto [record, ctor] = castRecord(value))
+        else if (Composite *record = castRecord(value))
         {
           for (i32 member_i = 0; member_i < record->arg_count && !out; member_i++)
           {
@@ -3402,8 +3211,20 @@ solveGoal(Solver *solver, Term *goal)
   return out;
 }
 
+inline b32
+expectingTypeError(Typer *typer)
+{
+  return checkFlag(typer->expected_errors, ExpectError_WrongType);
+}
+
+inline b32
+expectingAmbigousError(Typer *typer)
+{
+  return checkFlag(typer->expected_errors, ExpectError_Ambiguous);
+}
+
 inline TermArray
-getFunctionOverloads(Scope *scope, Identifier *ident, Term *goal0, b32 expect_error)
+getFunctionOverloads(Typer *typer, Identifier *ident, Term *goal0)
 {
   i32 UNUSED_VAR serial = DEBUG_SERIAL;
   TermArray out = {};
@@ -3424,7 +3245,7 @@ getFunctionOverloads(Scope *scope, Identifier *ident, Term *goal0, b32 expect_er
         Term *item = slot->items[slot_i];
         if (Arrow *signature = castTerm(getType(item), Arrow))
         {
-          UnifyContext *ctx = newUnifyContext(signature, getScopeDepth(scope));
+          UnifyContext *ctx = newUnifyContext(signature, getScopeDepth(typer->scope));
           matches = unify(ctx, signature->output_type, goal0);
         }
         if (matches)
@@ -3434,10 +3255,10 @@ getFunctionOverloads(Scope *scope, Identifier *ident, Term *goal0, b32 expect_er
       }
       if (out.count == 0)
       {
-        if (expect_error) silentError();
+        if (expectingTypeError(typer)) silentError();
         else
         {
-          parseError(&ident->a, "found no matching overload");
+          reportError(&ident->a, "found no matching overload");
           attach("serial", serial);
           attach("function", ident->token.string);
           attach("output_type_goal", goal0);
@@ -3448,10 +3269,10 @@ getFunctionOverloads(Scope *scope, Identifier *ident, Term *goal0, b32 expect_er
   }
   else
   {
-    if (expect_error) silentError();
+    if (expectingTypeError(typer)) silentError();
     else
     {
-      parseError(&ident->a, "identifier not found");
+      reportError(&ident->a, "identifier not found");
       attach("identifier", ident->token.string);
     }
   }
@@ -3467,7 +3288,7 @@ fillInEllipsis(Arena *arena, Typer *typer, Identifier *op_ident, Term *goal)
 
   if (goal->kind == Term_Hole)
   {
-    parseError(&op_ident->a, "cannot solve for arguments since we do know what the output type of this function should be");
+    reportError(&op_ident->a, "cannot solve for arguments since we do know what the output type of this function should be");
   }
   else if (lookupLocalName(typer, &op_ident->token))
   {
@@ -3493,14 +3314,14 @@ fillInEllipsis(Arena *arena, Typer *typer, Identifier *op_ident, Term *goal)
     if (!out && noError())
     {
       // :solveArgs-only-error-if-unification-succeeds
-      parseError(&op_ident->a, "found no matching overload");
+      reportError(&op_ident->a, "found no matching overload");
       attach("available_overloads", slot->count, slot->items, printOptionPrintType());
       attach("serial", serial);
     }
   }
   else
   {
-    parseError(&op_ident->a, "identifier not found");
+    reportError(&op_ident->a, "identifier not found");
     attach("identifier", op_ident->token.string);
   }
   
@@ -3782,7 +3603,7 @@ parseSequence(Arena *arena, b32 require_braces=true)
 
             default:
             {
-              parseError("invalid syntax for sequence item (keep in mind that we're in a sequence, so you need to use the \"return\" keyword to return an expression)");
+              reportError("invalid syntax for sequence item (keep in mind that we're in a sequence, so you need to use the \"return\" keyword to return an expression)");
             } break;
           }
         }
@@ -3794,7 +3615,7 @@ parseSequence(Arena *arena, b32 require_braces=true)
         }
         else
         {
-          parseError("expected a sequence item");
+          reportError("expected a sequence item");
         }
       } break;
     }
@@ -3867,11 +3688,11 @@ buildCtorAst(Arena *arena, CtorAst *in, Term *output_type)
       out = uni->constructors[in->ctor_i];
     }
     else
-      parseError(&in->a, "union only has %d constructors", uni->ctor_count);
+      reportError(&in->a, "union only has %d constructors", uni->ctor_count);
   }
   else
   {
-    parseError(&in->a, "cannot guess union of constructor");
+    reportError(&in->a, "cannot guess union of constructor");
   }
   return out;
 }
@@ -3930,7 +3751,7 @@ getOverloadFromDistinguisher(Token *token, const char *name, Term *distinguisher
     out = getOverloadFromDistinguisher(lookup, distinguisher);
   }
   else
-    parseError(token, "no function named \"%s\" found that matches distinguisher", name);
+    reportError(token, "no function named \"%s\" found that matches distinguisher", name);
 
   return out;
 }
@@ -4336,10 +4157,10 @@ buildAlgebraNorm(Arena *arena, Typer *typer, CompositeAst *in)
     }
   }
   else
-    parseError("expected 1 argument");
+    reportError("expected 1 argument");
 
   if (!out && noError())
-    parseError(&in->a, "expression is already algebraically normalized");
+    reportError(&in->a, "expression is already algebraically normalized");
 
   return out;
 }
@@ -4349,7 +4170,9 @@ buildFunctionGivenSignature(Typer *typer, Arrow *signature, Ast *in_body,
                             i32 function_flags=0, Token *global_name=0)
 {
   i32 unused_var serial = DEBUG_SERIAL;
-  Arena *arena = temp_arena;
+  // :persistent-global-function
+  Arena *arena = global_name ? global_state.top_level_arena : temp_arena;
+
   Function *out = newTerm(arena, Function, signature);
   out->body = &dummy_function_being_built;
   out->function_flags = function_flags;
@@ -4429,26 +4252,25 @@ buildInvert(Arena *arena, Typer *typer, CompositeAst *ast)
         }
         else
         {
-          parseError(&ast->a, "variable has no constructor information");
+          reportError(&ast->a, "variable has no constructor information");
         }
       }
       else
       {
-        parseError(&ast->a, "invert only support variables (since atm you can only fork variables anyway, and this is mean to be used in a fork)");
+        reportError(&ast->a, "invert only support variables (since atm you can only fork variables anyway, and this is mean to be used in a fork)");
       }
     }
   }
   else
   {
-    parseError(&ast->a, "we can only invert one thing at a time!");
+    reportError(&ast->a, "we can only invert one thing at a time!");
   }
 #endif
   return out;
 }
 
-// todo don't even need the arena tbh
-internal BuildTerm
-buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
+forward_declare internal BuildTerm
+buildTerm(Typer *typer, Ast *in0, Term *goal)
 {
   // beware: Usually we mutate in-place, but we may also allocate anew.
   i32 UNUSED_VAR serial = DEBUG_SERIAL++;
@@ -4480,7 +4302,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
         if (Identifier *op_ident = castAst(in->op, Identifier))
           out0.term = fillInEllipsis(arena, typer, op_ident, goal);
         else
-          parseError(in->args[0], "todo: ellipsis only works with identifier atm");
+          reportError(in->args[0], "todo: ellipsis only works with identifier atm");
 #endif
       }
       else if (equal(in->op->token, "test_sort"))
@@ -4509,7 +4331,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
           if (!lookupLocalName(typer, &in->op->token))
           {
             should_build_op = false;
-            op_list = getFunctionOverloads(typer->scope, op_ident, goal, silent_error);
+            op_list = getFunctionOverloads(typer, op_ident, goal);
           }
         }
         else if (CtorAst *op_ctor = castAst(in->op, CtorAst))
@@ -4533,210 +4355,219 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
           }
         }
 
-        silent_error = silent_error || op_list.count > 1;
-        for (i32 attempt=0;
-             (attempt < op_list.count) && (!value) && noError();
-             attempt++)
+        Typer new_typer = *typer;
         {
-          Term *op = op_list.items[attempt];
-          if (Arrow *signature = getSignature(op))
+          Typer *typer = &new_typer;
+          if (op_list.count > 1)
           {
-            i32 param_count = signature->param_count;
-            Ast **expanded_args = in->args;
-            if (param_count != in->arg_count)
+            setFlag(&typer->expected_errors, ExpectError_WrongType);
+          }
+
+          for (i32 attempt=0;
+               (attempt < op_list.count) && (!value) && noError();
+               attempt++)
+          {
+            Term *op = op_list.items[attempt];
+            if (Arrow *signature = getSignature(op))
             {
-              i32 explicit_param_count = getExplicitParamCount(signature);
-              if (in->arg_count == explicit_param_count)
+              i32 param_count = signature->param_count;
+              Ast **expanded_args = in->args;
+              if (param_count != in->arg_count)
               {
-                allocateArray(arena, param_count, expanded_args);
-                for (i32 param_i = 0, arg_i = 0;
-                     param_i < param_count;
-                     param_i++)
+                i32 explicit_param_count = getExplicitParamCount(signature);
+                if (in->arg_count == explicit_param_count)
                 {
-                  if (isInferredParameter(signature, param_i))
+                  allocateArray(arena, param_count, expanded_args);
+                  for (i32 param_i = 0, arg_i = 0;
+                       param_i < param_count;
+                       param_i++)
                   {
-                    // NOTE: We fill the missing argument with synthetic holes,
-                    // because the user input might also have actual holes, so
-                    // this makes the code more uniform.
-                    expanded_args[param_i] = newAst(arena, Hole, &in->op->token);
-                  }
-                  else
-                  {
-                    assert(arg_i < explicit_param_count);
-                    expanded_args[param_i] = in->args[arg_i++];
-                  }
-                }
-              }
-              else
-              {
-                if (silent_error) silentError();
-                else
-                {
-                  parseError(&in0->token, "argument count does not match the number of explicit parameters (expected: %d, got: %d)", explicit_param_count, in->arg_count);
-                }
-              }
-            }
-
-            if (noError())
-            {
-              UnifyContext *ctx = newUnifyContext(signature, getScopeDepth(typer->scope));
-              Term **args = ctx->values;
-              b32 stack_has_hole = false;  // This var is an optimization: in case we can just solve all the args in one pass.
-
-              if (goal->kind != Term_Hole)
-              {
-                b32 ouput_unify = unify(ctx, signature->output_type, goal);
-                if (!ouput_unify)
-                {
-                  if (silent_error) silentError();
-                  else
-                  {
-                    parseError(in0, "cannot unify output");
-                    attach("signature->output_type", signature->output_type);
-                    attach("serial", serial);
-                  }
-                }
-              }
-
-              for (int arg_i = 0;
-                   (arg_i < param_count) && noError();
-                   arg_i++)
-              {
-                // First round: Build and Infer arguments.
-                Term *param_type0 = signature->param_types[arg_i];
-                Ast *in_arg = expanded_args[arg_i];
-                b32 arg_was_filled = false;
-                if (args[arg_i])
-                {
-                  arg_was_filled = true;
-                  if (in_arg->kind != Ast_Hole)
-                  {
-                    Term *already_filled_arg_type = args[arg_i]->type;
-                    if (Term *arg = buildTerm(typer, in_arg, already_filled_arg_type).value)
+                    if (isInferredParameter(signature, param_i))
                     {
-                      if (!equal(arg, args[arg_i]))
-                      {
-                        parseError(in_arg, "actual arg differs from inferred arg");
-                        attach("actual", arg);
-                        attach("inferred", args[arg_i]);
-                      }
-                    }
-                  }
-                }
-                else if (in_arg->kind != Ast_Hole)
-                {
-                  if (stack_has_hole)
-                  {
-                    if (Term *arg = buildTerm(typer, in_arg, holev, true).value)
-                    {
-                      args[arg_i] = arg;
-                      arg_was_filled = true;
-                      b32 unify_result = unify(ctx, param_type0, getType(arg));
-                      if (!unify_result)
-                      {
-                        if (silent_error) silentError();
-                        else
-                        {
-                          parseError(in_arg, "cannot unify parameter type with argument %d's type", arg_i);
-                          attach("serial", serial);
-                          attach("parameter_type", param_type0);
-                          attach("argument_type", getType(arg));
-                        }
-                      }
+                      // NOTE: We fill the missing argument with synthetic holes,
+                      // because the user input might also have actual holes, so
+                      // this makes the code more uniform.
+                      expanded_args[param_i] = newAst(arena, Hole, &in->op->token);
                     }
                     else
                     {
-                      if (hasSilentError())
-                        wipeError();
-                    }
-                  }
-                  else
-                  {
-                    Term *expected_arg_type = evaluate(param_type0, param_count, args);
-                    if (Term *arg = buildTerm(typer, in_arg, expected_arg_type, silent_error).value)
-                    {
-                      args[arg_i] = arg;
-                      arg_was_filled = true;
+                      assert(arg_i < explicit_param_count);
+                      expanded_args[param_i] = in->args[arg_i++];
                     }
                   }
                 }
-                stack_has_hole = stack_has_hole || !arg_was_filled;
-              }
-
-              if (noError() && stack_has_hole)
-              {
-                // Second round, Build and Solve the remaining args.
-                for (int arg_i = 0;
-                     (arg_i < param_count) && noError();
-                     arg_i++)
+                else
                 {
-                  if (!args[arg_i])
+                  if (expectingTypeError(typer)) silentError();
+                  else
                   {
-                    Ast *in_arg = expanded_args[arg_i];
-                    Term *param_type0 = signature->param_types[arg_i];
-                    Term *expected_arg_type = evaluate(param_type0, param_count, args);
-                    if (in_arg->kind == Ast_Hole)
-                    {
-                      if (Term *fill = solveGoal(Solver{.arena=arena, .typer=typer, .use_global_hints=true}, expected_arg_type))
-                      {
-                        args[arg_i] = fill;
-                      }
-                      else
-                      {
-                        parseError(in_arg, "cannot solve argument %d", arg_i);
-                        attach("expected_arg_type", expected_arg_type);
-                      }
-                    }
-                    else if (Term *arg = buildTerm(typer, in_arg, expected_arg_type, silent_error).value)
-                    {
-                      args[arg_i] = arg;
-                    }
+                    reportError(&in0->token, "argument count does not match the number of explicit parameters (expected: %d, got: %d)", explicit_param_count, in->arg_count);
                   }
                 }
               }
 
               if (noError())
               {
-                assert(!value);
-                if (Function *fun = castTerm(op, Function))
+                UnifyContext *ctx = newUnifyContext(signature, getScopeDepth(typer->scope));
+                Term **args = ctx->values;
+                b32 stack_has_hole = false;  // This var is an optimization: in case we can just solve all the args in one pass.
+
+                if (goal->kind != Term_Hole)
                 {
-                  if (checkFlag(fun->function_flags, FunctionFlag_expand))
+                  b32 ouput_unify = unify(ctx, signature->output_type, goal);
+                  if (!ouput_unify)
                   {
-                    value = evaluate(fun->body, param_count, args);
+                    if (expectingTypeError(typer)) silentError();
+                    else
+                    {
+                      reportError(in0, "cannot unify output");
+                      attach("signature->output_type", signature->output_type);
+                      attach("serial", serial);
+                    }
                   }
                 }
-                if (!value)
+
+                for (int arg_i = 0;
+                     (arg_i < param_count) && noError();
+                     arg_i++)
                 {
-                  args = copyArray(arena, param_count, args);
-                  value = newComposite(arena, op, param_count, args);
+                  // First round: Build and Infer arguments.
+                  Term *param_type0 = signature->param_types[arg_i];
+                  Ast *in_arg = expanded_args[arg_i];
+                  b32 arg_was_filled = false;
+                  if (args[arg_i])
+                  {
+                    arg_was_filled = true;
+                    if (in_arg->kind != Ast_Hole)
+                    {
+                      Term *already_filled_arg_type = args[arg_i]->type;
+                      if (Term *arg = buildTerm(typer, in_arg, already_filled_arg_type))
+                      {
+                        if (!equal(arg, args[arg_i]))
+                        {
+                          reportError(in_arg, "actual arg differs from inferred arg");
+                          attach("actual", arg);
+                          attach("inferred", args[arg_i]);
+                        }
+                      }
+                    }
+                  }
+                  else if (in_arg->kind != Ast_Hole)
+                  {
+                    if (stack_has_hole)
+                    {
+                      Typer new_typer = *typer;
+                      setFlag(&new_typer.expected_errors, ExpectError_Ambiguous);
+                      if (Term *arg = buildTerm(&new_typer, in_arg, holev))
+                      {
+                        args[arg_i] = arg;
+                        arg_was_filled = true;
+                        b32 unify_result = unify(ctx, param_type0, arg->type);
+                        if (!unify_result)
+                        {
+                          if (expectingTypeError(typer)) silentError();
+                          else
+                          {
+                            reportError(in_arg, "cannot unify parameter type with argument %d's type", arg_i);
+                            attach("serial", serial);
+                            attach("parameter_type", param_type0);
+                            attach("argument_type", arg->type);
+                          }
+                        }
+                      }
+                      else if (hasSilentError())
+                      {
+                        wipeError();  // :argument-builds-retried-in-round-two
+                      }
+                    }
+                    else
+                    {
+                      Term *expected_arg_type = evaluate(param_type0, param_count, args);
+                      if (Term *arg = buildTerm(typer, in_arg, expected_arg_type).value)
+                      {
+                        args[arg_i] = arg;
+                        arg_was_filled = true;
+                      }
+                    }
+                  }
+                  stack_has_hole = stack_has_hole || !arg_was_filled;
+                }
+
+                if (noError() && stack_has_hole)
+                {
+                  // Second round, Build and Solve the remaining args.
+                  for (int arg_i = 0;
+                       (arg_i < param_count) && noError();
+                       arg_i++)
+                  {
+                    if (!args[arg_i])
+                    {
+                      Ast *in_arg = expanded_args[arg_i];
+                      Term *param_type0 = signature->param_types[arg_i];
+                      Term *expected_arg_type = evaluate(param_type0, param_count, args);
+                      if (in_arg->kind == Ast_Hole)
+                      {
+                        if (Term *fill = solveGoal(Solver{.arena=arena, .typer=typer, .use_global_hints=true}, expected_arg_type))
+                        {
+                          args[arg_i] = fill;
+                        }
+                        else
+                        {
+                          reportError(in_arg, "cannot solve argument %d", arg_i);
+                          attach("expected_arg_type", expected_arg_type);
+                          attach("serial", serial);
+                        }
+                      }
+                      else if (Term *arg = buildTerm(typer, in_arg, expected_arg_type))
+                      {
+                        // :argument-builds-retried-in-round-two
+                        args[arg_i] = arg;
+                      }
+                    }
+                  }
+                }
+
+                if (noError())
+                {
+                  assert(!value);
+                  if (Function *fun = castTerm(op, Function))
+                  {
+                    if (checkFlag(fun->function_flags, FunctionFlag_expand))
+                    {
+                      value = evaluate(fun->body, param_count, args);
+                    }
+                  }
+                  if (!value)
+                  {
+                    args = copyArray(arena, param_count, args);
+                    value = newComposite(arena, op, param_count, args);
+                  }
                 }
               }
             }
-          }
-          else
-          {
-            if (silent_error) silentError();
             else
             {
-              parseError(in->op, "operator must have an arrow type");
-              attach("operator type", getType(op));
-            }
-          }
-
-          if (op_list.count > 1)
-          {
-            if (hasSilentError())
-            {
-              wipeError();
-              if (attempt == op_list.count-1)
+              if (expectingTypeError(typer)) silentError();
+              else
               {
-                parseError(in->op, "found no suitable overload");
-                attach("available_overloads", op_list.count, op_list.items, printOptionPrintType());
-                attach("serial", serial);
+                reportError(in->op, "operator must have an arrow type");
+                attach("operator type", getType(op));
               }
             }
-            else
-              break;
+
+            if (op_list.count > 1)
+            {
+              if (hasSilentError())
+              {
+                wipeError();
+                if (attempt == op_list.count-1)
+                {
+                  reportError(in->op, "found no suitable overload");
+                  attach("available_overloads", op_list.count, op_list.items, printOptionPrintType());
+                  attach("serial", serial);
+                }
+              }
+            }
           }
         }
       }
@@ -4761,7 +4592,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
             {
               if (value)
               {// ambiguous
-                if (silent_error) silentError();
+                if (expectingAmbigousError(typer)) silentError();
                 else
                 {
                   tokenError(name, "not enough type information to disambiguate global name");
@@ -4777,7 +4608,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
           }
           if (!value)
           {
-            if (silent_error) silentError();
+            if (expectingTypeError(typer)) silentError();
             else
             {
               tokenError(name, "global name does not match expected type");
@@ -4807,7 +4638,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
       }
       else
       {
-        parseError(in0, "please provide an expression here");
+        reportError(in0, "please provide an expression here");
       }
     } break;
 
@@ -4822,10 +4653,11 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
       ArrowAst *in = castAst(in0, ArrowAst);
       Arrow *out = newTerm(arena, Arrow, rea_Type);
       i32 param_count = in->param_count;
+      // :arrow-copy-done-later
       out->param_count = param_count;
-      out->param_names = copyArray(arena, param_count, in->param_names);
-      out->param_flags = copyArray(arena, param_count, in->param_flags);
-      allocateArray(arena, param_count, out->param_types);
+      out->param_names = in->param_names;
+      out->param_flags = in->param_flags;
+      out->param_types = pushArray(arena, param_count, Term*);
       {
         Scope *scope = typer->scope = newScope(typer->scope, out->param_count);
         extendBindings(typer);
@@ -4862,22 +4694,26 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
       {
         i32 ctor_i = 0;
         Term **members = 0;
-        if (auto [record, ctor] = castRecord(record0))
+        if (Composite *record = castRecord(record0))
         {
-          ctor_i  = ctor->index;
-          members = record->args;
+          ctor_i  = record->ctor->index;
+          members = record->members;
         }
-        else if (Pointer *pointer = castTerm(record0, Pointer))
+        else if (Pointer *pointer = castPointer(record0))
         {
           if (pointer->ref)
           {
             Composite *record = pointer->ref;
-            Constructor *ctor = castTerm(record->op, Constructor);
-            ctor_i  = ctor->index;
+            ctor_i  = record->ctor->index;
             members = record->args;
           }
         }
-        if (ctor_i >= 0)
+        else
+        {
+          reportError(in->record, "cannot access a non-record");
+        }
+
+        if (noError())
         {
           Union *uni = castUnionOrPolyUnion(getType(record0));
           Arrow *struc = getConstructorSignature(uni, ctor_i);
@@ -4904,10 +4740,6 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
             attach("expected a member of constructor", getConstructorName(uni, ctor_i));
           }
         }
-        else
-        {
-          parseError(in->record, "cannot access a non-record");
-        }
       }
     } break;
 
@@ -4929,7 +4761,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
         }
         else
         {
-          parseError(in0, "function signature is required to be an arrow type");
+          reportError(in0, "function signature is required to be an arrow type");
           attach("type", type);
         }
       }
@@ -4940,7 +4772,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
       // should_check_type = false;
       if (goal->kind == Term_Hole)
       {
-        parseError(in0, "we do not know what the goal is, so nothing to rewrite");
+        reportError(in0, "we do not know what the goal is, so nothing to rewrite");
       }
       else
       {
@@ -4973,7 +4805,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
                 }
                 else
                 {
-                  parseError(in0, "cannot find a place to apply the rewrite");
+                  reportError(in0, "cannot find a place to apply the rewrite");
                   attach("substitution", proof_type);
                   attach("in_expression_type", getType(in_expression));
                 }
@@ -4992,14 +4824,14 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
               }
               else
               {
-                parseError(in0, "cannot find a place to apply the rewrite");
+                reportError(in0, "cannot find a place to apply the rewrite");
                 attach("substitution", proof_type);
               }
             }
           }
           else
           {
-            parseError(in->eq_proof, "please provide a proof of equality for rewrite");
+            reportError(in->eq_proof, "please provide a proof of equality for rewrite");
             attach("got", proof_type);
           }
         }
@@ -5035,11 +4867,11 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
         CompareTerms compare = compareTerms(arena, false, goal, new_goal);
         if (compare.result == Trinary_True)
         {
-          parseError(in0, "new goal is exactly the same as current goal");
+          reportError(in0, "new goal is exactly the same as current goal");
         }
         else if (compare.result == Trinary_False)
         {
-          parseError(in0, "new goal is totally different from current goal");
+          reportError(in0, "new goal is totally different from current goal");
         }
         else
         {
@@ -5065,7 +4897,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
                 }
                 else
                 {
-                  parseError(&ident->a, "identifier not found");
+                  reportError(&ident->a, "identifier not found");
                   attach("identifier", ident->token.string);
                 }
               }
@@ -5092,7 +4924,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
             }
             else
             {
-              parseError(in0, "cannot solve for equality proof");
+              reportError(in0, "cannot solve for equality proof");
               attach("equality", lr_eq);
               attach("serial", serial);
             }
@@ -5169,7 +5001,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
 
     case Ast_CtorAst:
     {
-      parseError(in0, "please use this constructor syntax as an operator");
+      reportError(in0, "please use this constructor syntax as an operator");
     } break;
 
     case Ast_SeekAst:
@@ -5185,7 +5017,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
       {
         value = seekGoal(Solver{.arena=arena, .typer=typer}, proposition);
         if (!value)
-          parseError(in0, "cannot find a matching proof in scope");
+          reportError(in0, "cannot find a matching proof in scope");
       }
     } break;
 
@@ -5198,7 +5030,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
         {
           value = getOverloadFromDistinguisher(lookup, distinguisher);
           if (!value)
-            parseError(in0, "found no overload corresponding to distinguisher");
+            reportError(in0, "found no overload corresponding to distinguisher");
         }
       }
     } break;
@@ -5216,7 +5048,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
     {
       value = reductioAdAbsurdum(Solver{.arena=arena, .typer=typer}, goal);
       if (!value)
-        parseError(in0, "no contradiction found");
+        reportError(in0, "no contradiction found");
     } break;
 
     invalidDefaultCase;
@@ -5229,13 +5061,10 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
     {
       if (!matchType(actual, goal))
       {
-        if (silent_error)
-        {
-          silentError();
-        }
+        if (expectingTypeError(typer)) silentError();
         else
         {
-          parseError(in0, "actual type differs from expected type");
+          reportError(in0, "actual type differs from expected type");
           attach("got", actual);
           attach("serial", serial);
         }
@@ -5243,13 +5072,13 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
     }
   }
 
-  if (ParseError *error = getError())
+  if (InterpError *error = getError())
   {
-    if (!silent_error)
+    if (!hasSilentError())
     {
-      setErrorFlag(ErrorTypecheck);
-      if (!checkErrorFlag(ErrorGoalAttached))
+      if (!error->goal_attached)
       {
+        error->goal_attached = true;
         attach("goal", goal);
 
         StartString start = startString(error_buffer);
@@ -5258,8 +5087,6 @@ buildTerm(Typer *typer, Ast *in0, Term *goal, b32 silent_error)
         attach("scope", endString(start));
 
         start = startString(error_buffer);
-
-        setErrorFlag(ErrorGoalAttached);
       }
     }
     value = 0;
@@ -5307,8 +5134,9 @@ copyToGlobalArena(Term *in0)
       {
         Arrow *in  = castTerm(in0, Arrow);
         Arrow *out = copyTerm(arena, in);
-        allocateArray(arena, in->param_count, out->param_types);
-        for (i32 i=0; i < in->param_count; i++)
+        i32 param_count = in->param_count;
+        allocateArray(arena, param_count, out->param_types);
+        for (i32 i=0; i < param_count; i++)
         {
           out->param_types[i] = copyToGlobalArena(in->param_types[i]);
         }
@@ -5316,6 +5144,9 @@ copyToGlobalArena(Term *in0)
         {
           out->output_type = copyToGlobalArena(in->output_type);
         }
+        // :arrow-copy-done-later
+        out->param_names = copyArray(arena, param_count, in->param_names);
+        out->param_flags = copyArray(arena, param_count, in->param_flags);
         out0 = out;
       } break;
 
@@ -5374,7 +5205,7 @@ copyToGlobalArena(Term *in0)
 internal Term *
 buildGlobalTerm(Typer *typer, Ast *in0, Term *goal)
 {
-  Term *out = buildTerm(typer, in0, goal, false);
+  Term *out = buildTerm(typer, in0, goal);
   if (out)
   {
     out = copyToGlobalArena(out);
@@ -5385,9 +5216,9 @@ buildGlobalTerm(Typer *typer, Ast *in0, Term *goal)
 internal b32
 instantiate(Typer *typer, Term *in0, i32 ctor_i)
 {
-  b32 added = false;
+  b32 success = false;
   Arena *arena = temp_arena;
-  if (Pointer *pointer = castTerm(in0, Pointer))
+  if (Pointer *pointer = castPointer(in0))
   {
     Union *uni = castTerm(in0->type, Union);
     if (!pointer->ref)
@@ -5399,17 +5230,27 @@ instantiate(Typer *typer, Term *in0, i32 ctor_i)
       for (i32 i=0; i < member_count; i++)
       {
         Term *member_type = evaluate(signature->param_types[i], member_count, members);
-        Pointer *member          = newTerm(arena, Pointer, member_type);
-        member->kind             = Pointer_Heap;
+        HeapPointer *member      = newTerm(arena, HeapPointer, member_type);
         member->record           = in0;
-        member->field_index      = i;
+        member->index      = i;
         member->debug_field_name = signature->param_names[i];
         members[i] = member;
       }
       pointer->ref = newComposite(arena, ctor, member_count, members);
+      success = true;
     }
   }
-  return added;
+  return success;
+}
+
+inline void
+uninstantiate(Term *in0)
+{
+  if (Pointer *pointer = castPointer(in0))
+  {
+    assert(pointer->ref);
+    pointer->ref = 0;
+  }
 }
 
 forward_declare internal Term *
@@ -5418,7 +5259,7 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
   Arena *arena = temp_arena;
   if (goal->kind == Term_Hole)
   {
-    parseError(&in->a, "fork expressions require a goal, please provide one (f.ex instead of writing \"a := b\", write \"a: A := b\")");
+    reportError(&in->a, "fork expressions require a goal, please provide one (f.ex instead of writing \"a := b\", write \"a: A := b\")");
   }
   Fork *out = newTerm(arena, Fork, goal);
   out->case_count = in->case_count;
@@ -5457,7 +5298,7 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
             {
               if (ordered_bodies[ctor_i])
               {
-                parseError(in->bodies[input_case_i], "fork case handled twice");
+                reportError(in->bodies[input_case_i], "fork case handled twice");
                 attach("constructor", getConstructorName(uni, ctor_i));
               }
               else
@@ -5468,11 +5309,11 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
                   ordered_bodies[ctor_i] = body;
                 }
               }
-              undoDataMap(typer);
+              uninstantiate(subject);
             }
             else
             {
-              parseError(in->subject, "cannot fork this term");
+              reportError(in->subject, "cannot fork this term");
             }
           }
           else
@@ -5494,12 +5335,12 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
         out->bodies = ordered_bodies;
       }
       else
-        parseError(&in->a, "wrong number of cases, expected: %d, got: %d",
+        reportError(&in->a, "wrong number of cases, expected: %d, got: %d",
                    uni->ctor_count, in->case_count);
     }
     else
     {
-      parseError(in->subject, "cannot fork expression of type");
+      reportError(in->subject, "cannot fork expression of type");
       attach("type", subject_type);
     }
   }
@@ -5547,7 +5388,7 @@ parseAndBuildGlobal(Term *expected_type=holev, b32 must_succeed=false)
   if (Ast *ast = parseExpression(temp_arena))
   {
     Typer typer = {};
-    out  = buildTerm(&typer, ast, expected_type);
+    out = buildTerm(&typer, ast, expected_type);
     out = copyToGlobalArena(out);
   }
   return out;
@@ -5681,7 +5522,7 @@ parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
       }
     }
     else
-      parseError(signature0, "function definition requires an arrow type");
+      reportError(signature0, "function definition requires an arrow type");
   }
 
   NULL_WHEN_ERROR(out);
@@ -5756,9 +5597,10 @@ parseArrowType(Arena *arena, b32 is_struct)
   char end_arg_char   = ')';
   if (requireChar(begin_arg_char))
   {
+    // :arrow-copy-done-later
     allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, param_names, true);
-    allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, param_types, true);
     allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, param_flags, true);
+    allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, param_types, true);
 
     i32 typeless_run = 0;
     Token typeless_token;
@@ -5874,7 +5716,7 @@ parseArrowType(Arena *arena, b32 is_struct)
     }
     else if (!is_struct)  // structs don't need return type
     {
-      parseError("non-struct arrow types require an output type");
+      reportError("non-struct arrow types require an output type");
     }
   }
 
@@ -6047,18 +5889,18 @@ buildUnion(Typer *typer, UnionAst *in, Token *global_name)
               }
               if (!valid_output)
               {
-                parseError(ast_struc, "constructor has to return the same union as the one being defined");
+                reportError(ast_struc, "constructor has to return the same union as the one being defined");
                 attach("output_type", struc->output_type);
               }
             }
             else
             {
-              parseError(ast_struc, "output type required since there are non-poly parameters");
+              reportError(ast_struc, "output type required since there are non-poly parameters");
             }
           }
           else if (struc->output_type)
           {
-            parseError(ast_struc, "you can't specify the constructor's output type because there is no non-poly parameter");
+            reportError(ast_struc, "you can't specify the constructor's output type because there is no non-poly parameter");
           }
         }
       }
@@ -6228,7 +6070,7 @@ parseList(Arena *arena)
   }
   if (count == 0)
   {
-    parseError(first_token, "empty list currently not supported");
+    reportError(first_token, "empty list currently not supported");
   }
   if (noError())
   {
@@ -6320,7 +6162,7 @@ parseOperand(Arena *arena)
 
     case Token_Keyword_union:
     {
-      parseError(&token, "anonymous union deprecated");
+      reportError(&token, "anonymous union deprecated");
     } break;
 
     case Token_Keyword_ctor:
@@ -6367,7 +6209,7 @@ parseOperand(Arena *arena)
             if (arg_i == 0)
               args[0] = newAst(arena, Ellipsis, &global_tokenizer->last_token);
             else
-              parseError("ellipsis must be the only argument");
+              reportError("ellipsis must be the only argument");
 
             requireChar(')', "ellipsis must be the only argument");
             break;
@@ -6504,13 +6346,14 @@ buildGlobalFunction(Arena *arena, FunctionAst *in)
 
   if (Term *type = buildTerm(typer, &in->signature->a, holev))
   {
+    type = copyToGlobalArena(type);
     if (Arrow *signature = castTerm(type, Arrow))
     {
       out = buildFunctionGivenSignature(typer, signature, in->body,
                                         in->function_flags, &in->token);
       if (out)
       {
-        out = castTerm(copyToGlobalArena(out), Function);
+        // :persistent-global-function
         if (checkFlag(in->function_flags, FunctionFlag_is_global_hint))
         {
           addGlobalHint(out);
@@ -6519,7 +6362,7 @@ buildGlobalFunction(Arena *arena, FunctionAst *in)
     }
     else
     {
-      parseError(&in->signature->a, "function signature is required to be an arrow type");
+      reportError(&in->signature->a, "function signature is required to be an arrow type");
     }
   }
 
@@ -6544,8 +6387,8 @@ parseTopLevel(EngineState *state)
     error_buffer_ = subArena(temp_arena, 2048);
 #endif
 
-    Typer  empty_typer_ = {};
-    Typer *empty_typer  = &empty_typer_;
+    Typer  typer_ = {};
+    Typer *typer  = &typer_;
 
     switch (token_.kind)
     {
@@ -6602,12 +6445,14 @@ parseTopLevel(EngineState *state)
       case Token_Directive_should_fail:
       {
         if (optionalString("off"))
-          should_fail_active = false;
+        {
+          unsetFlag(&typer->expected_errors, ExpectError_WrongType);
+        }
         else
         {
           should_fail_active = true;
+          setFlag(&typer->expected_errors, ExpectError_WrongType);
           tokenError(token, "#should_fail activated");
-          setErrorFlag(ErrorTypecheck);
         }
       } break;
 
@@ -6627,7 +6472,7 @@ parseTopLevel(EngineState *state)
       {
         if (Term *expr = parseAndBuild())
         {
-          normalize(empty_typer, expr);
+          normalize(typer, expr);
         }
       } break;
 
@@ -6676,7 +6521,7 @@ parseTopLevel(EngineState *state)
           }
           if (noError())
           {
-            buildTerm(empty_typer, ast, expected_type);
+            buildTerm(typer, ast, expected_type);
           }
         }
         popContext();
@@ -6692,12 +6537,12 @@ parseTopLevel(EngineState *state)
             if (eq->op == rea_equal)
             {
               goal_valid = true;
-              Term *lhs = normalize(empty_typer, eq->args[1]);
-              Term *rhs = normalize(empty_typer, eq->args[2]);
+              Term *lhs = normalize(typer, eq->args[1]);
+              Term *rhs = normalize(typer, eq->args[2]);
               if (!equal(lhs, rhs))
               {
                 tokenError(token, "equality cannot be proven by computation");
-                Term *lhs = normalize(empty_typer, eq->args[1]);
+                Term *lhs = normalize(typer, eq->args[1]);
                 attach("lhs", lhs);
                 attach("rhs", rhs);
               }
@@ -6773,7 +6618,7 @@ parseTopLevel(EngineState *state)
                 nextToken();
                 if (UnionAst *ast = parseUnion(arena, token))
                 {
-                  buildUnion(empty_typer, ast, token);
+                  buildUnion(typer, ast, token);
                 }
               }
               else
@@ -6823,9 +6668,13 @@ parseTopLevel(EngineState *state)
     if (should_fail_active)
     {
       if (noError())
+      {
         tokenError(token, "#should_fail active but didn't fail");
-      else if (checkErrorFlag(ErrorTypecheck))
+      }
+      else if (hasSilentError())
+      {
         wipeError();
+      }
     }
 
     if (hasMore())
@@ -6865,14 +6714,14 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
     global_tokenizer         = tk;
 
     parseTopLevel(state);
-    if (ParseError *error = tk->error)
+    if (InterpError *error = tk->error)
     {
       success = false;
       printf("%s:%d:%d: ", input_path.path, error->line, error->column);
       if (error->context)
       {
         print(0, "[");
-        for (ParseContext *context = error->context;
+        for (InterpContext *context = error->context;
              context;
              context=context->next)
         {

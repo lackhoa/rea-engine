@@ -103,31 +103,21 @@ isSpecial(char c)
 inline void
 printCharToBufferRepeat(char *buffer, char c, i32 repeat)
 {
-    for (i32 index = 0 ;
-         index < repeat;
-         index++)
-    {
-        buffer[index] = c;
-    }
-    buffer[repeat] = 0;
+  for (i32 index = 0 ;
+       index < repeat;
+       index++)
+  {
+    buffer[index] = c;
+  }
+  buffer[repeat] = 0;
 }
 
 global_variable Tokenizer *global_tokenizer;
 
-inline void setErrorFlag(u32 flag, Tokenizer *tk=global_tokenizer)
-{
-  setFlag(&tk->error->flags, flag);
-}
-
-inline b32 checkErrorFlag(u32 flag, Tokenizer *tk=global_tokenizer)
-{
-  return checkFlag(tk->error->flags, flag);
-}
-
 inline void
 pushContext(String string, b32 is_important, Tokenizer *tk=global_tokenizer)
 {
-  ParseContext *context = pushStruct(temp_arena, ParseContext);
+  InterpContext *context = pushStruct(temp_arena, InterpContext);
   context->first        = string;
   context->is_important = is_important;
   context->next         = tk->context;
@@ -163,11 +153,13 @@ hasMore(Tokenizer *tk = global_tokenizer)
   return out;
 }
 
+InterpError SILENT_ERROR;
+
 inline void
 wipeError(Tokenizer *tk = global_tokenizer)
 {
   resetArena(error_buffer);
-  tk->error = 0;
+  tk->error       = 0;
 }
 
 inline b32
@@ -176,14 +168,13 @@ noError(Tokenizer *tk = global_tokenizer)
   return !tk->error;
 }
 
-inline ParseError *
+inline InterpError *
 getError(Tokenizer *tk=global_tokenizer)
 {
   return tk->error;
 }
 
-ParseError SILENT_ERROR;
-inline ParseError *
+inline InterpError *
 hasError(Tokenizer *tk=global_tokenizer)
 {
   return tk->error;
@@ -258,21 +249,21 @@ eatAllSpaces(Tokenizer *tk)
 }
 
 internal void
-parseErrorVA(i32 line, i32 column, char *format, va_list arg_list, Tokenizer *tk = global_tokenizer)
+reportErrorVA(i32 line, i32 column, char *format, va_list arg_list, Tokenizer *tk = global_tokenizer)
 {
   assert(!tk->error);  // note: prevent parser from doing useless work after failure.
 
-  ParseContext *context = 0;
-  for (ParseContext *it = tk->context; it; it=it->next)
+  InterpContext *context = 0;
+  for (InterpContext *it = tk->context; it; it=it->next)
   {
     // note: we reverse the context list here, which is convenient for printing.
     // TODO #speed don't do this in here! Since we sometimes recover from error.
-    ParseContext *new_context = copyStruct(temp_arena, it);
+    InterpContext *new_context = copyStruct(temp_arena, it);
     new_context->next = context;
     context = new_context;
   }
 
-  tk->error = pushStruct(temp_arena, ParseError, true);
+  tk->error = pushStruct(temp_arena, InterpError, true);
   tk->error->message = printVA(temp_arena, format, arg_list);
   tk->error->line    = line;
   tk->error->column  = column;
@@ -280,21 +271,21 @@ parseErrorVA(i32 line, i32 column, char *format, va_list arg_list, Tokenizer *tk
 }
 
 internal void
-parseError(Ast *in, char *format, ...)
+reportError(Ast *in, char *format, ...)
 {
   va_list arg_list;
   __crt_va_start(arg_list, format);
   Token *token = &in->token;
-  parseErrorVA(token->line, token->column, format, arg_list);
+  reportErrorVA(token->line, token->column, format, arg_list);
   __crt_va_end(arg_list);
 }
 
 internal void
-parseError(Tokenizer *tk, Token *token, char *format, ...)
+reportError(Tokenizer *tk, Token *token, char *format, ...)
 {
   va_list arg_list;
   __crt_va_start(arg_list, format);
-  parseErrorVA(token->line, token->column, format, arg_list, tk);
+  reportErrorVA(token->line, token->column, format, arg_list, tk);
   __crt_va_end(arg_list);
 }
 
@@ -302,7 +293,7 @@ parseError(Tokenizer *tk, Token *token, char *format, ...)
 internal void
 tokenError(Token *token, char *message, Tokenizer *tk=global_tokenizer)
 {
-  parseError(tk, token, "%s", message);
+  reportError(tk, token, "%s", message);
 }
 
 internal void
@@ -312,17 +303,17 @@ tokenError(char *message, Tokenizer *tk=global_tokenizer)
 }
 
 internal void
-parseError(char *message, Tokenizer *tk=global_tokenizer)
+reportError(char *message, Tokenizer *tk=global_tokenizer)
 {
-  parseError(tk, &tk->last_token, message);
+  reportError(tk, &tk->last_token, message);
 }
 
 internal void
-parseError(Token *token, char *format, ...)
+reportError(Token *token, char *format, ...)
 {
   va_list arg_list;
   __crt_va_start(arg_list, format);
-  parseErrorVA(token->line, token->column, format, arg_list);
+  reportErrorVA(token->line, token->column, format, arg_list);
   __crt_va_end(arg_list);
 }
 
@@ -605,7 +596,7 @@ eatUntilMatchingPair(Tokenizer *tk)
   }
 
   if (noError(tk) && !found)
-    parseError(tk, &opening, "could not find matching pair for");
+    reportError(tk, &opening, "could not find matching pair for");
 
   return found;
 }

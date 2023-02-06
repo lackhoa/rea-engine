@@ -19,6 +19,7 @@ Term * rebase(Arena * arena, Term * in0, i32 delta);
 Term * apply(Arena * arena, Term * op, i32 arg_count, Term ** args, String name_to_unfold);
 Trinary equalTrinary(Term * lhs0, Term * rhs0);
 Term * solveGoal(Solver * solver, Term * goal);
+BuildTerm buildTerm(Typer * typer, Ast * in0, Term * goal);
 Term * buildFork(Typer * typer, ForkAst * in, Term * goal);
 Term * newRewrite(Arena * arena, Term * eq_proof, Term * body, TreePath * path, b32 right_to_left);
 Ast * parseFork(Arena * arena);

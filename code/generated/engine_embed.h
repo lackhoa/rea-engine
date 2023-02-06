@@ -1,1 +1,1 @@
-#define embed_Ast(name) union { Ast name; struct { AstKind cat; Token token; u32 flags;  }; };
+#define embed_Ast(name) union { Ast name; struct { AstKind kind; Token token; u32 flags;  }; };

@@ -67,7 +67,8 @@ enum TermKind {
   Term_Arrow,
   Term_Rewrite,
 
-  Term_Pointer,
+  Term_StackPointer,
+  Term_HeapPointer,
 };
 
 const u32 AstFlag_Generated = 1 << 0;
@@ -154,30 +155,6 @@ b32 operator!=(Trinary a, Trinary b)
   return a.v != b.v;
 }
 
-struct DataTree {
-  i32        ctor_i;
-  i32        member_count;
-  DataTree **members;
-  Union     *debug_uni;
-};
-
-struct DataMapAddHistory {
-  // option A: root 
-  DataMap      *previous_map;
-  // option B: branch
-  DataTree     *parent;
-  i32           field_index;
-
-  DataMapAddHistory *previous;
-};
-
-struct DataMap {
-  i32       depth;
-  i32       index;
-  DataTree  tree;
-  DataMap  *tail;
-};
-
 struct UnifyContext {
   i32            count;
   Term         **values;
@@ -193,14 +170,15 @@ struct Scope {
   Term  **values;
 };
 
+const u32 ExpectError_Ambiguous = 1 << 0;
+const u32 ExpectError_WrongType = 1 << 1;
+
 struct Typer
 {
-  Arena *build_arena;
   LocalBindings *bindings;
   Scope         *scope;
-  DataMap           *map;
-  DataMapAddHistory *add_history;
-  b32 try_reductio;
+  b32            try_reductio;
+  u32            expected_errors;  // ExpectError
 };
 
 struct AstList
@@ -229,12 +207,10 @@ struct Constructor : Term {
   i32    index;
 };
 
-#pragma pack(push, 1)
 struct Union : Term {
   i32           ctor_count;
   Constructor **constructors;
 };
-#pragma pack(pop)
 
 struct Function : Term {
   Term *body;
@@ -284,28 +260,24 @@ struct TreePath {
 
 struct Accessor : Term {
   Term   *record;
-  i32     field_index;
+  i32     index;
   String  debug_field_name;
 };
 
-enum PointerKind {Pointer_Stack = 1, Pointer_Heap = 2,};
-
 struct Pointer : Term {
-  PointerKind kind;
-  union {
-    struct {
-      String var_name;
-      i32    var_depth;
-      i32    var_index;
-    };
-    struct {
-      Term   *record;
-      i32     field_index;
-      String  debug_field_name;
-    };
-  };
-
   Composite *ref;
+};
+
+struct StackPointer : Pointer {
+  String name;
+  i32    depth;
+  i32    index;
+};
+
+struct HeapPointer : Pointer {
+  Term      *record;
+  i32        index;
+  String     debug_field_name;
 };
 
 struct CompositeAst {
@@ -316,9 +288,18 @@ struct CompositeAst {
 };
 
 struct Composite : Term {
-  Term  *op;
-  i32    arg_count;
-  Term **args;
+  union {
+    struct {
+      Term  *op;
+      i32    arg_count;
+      Term **args;
+    };
+    struct {
+      Constructor  *ctor;
+      i32           member_count;
+      Term        **members;
+    };
+  };
 };
 
 u32 ParameterFlag_Inferred = 1 << 0;
@@ -492,13 +473,6 @@ struct CtorAst {
   i32  ctor_i;
 };
 
-#if 0
-struct AddDataTree {
-  DataTree *tree;
-  b32       added;
-};
-#endif
-
 struct SeekAst {
   embed_Ast(a);
   Ast *proposition;
@@ -567,9 +541,6 @@ struct TypedExpression {
 };
 
 #define DEFAULT_MAX_LIST_LENGTH 64
-
-internal BuildTerm
-buildTerm(Typer *typer, Ast *in0, Term *goal, b32 expect_error=false);
 
 String number_to_string[] = {
   toString("0"), toString("1"), toString("2"), toString("3"),
