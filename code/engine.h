@@ -18,6 +18,9 @@ struct Function;
 struct Union;
 struct Arrow;
 struct Composite;
+// NOTE: I almost think records are different cases from composites, just a
+// coincidence that they are represented the same way.
+typedef Composite Record;
 struct Constructor;
 struct Term;
 struct ArrowAst;
@@ -264,7 +267,7 @@ struct Accessor : Term {
 };
 
 struct Pointer : Term {
-  Composite *ref;
+  Record *ref;
 };
 
 struct StackPointer : Pointer {
@@ -300,10 +303,6 @@ struct Composite : Term {
     };
   };
 };
-
-// NOTE: I almost think records are different cases from composites, just a
-// coincidence that they are represented the same way.
-typedef Composite Record;
 
 u32 ParameterFlag_Inferred = 1 << 0;
 u32 ParameterFlag_Unused   = 1 << 1;

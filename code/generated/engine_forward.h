@@ -1,6 +1,7 @@
 void eatToken(Tokenizer * tk);
 Token nextToken(Tokenizer * tk);
 Token peekToken(Tokenizer * tk);
+Record * castRecord(Term * record0);
 Term * getType(Term * in0);
 void dump(Trinary trinary);
 void unwindScope(Typer * env);

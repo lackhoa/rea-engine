@@ -77,11 +77,6 @@ _copyTerm(Arena *arena, void *src, size_t size)
 {
   Term *out = (Term *)copySize(arena, src, size);
   out->serial = DEBUG_SERIAL++;
-  if (out->serial == 30943)
-  {
-    DUMP("original goal (serial 30943): ", out, "\n");
-    breakhere;
-  }
   return out;
 }
 
@@ -398,24 +393,6 @@ getConstructorName(Union *uni, i32 ctor_index)
 
 inline i32 getScopeDepth(Scope *scope) {return scope ? scope->depth : 0;}
 inline i32 getScopeDepth(Typer *env)   {return (env && env->scope) ? env->scope->depth : 0;}
-
-inline Record *
-castRecord(Term *record0)
-{
-  Record *out = {};
-  if (Composite *record = castTerm(record0, Composite))
-  {
-    if (Constructor *ctor = castTerm(record->op, Constructor))
-    {
-      out = record;
-    }
-  }
-  else if (Pointer *pointer = castPointer(record0))
-  {
-    out = pointer->ref;
-  }
-  return out;
-}
 
 internal Term *
 rewriteTerm(Arena *arena, Term *from, Term *to, TreePath *path, Term *in0)
@@ -1399,16 +1376,17 @@ evaluate_(EvalContext *ctx, Term *in0)
       {
         Accessor *in  = castTerm(in0, Accessor);
         Term *record0 = evaluate_(ctx, in->record);
-        if (ctx->offset)
+        if (Record *record = castRecord(record0))
         {
-          Accessor *out = copyTerm(arena, in);
-          out->record = record0;
-          out0 = out;
+          out0 = record->members[in->index];
         }
         else
         {
-          Composite *record = castRecord(record0);
-          out0 = record->members[in->index];
+          assert(ctx->offset);
+          castRecord(record0);
+          Accessor *out = copyTerm(arena, in);
+          out->record = record0;
+          out0 = out;
         }
       } break;
 
@@ -1613,6 +1591,75 @@ newCompositeN_(Arena *arena, Term *op, i32 param_count, ...)
 }
 
 #define newCompositeN(arena, op, ...) newCompositeN_(arena, op, PP_NARG(__VA_ARGS__), __VA_ARGS__)
+
+internal b32
+instantiate(Term *in0, i32 ctor_i)
+{
+  b32 success = false;
+  Arena *arena = temp_arena;
+  if (Pointer *pointer = castPointer(in0))
+  {
+    Union *uni = castTerm(in0->type, Union);
+    if (uni->type->kind == Term_Arrow)
+      todoIncomplete;
+    if (!pointer->ref)
+    {
+      Constructor *ctor = uni->constructors[ctor_i];
+      Arrow *signature = getSignature(ctor);
+      i32 member_count = signature->param_count;
+      Term **members = pushArray(arena, member_count, Term *);
+      for (i32 i=0; i < member_count; i++)
+      {
+        Term *member_type = substitute(signature->param_types[i], member_count, members);
+        HeapPointer *member      = newTerm(arena, HeapPointer, member_type);
+        member->record           = pointer;
+        member->index            = i;
+        member->debug_field_name = signature->param_names[i];
+        members[i] = member;
+      }
+      pointer->ref = newComposite(arena, ctor, member_count, members);
+      success = true;
+    }
+  }
+  return success;
+}
+
+inline void
+uninstantiate(Term *in0)
+{
+  Pointer *pointer = castPointer(in0);
+  assert(pointer->ref);
+  pointer->ref = 0;
+}
+
+forward_declare inline Record *
+castRecord(Term *record0)
+{
+  Record *out = {};
+  if (Composite *record = castTerm(record0, Composite))
+  {
+    if (Constructor *ctor = castTerm(record->op, Constructor))
+    {
+      out = record;
+    }
+  }
+  else if (Pointer *pointer = castPointer(record0))
+  {
+    if (!pointer->ref)
+    {
+      if (Union *uni = castUnionOrPolyUnion(pointer->type))
+      {
+        if (uni->ctor_count == 1)
+        {
+          // lazy instantiation
+          instantiate(pointer, 0);
+        }
+      }
+    }
+    out = pointer->ref;
+  }
+  return out;
+}
 
 inline Term *
 reaSingle(Arena *arena, Term *head)
@@ -2263,6 +2310,7 @@ normalize_(NormalizeContext *ctx, Term *in0)
         NormalizeContext new_ctx = *ctx;
         {
           NormalizeContext *ctx  = &new_ctx;
+          ctx->depth++;
           for (i32 i=0; i < param_count; i++)
           {
             // NOTE: optimization to eval and normalize at the same time, which
@@ -4546,11 +4594,11 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
     case Ast_AccessorAst:
     {
       AccessorAst *in = (AccessorAst *)(in0);
-      if (Term *record0 = buildTerm(typer, in->record, holev).value)
+      if (Term *record0 = buildTerm(typer, in->record, holev))
       {
         i32 ctor_i = 0;
         Term **members = 0;
-        if (Composite *record = castRecord(record0))
+        if (Record *record = castRecord(record0))
         {
           ctor_i  = record->ctor->index;
           members = record->members;
@@ -5060,44 +5108,6 @@ buildGlobalTerm(Typer *typer, Ast *in0, Term *goal)
   return out;
 }
 
-internal b32
-instantiate(Typer *typer, Term *in0, i32 ctor_i)
-{
-  b32 success = false;
-  Arena *arena = temp_arena;
-  if (Pointer *pointer = castPointer(in0))
-  {
-    Union *uni = castTerm(in0->type, Union);
-    if (!pointer->ref)
-    {
-      Constructor *ctor = uni->constructors[ctor_i];
-      Arrow *signature = getSignature(ctor);
-      i32 member_count = signature->param_count;
-      Term **members = pushArray(arena, member_count, Term *);
-      for (i32 i=0; i < member_count; i++)
-      {
-        Term *member_type = substitute(signature->param_types[i], member_count, members);
-        HeapPointer *member      = newTerm(arena, HeapPointer, member_type);
-        member->record           = pointer;
-        member->index            = i;
-        member->debug_field_name = signature->param_names[i];
-        members[i] = member;
-      }
-      pointer->ref = newComposite(arena, ctor, member_count, members);
-      success = true;
-    }
-  }
-  return success;
-}
-
-inline void
-uninstantiate(Term *in0)
-{
-  Pointer *pointer = castPointer(in0);
-  assert(pointer->ref);
-  pointer->ref = 0;
-}
-
 forward_declare internal Term *
 buildFork(Typer *typer, ForkAst *in, Term *goal)
 {
@@ -5137,12 +5147,9 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
             }
           }
 
-          if (serial == 30962)
-            breakhere;
-
           if (ctor_i != -1)
           {
-            if (instantiate(typer, subject, ctor_i))
+            if (instantiate(subject, ctor_i))
             {
               if (ordered_bodies[ctor_i])
               {
