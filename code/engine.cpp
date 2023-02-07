@@ -64,6 +64,8 @@ _newTerm(Arena *arena, TermKind cat, Term *type, size_t size)
   Term *out = (Term *)pushSize(arena, size, true);
   initTerm(out, cat, type);
   out->serial = DEBUG_SERIAL++;
+  if (out->serial == 30943)
+    breakhere;
   return out;
 }
 
@@ -75,6 +77,11 @@ _copyTerm(Arena *arena, void *src, size_t size)
 {
   Term *out = (Term *)copySize(arena, src, size);
   out->serial = DEBUG_SERIAL++;
+  if (out->serial == 30943)
+  {
+    DUMP("original goal (serial 30943): ", out, "\n");
+    breakhere;
+  }
   return out;
 }
 
@@ -1302,19 +1309,21 @@ newScope(Scope *outer, i32 param_count)
   return newScope(outer, param_count, values);
 }
 
-struct EvaluateContext {
-  Scope *scope;
+struct EvalContext {
+  Term **args;
+  i32    arg_count;
   i32    offset;
-  u32    flags;
-  operator EvaluateContext*() {return this;};
+  b32    substitute_only;
+  operator EvalContext*() {return this;};
 };
 
 internal Term *
-evaluate_(EvaluateContext *ctx, Term *in0)
+evaluate_(EvalContext *ctx, Term *in0)
 {
   Term *out0 = 0;
-  Arena *arena = temp_arena;
   i32 unused_var serial = DEBUG_SERIAL++;
+  Arena *arena = temp_arena;
+  b32 substitute_only = ctx->offset || ctx->substitute_only;
   if (isGlobalValue(in0))
   {
     out0 = in0;
@@ -1327,15 +1336,10 @@ evaluate_(EvaluateContext *ctx, Term *in0)
       {
         Variable *in = castTerm(in0, Variable);
         i32 delta = in->delta - ctx->offset;
-        Scope *scope = ctx->scope;
         if (delta >= 0)
         {
-          for (i32 i=0; i < delta; i++)
-          {
-            scope = scope->outer;
-          }
-          assert(in->index < scope->param_count);
-          out0 = scope->values[in->index];
+          assert(in->index < ctx->arg_count);
+          out0 = ctx->args[in->index];
         }
         else
         {
@@ -1357,7 +1361,7 @@ evaluate_(EvaluateContext *ctx, Term *in0)
           assert(args[i]);
         }
 
-        if (checkFlag(ctx->flags, EvalFlag_TryApply))
+        if (!substitute_only)
         {
           out0 = apply(op, in->arg_count, args, {});
         }
@@ -1377,7 +1381,7 @@ evaluate_(EvaluateContext *ctx, Term *in0)
         Arrow *out = copyTerm(arena, in);
         allocateArray(arena, out->param_count, out->param_types);
 
-        EvaluateContext new_ctx = *ctx;
+        EvalContext new_ctx = *ctx;
         new_ctx.offset++;
         for (i32 i=0; i < out->param_count; i++)
         {
@@ -1422,9 +1426,8 @@ evaluate_(EvaluateContext *ctx, Term *in0)
         Function *in  = castTerm(in0, Function);
         Function *out = copyTerm(arena, in);
 
-        EvaluateContext new_ctx = *ctx;
+        EvalContext new_ctx = *ctx;
         new_ctx.offset++;
-        unsetFlag(&new_ctx.flags, EvalFlag_TryApply);  // ??? go into "substitute" mode, don't try anything weird.
         out->body = evaluate_(&new_ctx, in->body);
         assert(out->body);
 
@@ -1435,15 +1438,7 @@ evaluate_(EvaluateContext *ctx, Term *in0)
       {
         Fork *in = (Fork *)in0;
         Term *subject0 = evaluate_(ctx, in->subject);
-        if (checkFlag(ctx->flags, EvalFlag_TryApply))
-        {
-          if (Record *subject = castRecord(subject0))
-          {
-            i32 ctor_index = subject->ctor->index;
-            out0 = evaluate_(ctx, in->bodies[ctor_index]);
-          }
-        }
-        else
+        if (substitute_only)
         {
           Fork *out = copyTerm(arena, in);
           out->subject = subject0;
@@ -1453,6 +1448,14 @@ evaluate_(EvaluateContext *ctx, Term *in0)
             out->bodies[i] = evaluate_(ctx, in->bodies[i]);
           }
           out0 = out;
+        }
+        else
+        {
+          if (Record *subject = castRecord(subject0))
+          {
+            i32 ctor_index = subject->ctor->index;
+            out0 = evaluate_(ctx, in->bodies[ctor_index]);
+          }
         }
       } break;
 
@@ -1482,25 +1485,31 @@ evaluate_(EvaluateContext *ctx, Term *in0)
     }
   }
 
-  if (!checkFlag(ctx->flags, EvalFlag_TryApply))
+  if (substitute_only)
   {
     assert(out0);
   }
   return out0;
 }
 
-internal Term *
+inline Term *
 toValue(Scope *scope, Term *in0)
 {
-  EvaluateContext ctx = {.scope=scope};
+  EvalContext ctx = {.arg_count=scope->param_count, .args=scope->values, .substitute_only=true};
   return evaluate_(&ctx, in0);
 }
 
 inline Term *
-evaluate(Term *in0, i32 arg_count, Term **args, u32 flags=0)
+substitute(Term *in0, i32 arg_count, Term **args)
 {
-  Scope *scope = newScope(0, arg_count, args);
-  EvaluateContext ctx = {.scope=scope, .flags=flags};
+  EvalContext ctx = {.arg_count=arg_count, .args=args, .substitute_only=true};
+  return evaluate_(&ctx, in0);
+}
+
+inline Term *
+evaluate(Term *in0, i32 arg_count, Term **args)
+{
+  EvalContext ctx = {.arg_count=arg_count, .args=args};
   return evaluate_(&ctx, in0);
 }
 
@@ -1569,12 +1578,12 @@ newComposite(Arena *arena, Term *op, i32 arg_count, Term **args)
   Composite *out = 0;
   Arrow *signature = castTerm(getType(op), Arrow);
   assert(signature->param_count == arg_count);
-  Term  *type      = evaluate(signature->output_type, arg_count, args);
+  Term  *type      = substitute(signature->output_type, arg_count, args);
 
   for (i32 arg_i=0; arg_i < arg_count; arg_i++)
   {
     Term *actual_type   = args[arg_i]->type;
-    Term *expected_type = evaluate(signature->param_types[arg_i], arg_count, args);
+    Term *expected_type = substitute(signature->param_types[arg_i], arg_count, args);
     assertEqual(actual_type, expected_type);
   }
 
@@ -1662,7 +1671,7 @@ apply(Term *op, i32 arg_count, Term **args, String name_to_unfold)
 
     if (should_apply_function)
     {
-      out0 = evaluate(fun->body, arg_count, args, EvalFlag_TryApply);
+      out0 = evaluate(fun->body, arg_count, args);
     }
   }
   else if (op == rea_equal)
@@ -2249,7 +2258,7 @@ normalize_(NormalizeContext *ctx, Term *in0)
 
         i32 param_count = in->param_count;
         Term *output_type = 0;
-        Term **intros = pushArray(arena, param_count, Term *);
+        Term **param_types = pushArray(arena, param_count, Term *);
 
         NormalizeContext new_ctx = *ctx;
         {
@@ -2258,21 +2267,22 @@ normalize_(NormalizeContext *ctx, Term *in0)
           {
             // NOTE: optimization to eval and normalize at the same time, which
             // would save us some allocation if the application succeeds.
-            Term *param_type = evaluate(in->param_types[i], param_count, intros, EvalFlag_TryApply);
+            Term *param_type = evaluate(in->param_types[i], param_count, param_types);
             param_type = normalize_(ctx, param_type);
-            intros[i] = newStackPointer(in->param_names[i], ctx->depth, i, param_type);
+            param_types[i] = newStackPointer(in->param_names[i], ctx->depth, i, param_type);
           }
           if (in->output_type)
           {
-            output_type = evaluate(in->output_type, param_count, intros, EvalFlag_TryApply);
+            output_type = evaluate(in->output_type, param_count, param_types);
             output_type = normalize_(ctx, output_type);
           }
         }
 
         for (i32 i=0; i < param_count; i++)
         {
-          out->param_types[i] = toAbstractTerm(arena, intros[i]->type, ctx->depth);
+          param_types[i] = toAbstractTerm(arena, param_types[i]->type, ctx->depth);
         }
+        out->param_types = param_types;
         if (in->output_type)
         {
           out->output_type = toAbstractTerm(arena, output_type, ctx->depth);
@@ -2683,7 +2693,7 @@ unify(UnifyContext *ctx, Term *in0, Term *goal0)
             for (i32 param_i=0; param_i < param_count && success; param_i++)
             {
               String  name       = goal->param_names[param_i];
-              Term   *param_type = evaluate(goal->param_types[param_i], param_count, intros);
+              Term   *param_type = substitute(goal->param_types[param_i], param_count, intros);
               intros[param_i] = newStackPointer(name, new_ctx->depth, param_i, param_type);
               if (!unify(new_ctx, in->param_types[param_i], param_type))
               {
@@ -2693,7 +2703,7 @@ unify(UnifyContext *ctx, Term *in0, Term *goal0)
 
             if (success)
             {
-              Term *output_type = evaluate(goal->output_type, param_count, intros);
+              Term *output_type = substitute(goal->output_type, param_count, intros);
               success = unify(new_ctx, in->output_type, output_type);
             }
           }
@@ -2783,7 +2793,7 @@ solveArgs(Solver *solver, Term *op, Term *goal0, Token *blame_token=0)
         // solving loop
         if (!args[arg_i])
         {
-          Term *type = evaluate(signature->param_types[arg_i], arg_count, args);
+          Term *type = substitute(signature->param_types[arg_i], arg_count, args);
           Term *arg  = solveGoal(solver, type);
           if (arg)
           {
@@ -4111,6 +4121,13 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
 {
   // beware: Usually we mutate in-place, but we may also allocate anew.
   i32 UNUSED_VAR serial = DEBUG_SERIAL++;
+
+  if (serial == 31086)
+  {
+    // DEBUG_LOG_normalize = 1;
+    DUMP("the goal is: ", goal, " (serial: ", goal->serial, ")", "\n");
+  }
+  
   assert(goal);
   Arena *arena = temp_arena;
   Term *value = 0;
@@ -4319,7 +4336,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
                     }
                     else
                     {
-                      Term *expected_arg_type = evaluate(param_type0, param_count, args);
+                      Term *expected_arg_type = substitute(param_type0, param_count, args);
                       if (Term *arg = buildTerm(typer, in_arg, expected_arg_type).value)
                       {
                         args[arg_i] = arg;
@@ -4341,7 +4358,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
                     {
                       Ast *in_arg = expanded_args[arg_i];
                       Term *param_type0 = signature->param_types[arg_i];
-                      Term *expected_arg_type = evaluate(param_type0, param_count, args);
+                      Term *expected_arg_type = substitute(param_type0, param_count, args);
                       if (in_arg->kind == Ast_Hole)
                       {
                         if (Term *fill = solveGoal(Solver{.arena=arena, .typer=typer, .use_global_hints=true}, expected_arg_type))
@@ -4371,7 +4388,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
                   {
                     if (checkFlag(fun->function_flags, FunctionFlag_expand))
                     {
-                      value = evaluate(fun->body, param_count, args);
+                      value = substitute(fun->body, param_count, args);
                     }
                   }
                   if (!value)
@@ -5059,7 +5076,7 @@ instantiate(Typer *typer, Term *in0, i32 ctor_i)
       Term **members = pushArray(arena, member_count, Term *);
       for (i32 i=0; i < member_count; i++)
       {
-        Term *member_type = evaluate(signature->param_types[i], member_count, members);
+        Term *member_type = substitute(signature->param_types[i], member_count, members);
         HeapPointer *member      = newTerm(arena, HeapPointer, member_type);
         member->record           = pointer;
         member->index            = i;
@@ -5076,11 +5093,9 @@ instantiate(Typer *typer, Term *in0, i32 ctor_i)
 inline void
 uninstantiate(Term *in0)
 {
-  if (Pointer *pointer = castPointer(in0))
-  {
-    assert(pointer->ref);
-    pointer->ref = 0;
-  }
+  Pointer *pointer = castPointer(in0);
+  assert(pointer->ref);
+  pointer->ref = 0;
 }
 
 forward_declare internal Term *
@@ -5122,6 +5137,9 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
             }
           }
 
+          if (serial == 30962)
+            breakhere;
+
           if (ctor_i != -1)
           {
             if (instantiate(typer, subject, ctor_i))
@@ -5140,6 +5158,10 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
                 }
               }
               uninstantiate(subject);
+              if (StackPointer *stackp = castTerm(subject, StackPointer))
+              {
+                assert(stackp->ref == 0);
+              }
             }
             else
             {

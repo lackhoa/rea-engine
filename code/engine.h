@@ -455,8 +455,6 @@ struct SyntheticAst {
   Term *term;
 };
 
-const u32 EvalFlag_TryApply = 1 << 0;
-
 struct UnionAst {
   embed_Ast(a);
   i32        ctor_count;

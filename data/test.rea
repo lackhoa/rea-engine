@@ -50,9 +50,6 @@ testLocalVar2 :: fn (x: Nat) -> Nat
  b := 2;
  return a + x + b
  }
-#debug
-print testLocalVar2;
-check_truth testLocalVar2(1) = 6;
 
 testComplexFork :: fn (a, b: Nat) -> Nat
 {apb := a+b;
@@ -116,12 +113,22 @@ check_truth testConstantInFunction() = 4;
 
 ;; showing off now that we have arrow type normalization
 mulPosv2 :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
-{norm a_positive; norm b_positive;
+{
  fork a
- {0 : return fn {return a_positive(_)},
+ {
+  0 :
+  return fn {return a_positive(_)}
+  ,
   ++: ;; goal: (b + a.p * b = 0) -> False
-  return fn {fork b {0: return b_positive(_),
-                       ++: norm(seek(b + a.p * b = 0)); seek}}}}
+  return fn {
+             fork b {0: return b_positive(_),
+                     ++:
+                     norm(seek(b + a.p * b = 0));
+                     ;; seek
+                     }
+             }
+  ,
+  }}
 
 testExecutionModel :: (a,b: Nat) -> (x: Nat) -> Nat
 {
