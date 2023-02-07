@@ -158,7 +158,6 @@ b32 operator!=(Trinary a, Trinary b)
 }
 
 struct UnifyContext {
-  i32            count;
   Term         **values;
   Arrow         *signature;
   i32            depth;

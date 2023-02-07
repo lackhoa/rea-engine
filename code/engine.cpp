@@ -52,6 +52,19 @@ castPointer(Term *in0)
 }
 
 inline void
+maybeDeref(Term **in0)
+{
+  // #dicey-pointer-handling
+  if (Pointer *pointer = castPointer(*in0))
+  {
+    if (pointer->ref)
+    {
+      *in0 = pointer->ref;
+    }
+  }
+}
+
+inline void
 initTerm(Term *in, TermKind cat, Term *type)
 {
   in->kind  = cat;
@@ -92,7 +105,7 @@ getArg(Term *in0, i32 index)
 }
 
 inline Union *
-castUnionOrPolyUnion(Term *in0)
+getUnionOrPolyUnion(Term *in0)
 {
   if (Union *uni = castTerm(in0, Union))
   {
@@ -313,7 +326,6 @@ extendUnifyContext(Arrow *signature, UnifyContext *outer)
 {
   // :two-ways-to-make-contexts
   UnifyContext *ctx = pushStruct(temp_arena, UnifyContext, true);
-  ctx->count        = signature->param_count;
   ctx->values       = pushArray(temp_arena, signature->param_count, Term*, true);
   ctx->signature    = signature;
   ctx->depth        = outer->depth+1;
@@ -326,7 +338,6 @@ newUnifyContext(Arrow *signature, i32 depth)
 {
   // :two-ways-to-make-contexts
   UnifyContext *ctx = pushStruct(temp_arena, UnifyContext, true);
-  ctx->count        = signature->param_count;
   ctx->values       = pushArray(temp_arena, signature->param_count, Term*, true);
   ctx->signature    = signature;
   ctx->depth        = depth;
@@ -398,12 +409,15 @@ internal Term *
 rewriteTerm(Arena *arena, Term *from, Term *to, TreePath *path, Term *in0)
 {
   Term *out0 = 0;
+  maybeDeref(&in0);
   if (path)
   {
     Composite *in  = castTerm(in0, Composite);
     Composite *out = copyTerm(arena, in);
     if (path->head == -1)
+    {
       out->op = rewriteTerm(arena, from, to, path->tail, in->op);
+    }
     else
     {
       assert((path->head >= 0) && (path->head < out->arg_count));
@@ -1195,7 +1209,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
           print(buffer, in->subject, new_opt);
           newlineAndIndent(buffer, opt.indentation);
           print(buffer, "{");
-          Union *uni = castUnionOrPolyUnion(getType(in->subject));
+          Union *uni = getUnionOrPolyUnion(getType(in->subject));
           for (i32 ctor_id = 0;
                ctor_id < uni->ctor_count;
                ctor_id++)
@@ -1599,23 +1613,32 @@ instantiate(Term *in0, i32 ctor_i)
   Arena *arena = temp_arena;
   if (Pointer *pointer = castPointer(in0))
   {
-    Union *uni = castTerm(in0->type, Union);
-    if (uni->type->kind == Term_Arrow)
-      todoIncomplete;
+    auto [uni, args] = castUnion(in0->type);
     if (!pointer->ref)
     {
+      i32 poly_count = 0;
+      if (Arrow *uni_params = castTerm(uni->type, Arrow))
+      {
+        poly_count = getPolyParamCount(uni_params);
+      }
+
       Constructor *ctor = uni->constructors[ctor_i];
       Arrow *signature = getSignature(ctor);
       i32 member_count = signature->param_count;
       Term **members = pushArray(arena, member_count, Term *);
-      for (i32 i=0; i < member_count; i++)
+      for (i32 mem_i = 0; mem_i < poly_count; mem_i++)
       {
-        Term *member_type = substitute(signature->param_types[i], member_count, members);
+        members[mem_i] = args[mem_i];
+      }
+      for (i32 mem_i=poly_count; mem_i < member_count; mem_i++)
+      {
+        Term *member_type = signature->param_types[mem_i];
+        member_type = substitute(member_type, member_count, members);
         HeapPointer *member      = newTerm(arena, HeapPointer, member_type);
         member->record           = pointer;
-        member->index            = i;
-        member->debug_field_name = signature->param_names[i];
-        members[i] = member;
+        member->index            = mem_i;
+        member->debug_field_name = signature->param_names[mem_i];
+        members[mem_i] = member;
       }
       pointer->ref = newComposite(arena, ctor, member_count, members);
       success = true;
@@ -1647,7 +1670,7 @@ castRecord(Term *record0)
   {
     if (!pointer->ref)
     {
-      if (Union *uni = castUnionOrPolyUnion(pointer->type))
+      if (Union *uni = getUnionOrPolyUnion(pointer->type))
       {
         if (uni->ctor_count == 1)
         {
@@ -1764,13 +1787,6 @@ apply(Term *op, i32 arg_count, Term **args, String name_to_unfold)
   return out0;
 }
 
-#if 0
-internal Term *
-apply(EvaluateContext *ctx, Term *op, i32 arg_count, Term **args, String name_to_unfold)
-{
-}
-#endif
-
 // todo #cleanup "same_type" doesn't need to be passed down all the time.
 internal CompareTerms
 compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
@@ -1787,177 +1803,166 @@ compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
   {
     out.result = {Trinary_True};
   }
-  else if (castPointer(l0) || castPointer(r0))
+  else
   {
-    if (Pointer *l = castPointer(l0))
+    maybeDeref(&l0);
+    maybeDeref(&r0);
+
+    if (l0->kind == r0->kind)
     {
-      l0 = l->ref;
-    }
-    if (Pointer *r = castPointer(r0))
-    {
-      r0 = r->ref;
-    }
-    if (l0 && r0)
-    {
-      out = compareTerms(arena, same_type, l0, r0);
-    }
-  }
-  else if (l0->kind == r0->kind)
-  {
-    switch (l0->kind)
-    {
-      case Term_Variable:
+      switch (l0->kind)
       {
-        Variable *lhs = castTerm(l0, Variable);
-        Variable *rhs = castTerm(r0, Variable);
-        if ((lhs->delta == rhs->delta) && (lhs->index == rhs->index))
-          out.result = Trinary_True;
-      } break;
-
-      case Term_Arrow:
-      {
-        Arrow* lhs = castTerm(l0, Arrow);
-        Arrow* rhs = castTerm(r0, Arrow);
-        i32 param_count = lhs->param_count;
-        if (rhs->param_count == param_count)
+        case Term_Variable:
         {
-          b32 type_mismatch = false;
-          for (i32 id = 0; id < param_count; id++)
-          {
-            if (!equal(lhs->param_types[id], rhs->param_types[id]))
-            {
-              type_mismatch = true;
-              break;
-            }
-          }
-          if (!type_mismatch)
-          {
-            if (lhs->output_type && rhs->output_type)
-            {
-              out.result = equalTrinary(lhs->output_type, rhs->output_type);
-            }
-            else if (!rhs->output_type && !rhs->output_type)
-            {
-              out.result = Trinary_True;
-            }
-            else
-            {
-              out.result = Trinary_False;
-            }
-          }
-        }
-        else
-          out.result = Trinary_False;
-      } break;
+          Variable *lhs = castTerm(l0, Variable);
+          Variable *rhs = castTerm(r0, Variable);
+          if ((lhs->delta == rhs->delta) && (lhs->index == rhs->index))
+            out.result = Trinary_True;
+        } break;
 
-      case Term_Composite:
-      {
-        Composite *l = castTerm(l0, Composite);
-        Composite *r = castTerm(r0, Composite);
-
-        if (!same_type)
+        case Term_Arrow:
         {
-          same_type = equal(l0->type, r0->type);
-        }
-
-        b32 op_equal = same_type && equal(l->op, r->op);
-        if (op_equal)
-        {
-          Arrow *arrow = getSignature(l->op);
-
-          i32 count = l->arg_count;
-          assert(l->arg_count == r->arg_count);
-
-          i32 mismatch_count = 0;
-          i32 false_count = 0;
-          int       unique_diff_id   = 0;
-          TreePath *unique_diff_path = 0;
-          out.result = Trinary_True;
-          for (i32 arg_i=0; arg_i < count; arg_i++)
+          Arrow* lhs = castTerm(l0, Arrow);
+          Arrow* rhs = castTerm(r0, Arrow);
+          i32 param_count = lhs->param_count;
+          if (rhs->param_count == param_count)
           {
-            // todo "ParameterFlag_Unused" is just a hack, it doesn't mean anything yet.
-            if (!checkFlag(arrow->param_flags[arg_i], ParameterFlag_Unused))
+            b32 type_mismatch = false;
+            for (i32 id = 0; id < param_count; id++)
             {
-              CompareTerms recurse = compareTerms(arena, true, l->args[arg_i], r->args[arg_i]);
-              if (recurse.result != Trinary_True)
+              if (!equal(lhs->param_types[id], rhs->param_types[id]))
               {
-                mismatch_count++;
-                if (mismatch_count == 1)
-                {
-                  unique_diff_id   = arg_i;
-                  unique_diff_path = recurse.diff_path;
-                }
-                if (recurse.result == Trinary_False)
-                  false_count++;
+                type_mismatch = true;
+                break;
+              }
+            }
+            if (!type_mismatch)
+            {
+              if (lhs->output_type && rhs->output_type)
+              {
+                out.result = equalTrinary(lhs->output_type, rhs->output_type);
+              }
+              else if (!rhs->output_type && !rhs->output_type)
+              {
+                out.result = Trinary_True;
+              }
+              else
+              {
+                out.result = Trinary_False;
               }
             }
           }
-          if (mismatch_count > 0)
+          else
+            out.result = Trinary_False;
+        } break;
+
+        case Term_Composite:
+        {
+          Composite *l = castTerm(l0, Composite);
+          Composite *r = castTerm(r0, Composite);
+
+          if (!same_type)
           {
-            out.result = Trinary_Unknown;
-            if ((l->op->kind == Term_Constructor) &&
-                (r->op->kind == Term_Constructor) &&
-                (false_count > 0))
+            same_type = equal(l0->type, r0->type);
+          }
+
+          b32 op_equal = same_type && equal(l->op, r->op);
+          if (op_equal)
+          {
+            Arrow *arrow = getSignature(l->op);
+
+            i32 count = l->arg_count;
+            assert(l->arg_count == r->arg_count);
+
+            i32 mismatch_count = 0;
+            i32 false_count = 0;
+            int       unique_diff_id   = 0;
+            TreePath *unique_diff_path = 0;
+            out.result = Trinary_True;
+            for (i32 arg_i=0; arg_i < count; arg_i++)
+            {
+              // todo "ParameterFlag_Unused" is just a hack, it doesn't mean anything yet.
+              if (!checkFlag(arrow->param_flags[arg_i], ParameterFlag_Unused))
+              {
+                CompareTerms recurse = compareTerms(arena, true, l->args[arg_i], r->args[arg_i]);
+                if (recurse.result != Trinary_True)
+                {
+                  mismatch_count++;
+                  if (mismatch_count == 1)
+                  {
+                    unique_diff_id   = arg_i;
+                    unique_diff_path = recurse.diff_path;
+                  }
+                  if (recurse.result == Trinary_False)
+                    false_count++;
+                }
+              }
+            }
+            if (mismatch_count > 0)
+            {
+              out.result = Trinary_Unknown;
+              if ((l->op->kind == Term_Constructor) &&
+                  (r->op->kind == Term_Constructor) &&
+                  (false_count > 0))
+              {
+                out.result = Trinary_False;
+              }
+            }
+            if ((out.result == Trinary_Unknown) && (mismatch_count == 1) && arena)
+            {
+              allocate(arena, out.diff_path);
+              out.diff_path->head = unique_diff_id;
+              out.diff_path->tail = unique_diff_path;
+            }
+          }
+          else
+          {
+            // #constructor-disjointness
+            if (l->op->kind == Term_Constructor &&
+                r->op->kind == Term_Constructor)
             {
               out.result = Trinary_False;
             }
           }
-          if ((out.result == Trinary_Unknown) && (mismatch_count == 1) && arena)
-          {
-            allocate(arena, out.diff_path);
-            out.diff_path->head = unique_diff_id;
-            out.diff_path->tail = unique_diff_path;
-          }
-        }
-        else
+        } break;
+
+        case Term_Constructor:
         {
           // #constructor-disjointness
-          if (l->op->kind == Term_Constructor &&
-              r->op->kind == Term_Constructor)
-          {
-            out.result = Trinary_False;
-          }
-        }
-      } break;
+          out.result = Trinary_False;
+        } break;
 
-      case Term_Constructor:
-      {
-        // #constructor-disjointness
-        out.result = Trinary_False;
-      } break;
-
-      case Term_Accessor:
-      {
-        Accessor *lhs = castTerm(l0, Accessor);
-        Accessor *rhs = castTerm(r0, Accessor);
-        if (lhs->index == rhs->index)
+        case Term_Accessor:
         {
-          if (equal(lhs->record, rhs->record))
+          Accessor *lhs = castTerm(l0, Accessor);
+          Accessor *rhs = castTerm(r0, Accessor);
+          if (lhs->index == rhs->index)
           {
-            out.result = Trinary_True;
+            if (equal(lhs->record, rhs->record))
+            {
+              out.result = Trinary_True;
+            }
           }
-        }
-      } break;
+        } break;
 
-      case Term_Primitive:
-      {
-        out.result = toTrinary(l0 == r0);
-      } break;
+        case Term_Primitive:
+        {
+          out.result = toTrinary(l0 == r0);
+        } break;
 
-      case Term_Union:
-      case Term_Function:
-      case Term_Hole:
-      case Term_Rewrite:
-      case Term_Computation:
-      case Term_Fork:
-      {} break;
+        case Term_Union:
+        case Term_Function:
+        case Term_Hole:
+        case Term_Rewrite:
+        case Term_Computation:
+        case Term_Fork:
+        case Term_StackPointer:
+        case Term_HeapPointer:
+        {} break;
 
-      case Term_StackPointer:
-      case Term_HeapPointer:
-        invalidCodePath;
-
-      default:
-        todoIncomplete;
+        default:
+          todoIncomplete;
+      }
     }
   }
 
@@ -2703,7 +2708,7 @@ unify(UnifyContext *ctx, Term *in0, Term *goal0)
     {
       case Term_Variable:
       {
-        Variable *in = castTerm(in0, Variable);
+        Variable *in = (Variable *)in0;
         UnifyContext *lookup_ctx = ctx;
         for (i32 delta=0;  delta < in->delta && lookup_ctx;  delta++)
         {
@@ -2728,7 +2733,7 @@ unify(UnifyContext *ctx, Term *in0, Term *goal0)
 
       case Term_Arrow:
       {
-        Arrow *in = castTerm(in0, Arrow);
+        Arrow *in = (Arrow *)in0;
         if (Arrow *goal = castTerm(goal0, Arrow))
         {
           i32 param_count = in->param_count;
@@ -2760,7 +2765,7 @@ unify(UnifyContext *ctx, Term *in0, Term *goal0)
 
       case Term_Accessor:
       {
-        Accessor *in = castTerm(in0, Accessor);
+        Accessor *in = (Accessor *)in0;
         if (Accessor *goal = castTerm(goal0, Accessor))
         {
           if (in->index == goal->index)
@@ -2772,7 +2777,12 @@ unify(UnifyContext *ctx, Term *in0, Term *goal0)
 
       case Term_Composite:
       {
-        Composite *in = castTerm(in0, Composite);
+        Composite *in = (Composite *)in0;
+        if (Record *record = castRecord(goal0))
+        {
+          goal0 = record;
+        }
+
         if (Composite *goal = castTerm(goal0, Composite))
         {
           if (unify(ctx, in->op, goal->op))
@@ -3141,6 +3151,12 @@ getFunctionOverloads(Typer *typer, Identifier *ident, Term *goal0)
         if (Arrow *signature = castTerm(getType(item), Arrow))
         {
           UnifyContext *ctx = newUnifyContext(signature, getScopeDepth(typer->scope));
+#if 0
+          if (serial == 80659)
+          {
+            DEBUG_LOG_unify = 1;
+          }
+#endif
           matches = unify(ctx, signature->output_type, goal0);
         }
         if (matches)
@@ -3209,7 +3225,7 @@ fillInEllipsis(Arena *arena, Typer *typer, Identifier *op_ident, Term *goal)
     if (!out && noError())
     {
       // :solveArgs-only-error-if-unification-succeeds
-      reportError(&op_ident->a, "found no matching overload");
+      reportError(&op_ident->a, "either no matching overload was found, or failed to solve args");
       attach("available_overloads", slot->count, slot->items, printOptionPrintType());
       attach("serial", serial);
     }
@@ -3227,11 +3243,15 @@ fillInEllipsis(Arena *arena, Typer *typer, Identifier *op_ident, Term *goal)
 internal SearchOutput
 searchExpression(Arena *arena, Typer *env, Term *lhs, Term* in0)
 {
-  SearchOutput out = {};
+  b32       found = false;
+  TreePath *path  = 0;
   if (equal(in0, lhs))
-    out.found = true;
+  {
+    found = true;
+  }
   else
   {
+    maybeDeref(&in0);
     switch (in0->kind)
     {
       case Term_Composite:
@@ -3240,10 +3260,10 @@ searchExpression(Arena *arena, Typer *env, Term *lhs, Term* in0)
         SearchOutput op = searchExpression(arena, env, lhs, in->op);
         if (op.found)
         {
-          allocate(arena, out.path);
-          out.found       = true;
-          out.path->head = -1;
-          out.path->tail  = op.path;
+          allocate(arena, path);
+          found       = true;
+          path->head = -1;
+          path->tail  = op.path;
         }
         else
         {
@@ -3252,10 +3272,10 @@ searchExpression(Arena *arena, Typer *env, Term *lhs, Term* in0)
             SearchOutput arg = searchExpression(arena, env, lhs, in->args[arg_i]);
             if (arg.found)
             {
-              allocate(arena, out.path);
-              out.found     = true;
-              out.path->head = arg_i;
-              out.path->tail  = arg.path;
+              allocate(arena, path);
+              found      = true;
+              path->head = arg_i;
+              path->tail = arg.path;
             }
           }
         }
@@ -3264,7 +3284,9 @@ searchExpression(Arena *arena, Typer *env, Term *lhs, Term* in0)
       case Term_Accessor:
       {
         Accessor* in = castTerm(in0, Accessor);
-        out = searchExpression(arena, env, lhs, in->record);
+        SearchOutput recurse = searchExpression(arena, env, lhs, in->record);
+        found = recurse.found;
+        path  = recurse.path;
       } break;
 
       case Term_Hole:
@@ -3280,7 +3302,7 @@ searchExpression(Arena *arena, Typer *env, Term *lhs, Term* in0)
       {} break;
     }
   }
-  return out;
+  return {.found=found, .path=path};
 }
 
 inline Ast *
@@ -3576,7 +3598,7 @@ inline Term *
 buildCtorAst(Arena *arena, CtorAst *in, Term *output_type)
 {
   Term *out = 0;
-  if (Union *uni = castUnionOrPolyUnion(output_type))
+  if (Union *uni = getUnionOrPolyUnion(output_type))
   {
     if (in->ctor_i < uni->ctor_count)
     {
@@ -4610,7 +4632,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
 
         if (noError())
         {
-          Union *uni = castUnionOrPolyUnion(getType(record0));
+          Union *uni = getUnionOrPolyUnion(getType(record0));
           Arrow *struc = getConstructorSignature(uni, ctor_i);
           i32 param_count = struc->param_count;
           b32 valid_param_name = false;
@@ -4688,7 +4710,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
                   b32 right_to_left = !in->right_to_left;  // since we rewrite the body, not the goal.
                   Term *asset = newRewrite(arena, eq_proof, in_expression, search.path, right_to_left);
                   String name = {};
-                  if (Variable *var = castTerm(in_expression, Variable))
+                  if (StackPointer *var = castTerm(in_expression, StackPointer))
                   {
                     name = var->name;
                   }
@@ -5125,7 +5147,7 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
     i32 case_count = in->case_count;
 
     Term *subject_type = subject->type;
-    if (Union *uni = castUnionOrPolyUnion(subject_type))
+    if (Union *uni = getUnionOrPolyUnion(subject_type))
     {
       if (uni->ctor_count == case_count)
       {
