@@ -12,7 +12,6 @@ global_variable Arena *temp_arena = &temp_arena_;
 global_variable StringBuffer  error_buffer_;
 global_variable StringBuffer *error_buffer = &error_buffer_;
 
-global_variable b32 DEBUG_MODE;
 global_variable i32 DEBUG_SERIAL;
 
 struct Function;
@@ -275,9 +274,9 @@ struct StackPointer : Pointer {
 };
 
 struct HeapPointer : Pointer {
-  Term      *record;
-  i32        index;
-  String     debug_field_name;
+  Pointer *record;
+  i32      index;
+  String   debug_field_name;
 };
 
 struct CompositeAst {
@@ -516,11 +515,12 @@ struct AlgebraDatabase {
 
 // :global_state_cleared_at_startup
 struct EngineState {
-  Arena     *top_level_arena;
+  Arena           *top_level_arena;
   FileList        *file_list;
   GlobalBindings  *bindings;
   HintDatabase    *hints;
   AlgebraDatabase *algebras;
+  b32              top_level_debug_mode;
 };
 
 struct TreePathList {

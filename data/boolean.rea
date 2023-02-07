@@ -23,7 +23,7 @@ andCommutative :: (a,b: Bool) -> a & b = b & a
 {fork a {false rewrite andFalse(b),
          true  rewrite andTrue(b)}}
 
-;; todo #automate
+;; todo #removeme
 trueNotFalse :: (a: Bool, p: a=true, q: a=false) -> False
 {
  => true = false {}

@@ -568,3 +568,133 @@ struct DataMap {
   DataMap  *tail;
 };
 
+#if 0
+// todo make this an inline mutation
+internal Term *
+rebase_(Arena *arena, Term *in0, i32 delta, i32 offset)
+{
+  Term *out0 = 0;
+  if (!isGround(in0) && (delta != 0))
+  {
+    switch (in0->kind)
+    {
+      case Term_Variable:
+      {
+        Variable *in  = castTerm(in0, Variable);
+        if (in->delta >= offset)
+        {
+          Variable *out = copyTerm(arena, in);
+          out->delta += delta; assert(out->delta >= 0);
+          out0 = out;
+        }
+        else
+          out0 = in0;
+      } break;
+
+      case Term_Composite:
+      {
+        Composite *in  = castTerm(in0, Composite);
+        Composite *out = copyTerm(arena, in);
+        if (in->op->kind == Term_Constructor)
+        {
+          // we copied the constructor index, and that's enough.
+        }
+        else
+        {
+          out->op = rebase_(arena, out->op, delta, offset);
+        }
+        allocateArray(arena, out->arg_count, out->args);
+        for (i32 id = 0; id < out->arg_count; id++)
+        {
+          out->args[id] = rebase_(arena, in->args[id], delta, offset);
+        }
+        out0 = out;
+      } break;
+
+      case Term_Arrow:
+      {
+        Arrow *in  = castTerm(in0, Arrow);
+        Arrow *out = copyTerm(arena, in);
+        allocateArray(arena, in->param_count, out->param_types);
+        for (i32 id=0; id < in->param_count; id++)
+          out->param_types[id] = rebase_(arena, in->param_types[id], delta, offset+1);
+        if (in->output_type)
+        {
+          out->output_type = rebase_(arena, in->output_type, delta, offset+1);
+        }
+        out0 = out;
+      } break;
+
+      case Term_Accessor:
+      {
+        Accessor *in  = castTerm(in0, Accessor);
+        Accessor *out = copyTerm(arena, in);
+        out->record = rebase_(arena, in->record, delta, offset);
+        out0 = out;
+      } break;
+
+      case Term_Rewrite:
+      {
+        Rewrite *in  = castTerm(in0, Rewrite);
+        Rewrite *out = copyTerm(arena, in);
+        out->eq_proof = rebase_(arena, in->eq_proof, delta, offset);
+        out->body     = rebase_(arena, in->body, delta, offset);
+        out0 = out;
+      } break;
+
+      case Term_Computation:
+      {
+        Computation *in  = castTerm(in0, Computation);
+        Computation *out = copyTerm(arena, in);
+        out0 = out;
+      } break;
+
+      case Term_Function:
+      {
+        Function *in  = castTerm(in0, Function);
+        Function *out = copyTerm(arena, in);
+        out->body = rebase_(arena, in->body, delta, offset+1);
+        out0 = out;
+      } break;
+
+#if 0
+      case Term_Union:
+      {
+        Union *in  = castTerm(in0, Union);
+        Union *out = copyTerm(arena, in);
+        allocateArray(arena, in->ctor_count, out->structs);
+        for (i32 i=0; i < in->ctor_count; i++)
+        {
+          Term *rebased = rebase_(arena, &in->structs[i]->t, delta, offset);
+          out->structs[i] = castTerm(rebased, Arrow);
+        }
+        out0 = out;
+      } break;
+#endif
+
+      case Term_Constructor:
+      {
+        invalidCodePath;
+      } break;
+
+      default:
+        todoIncomplete;
+    }
+    if (out0 != in0)
+    {
+      out0->type = rebase_(arena, getType(in0), delta, offset);
+    }
+  }
+  else
+    out0 = in0;
+
+  assert(out0);
+  return out0;
+}
+
+forward_declare internal Term *
+rebase(Arena *arena, Term *in0, i32 delta)
+{
+  return rebase_(arena, in0, delta, 0);
+}
+#endif
