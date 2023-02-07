@@ -19,10 +19,6 @@ typecheckAlpha :: (a,b,c: Bool, a=false) -> a & b = a & c
 #should_fail
 typecheck1 :: fn (id: (A: Type, a: A) -> a=a, b: Bool) -> b=b
 {return b}
-typecheck2 :: fn (id: (A: Type, a: A) -> a=a, a,b: Bool) -> b=b
-{return id(Bool, a)}
-typecheckBeta :: (a,b,c: Bool, a=false) -> a & b = a & c
-{}
 #should_fail off
 
 check_truth false & true = false;
@@ -44,6 +40,20 @@ dependentTypeTest :: fn (A: Type, a: A) -> a=a
 {}
 check dependentTypeTest(Bool, true): true=true;
 
+testLocalVar1 :: fn (x: Nat) -> Nat
+{a := 3;
+ return a + x}
+
+testLocalVar2 :: fn (x: Nat) -> Nat
+{
+ a := 3;
+ b := 2;
+ return a + x + b
+ }
+#debug
+print testLocalVar2;
+check_truth testLocalVar2(1) = 6;
+
 testComplexFork :: fn (a, b: Nat) -> Nat
 {apb := a+b;
  fork apb
@@ -51,12 +61,6 @@ testComplexFork :: fn (a, b: Nat) -> Nat
   ++: return apb.p}}
 check_truth testComplexFork(0, 0) = 0;
 check_truth testComplexFork(1, 1) = 1;
-
-testLocalVariable :: fn (x: Nat) -> Nat
-{a := 3;
- b := 2;
- return a + x + b}
-check_truth testLocalVariable(1) = 6;
 
 #should_fail
 reproLet :: fn (a: Nat) -> Nat {b : Bool := true; return b}

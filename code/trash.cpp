@@ -698,3 +698,103 @@ rebase(Arena *arena, Term *in0, i32 delta)
   return rebase_(arena, in0, delta, 0);
 }
 #endif
+
+#if 0
+inline Term *
+newConjunctionN(Arena *arena, i32 count, Term **conjuncts)
+{
+  Term *out0 = 0;
+  assert(count != 0);  // return True? :>
+  if (count == 1)
+  {
+    out0 = conjuncts[0];
+  }
+  else
+  {
+    Arrow *struc = newTerm(arena, Arrow, rea_Type);
+    struc->param_count = count;
+    struc->param_names = pushArray(arena, count, String);
+    struc->param_types = pushArray(arena, count, Term *);
+
+    for (i32 i=0; i < count; i++)
+    {
+      assert(i < arrayCount(number_to_string));
+      struc->param_names[i] = number_to_string[i];
+      struc->param_types[i] = rebase(arena, conjuncts[i], 1);
+    }
+
+    Union *out = newTerm(arena, Union, rea_Type);
+    out->ctor_count = 1;
+    out->structs    = pushArray(arena, 1, Arrow*);
+    out->structs[0] = struc;
+    out0 = out;
+  }
+  return out0;
+}
+#endif
+
+#if 0
+    if (Composite *l = castTerm(l0, Composite))
+    {
+      if (Composite *r = castTerm(r0, Composite))
+      {
+        if (Constructor *lctor = castTerm(l->op, Constructor))
+        {
+          if (Constructor *rctor = castTerm(r->op, Constructor))
+          {
+            can_destruct = (lctor->index == rctor->index);
+          }
+        }
+
+        if (Union *luni = castTerm(l->op, Union))
+        {
+          if (Union *runi = castTerm(r->op, Union))
+          {
+            can_destruct = (luni == runi);
+          }
+        }
+
+        if (can_destruct)
+        {
+          assert(l->arg_count == r->arg_count);
+          i32 arg_count = l->arg_count;
+          if (arg_count == 0)
+          {
+            // since we can't return "True", nothing to do here
+          }
+          else if (arg_count == 1)
+          {
+            i32 arg_i = 0;
+            Term *conjunct = newEquality(arena, l->args[arg_i], r->args[arg_i]);
+            Composite *composite = castTerm(conjunct, Composite);
+            if (Term *more = apply(arena, composite->op, composite->arg_count, composite->args, name_to_unfold))
+            {
+              conjunct = more;
+            }
+
+            out0 = conjunct;
+          }
+          else
+          {
+            todoIncomplete;
+#if 0
+            Term **conjuncts = pushArray(temp_arena, arg_count, Term *);
+            for (i32 arg_i=0; arg_i < arg_count; arg_i++)
+            {
+              Term *conjunct = newEquality(arena, l->args[arg_i], r->args[arg_i]);
+              Composite *composite = castTerm(conjunct, Composite);
+              if (Term *more = apply(arena, composite->op, composite->arg_count, composite->args, name_to_unfold))
+              {
+                conjunct = more;
+              }
+
+              // todo #leak the conjuncts are gonna be rebased anyway, haizz
+              conjuncts[arg_i] = conjunct;
+            }
+            out0 = newConjunctionN(arena, arg_count, conjuncts);
+#endif
+          }
+        }
+      }
+    }
+#endif

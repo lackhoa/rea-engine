@@ -301,6 +301,10 @@ struct Composite : Term {
   };
 };
 
+// NOTE: I almost think records are different cases from composites, just a
+// coincidence that they are represented the same way.
+typedef Composite Record;
+
 u32 ParameterFlag_Inferred = 1 << 0;
 u32 ParameterFlag_Unused   = 1 << 1;
 u32 ParameterFlag_Poly     = 1 << 2;
