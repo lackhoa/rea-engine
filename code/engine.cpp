@@ -54,6 +54,9 @@ castPointer(Term *in0)
 inline void
 maybeDeref(Term **in0)
 {
+  // todo: so how is this different from "castRecord"? A fact is that we don't try
+  // to infer constructor.
+  //
   // #dicey-pointer-handling
   if (Pointer *pointer = castPointer(*in0))
   {
@@ -77,8 +80,6 @@ _newTerm(Arena *arena, TermKind cat, Term *type, size_t size)
   Term *out = (Term *)pushSize(arena, size, true);
   initTerm(out, cat, type);
   out->serial = DEBUG_SERIAL++;
-  if (out->serial == 30943)
-    breakhere;
   return out;
 }
 
@@ -1378,10 +1379,7 @@ evaluate_(EvalContext *ctx, Term *in0)
         {
           out->param_types[i] = evaluate_(&new_ctx, in->param_types[i]);
         }
-        if (in->output_type)
-        {
-          out->output_type = evaluate_(&new_ctx, in->output_type);
-        }
+        out->output_type = evaluate_(&new_ctx, in->output_type);
 
         out0 = out;
       } break;
@@ -1838,18 +1836,7 @@ compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
             }
             if (!type_mismatch)
             {
-              if (lhs->output_type && rhs->output_type)
-              {
-                out.result = equalTrinary(lhs->output_type, rhs->output_type);
-              }
-              else if (!rhs->output_type && !rhs->output_type)
-              {
-                out.result = Trinary_True;
-              }
-              else
-              {
-                out.result = Trinary_False;
-              }
+              out.result = equalTrinary(lhs->output_type, rhs->output_type);
             }
           }
           else
@@ -2324,11 +2311,8 @@ normalize_(NormalizeContext *ctx, Term *in0)
             param_type = normalize_(ctx, param_type);
             param_types[i] = newStackPointer(in->param_names[i], ctx->depth, i, param_type);
           }
-          if (in->output_type)
-          {
-            output_type = evaluate(in->output_type, param_count, param_types);
-            output_type = normalize_(ctx, output_type);
-          }
+          output_type = evaluate(in->output_type, param_count, param_types);
+          output_type = normalize_(ctx, output_type);
         }
 
         for (i32 i=0; i < param_count; i++)
@@ -2336,10 +2320,7 @@ normalize_(NormalizeContext *ctx, Term *in0)
           param_types[i] = toAbstractTerm(arena, param_types[i]->type, ctx->depth);
         }
         out->param_types = param_types;
-        if (in->output_type)
-        {
-          out->output_type = toAbstractTerm(arena, output_type, ctx->depth);
-        }
+        out->output_type = toAbstractTerm(arena, output_type, ctx->depth);
 
         out0 = out;
       } break;
@@ -2778,11 +2759,7 @@ unify(UnifyContext *ctx, Term *in0, Term *goal0)
       case Term_Composite:
       {
         Composite *in = (Composite *)in0;
-        if (Record *record = castRecord(goal0))
-        {
-          goal0 = record;
-        }
-
+        maybeDeref(&goal0);
         if (Composite *goal = castTerm(goal0, Composite))
         {
           if (unify(ctx, in->op, goal->op))
@@ -3151,12 +3128,6 @@ getFunctionOverloads(Typer *typer, Identifier *ident, Term *goal0)
         if (Arrow *signature = castTerm(getType(item), Arrow))
         {
           UnifyContext *ctx = newUnifyContext(signature, getScopeDepth(typer->scope));
-#if 0
-          if (serial == 80659)
-          {
-            DEBUG_LOG_unify = 1;
-          }
-#endif
           matches = unify(ctx, signature->output_type, goal0);
         }
         if (matches)
@@ -4192,12 +4163,6 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
   // beware: Usually we mutate in-place, but we may also allocate anew.
   i32 UNUSED_VAR serial = DEBUG_SERIAL++;
 
-  if (serial == 31086)
-  {
-    // DEBUG_LOG_normalize = 1;
-    DUMP("the goal is: ", goal, " (serial: ", goal->serial, ")", "\n");
-  }
-  
   assert(goal);
   Arena *arena = temp_arena;
   Term *value = 0;
@@ -4601,12 +4566,9 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
         if (noError())
         {
           value = out;
-          if (in->output_type)
+          if (Term *output_type = buildTerm(typer, in->output_type, holev).value)
           {
-            if (Term *output_type = buildTerm(typer, in->output_type, holev).value)
-            {
-              out->output_type = toAbstractTerm(arena, output_type, getScopeDepth(scope->outer));
-            }
+            out->output_type = toAbstractTerm(arena, output_type, getScopeDepth(scope->outer));
           }
         }
         unwindBindingsAndScope(typer);
@@ -5057,10 +5019,7 @@ copyToGlobalArena(Term *in0)
         {
           out->param_types[i] = copyToGlobalArena(in->param_types[i]);
         }
-        if (in->output_type)
-        {
-          out->output_type = copyToGlobalArena(in->output_type);
-        }
+        out->output_type = copyToGlobalArena(in->output_type);
         // :arrow-copy-done-later
         out->param_names = copyArray(arena, param_count, in->param_names);
         out->param_flags = copyArray(arena, param_count, in->param_flags);
@@ -5623,71 +5582,125 @@ eitherOrChar(char optional, char require)
 }
 
 internal UnionAst *
-parseUnion(Arena *arena, Token *global_name)
+parseUnion(Arena *arena, Token *uni_name)
 {
-  UnionAst *uni = newAst(arena, UnionAst, lastToken());
+  UnionAst *uni = newAst(arena, UnionAst, uni_name);
 
-  i32 poly_count = 0;
+  i32 uni_param_count = 0;
+  i32 poly_count      = 0;
+  i32 non_poly_count  = 0;
   if (peekChar() == ('('))
   {
-    uni->params = parseArrowType(arena, true);
-    poly_count = getPolyParamCount(uni->params);
+    if ((uni->signature = parseArrowType(arena, true)))
+    {
+      if (uni->signature->output_type)
+      {
+        reportError(uni->signature->output_type, "didn't expect an output type");
+      }
+      else
+      {
+        uni->signature->output_type = synthesizeAst(arena, rea_Type, uni_name);
+        uni_param_count = uni->signature->param_count;
+        poly_count      = getPolyParamCount(uni->signature);
+        non_poly_count  = uni_param_count - poly_count;
+      }
+    }
   }
 
   if (requireChar('{'))
   {
     allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, uni->ctor_signatures);
-    if (global_name)
+    if (uni_name)
     {
       allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, uni->ctor_names);
     }
+
+    Ast *auto_ctor_output_type = 0;
+    if (!non_poly_count)
+    {
+      if (poly_count)
+      {
+        CompositeAst *output_type = newAst(arena, CompositeAst, uni_name);
+        output_type->arg_count = uni_param_count;
+        allocateArray(arena, uni_param_count, output_type->args);
+        for (i32 i=0; i < uni_param_count; i++)
+        {
+          // we got rid of the param token, so now we gotta make one up...
+          Token token = newToken(uni->signature->param_names[i]);
+          output_type->args[i] = &newAst(arena, Identifier, &token)->a;
+        }
+        output_type->op = &newAst(arena, Identifier, uni_name)->a;
+        auto_ctor_output_type = &output_type->a;
+      }
+      else
+      {
+        auto_ctor_output_type = &newAst(arena, Identifier, uni_name)->a;
+      }
+    }
+
     for (b32 stop=false; noError() && !stop; )
     {
       if (optionalChar('}')) stop=true;
       else
       {
         i32 ctor_i = uni->ctor_count++;
-        if (global_name)
+        Token ctor_name = nextToken();
+        uni->ctor_names[ctor_i] = ctor_name;
+        if (isIdentifier(&ctor_name))
         {
-          Token ctor_name = nextToken();
-          uni->ctor_names[ctor_i] = ctor_name;
-          if (isIdentifier(&ctor_name))
+          ArrowAst *sig = 0;
+          if (peekChar() == '(')
+          {// composite constructor
+            sig = uni->ctor_signatures[ctor_i] = parseArrowType(arena, true);
+          }
+          else
+          {// atomic constructor
+            sig = newAst(arena, ArrowAst, &ctor_name);
+            uni->ctor_signatures[ctor_i] = sig;
+            allocateArray(arena, poly_count, sig->param_names);
+            allocateArray(arena, poly_count, sig->param_types);
+            allocateArray(arena, poly_count, sig->param_flags);
+          }
+
+          if (noError())
           {
-            ArrowAst *struc = 0;
-            if (peekChar() == '(')
-            {// subtype
-              struc = uni->ctor_signatures[ctor_i] = parseArrowType(arena, true);
-            }
-            else
-            {// atomic constructor
-              struc = newAst(arena, ArrowAst, &ctor_name);
-              uni->ctor_signatures[ctor_i] = struc;
-              allocateArray(arena, poly_count, struc->param_names);
-              allocateArray(arena, poly_count, struc->param_types);
-              allocateArray(arena, poly_count, struc->param_flags);
-            }
-            // syntactic modification to add poly variables
-            assert((struc->param_count + poly_count) < DEFAULT_MAX_LIST_LENGTH);
-            for (i32 i = struc->param_count-1; i >= 0; i--)
+            // modification to add poly variables
+            assert((sig->param_count + poly_count) < DEFAULT_MAX_LIST_LENGTH);
+            for (i32 i = sig->param_count-1; i >= 0; i--)
             {
-              struc->param_names[i+poly_count] = struc->param_names[i];
-              struc->param_types[i+poly_count] = struc->param_types[i];
-              struc->param_flags[i+poly_count] = struc->param_flags[i];
+              sig->param_names[i+poly_count] = sig->param_names[i];
+              sig->param_types[i+poly_count] = sig->param_types[i];
+              sig->param_flags[i+poly_count] = sig->param_flags[i];
             }
             for (i32 i=0; i < poly_count; i++)
             {
-              struc->param_names[i] = uni->params->param_names[i];
-              struc->param_types[i] = uni->params->param_types[i];
-              struc->param_flags[i] = uni->params->param_flags[i];
+              sig->param_names[i] = uni->signature->param_names[i];
+              sig->param_types[i] = uni->signature->param_types[i];
+              sig->param_flags[i] = uni->signature->param_flags[i];
             }
-            struc->param_count += poly_count;
+            sig->param_count += poly_count;
+
+            // modification to add output type
+            if (auto_ctor_output_type)
+            {
+              if (sig->output_type)
+              {
+                reportError(sig->output_type, "did not expect output type");
+              }
+              else
+              {
+                sig->output_type = auto_ctor_output_type;
+              }
+            }
+            else if (!sig->output_type)
+            {
+              reportError(&sig->a, "output type required since there are non-poly parameters");
+            }
           }
-          else
-            tokenError("expected an identifier as constructor name");
         }
         else
         {
-          uni->ctor_signatures[ctor_i] = parseArrowType(arena, true);
+          tokenError("expected an identifier as constructor name");
         }
 
         stop = eitherOrChar(',', '}');
@@ -5713,9 +5726,9 @@ buildUnion(Typer *typer, UnionAst *in, Token *global_name)
   Arrow *uni_signature  = 0;
   i32    poly_count     = 0;
   i32    non_poly_count = 0;
-  if (in->params)
+  if (in->signature)
   {
-    if (Term *uni_params0 = buildGlobalTerm(typer, &in->params->a, holev))
+    if (Term *uni_params0 = buildGlobalTerm(typer, &in->signature->a, holev))
     {
       uni_signature              = castTerm(uni_params0, Arrow);
       uni_signature->output_type = rea_Type;
@@ -5732,56 +5745,40 @@ buildUnion(Typer *typer, UnionAst *in, Token *global_name)
 
     for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
     {
-      Ast *ast_struc = &in->ctor_signatures[ctor_i]->a;
-      if (Term *struc0 = buildGlobalTerm(typer, ast_struc, holev))
+      Ast *ast_sig = &in->ctor_signatures[ctor_i]->a;
+      if (Term *sig0 = buildGlobalTerm(typer, ast_sig, holev))
       {
-        Arrow *struc = ctor_signatures[ctor_i] = castTerm(struc0, Arrow);
-        assert(struc);
+        Arrow *sig = ctor_signatures[ctor_i] = castTerm(sig0, Arrow);
+        assert(sig);
 
-        if (uni_signature)
+        if (uni_signature && non_poly_count)
         {
-          // NOTE: we disallow you specifying output type if you have non-poly
-          // params, for simplicity omg.
-          if (non_poly_count)
+          b32 valid_output = false;
+          if (Composite *output_type = castTerm(sig->output_type, Composite))
           {
-            if (struc->output_type)
+            if (Union *output_uni = castTerm(output_type->op, Union))
             {
-              b32 valid_output = false;
-              if (Composite *output_type = castTerm(struc->output_type, Composite))
+              if (output_uni == uni)
               {
-                if (Union *output_uni = castTerm(output_type->op, Union))
+                valid_output = true;
+                for (i32 poly_i=0; poly_i < poly_count; poly_i++)
                 {
-                  if (output_uni == uni)
+                  if (Variable *var = castTerm(output_type->args[poly_i], Variable))
                   {
-                    valid_output = true;
-                    for (i32 poly_i=0; poly_i < poly_count; poly_i++)
+                    b32 correct_var = (var->delta == 0 && var->index == poly_i);
+                    if (!correct_var)
                     {
-                      if (Variable *var = castTerm(output_type->args[poly_i], Variable))
-                      {
-                        b32 correct_var = (var->delta == 0 && var->index == poly_i);
-                        if (!correct_var)
-                        {
-                          valid_output = false;
-                        }
-                      }
+                      valid_output = false;
                     }
                   }
                 }
               }
-              if (!valid_output)
-              {
-                reportError(ast_struc, "constructor has to return the same union as the one being defined");
-                attach("output_type", struc->output_type);
-              }
-            }
-            else
-            {
-              reportError(ast_struc, "output type required since there are non-poly parameters");
             }
           }
-          else if (struc->output_type)
+          if (!valid_output)
           {
-            reportError(ast_struc, "you can't specify the constructor's output type because there is no non-poly parameter");
+            reportError(ast_sig, "constructor has to return the same union as the one being defined");
+            attach("output_type", sig->output_type);
           }
         }
       }
@@ -5792,30 +5789,10 @@ buildUnion(Typer *typer, UnionAst *in, Token *global_name)
   {
     if (uni_signature)
     {
-      i32 uni_param_count = uni_signature->param_count;
-      Composite *common_ctor_output_type = newTerm(arena, Composite, rea_Type);
-      common_ctor_output_type->arg_count = uni_param_count;
-      allocateArray(arena, uni_param_count, common_ctor_output_type->args);
-      for (i32 i=0; i < uni_param_count; i++)
-      {
-        // TODO: do this output type patching during parsing.
-        Variable *var = newTerm(arena, Variable, uni_signature->param_types[i]);
-        var->name  = uni_signature->param_names[i];
-        var->delta = 0;
-        var->index = i;
-        common_ctor_output_type->args[i] = var;
-      }
-      common_ctor_output_type->op = uni;
-
       for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
       {
-        Arrow *struc = ctor_signatures[ctor_i];
-        if (non_poly_count == 0)
-        {
-          struc->output_type = common_ctor_output_type;
-        }
-
-        Constructor *ctor = newTerm(arena, Constructor, struc);
+        Arrow *ctor_sig = ctor_signatures[ctor_i];
+        Constructor *ctor = newTerm(arena, Constructor, ctor_sig);
         ctor->index = ctor_i;
         ctor->name  = in->ctor_names[ctor_i];
         addGlobalBinding(&in->ctor_names[ctor_i], ctor);

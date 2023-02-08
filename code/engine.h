@@ -458,7 +458,7 @@ struct UnionAst {
   i32        ctor_count;
   Token     *ctor_names;
   ArrowAst **ctor_signatures;
-  ArrowAst  *params;
+  ArrowAst  *signature;
 };
 
 struct OverloadAst {
