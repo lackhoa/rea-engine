@@ -41,24 +41,14 @@ global_variable Term *holev = &holev_;
 
 global_variable EngineState global_state;
 
-inline Pointer *
-castPointer(Term *in0)
-{
-  if (StackPointer *in = castTerm(in0, StackPointer))
-    return in;
-  if (HeapPointer *in = castTerm(in0, HeapPointer))
-    return in;
-  return 0;
-}
-
 inline void
 maybeDeref(Term **in0)
 {
-  // todo: so how is this different from "castRecord"? A fact is that we don't try
-  // to infer constructor.
+  // NOTE: so how is this different from "castRecord"? A fact is that we don't try
+  // to infer constructor... maybe we should, I don't know atm.
   //
   // #dicey-pointer-handling
-  if (Pointer *pointer = castPointer(*in0))
+  if (Pointer *pointer = castTerm(*in0, Pointer))
   {
     if (pointer->ref)
     {
@@ -935,24 +925,6 @@ printTermsInParentheses(Arena *buffer, i32 count, Term **terms, PrintOptions opt
   print(buffer, ")");
 }
 
-#if 0
-inline String
-getConstructorName(Constructor *ctor)
-{
-  if (Union *uni = castTerm(ctor->uni, Union))
-  {
-    return getConstructorName(uni, ctor->index);
-  }
-  else
-  {
-    Composite *composite = castTerm(ctor->uni, Composite);
-    Union *puni = castTerm(composite->op, Union);
-    return getConstructorName(puni, ctor->index);
-  }
-  invalidCodePath;
-}
-#endif
-
 inline void
 printStackPointerNoDeref(Arena *buffer, StackPointer *in, PrintOptions opt)
 {
@@ -1035,52 +1007,53 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
           print(buffer, in->debug_field_name);
         } break;
 
-        case Term_StackPointer:
+        case Term_Pointer:
         {
-          StackPointer *in = (StackPointer *)(in0);
-          if (in->ref)
+          Pointer *in = (Pointer *)(in0);
+          if (in->is_stack_pointer)
           {
-            print(buffer, in->ref);
-          }
-          else
-          {
-            printStackPointerNoDeref(buffer, in, opt);
-          }
-        } break;
-
-        case Term_HeapPointer:
-        {
-          auto in = (HeapPointer *)(in0);
-          if (in->ref)
-          {
-            print(buffer, in->ref, opt);
-          }
-          else
-          {
-            const i32 max_path_length = 32;
-            String rev_field_names[max_path_length];
-            i32 path_length = 0;
-            Pointer *iter = in;
-            for (b32 stop = false; !stop;)
+            if (in->ref)
             {
-              if (StackPointer *stack = castTerm(iter, StackPointer))
-              {
-                printStackPointerNoDeref(buffer, stack, opt);
-                stop = true;
-              }
-              else
-              {
-                HeapPointer *heap = castTerm(iter, HeapPointer);
-                rev_field_names[path_length++] = heap->debug_field_name;
-                assert(path_length < max_path_length);
-                iter = heap->record;
-              }
+              print(buffer, in->ref);
             }
-
-            for (i32 path_i = path_length-1; path_i >= 0; path_i--)
+            else
             {
-              print(buffer, ".");
-              print(buffer, rev_field_names[path_i]);
+              printStackPointerNoDeref(buffer, &in->stack, opt);
+            }
+          }
+          else
+          {
+            if (in->ref)
+            {
+              print(buffer, in->ref, opt);
+            }
+            else
+            {
+              const i32 max_path_length = 32;
+              String rev_field_names[max_path_length];
+              i32 path_length = 0;
+              Pointer *iter = in;
+              for (b32 stop = false; !stop;)
+              {
+                if (iter->is_stack_pointer)
+                {
+                  printStackPointerNoDeref(buffer, &in->stack, opt);
+                  stop = true;
+                }
+                else
+                {
+                  HeapPointer *heap = &iter->heap;
+                  rev_field_names[path_length++] = heap->debug_field_name;
+                  assert(path_length < max_path_length);
+                  iter = heap->record;
+                }
+              }
+
+              for (i32 path_i = path_length-1; path_i >= 0; path_i--)
+              {
+                print(buffer, ".");
+                print(buffer, rev_field_names[path_i]);
+              }
             }
           }
         } break;
@@ -1455,8 +1428,7 @@ evaluate_(EvalContext *ctx, Term *in0)
         out0 = copyTerm(arena, in);
       } break;
 
-      case Term_StackPointer:
-      case Term_HeapPointer:
+      case Term_Pointer:
       {
         out0 = in0;
       } break;
@@ -1609,7 +1581,7 @@ instantiate(Term *in0, i32 ctor_i)
 {
   b32 success = false;
   Arena *arena = temp_arena;
-  if (Pointer *pointer = castPointer(in0))
+  if (Pointer *pointer = castTerm(in0, Pointer))
   {
     auto [uni, args] = castUnion(in0->type);
     if (!pointer->ref)
@@ -1632,10 +1604,10 @@ instantiate(Term *in0, i32 ctor_i)
       {
         Term *member_type = signature->param_types[mem_i];
         member_type = substitute(member_type, member_count, members);
-        HeapPointer *member      = newTerm(arena, HeapPointer, member_type);
-        member->record           = pointer;
-        member->index            = mem_i;
-        member->debug_field_name = signature->param_names[mem_i];
+        Pointer *member          = newTerm(arena, Pointer, member_type);
+        member->heap.record           = pointer;
+        member->heap.index            = mem_i;
+        member->heap.debug_field_name = signature->param_names[mem_i];
         members[mem_i] = member;
       }
       pointer->ref = newComposite(arena, ctor, member_count, members);
@@ -1648,7 +1620,7 @@ instantiate(Term *in0, i32 ctor_i)
 inline void
 uninstantiate(Term *in0)
 {
-  Pointer *pointer = castPointer(in0);
+  Pointer *pointer = castTerm(in0, Pointer);
   assert(pointer->ref);
   pointer->ref = 0;
 }
@@ -1664,7 +1636,7 @@ castRecord(Term *record0)
       out = record;
     }
   }
-  else if (Pointer *pointer = castPointer(record0))
+  else if (Pointer *pointer = castTerm(record0, Pointer))
   {
     if (!pointer->ref)
     {
@@ -1943,8 +1915,7 @@ compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
         case Term_Rewrite:
         case Term_Computation:
         case Term_Fork:
-        case Term_StackPointer:
-        case Term_HeapPointer:
+        case Term_Pointer:
         {} break;
 
         default:
@@ -2088,39 +2059,40 @@ toAbstractTerm_(AbstractContext *ctx, Term *in0)
   {
     switch (in0->kind)
     {
-      case Term_StackPointer:
+      case Term_Pointer:
       {
-        StackPointer *in = castTerm(in0, StackPointer);
-        if (in->depth > ctx->env_depth)
+        Pointer *in = castTerm(in0, Pointer);
+        if (in->is_stack_pointer)
         {
-          Variable *out = newTerm(arena, Variable, 0);
-          out->name  = in->name;
-          out->delta = ctx->zero_depth - in->depth;
-          out->index = in->index;
-          assert(out->delta >= 0);
-          out0 = out;
+          if (in->stack.depth > ctx->env_depth)
+          {
+            Variable *out = newTerm(arena, Variable, 0);
+            out->name  = in->stack.name;
+            out->delta = ctx->zero_depth - in->stack.depth;
+            out->index = in->stack.index;
+            assert(out->delta >= 0);
+            out0 = out;
+          }
+          else
+          {
+            out0 = in0;
+          }
         }
         else
         {
-          out0 = in0;
-        }
-      } break;
-
-      case Term_HeapPointer:
-      {
-        HeapPointer *in = castTerm(in0, HeapPointer);
-        Term *record = toAbstractTerm_(ctx, in->record);
-        if (record != in->record)
-        {
-          Accessor *out = newTerm(arena, Accessor, 0);
-          out->record           = record;
-          out->index            = in->index;
-          out->debug_field_name = in->debug_field_name;
-          out0 = out;
-        }
-        else
-        {
-          out0 = in0;
+          Term *record = toAbstractTerm_(ctx, in->heap.record);
+          if (record != in->heap.record)
+          {
+            Accessor *out = newTerm(arena, Accessor, 0);
+            out->record           = record;
+            out->index            = in->heap.index;
+            out->debug_field_name = in->heap.debug_field_name;
+            out0 = out;
+          }
+          else
+          {
+            out0 = in0;
+          }
         }
       } break;
 
@@ -2230,14 +2202,15 @@ toAbstractTerm(Arena *arena, Term *value, b32 env_depth)
   return toAbstractTerm_(&ctx, value);
 }
 
-inline StackPointer *
+inline Pointer *
 newStackPointer(String name, i32 depth, i32 index, Term *type)
 {
   assert(depth);
-  StackPointer *out = newTerm(temp_arena, StackPointer, type);
-  out->name  = name;
-  out->depth = depth;
-  out->index = index;
+  Pointer *out = newTerm(temp_arena, Pointer, type);
+  out->is_stack_pointer = true;
+  out->stack.name       = name;
+  out->stack.depth      = depth;
+  out->stack.index      = index;
   return out;
 }
 
@@ -2343,7 +2316,7 @@ normalize_(NormalizeContext *ctx, Term *in0)
       {
         Accessor *in = castTerm(in0, Accessor);
         Term *record0 = normalize_(ctx, in->record);
-        if (Composite *record = castRecord(record0))
+        if (Record *record = castRecord(record0))
         {
           out0 = record->args[in->index];
         }
@@ -2664,7 +2637,7 @@ matchType(Term *actual, Term *goal)
 inline b32
 isGrounded(Term *in0)
 {
-  return isGlobalValue(in0) || (in0->kind == Term_StackPointer) || (in0->kind == Term_HeapPointer);
+  return isGlobalValue(in0) || (in0->kind == Term_Pointer);
 }
 
 internal b32
@@ -2967,7 +2940,7 @@ seekGoal(Solver *solver, Term *goal, b32 try_reductio=false)
         {
           out = value;
         }
-        else if (Composite *record = castRecord(value))
+        else if (Record *record = castRecord(value))
         {
           for (i32 member_i = 0; member_i < record->arg_count && !out; member_i++)
           {
@@ -4672,9 +4645,10 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
                   b32 right_to_left = !in->right_to_left;  // since we rewrite the body, not the goal.
                   Term *asset = newRewrite(arena, eq_proof, in_expression, search.path, right_to_left);
                   String name = {};
-                  if (StackPointer *var = castTerm(in_expression, StackPointer))
+                  Pointer *var = castTerm(in_expression, Pointer);
+                  if (var && var->is_stack_pointer)
                   {
-                    name = var->name;
+                    name = var->stack.name;
                   }
                   else
                   {
@@ -5146,10 +5120,6 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
                 }
               }
               uninstantiate(subject);
-              if (StackPointer *stackp = castTerm(subject, StackPointer))
-              {
-                assert(stackp->ref == 0);
-              }
             }
             else
             {

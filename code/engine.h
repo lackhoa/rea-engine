@@ -69,8 +69,7 @@ enum TermKind {
   Term_Arrow,
   Term_Rewrite,
 
-  Term_StackPointer,
-  Term_HeapPointer,
+  Term_Pointer,
 };
 
 const u32 AstFlag_Generated = 1 << 0;
@@ -260,20 +259,27 @@ struct Accessor : Term {
   String  debug_field_name;
 };
 
-struct Pointer : Term {
-  Record *ref;
-};
+struct Pointer;
 
-struct StackPointer : Pointer {
+struct StackPointer {
   String name;
   i32    depth;
   i32    index;
 };
 
-struct HeapPointer : Pointer {
+struct HeapPointer {
   Pointer *record;
   i32      index;
   String   debug_field_name;
+};
+
+struct Pointer : Term {
+  Record *ref;
+  b32     is_stack_pointer;
+  union {
+    StackPointer stack;
+    HeapPointer  heap;
+  };
 };
 
 struct CompositeAst : Ast {
