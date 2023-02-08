@@ -1,3 +1,8 @@
+eqChain :: fn($A: Type, $a,$b,$c: A, a=b, b=c) -> a=c {=> b = c {seek(a=b)} seek}
+falseImpliesAll :: fn(f: False, G: Type) -> G {fork f {}}
+primitive Array : (A: Type) -> Type;
+primitive Int : Type;
+
 ;; -----
 ;; Utils
 ;; -----

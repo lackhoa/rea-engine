@@ -798,3 +798,29 @@ newConjunctionN(Arena *arena, i32 count, Term **conjuncts)
       }
     }
 #endif
+
+#if 0
+    Tokenizer builtin_tk = newTokenizer(0);
+    global_tokenizer = &builtin_tk;
+    builtin_tk.at = "($A: Type, a,b: A) -> Type";
+    Term *equal_type = installBuiltin(); 
+    rea_equal = newTerm(arena, Primitive, equal_type);
+    addBuiltinGlobalBinding("=", rea_equal);
+
+    builtin_tk.at = "fn($A: Type, $a,$b,$c: A, a=b, b=c) -> a=c {=> b = c {seek(a=b)} seek}";
+    rea_eqChain = installBuiltin();
+    addBuiltinGlobalBinding("eqChain", rea_eqChain);
+
+    builtin_tk.at = "fn(f: False, G: Type) -> G {fork f {}}";
+    rea_falseImpliesAll = installBuiltin();
+    addBuiltinGlobalBinding("falseImpliesAll", rea_falseImpliesAll);
+
+    builtin_tk.at = "(A: Type) -> Type";
+    Term *array_type = installBuiltin();
+    rea_Array = newTerm(arena, Primitive, array_type);
+    addBuiltinGlobalBinding("Array", rea_Array);
+
+    rea_Int = newTerm(arena, Primitive, rea_Type);
+    addBuiltinGlobalBinding("Int", rea_Int);
+#endif
+

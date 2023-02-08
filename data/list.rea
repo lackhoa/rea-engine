@@ -19,17 +19,6 @@ concatNonEmpty :: (T:Type, l,m: List(T), nonEmpty(l), nonEmpty(m)) -> nonEmpty(l
 #hint
 {fork l {nil, cons}}
 
-;; Permute :: union($$T: Type, List(T), List(T))
-;; {
-;;  permuteSame(l: List(T)) -> Permute(l,l)
-;;  ,
-;;  permute(a: T, $l,$b,$c: List(T), recurse: Permute(l, b+c)) ->
-;;  Permute(a cons l, b + (a cons c))
-;;  }
-
-#print all_args
-#print var_delta
-
 Permute :: union($$T: Type, List(T), List(T))
 {
  permuteNil() -> Permute(nil(T), nil(T))
@@ -40,10 +29,6 @@ Permute :: union($$T: Type, List(T), List(T))
  ,
  permuteChain(l,l1,l2: List(T), Permute(l, l1), Permute(l1, l2)) -> Permute(l, l2)
  }
-
-;;
-;; PList (Populated list)
-;;
 
 binaryOp :: fn(T: Type) -> Type
 #expand
@@ -83,8 +68,7 @@ foldPermute :: ($T: Type,
  {
   permuteNil
   i := invert(p);
-  norm i;
-  reductio;
+  ;; reductio;
   ,
   permuteSkip
   ,
@@ -93,65 +77,3 @@ foldPermute :: ($T: Type,
   permuteChain
   }
  }
-
-provePermuteHelper :: fn(T: Type, a,b,c: PList(T), p: Permute(a,b), e: b=c) -> Permute(a,c)
-{rewrite <- e;}
-
-;; toList :: fn($T: Type, l: PList(T)) -> List(T)
-;; {fork l
-;;  {single return l.head cons nil(T),
-;;   cons   return l.head cons toList(l.tail)}}
-
-;; toListNonNil :: ($T: Type, l: PList(T)) -> toList(l) != nil(T)
-;; {fork l {single, cons}}
-
-;; toListEq :: ($T: Type, $l,$m: PList(T), e: toList(l) = toList(m)) -> l = m
-;; #norm(e)
-;; {
-;;  fork l {single
-;;          fork m {single,
-;;                  cons
-;;                  prove(toList(m.tail) = nil(T)) {rewrite e.1} as p
-;;                  return toListNonNil(m.tail)(p)
-;;                  },
-;;          cons
-;;          fork m {single return toListNonNil(l.tail)(e.1),
-;;                  cons   return ctor[0](e.0, toListEq(e.1))}
-;;          }
-;;  }
-
-toPList :: fn($A: Type, a: A, l: List(A)) -> PList(A)
-{fork l
- {nil  return single(a),
-  cons return a cons toPList(l.head, l.tail)}}
-
-permuteEquivalent :: ($A: Type, a,b: A, l,m: List(A),
-                      p: (a cons l) Permute (b cons m))
--> toPList(a, l) Permute toPList(b, m)
-{fork p
- {permuteSame
-  norm p.same; rewrite seek(a=b); rewrite seek(l=m); return permuteSame(...),
-
-  permute 
-  fork p.b
-  {nil
-   ;; eg [0,2,3] Permute [0,3,2]
-   prove (b cons m = p.a cons p.c) ;; eg b = 3, m = [2]
-   {=> b cons m = p.b + (p.a cons p.c)}
-
-   prove (p.l Permute p.c)  ;; eg [2,3] Permute [3,2]
-   {=> p.l Permute p.b + p.c}
-
-   norm p.al_destruct;
-   rewrite(seek(a = p.a));
-   rewrite(seek(l = p.l));
-   norm p.bac_destruct;
-   rewrite(seek(b = p.a));
-   rewrite(seek(m = p.c));
-   prove ((p.a cons p.l) Permute (p.a cons p.c))
-   {=> (p.a cons p.l) Permute (nil(A) + (p.a cons p.c));
-    return permute(p.a, p.l,nil(A),p.c,_,_,_)}
-   return permuteEquivalent(...)
-   ,
-   cons
-   }}}

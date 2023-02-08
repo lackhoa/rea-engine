@@ -15,12 +15,14 @@
 #include "lexer.cpp"
 #include "debug_config.h"
 
-global_variable Term *rea_Type;
-global_variable Term *rea_equal;
+global_variable Primitive *rea_Type;
+global_variable Primitive *rea_equal;
 global_variable Term *rea_False;
 global_variable Term *rea_eqChain;
 
 // TODO: These List builtins are going too far...
+global_variable Primitive *rea_Int;
+global_variable Primitive *rea_Array;
 global_variable Term *rea_List;
 global_variable Term *rea_single;
 global_variable Term *rea_cons;
@@ -40,6 +42,17 @@ global_variable Term  holev_ = {.kind = Term_Hole};
 global_variable Term *holev = &holev_;
 
 global_variable EngineState global_state;
+
+struct PrimitiveEntry {
+  char       *name;
+  Primitive **term;
+};
+
+global_variable PrimitiveEntry primitive_table[] = {
+  {"=", &rea_equal},
+  {"Array", &rea_Array},
+  {"Int", &rea_Int},
+};
 
 inline void
 maybeDeref(Term **in0)
@@ -926,7 +939,7 @@ printTermsInParentheses(Arena *buffer, i32 count, Term **terms, PrintOptions opt
 }
 
 inline void
-printStackPointerNoDeref(Arena *buffer, StackPointer *in, PrintOptions opt)
+printStackPointerName(Arena *buffer, StackPointer *in, PrintOptions opt)
 {
   bool has_name = in->name.chars;
   if (has_name)
@@ -1018,7 +1031,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
             }
             else
             {
-              printStackPointerNoDeref(buffer, &in->stack, opt);
+              printStackPointerName(buffer, &in->stack, opt);
             }
           }
           else
@@ -1037,7 +1050,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
               {
                 if (iter->is_stack_pointer)
                 {
-                  printStackPointerNoDeref(buffer, &in->stack, opt);
+                  printStackPointerName(buffer, &iter->stack, opt);
                   stop = true;
                 }
                 else
@@ -1071,6 +1084,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
         {
           auto in = (Union *)(in0);
           print(buffer, "union {");
+          newlineAndIndent(buffer, opt.indentation+1);
           if (in->ctor_count)
           {
             unsetFlag(&new_opt.flags, PrintFlag_Detailed);
@@ -1078,9 +1092,13 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
             {
               print(buffer, getConstructorSignature(in, ctor_id), new_opt);
               if (ctor_id != in->ctor_count-1)
-                print(buffer, ", ");
+              {
+                print(buffer, ",");
+                newlineAndIndent(buffer, opt.indentation+1);
+              }
             }
           }
+          newlineAndIndent(buffer, opt.indentation);
           print(buffer, "}");
         } break;
 
@@ -1759,7 +1777,7 @@ apply(Term *op, i32 arg_count, Term **args, String name_to_unfold)
 
 // todo #cleanup "same_type" doesn't need to be passed down all the time.
 internal CompareTerms
-compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
+compareTerms(Arena *arena, Term *l0, Term *r0)
 {
   CompareTerms out = {.result = Trinary_Unknown};
 
@@ -1820,12 +1838,7 @@ compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
           Composite *l = castTerm(l0, Composite);
           Composite *r = castTerm(r0, Composite);
 
-          if (!same_type)
-          {
-            same_type = equal(l0->type, r0->type);
-          }
-
-          b32 op_equal = same_type && equal(l->op, r->op);
+          b32 op_equal = equal(l->op, r->op);
           if (op_equal)
           {
             Arrow *arrow = getSignature(l->op);
@@ -1843,7 +1856,7 @@ compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
               // todo "ParameterFlag_Unused" is just a hack, it doesn't mean anything yet.
               if (!checkFlag(arrow->param_flags[arg_i], ParameterFlag_Unused))
               {
-                CompareTerms recurse = compareTerms(arena, true, l->args[arg_i], r->args[arg_i]);
+                CompareTerms recurse = compareTerms(arena, l->args[arg_i], r->args[arg_i]);
                 if (recurse.result != Trinary_True)
                 {
                   mismatch_count++;
@@ -1935,7 +1948,7 @@ compareTerms(Arena *arena, b32 same_type, Term *l0, Term *r0)
 forward_declare internal Trinary
 equalTrinary(Term *lhs0, Term *rhs0)
 {
-  return compareTerms(0, false, lhs0, rhs0).result;
+  return compareTerms(0, lhs0, rhs0).result;
 }
 
 internal GlobalBinding *
@@ -2429,6 +2442,13 @@ addBuiltinGlobalBinding(char *key, Term *value)
   addGlobalBinding(&token, value);
 }
 
+inline void
+addBuiltinGlobalBinding(String key, Term *value)
+{
+  Token token = newToken(key);
+  addGlobalBinding(&token, value);
+}
+
 inline LookupLocalName
 lookupLocalName(Typer *env, Token *token)
 {
@@ -2486,6 +2506,10 @@ inline b32
 requireIdentifier(char *message=0, Tokenizer *tk=global_tokenizer)
 {
   b32 out = false;
+  if (!message)
+  {
+    message = "expected identifier";
+  }
   if (hasMore())
   {
     Token token = nextToken(tk);
@@ -4092,41 +4116,31 @@ internal Term *
 buildInvert(Arena *arena, Typer *typer, CompositeAst *ast)
 {
   Term *out = 0;
-  todoIncomplete;
-#if 0
   if (ast->arg_count == 1)
   {
-    if (Term *arg = buildTerm(arena, typer, ast->args[0], holev))
+    if (Term *arg = buildTerm(typer, ast->args[0], holev))
     {
-      if (Variable *var = castTerm(arg, Variable))
+      if (Pointer *pointer = castTerm(arg, Pointer))
       {
-        Term *norm0 = normalizeVariable(arena, typer->map, getScopeDepth(typer), var);
-        if (Composite *norm = castRecord(norm0))
+        if (pointer->ref)
         {
-          Constructor *ctor = castTerm(norm->op, Constructor);
-          auto [uni, _] = castUnion(getType(arg));
-          Arrow *struc = uni->structs[ctor->index];
-          Term *output_type = evaluate(arena, struc->output_type, norm->args);
-          // NOTE: we could destruct the equality, but normalize can do that so
-          // let's save the complexity here.
-          out = newComputation_(arena, getType(arg), output_type);
+          out = newComputation_(arena, pointer->type, pointer->ref->type);
         }
         else
         {
-          reportError(&ast->a, "variable has no constructor information");
+          reportError(ast, "variable has no constructor information");
         }
       }
       else
       {
-        reportError(&ast->a, "invert only support variables (since atm you can only fork variables anyway, and this is mean to be used in a fork)");
+        reportError(ast, "invert only support pointers (since atm you can only fork pointers anyway, and this is mean to be used in a fork)");
       }
     }
   }
   else
   {
-    reportError(&ast->a, "we can only invert one thing at a time!");
+    reportError(ast, "we can only invert one thing at a time!");
   }
-#endif
   return out;
 }
 
@@ -4181,8 +4195,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
       }
       else if (equal(in->op->token, "invert"))
       {
-        todoIncomplete;
-        // out0 = buildInvert(arena, typer, in);
+        value = buildInvert(arena, typer, in);
       }
       else
       {
@@ -4717,7 +4730,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
       }
       else if ((new_goal = buildTerm(typer, in->new_goal, holev).value))
       {
-        CompareTerms compare = compareTerms(arena, false, goal, new_goal);
+        CompareTerms compare = compareTerms(arena, goal, new_goal);
         if (compare.result == Trinary_True)
         {
           reportError(in0, "new goal is exactly the same as current goal");
@@ -5180,7 +5193,7 @@ newRewrite(Arena *arena, Term *eq_proof, Term *body, TreePath *path, b32 right_t
 }
 
 inline Term *
-parseAndBuildTemp(Term *expected_type=holev, b32 must_succeed=false)
+parseAndBuildTemp(Term *expected_type=holev)
 {
   Term *out = 0;
   if (Ast *ast = parseExpression(temp_arena))
@@ -5192,7 +5205,7 @@ parseAndBuildTemp(Term *expected_type=holev, b32 must_succeed=false)
 }
 
 inline Term *
-parseAndBuildGlobal(Term *expected_type=holev, b32 must_succeed=false)
+parseAndBuildGlobal(Term *expected_type=holev)
 {
   Term *out = 0;
   if (Ast *ast = parseExpression(temp_arena))
@@ -5203,6 +5216,16 @@ parseAndBuildGlobal(Term *expected_type=holev, b32 must_succeed=false)
   }
   return out;
 }
+
+#if 0
+inline Term *
+installBuiltin()
+{
+  Term *out = parseAndBuildGlobal(holev);
+  assert(out);
+  return out;
+}
+#endif
 
 struct NormList {
   i32          count;
@@ -6413,6 +6436,34 @@ parseTopLevel(EngineState *state)
         }
       } break;
 
+      case Token_Keyword_primitive:
+      {
+        if (requireIdentifier())
+        {
+          Token primitive_name = *lastToken();
+          if (requireChar(':'))
+          {
+            if (Term *primitive_type = parseAndBuildGlobal())
+            {
+              b32 installed = false;
+              for (i32 i=0;
+                   !installed && i < arrayCount(primitive_table);
+                   i++)
+              {
+                PrimitiveEntry entry = primitive_table[i];
+                if (equal(primitive_name, entry.name))
+                {
+                  installed = true;
+                  *entry.term = newTerm(arena, Primitive, primitive_type);
+                  addBuiltinGlobalBinding(primitive_name.string, *entry.term);
+                }
+              }
+              assert(installed);
+            }
+          }
+        }
+      } break;
+
       default:
       {
         if (isIdentifier(token))
@@ -6624,30 +6675,21 @@ beginInterpreterSession(Arena *top_level_arena, FilePath input_path)
     rea_Type->type = rea_Type; // NOTE: circular types
     addBuiltinGlobalBinding("Type", rea_Type);
 
-    Tokenizer builtin_tk = newTokenizer(0);
-    global_tokenizer = &builtin_tk;
-    builtin_tk.at = "($A: Type, a,b: A) -> Type";
-    Term *equal_type = parseAndBuildGlobal(holev, true); 
-    rea_equal = newTerm(arena, Primitive, equal_type);
-    addBuiltinGlobalBinding("=", rea_equal);
-
     rea_False = newTerm(arena, Union, rea_Type);  // NOTE: "union {}"
     addBuiltinGlobalBinding("False", rea_False);
 
-    builtin_tk.at = "fn ($A: Type, $a,$b,$c: A, a=b, b=c) -> a=c {=> b = c {seek(a=b)} seek}";
-    rea_eqChain = parseAndBuildGlobal(holev, true);
-    addBuiltinGlobalBinding("eqChain", rea_eqChain);
+    auto path = platformGetFileFullPath(arena, "../data/builtin0.rea");
+    interpretFile(&global_state, path, true);
 
-    builtin_tk.at = "fn(f: False, G: Type) -> G {fork f {}}";
-    rea_falseImpliesAll = parseAndBuildGlobal(holev, true);
-    addBuiltinGlobalBinding("falseImpliesAll", rea_falseImpliesAll);
+    path = platformGetFileFullPath(arena, "../data/builtin10.rea");
+    interpretFile(&global_state, path, true);
 
-    FilePath builtin_path = platformGetFileFullPath(arena, "../data/builtins.rea");
-    interpretFile(&global_state, builtin_path, true);
+#define LOOKUP_BUILTIN(name) rea_##name = lookupBuiltin(#name);
+
+    LOOKUP_BUILTIN(falseImpliesAll);
 
 #if 0
     // TODO #cleanup These List builtins are going too far...
-#define LOOKUP_BUILTIN(name) rea_##name = lookupBuiltin(#name);
     LOOKUP_BUILTIN(List);
     LOOKUP_BUILTIN(single);
     LOOKUP_BUILTIN(cons);
@@ -6704,10 +6746,10 @@ int engineMain()
   temp_arena_ = newArena(temp_arena_size, temp_arena_base);
 
   char *files[] = {
+    "../data/array.rea",
     "../data/test.rea",
     "../data/z.rea",
     "../data/z-slider.rea",
-    // "list.rea",
   };
   for (i32 file_id=0; file_id < arrayCount(files); file_id++)
   {

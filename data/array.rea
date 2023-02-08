@@ -1,9 +1,13 @@
-fold :: (a: Nat, l: Array) -> Nat
+#load "nat.rea"
+
+slice :: ($A: Type, l: Array(A), a,b: Int) -> A
+
+fold :: ($A: Type, a: A, l: Array(A)) -> A
 {
  fork length(l)
  {
-  0  a
-  ++ a + fold(l[0], slice(l, 1, length(l)))
+  0  return a
+  ++ return a + fold(l.[0], slice(l, 1, length(l)))
   }
  }
 
@@ -16,7 +20,7 @@ Permute :: union(Array, Array)
  permuteChain(l,l1,l2: List(T), Permute(l, l1), Permute(l1, l2)) -> Permute(l, l2)
  }
 
-foldPermute :: (a,a1: Nat, l,l1: Array, p: Permute(a cons l, a1 cons l1)) -> fold(a,l) = fold(a1,l1)
+foldPermute :: ($A: Type, a,a1: A, l,l1: Array, p: Permute(a cons l, a1 cons l1)) -> fold(a,l) = fold(a1,l1)
 {
  fork p
  {
@@ -24,7 +28,6 @@ foldPermute :: (a,a1: Nat, l,l1: Array, p: Permute(a cons l, a1 cons l1)) -> fol
   ;; trivial yo!
   ,
   permuteSwap
-  ;; a1 cons l1 = swap(a cons l, a,b)
   ,
   permuteChain
   }
