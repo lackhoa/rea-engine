@@ -3140,7 +3140,7 @@ getFunctionOverloads(Typer *typer, Identifier *ident, Term *goal0)
         if (typeErrorExpected(typer)) silentError();
         else
         {
-          reportError(&ident->a, "found no matching overload");
+          reportError(ident, "found no matching overload");
           attach("serial", serial);
           attach("function", ident->token.string);
           attach("output_type_goal", goal0);
@@ -3154,7 +3154,7 @@ getFunctionOverloads(Typer *typer, Identifier *ident, Term *goal0)
     if (typeErrorExpected(typer)) silentError();
     else
     {
-      reportError(&ident->a, "identifier not found");
+      reportError(ident, "identifier not found");
       attach("identifier", ident->token.string);
     }
   }
@@ -3170,7 +3170,7 @@ fillInEllipsis(Arena *arena, Typer *typer, Identifier *op_ident, Term *goal)
 
   if (goal->kind == Term_Hole)
   {
-    reportError(&op_ident->a, "cannot solve for arguments since we do know what the output type of this function should be");
+    reportError(op_ident, "cannot solve for arguments since we do know what the output type of this function should be");
   }
   else if (lookupLocalName(typer, &op_ident->token))
   {
@@ -3196,14 +3196,14 @@ fillInEllipsis(Arena *arena, Typer *typer, Identifier *op_ident, Term *goal)
     if (!out && noError())
     {
       // :solveArgs-only-error-if-unification-succeeds
-      reportError(&op_ident->a, "either no matching overload was found, or failed to solve args");
+      reportError(op_ident, "either no matching overload was found, or failed to solve args");
       attach("available_overloads", slot->count, slot->items, printOptionPrintType());
       attach("serial", serial);
     }
   }
   else
   {
-    reportError(&op_ident->a, "identifier not found");
+    reportError(op_ident, "identifier not found");
     attach("identifier", op_ident->token.string);
   }
   
@@ -3323,15 +3323,15 @@ parseSequence(Arena *arena, b32 require_braces=true)
           if (seesExpressionEndMarker())
           {// normalize goal
             GoalTransform *ast = newAst(arena, GoalTransform, &token);
-            ast->new_goal = &ast_goal->a;
-            ast0 = &ast->a;
+            ast->new_goal = ast_goal;
+            ast0 = ast;
           }
           else if (Ast *expression = parseExpression(arena))
           {// normalize with let.
             Let *let = newAst(arena, Let, &token);
             let->rhs  = expression;
-            let->type = &ast_goal->a;
-            ast0 = &let->a;
+            let->type = ast_goal;
+            ast0 = let;
             if (expression->kind == Ast_Identifier)
             {
               // borrow the name if the expression is an identifier 
@@ -3360,7 +3360,7 @@ parseSequence(Arena *arena, b32 require_braces=true)
         {
           rewrite->in_expression = parseExpression(arena);
         }
-        ast0 = &rewrite->a;
+        ast0 = rewrite;
         popContext();
       } break;
 
@@ -3368,14 +3368,14 @@ parseSequence(Arena *arena, b32 require_braces=true)
       {
         pushContext("Goal transform: => NEW_GOAL [{ EQ_PROOF_HINT }]; ...");
         GoalTransform *ast = newAst(arena, GoalTransform, &token);
-        ast0 = &ast->a;
+        ast0 = ast;
         if (optionalKind(Token_Directive_print_proof))
         {
           ast->print_proof = true;
         }
         if (optionalString("norm"))
         {
-          ast->new_goal = &newAst(arena, NormalizeMeAst, &token)->a;
+          ast->new_goal = newAst(arena, NormalizeMeAst, &token);
         }
         else
         {
@@ -3414,7 +3414,7 @@ parseSequence(Arena *arena, b32 require_braces=true)
               let->lhs  = name;
               let->rhs  = proof;
               let->type = proposition;
-              ast0 = &let->a;
+              ast0 = let;
             }
           }
         }
@@ -3436,14 +3436,14 @@ parseSequence(Arena *arena, b32 require_braces=true)
       case Tactic_seek:
       {
         SeekAst *ast = newAst(arena, SeekAst, &token);
-        ast0 = &ast->a;
+        ast0 = ast;
         expect_sequence_ended = true;
       } break;
 
       case Tactic_reductio:
       {
         ReductioAst *ast = newAst(arena, ReductioAst, &token);
-        ast0 = &ast->a;
+        ast0 = ast;
         expect_sequence_ended = true;
       } break;
 
@@ -3462,7 +3462,7 @@ parseSequence(Arena *arena, b32 require_braces=true)
               if (Ast *rhs = parseExpression(arena))
               {
                 Let *let = newAst(arena, Let, name);
-                ast0 = &let->a;
+                ast0 = let;
                 let->lhs = name->string;
                 let->rhs = rhs;
               }
@@ -3482,7 +3482,7 @@ parseSequence(Arena *arena, b32 require_braces=true)
                     let->lhs  = name->string;
                     let->rhs  = rhs;
                     let->type = type;
-                    ast0 = &let->a;
+                    ast0 = let;
                   }
                 }
               }
@@ -3555,7 +3555,7 @@ synthesizeAst(Arena *arena, Term *term, Token *token)
 {
   SyntheticAst *out = newAst(arena, SyntheticAst, token);
   out->term = term;
-  return &out->a;
+  return out;
 }
 
 internal Arrow *
@@ -3576,11 +3576,11 @@ buildCtorAst(Arena *arena, CtorAst *in, Term *output_type)
       out = uni->constructors[in->ctor_i];
     }
     else
-      reportError(&in->a, "union only has %d constructors", uni->ctor_count);
+      reportError(in, "union only has %d constructors", uni->ctor_count);
   }
   else
   {
-    reportError(&in->a, "cannot guess union of constructor");
+    reportError(in, "cannot guess union of constructor");
   }
   return out;
 }
@@ -4048,7 +4048,7 @@ buildAlgebraNorm(Arena *arena, Typer *typer, CompositeAst *in)
     reportError("expected 1 argument");
 
   if (!out && noError())
-    reportError(&in->a, "expression is already algebraically normalized");
+    reportError(in, "expression is already algebraically normalized");
 
   return out;
 }
@@ -4628,7 +4628,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
       Term *type = goal;
       if (in->signature)
       {
-        type = buildTerm(typer, &in->signature->a, holev).value;
+        type = buildTerm(typer, in->signature, holev).value;
       }
 
       if (noError())
@@ -4776,7 +4776,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
                 }
                 else
                 {
-                  reportError(&ident->a, "identifier not found");
+                  reportError(ident, "identifier not found");
                   attach("identifier", ident->token.string);
                 }
               }
@@ -5095,7 +5095,7 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
   Arena *arena = temp_arena;
   if (goal->kind == Term_Hole)
   {
-    reportError(&in->a, "fork expressions require a goal, please provide one (f.ex instead of writing \"a := b\", write \"a: A := b\")");
+    reportError(in, "fork expressions require a goal, please provide one (f.ex instead of writing \"a := b\", write \"a: A := b\")");
   }
   Fork *out = newTerm(arena, Fork, goal);
   out->case_count = in->case_count;
@@ -5175,7 +5175,7 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
         out->bodies = ordered_bodies;
       }
       else
-        reportError(&in->a, "wrong number of cases, expected: %d, got: %d",
+        reportError(in, "wrong number of cases, expected: %d, got: %d",
                    uni->ctor_count, in->case_count);
     }
     else
@@ -5258,17 +5258,17 @@ insertAutoNormalizations(Arena *arena, NormList norm_list, Ast *in0)
           // todo cleanup: we'll need to clean useless let-normalization too!
           Let *new_body = newAst(arena, Let, &item->token);
           new_body->lhs   = item->token.string;
-          new_body->rhs   = &item->a;
-          new_body->type  = &newAst(arena, NormalizeMeAst, &item->token)->a;
+          new_body->rhs   = item;
+          new_body->type  = newAst(arena, NormalizeMeAst, &item->token);
           new_body->body  = body;
           setFlag(&new_body->flags, AstFlag_Generated);
-          body = &new_body->a;
+          body = new_body;
         }
         GoalTransform *new_body = newAst(arena, GoalTransform, &body->token);
-        new_body->new_goal = &newAst(arena, NormalizeMeAst, &body->token)->a;
+        new_body->new_goal = newAst(arena, NormalizeMeAst, &body->token);
         setFlag(&new_body->flags, AstFlag_Generated);
         new_body->body = body;
-        in->bodies[case_id] = &new_body->a;
+        in->bodies[case_id] = new_body;
       }
     } break;
 
@@ -5413,7 +5413,7 @@ parseFork(Arena *arena)
     if (noError())
     {
       out = newAst(arena, ForkAst, &token);
-      out->a.token    = token;
+      out->token    = token;
       out->subject    = subject;
       out->case_count = actual_case_count;
       out->bodies     = bodies;
@@ -5421,7 +5421,7 @@ parseFork(Arena *arena)
     }
   }
 
-  return &out->a;
+  return out;
 }
 
 internal ArrowAst *
@@ -5627,14 +5627,14 @@ parseUnion(Arena *arena, Token *uni_name)
         {
           // we got rid of the param token, so now we gotta make one up...
           Token token = newToken(uni->signature->param_names[i]);
-          output_type->args[i] = &newAst(arena, Identifier, &token)->a;
+          output_type->args[i] = newAst(arena, Identifier, &token);
         }
-        output_type->op = &newAst(arena, Identifier, uni_name)->a;
-        auto_ctor_output_type = &output_type->a;
+        output_type->op = newAst(arena, Identifier, uni_name);
+        auto_ctor_output_type = output_type;
       }
       else
       {
-        auto_ctor_output_type = &newAst(arena, Identifier, uni_name)->a;
+        auto_ctor_output_type = newAst(arena, Identifier, uni_name);
       }
     }
 
@@ -5694,7 +5694,7 @@ parseUnion(Arena *arena, Token *uni_name)
             }
             else if (!sig->output_type)
             {
-              reportError(&sig->a, "output type required since there are non-poly parameters");
+              reportError(sig, "output type required since there are non-poly parameters");
             }
           }
         }
@@ -5728,7 +5728,7 @@ buildUnion(Typer *typer, UnionAst *in, Token *global_name)
   i32    non_poly_count = 0;
   if (in->signature)
   {
-    if (Term *uni_params0 = buildGlobalTerm(typer, &in->signature->a, holev))
+    if (Term *uni_params0 = buildGlobalTerm(typer, in->signature, holev))
     {
       uni_signature              = castTerm(uni_params0, Arrow);
       uni_signature->output_type = rea_Type;
@@ -5745,7 +5745,7 @@ buildUnion(Typer *typer, UnionAst *in, Token *global_name)
 
     for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
     {
-      Ast *ast_sig = &in->ctor_signatures[ctor_i]->a;
+      Ast *ast_sig = in->ctor_signatures[ctor_i];
       if (Term *sig0 = buildGlobalTerm(typer, ast_sig, holev))
       {
         Arrow *sig = ctor_signatures[ctor_i] = castTerm(sig0, Arrow);
@@ -5866,7 +5866,7 @@ parseOverload(Arena *arena)
     requireChar(')');
   }
   if (hasError()) out = 0;
-  return &out->a;
+  return out;
 }
 
 internal Ast *
@@ -5895,7 +5895,7 @@ parseFunctionExpression(Arena *arena)
   }
 
   NULL_WHEN_ERROR(out);
-  return &out->a;
+  return out;
 }
 
 internal Ast *
@@ -5951,12 +5951,12 @@ parseList(Arena *arena)
         new_out->arg_count = 2;
         new_out->args      = pushArray(arena, 2, Ast*);
         new_out->args[0]   = items[i];
-        new_out->args[1]   = &out->a;
+        new_out->args[1]   = out;
         out = new_out;
       }
     }
   }
-  return &out->a;
+  return out;
 }
 
 internal Ast *
@@ -6004,7 +6004,7 @@ parseOperand(Arena *arena)
             TypedExpression *typed = newAst(arena, TypedExpression, &type->token);
             typed->type       = type;
             typed->expression = expression;
-            operand = &typed->a;
+            operand = typed;
           }
           else
             operand = expression;
@@ -6015,7 +6015,7 @@ parseOperand(Arena *arena)
     case Token_Alphanumeric:
     case Token_Special:
     {
-      operand = &newAst(arena, Identifier, &token)->a;
+      operand = newAst(arena, Identifier, &token);
     } break;
 
     case Token_Keyword_union:
@@ -6025,12 +6025,12 @@ parseOperand(Arena *arena)
 
     case Token_Keyword_ctor:
     {
-      operand = &parseCtor(arena)->a;
+      operand = parseCtor(arena);
     } break;
 
     case Token_Keyword_seek:
     {
-      operand = &parseSeek(arena)->a;
+      operand = parseSeek(arena);
     } break;
 
     case Token_Keyword_overload:
@@ -6054,7 +6054,7 @@ parseOperand(Arena *arena)
       new_operand->op        = op;
       new_operand->arg_count = 0;
       new_operand->args      = args;
-      operand = &new_operand->a;
+      operand = new_operand;
       while (hasMore())
       {
         if (optionalChar(')'))
@@ -6121,7 +6121,7 @@ parseExpression_(Arena *arena, ParseExpressionOptions opt)
   if (seesArrowExpression())
   {
     // todo Arrow could just be an operand maybe?
-    out = &parseArrowType(arena, false)->a;
+    out = parseArrowType(arena, false);
   }
   else if (Ast *operand = parseOperand(arena))
   {
@@ -6152,10 +6152,10 @@ parseExpression_(Arena *arena, ParseExpressionOptions opt)
             args[1] = recurse;
 
             CompositeAst *new_operand = newAst(arena, CompositeAst, &op_token);
-            new_operand->op        = &op->a;
+            new_operand->op        = op;
             new_operand->arg_count = arg_count;
             new_operand->args      = args;
-            operand = &new_operand->a;
+            operand = new_operand;
           }
         }
         else
@@ -6200,7 +6200,7 @@ buildGlobalFunction(Typer *typer, FunctionAst *in)
   i32 unused_var serial = DEBUG_SERIAL;
   pushContext(in->token.string, true);
   Function *out = 0;
-  if (Term *type = buildTerm(typer, &in->signature->a, holev))
+  if (Term *type = buildTerm(typer, in->signature, holev))
   {
     type = copyToGlobalArena(type);
     if (Arrow *signature = castTerm(type, Arrow))
@@ -6218,7 +6218,7 @@ buildGlobalFunction(Typer *typer, FunctionAst *in)
     }
     else
     {
-      reportError(&in->signature->a, "function signature is required to be an arrow type");
+      reportError(in->signature, "function signature is required to be an arrow type");
     }
   }
 

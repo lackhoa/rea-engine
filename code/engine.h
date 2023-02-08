@@ -77,8 +77,8 @@ const u32 AstFlag_Generated = 1 << 0;
 
 embed_struct struct Ast {
   AstKind kind;
-  Token       token;
-  u32         flags;
+  Token token;
+  u32   flags;
 };
 
 inline Ast **
@@ -108,24 +108,20 @@ newAst_(Arena *arena, AstKind cat, Token *token, size_t size)
 #define castAst(exp, Cat) ((exp)->kind == Ast_##Cat ? (Cat*)(exp) : 0)
 #define castTerm(exp, Cat) ((exp)->kind == Term_##Cat ? (Cat*)(exp) : 0)
 
-struct Identifier {
-  embed_Ast(a);
+struct Identifier : Ast {
   // NOTE: Since the ast has a token, which already has the identifier in it, we
-  // don't need to put it in the identifier struct. But that might change.
+  // don't need to put it in the identifier struct.
 };
 
 typedef Ast Hole;
 typedef Ast Ellipsis;
 typedef Ast AlgebraicManipulation;
 
-struct NormalizeMeAst {
-  embed_Ast(a);
+struct NormalizeMeAst : Ast {
   String name_to_unfold;
 };
 
-struct ForkAst {
-  embed_Ast(a);
-
+struct ForkAst : Ast {
   Ast    *subject;
   i32     case_count;
   Ast   **bodies;
@@ -218,8 +214,7 @@ struct Function : Term {
   u32   function_flags;
 };
 
-struct Let {
-  embed_Ast(a);
+struct Let : Ast {
   String  lhs;
   Ast    *rhs;
   Ast    *type;
@@ -281,8 +276,7 @@ struct HeapPointer : Pointer {
   String   debug_field_name;
 };
 
-struct CompositeAst {
-  embed_Ast(a);
+struct CompositeAst : Ast {
   Ast  *op;
   i32   arg_count;
   Ast **args;
@@ -307,8 +301,7 @@ u32 ParameterFlag_Inferred = 1 << 0;
 u32 ParameterFlag_Unused   = 1 << 1;
 u32 ParameterFlag_Poly     = 1 << 2;
 
-struct ArrowAst {
-  embed_Ast(a);
+struct ArrowAst : Ast {
   i32     param_count;
   String *param_names;
   Ast   **param_types;
@@ -343,9 +336,7 @@ struct BuildTerm
   operator Term*() { return value; }
 };
 
-struct RewriteAst
-{
-  embed_Ast(a);
+struct RewriteAst : Ast {
   Ast *eq_proof;
   Ast *new_goal;
   Ast *body;
@@ -353,9 +344,7 @@ struct RewriteAst
   Ast *in_expression;
 };
 
-struct GoalTransform
-{
-  embed_Ast(a);
+struct GoalTransform : Ast {
   Ast *hint;
   Ast *new_goal;
   Ast *body;
@@ -428,8 +417,7 @@ const u32 FunctionFlag_no_apply               = 1 << 1;
 const u32 FunctionFlag_no_print_as_binop      = 1 << 2;
 const u32 FunctionFlag_expand                 = 1 << 3;
 
-struct FunctionAst {
-  embed_Ast(a);
+struct FunctionAst : Ast {
   ArrowAst *signature;
   Ast      *body;
   u32       function_flags;
@@ -448,38 +436,31 @@ struct Fork : Term {
   Term  **bodies;
 };
 
-struct SyntheticAst {
-  embed_Ast(a);
+struct SyntheticAst : Ast {
   Term *term;
 };
 
-struct UnionAst {
-  embed_Ast(a);
+struct UnionAst : Ast {
   i32        ctor_count;
   Token     *ctor_names;
   ArrowAst **ctor_signatures;
   ArrowAst  *signature;
 };
 
-struct OverloadAst {
-  embed_Ast(a);
+struct OverloadAst : Ast {
   Token  function_name;
   Ast   *distinguisher;
 };
 
-struct CtorAst {
-  embed_Ast(a);
+struct CtorAst : Ast {
   i32  ctor_i;
 };
 
-struct SeekAst {
-  embed_Ast(a);
+struct SeekAst : Ast {
   Ast *proposition;
 };
 
-struct ReductioAst {
-  embed_Ast(a);
-};
+struct ReductioAst : Ast {};
 
 struct SolveArgs {i32 arg_count; Term **args;};
 
@@ -534,8 +515,7 @@ struct LookupPolyParameter {
   operator bool() { return found; }
 };
 
-struct TypedExpression {
-  embed_Ast(a);
+struct TypedExpression : Ast {
   Ast *type;
   Ast *expression;
 };

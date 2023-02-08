@@ -1,7 +1,6 @@
 void eatToken(Tokenizer * tk);
 Token nextToken(Tokenizer * tk);
 Token peekToken(Tokenizer * tk);
-Record * castRecord(Term * record0);
 Term * getType(Term * in0);
 void dump(Trinary trinary);
 void unwindScope(Typer * env);
@@ -15,6 +14,7 @@ void print(Arena * buffer, Ast * in0);
 void print(Arena * buffer, Term * in0, PrintOptions opt);
 void print(Arena * buffer, Term * in0);
 b32 equal(Term * lhs, Term * rhs);
+Record * castRecord(Term * record0);
 Term * apply(Term * op, i32 arg_count, Term ** args, String name_to_unfold);
 Trinary equalTrinary(Term * lhs0, Term * rhs0);
 Term * solveGoal(Solver * solver, Term * goal);
