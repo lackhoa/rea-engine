@@ -119,3 +119,13 @@ permuteEquivalent :: ($A: Type, a,b: A, l,m: List(A),
 provePermuteHelper :: fn(T: Type, a,b,c: PList(T), p: Permute(a,b), e: b=c) -> Permute(a,c)
 {rewrite <- e;}
 
+fold :: fn($A: Type, op: binaryOp(A), a: A, l: Array(A)) -> A
+{
+ len := toNat(length(l));
+ fork len
+ {
+  0  return a,
+  ++ return a op fold(op, get(l, 0), slice(l, 1, length(l)))
+  }
+ }
+

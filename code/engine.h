@@ -44,6 +44,7 @@ enum AstKind {
   Ast_CtorAst,
   Ast_SeekAst,
   Ast_ReductioAst,
+  Ast_ListAst,
 
   // Sequence
   Ast_ForkAst,
@@ -58,6 +59,7 @@ enum TermKind {
   Term_Hole = 1,
 
   Term_Primitive,
+
   Term_Union,
   Term_Constructor,
   Term_Function,
@@ -166,8 +168,8 @@ struct Scope {
   Term  **values;
 };
 
-const u32 ExpectError_Ambiguous = 1 << 0;
-const u32 ExpectError_WrongType = 1 << 1;
+const u32 Error_Ambiguous = 1 << 0;
+const u32 Error_WrongType = 1 << 1;
 
 struct Typer
 {
@@ -191,12 +193,29 @@ struct TermList
 
 struct Term {
   TermKind  kind;
-  i32           serial;
-  Term         *type;
-  Token        *global_name;
+  i32       serial;
+  Term     *type;
+  Token    *global_name;
 };
 
-struct Primitive : Term {};
+struct TermArray {
+  i32    count;
+  Term **items;
+};
+
+enum PrimitiveKind {
+  Primitive_Unique = 0,         // f.ex =, Set, Type, etc. they have no data attached
+  Primitive_U32    = 1,
+  Primitive_Array  = 2,
+};
+
+struct Primitive : Term {
+  PrimitiveKind prim_kind;
+  union {
+    u32       u32;
+    TermArray array;
+  };
+};
 
 struct Constructor : Term {
   String name;  // :atomic-constructors-dont-have-global-names
@@ -394,11 +413,6 @@ printOptionPrintType(PrintOptions options={})
   return options;
 }
 
-struct TermArray {
-  i32    count;
-  Term **items;
-};
-
 struct AstArray {
   i32   count;
   Term *items;
@@ -418,10 +432,11 @@ struct SearchOutput {b32 found; TreePath *path; operator bool() {return found;}}
 
 struct CompareTerms {Trinary result; TreePath *diff_path;};
 
-const u32 FunctionFlag_is_global_hint         = 1 << 0;
-const u32 FunctionFlag_no_apply               = 1 << 1;
-const u32 FunctionFlag_no_print_as_binop      = 1 << 2;
-const u32 FunctionFlag_expand                 = 1 << 3;
+const u32 FunctionFlag_is_global_hint    = 1 << 0;
+const u32 FunctionFlag_no_apply          = 1 << 1;
+const u32 FunctionFlag_no_print_as_binop = 1 << 2;
+const u32 FunctionFlag_expand            = 1 << 3;
+const u32 FunctionFlag_is_builtin        = 1 << 4;
 
 struct FunctionAst : Ast {
   ArrowAst *signature;
@@ -533,6 +548,12 @@ String number_to_string[] = {
   toString("4"), toString("5"), toString("6"), toString("7"),
   toString("8"), toString("9"), toString("10"), toString("11"),
   toString("12"), toString("13"), toString("14"), toString("15"),
+};
+
+struct ListAst : Ast {
+  i32   count;
+  Ast **items;
+  Ast  *tail;
 };
 
 #include "generated/engine_forward.h"

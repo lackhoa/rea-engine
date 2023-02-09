@@ -30,14 +30,6 @@ Permute :: union($$T: Type, List(T), List(T))
  permuteChain(l,l1,l2: List(T), Permute(l, l1), Permute(l1, l2)) -> Permute(l, l2)
  }
 
-binaryOp :: fn(T: Type) -> Type
-#expand
-{return (a,b: T) -> T}
-
-isAssociative :: fn($T: Type, op: binaryOp(T)) -> Type
-#expand
-{return (a,b,c: T) -> (a op b) op c = a op b op c}
-
 fold :: fn($A: Type, op: binaryOp(A), a: A, tail: List(A)) -> A
 #no_print_as_binop
 {fork tail
@@ -57,23 +49,23 @@ foldConcat :: (($T: Type, op: binaryOp(T), assoc: isAssociative(op),
   => a op fold(op, l.head, l.tail) op fold(op, b, m) = a op fold(op, l.head, l.tail) op fold(op, b, m) {foldConcat}
   }}
 
-foldPermute :: ($T: Type,
-                op: (a,b: T) -> T,
-                associative: (a,b,c: T) -> (a op b) op c = a op b op c,
-                commutative: (a,b: T) -> a op b = b op a,
-                a,b: T, l,m: List(T),
-                p: Permute(a cons l, b cons m)) -> fold(op, a, l) = fold(op, b, m)
-{
- fork p
- {
-  permuteNil
-  i := invert(p);
-  ;; reductio;
-  ,
-  permuteSkip
-  ,
-  permuteSwap
-  ,
-  permuteChain
-  }
- }
+;; foldPermute :: ($T: Type,
+;;                 op: (a,b: T) -> T,
+;;                 associative: (a,b,c: T) -> (a op b) op c = a op b op c,
+;;                 commutative: (a,b: T) -> a op b = b op a,
+;;                 a,b: T, l,m: List(T),
+;;                 p: Permute(a cons l, b cons m)) -> fold(op, a, l) = fold(op, b, m)
+;; {
+;;  fork p
+;;  {
+;;   permuteNil
+;;   i := invert(p);
+;;   ;; reductio;
+;;   ,
+;;   permuteSkip
+;;   ,
+;;   permuteSwap
+;;   ,
+;;   permuteChain
+;;   }
+;;  }

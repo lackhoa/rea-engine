@@ -35,7 +35,6 @@ enum TokenKind
   Token_Keyword_check,
   Token_Keyword_check_truth,
   Token_Keyword_algebra_declare,
-  Token_Keyword_primitive,
   Token_Keyword_END,
 
   // todo #cleanup We don't want token categories for these! Just dispatch when you see "#".
@@ -51,14 +50,16 @@ enum TokenKind
   Token_Directive_print_proof,
   Token_Directive_unused,
   Token_Directive_print,
+  Token_Directive_primitive,
+  Token_Directive_builtin,
   Token_Directive_END,
 };
 
 const char *language_keywords[] = {
   "", "fn", "union", "ctor", "overload", "prove", "seek", "in",
-  "test_eval", "print", "print_raw", "print_ast", "check", "check_truth", "algebra_declare", "primitive",
+  "test_eval", "print", "print_raw", "print_ast", "check", "check_truth", "algebra_declare",
 };
-const char *meta_directives[] = {"", "load", "should_fail", "debug", "norm", "hint", "no_apply", "expand", "no_print_as_binop", "print_proof", "unused", "print"};
+const char *meta_directives[] = {"", "load", "should_fail", "debug", "norm", "hint", "no_apply", "expand", "no_print_as_binop", "print_proof", "unused", "print", "primitive", "builtin"};
 
 enum TacticEnum {
   Tactic_rewrite = 1,

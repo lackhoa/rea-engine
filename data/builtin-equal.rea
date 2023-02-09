@@ -1,0 +1,1 @@
+#primitive = : ($A: Type, a,b: A) -> Type;

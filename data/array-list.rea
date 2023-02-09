@@ -1,0 +1,22 @@
+toArray :: fn($A: Type, l: List(A)) -> Array(A)
+{
+ fork l
+ {
+  nil   return [],
+  cons  return [l.head] + toArray(l.tail),
+  }
+ }
+
+permuteListToArray :: (A: Type, l,l1:List(A), p: Permute(l,l1)) -> Permute(toArray(l), toArray(a1))
+{
+ }
+
+Permute :: union($$A: Type, Array(A), Array(A))
+{
+ permuteSame(l: Array(A)) -> Permute(l, l)
+ ,
+ permuteSwap(l: Array(A), a,b: U32) -> Permute(l, swap(l, a,b))
+ ,
+ permuteChain(l,l1,l2: Array(A), Permute(l, l1), Permute(l1, l2)) -> Permute(l, l2)
+ }
+

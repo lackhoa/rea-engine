@@ -1,0 +1,11 @@
+#load "builtin-equal.rea"
+#load "nat.rea"
+
+#primitive U32   : Type;
+#primitive toNat : (U32) -> Nat;
+
+#primitive Array  : (A: Type) -> Type;
+#primitive length : ($A: Type, l: Array(A)) -> U32;
+#primitive slice  : ($A: Type, l: Array(A), i,j: U32) -> Array(A);
+#primitive get    : ($A: Type, l: Array(A), i: U32)   -> A;
+#primitive swap   : ($A: Type, l: Array(A), i,j: U32) -> Array(A);

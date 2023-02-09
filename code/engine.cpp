@@ -15,14 +15,20 @@
 #include "lexer.cpp"
 #include "debug_config.h"
 
-global_variable Primitive *rea_Type;
-global_variable Primitive *rea_equal;
+global_variable Term *rea_Type;
+global_variable Term *rea_equal;
 global_variable Term *rea_False;
 global_variable Term *rea_eqChain;
 
 // TODO: These List builtins are going too far...
-global_variable Primitive *rea_Int;
-global_variable Primitive *rea_Array;
+global_variable Term *rea_U32;
+global_variable Term *rea_Array;
+global_variable Term *rea_length;
+global_variable Term *rea_slice;
+global_variable Term *rea_swap;
+global_variable Term *rea_toNat;
+global_variable Term *rea_get;
+
 global_variable Term *rea_List;
 global_variable Term *rea_single;
 global_variable Term *rea_cons;
@@ -43,16 +49,24 @@ global_variable Term *holev = &holev_;
 
 global_variable EngineState global_state;
 
-struct PrimitiveEntry {
-  char       *name;
-  Primitive **term;
+struct BuiltinEntry {
+  char  *name;
+  Term **term;
 };
 
-global_variable PrimitiveEntry primitive_table[] = {
+#define ENTRY(name) {#name, &rea_##name}
+global_variable BuiltinEntry builtin_table[] = {
   {"=", &rea_equal},
-  {"Array", &rea_Array},
-  {"Int", &rea_Int},
+  ENTRY(Array),
+  ENTRY(U32),
+  ENTRY(length),
+  ENTRY(slice),
+  ENTRY(get),
+  ENTRY(swap),
+  ENTRY(toNat),
+  ENTRY(falseImpliesAll),
 };
+#undef ENTRY
 
 inline void
 maybeDeref(Term **in0)
@@ -182,12 +196,6 @@ attach(char *key, i32 n, Tokenizer *tk=global_tokenizer)
   StartString start = startString(error_buffer);
   print(error_buffer, "%d", n);
   attach(key, endString(start), tk);
-}
-
-inline Token *
-lastToken()
-{
-  return &global_tokenizer->last_token;
 }
 
 inline String
@@ -1105,6 +1113,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
         case Term_Function:
         {
           Function *in = castTerm(in0, Function);
+          print(buffer, "fn");
           if (in->type)
           {
             print(buffer, in->type, new_opt);
@@ -1144,13 +1153,27 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
 
         case Term_Primitive:
         {
-          // todo cleanup probably don't need these anymore
-          if (in0 == rea_equal)
-            print(buffer, "=");
-          else if (in0 == rea_Type)
-            print(buffer, "Type");
-          else
-            todoIncomplete;
+          Primitive *in = (Primitive*)in0;
+          switch (in->prim_kind)
+          {
+            case Primitive_Unique:
+            {
+              assert(in->global_name);
+              print(buffer, in->global_name->string);
+            } break;
+
+            case Primitive_U32:
+            {
+              print(buffer, "%d", in->u32);
+            } break;
+
+            case Primitive_Array:
+            {
+              todoIncomplete;
+            } break;
+
+            invalidDefaultCase;
+          }
         } break;
 
         case Term_Constructor:
@@ -1328,6 +1351,7 @@ evaluate_(EvalContext *ctx, Term *in0)
         {
           // copy so we can evaluate the type.
           Variable *out = copyTerm(arena, in);
+          out->type = evaluate_(ctx, in0->type);
           out0 = out;
         }
       } break;
@@ -1352,6 +1376,7 @@ evaluate_(EvalContext *ctx, Term *in0)
         if (!out0)
         {
           Composite *out = copyTerm(arena, in);
+          out->type = evaluate_(ctx, in0->type);
           out->op   = op;
           out->args = args;
           out0 = out;
@@ -1388,6 +1413,7 @@ evaluate_(EvalContext *ctx, Term *in0)
           assert(ctx->offset);
           castRecord(record0);
           Accessor *out = copyTerm(arena, in);
+          out->type = evaluate_(ctx, in0->type);
           out->record = record0;
           out0 = out;
         }
@@ -1397,6 +1423,7 @@ evaluate_(EvalContext *ctx, Term *in0)
       {
         Rewrite *in  = castTerm(in0, Rewrite);
         Rewrite *out = copyTerm(arena, in);
+        out->type = evaluate_(ctx, in0->type);
         out->eq_proof = evaluate_(ctx, in->eq_proof);
         out->body     = evaluate_(ctx, in->body);
         out0 = out;
@@ -1406,6 +1433,7 @@ evaluate_(EvalContext *ctx, Term *in0)
       {
         Function *in  = castTerm(in0, Function);
         Function *out = copyTerm(arena, in);
+        out->type = evaluate_(ctx, in0->type);
 
         EvalContext new_ctx = *ctx;
         new_ctx.offset++;
@@ -1422,6 +1450,7 @@ evaluate_(EvalContext *ctx, Term *in0)
         if (substitute_only)
         {
           Fork *out = copyTerm(arena, in);
+          out->type = evaluate_(ctx, in0->type);
           out->subject = subject0;
           allocateArray(arena, in->case_count, out->bodies);
           for (i32 i=0; i < in->case_count; i++)
@@ -1443,7 +1472,9 @@ evaluate_(EvalContext *ctx, Term *in0)
       case Term_Computation:
       {
         Computation *in  = (Computation *)(in0);
-        out0 = copyTerm(arena, in);
+        Computation *out = copyTerm(arena, in);
+        out->type = evaluate_(ctx, in0->type);
+        out0 = out;
       } break;
 
       case Term_Pointer:
@@ -1459,16 +1490,9 @@ evaluate_(EvalContext *ctx, Term *in0)
       default:
         todoIncomplete;
     }
-    if (out0 && out0 != in0)
-    {
-      out0->type = evaluate_(ctx, in0->type);
-    }
   }
 
-  if (substitute_only)
-  {
-    assert(out0);
-  }
+  if (substitute_only) assert(out0);
   return out0;
 }
 
@@ -2184,7 +2208,27 @@ toAbstractTerm_(AbstractContext *ctx, Term *in0)
       case Term_Accessor:
       {
         // #toAbstractTerm-guarantee-copy
-        out0 = copyTerm(arena, (Accessor *)in0);
+        Accessor *in = (Accessor *)in0;
+        Accessor *out = copyTerm(arena, in);
+        out->record = toAbstractTerm_(ctx, in->record);
+        out0 = out;
+      } break;
+
+      case Term_Primitive:
+      {
+        Primitive *in = (Primitive *)in0;
+        Primitive *out = copyTerm(arena, in);
+        switch (in->prim_kind)
+        {
+          case Primitive_U32:
+          {} break;
+
+          case Primitive_Array:
+          {todoIncomplete} break;
+
+          invalidDefaultCase;
+        }
+        out0 = out;
       } break;
 
       default:
@@ -3093,13 +3137,13 @@ solveGoal(Solver *solver, Term *goal)
 inline b32
 typeErrorExpected(Typer *typer)
 {
-  return checkFlag(typer->expected_errors, ExpectError_WrongType);
+  return checkFlag(typer->expected_errors, Error_WrongType);
 }
 
 inline b32
-AmbiguousErrorExpected(Typer *typer)
+ambiguousErrorExpected(Typer *typer)
 {
-  return checkFlag(typer->expected_errors, ExpectError_Ambiguous);
+  return checkFlag(typer->expected_errors, Error_Ambiguous);
 }
 
 inline TermArray
@@ -3107,6 +3151,10 @@ getFunctionOverloads(Typer *typer, Identifier *ident, Term *goal0)
 {
   i32 UNUSED_VAR serial = DEBUG_SERIAL;
   TermArray out = {};
+  if (equal(ident->token, "toArray"))
+  {
+    breakhere;
+  }
   if (GlobalBinding *slot = lookupGlobalNameSlot(ident, false))
   {
     if (goal0->kind == Term_Hole)
@@ -3148,12 +3196,8 @@ getFunctionOverloads(Typer *typer, Identifier *ident, Term *goal0)
   }
   else
   {
-    if (typeErrorExpected(typer)) silentError();
-    else
-    {
-      reportError(ident, "identifier not found");
-      attach("identifier", ident->token.string);
-    }
+    reportError(ident, "identifier not found");
+    attach("identifier", ident->token.string);
   }
   return out;
 }
@@ -4235,7 +4279,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
           Typer *typer = &new_typer;
           if (op_list.count > 1)
           {
-            setFlag(&typer->expected_errors, ExpectError_WrongType);
+            setFlag(&typer->expected_errors, Error_WrongType);
           }
 
           for (i32 attempt=0;
@@ -4332,7 +4376,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
                     if (stack_has_hole)
                     {
                       Typer new_typer = *typer;
-                      setFlag(&new_typer.expected_errors, ExpectError_Ambiguous);
+                      setFlag(&new_typer.expected_errors, Error_Ambiguous);
                       if (Term *arg = buildTerm(&new_typer, in_arg, holev))
                       {
                         args[arg_i] = arg;
@@ -4385,6 +4429,10 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
                         if (Term *fill = solveGoal(Solver{.arena=arena, .typer=typer, .use_global_hints=true}, expected_arg_type))
                         {
                           args[arg_i] = fill;
+                        }
+                        else if (ambiguousErrorExpected(typer))
+                        {
+                          silentError();
                         }
                         else
                         {
@@ -4452,55 +4500,69 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
     {
       Identifier *in = castAst(in0, Identifier);
       Token *name = &in->token;
-      if (LookupLocalName local = lookupLocalName(typer, name))
+      if (goal == rea_U32)
       {
-        value = lookupStack(typer, local.stack_delta, local.var_index);
+        i32 number = toInt32(name);  // todo: wrong number type.
+        if (noError())
+        {
+          Primitive *primitive_num = newTerm(arena, Primitive, rea_U32);
+          primitive_num->u32    = number;
+          primitive_num->prim_kind = Primitive_U32;
+          value = primitive_num;
+        }
       }
       else
       {
-        if (GlobalBinding *globals = lookupGlobalName(name))
+        if (LookupLocalName local = lookupLocalName(typer, name))
         {
-          for (i32 value_id = 0; value_id < globals->count; value_id++)
+          value = lookupStack(typer, local.stack_delta, local.var_index);
+        }
+        else
+        {
+          if (GlobalBinding *globals = lookupGlobalName(name))
           {
-            Term *slot_value = globals->items[value_id];
-            if (matchType(getType(slot_value), goal))
+            for (i32 value_id = 0; value_id < globals->count; value_id++)
             {
-              if (value)
-              {// ambiguous
-                if (AmbiguousErrorExpected(typer)) silentError();
+              Term *slot_value = globals->items[value_id];
+              if (matchType(getType(slot_value), goal))
+              {
+                if (value)
+                {// ambiguous
+                  if (ambiguousErrorExpected(typer)) silentError();
+                  else
+                  {
+                    tokenError(name, "not enough type information to disambiguate global name");
+                    attach("serial", serial);
+                  }
+                  break;
+                }
                 else
                 {
-                  tokenError(name, "not enough type information to disambiguate global name");
-                  attach("serial", serial);
+                  value = slot_value;
                 }
-                break;
               }
+            }
+            if (!value)
+            {
+              if (typeErrorExpected(typer)) silentError();
               else
               {
-                value = slot_value;
+                tokenError(name, "global name does not match expected type");
+                attach("name", name);
+                attach("expected_type", goal);
+                attach("serial", serial);
+                if (globals->count == 1)
+                {
+                  attach("actual_type", getType(globals->items[0]));
+                }
               }
             }
           }
-          if (!value)
-          {
-            if (typeErrorExpected(typer)) silentError();
-            else
-            {
-              tokenError(name, "global name does not match expected type");
-              attach("name", name);
-              attach("expected_type", goal);
-              attach("serial", serial);
-              if (globals->count == 1)
-              {
-                attach("actual_type", getType(globals->items[0]));
-              }
-            }
-          }
-        }
 
-        if (value)
-        {
-          should_check_type = false;
+          if (value)
+          {
+            should_check_type = false;
+          }
         }
       }
     } break;
@@ -4903,7 +4965,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
 
     case Ast_TypedExpression:
     {
-      TypedExpression *in = castAst(in0, TypedExpression);
+      TypedExpression *in = (TypedExpression *)(in0);
       if (Term *type = buildTerm(typer, in->type, holev).value)
       {
         value = buildTerm(typer, in->expression, type).value;
@@ -4915,6 +4977,38 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
       value = reductioAdAbsurdum(Solver{.arena=arena, .typer=typer}, goal);
       if (!value)
         reportError(in0, "no contradiction found");
+    } break;
+
+    case Ast_ListAst:
+    {
+      ListAst *in = (ListAst *)in0;
+      auto [uni, uni_args] = castUnion(goal);
+      if (uni == rea_Array)
+      {
+        todoIncomplete;
+#if 0
+        Term **items = pushArray(arena, in->count, Term *);
+        Primitive *array = newTerm(arena, Primitive, goal);
+        array->prim_kind = Primitive_Array;
+        array->array.count = in->count;
+        array->array.items = items;
+#endif
+      }
+      else if (uni == rea_List)
+      {
+        todoIncomplete;
+      }
+      else
+      {
+        if (goal->kind == Term_Hole)
+        {
+          reportError(in, "type annotation is needed to decode this list expression");
+        }
+        else
+        {
+          reportError(in, "list syntax is not supported for this type");
+        }
+      }
     } break;
 
     invalidDefaultCase;
@@ -5193,39 +5287,27 @@ newRewrite(Arena *arena, Term *eq_proof, Term *body, TreePath *path, b32 right_t
 }
 
 inline Term *
-parseAndBuildTemp(Term *expected_type=holev)
+parseAndBuildTemp(Typer *typer, Term *expected_type=holev)
 {
   Term *out = 0;
   if (Ast *ast = parseExpression(temp_arena))
   {
-    Typer typer = {};
-    out  = buildTerm(&typer, ast, expected_type);
+    out  = buildTerm(typer, ast, expected_type);
   }
   return out;
 }
 
 inline Term *
-parseAndBuildGlobal(Term *expected_type=holev)
+parseAndBuildGlobal(Typer *typer, Term *expected_type=holev)
 {
   Term *out = 0;
   if (Ast *ast = parseExpression(temp_arena))
   {
-    Typer typer = {};
-    out = buildTerm(&typer, ast, expected_type);
+    out = buildTerm(typer, ast, expected_type);
     out = copyToGlobalArena(out);
   }
   return out;
 }
-
-#if 0
-inline Term *
-installBuiltin()
-{
-  Term *out = parseAndBuildGlobal(holev);
-  assert(out);
-  return out;
-}
-#endif
 
 struct NormList {
   i32          count;
@@ -5342,6 +5424,10 @@ parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
         {
           setFlag(&out->function_flags, FunctionFlag_expand);
         }
+        else if (optionalKind(Token_Directive_builtin))
+        {
+          setFlag(&out->function_flags, FunctionFlag_is_builtin);
+        }
         else
           break;
       }
@@ -5349,7 +5435,9 @@ parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
       if (Ast *body = parseSequence(arena))
       {
         if (is_theorem)
+        {
           insertAutoNormalizations(arena, norm_list, body);
+        }
         out->body      = body;
         out->signature = signature;
       }
@@ -5820,7 +5908,7 @@ buildUnion(Typer *typer, UnionAst *in, Token *global_name)
 }
 
 inline CtorAst *
-parseCtor(Arena *arena)
+parseCtorAst(Arena *arena)
 {
   CtorAst *out = newAst(arena, CtorAst, &global_tokenizer->last_token);
   if (requireChar('['))
@@ -5894,13 +5982,13 @@ parseFunctionExpression(Arena *arena)
 internal Ast *
 parseList(Arena *arena)
 {
-  CompositeAst *out = 0;
+  ListAst *out = 0;
   // :list-opening-brace-eaten
   Token *first_token = lastToken();
   i32 count = 0;
   Ast **items = pushArray(arena, DEFAULT_MAX_LIST_LENGTH, Ast*);
   char closing = ']';
-  Ast unused_var *tail = 0;
+  Ast *tail = 0;
   for (; noError(); )
   {
     if (optionalChar(closing))
@@ -5919,35 +6007,12 @@ parseList(Arena *arena)
       break;
     }
   }
-  if (count == 0)
-  {
-    reportError(first_token, "empty list currently not supported");
-  }
   if (noError())
   {
-    if (tail)
-    {
-      todoIncomplete;
-    }
-    else
-    {
-      out = newAst(arena, CompositeAst, first_token);
-      out->op        = synthesizeAst(arena, rea_single, first_token);
-      out->arg_count = 1;
-      out->args      = pushArray(arena, 1, Ast *);
-      out->args[0]   = items[count-1];
-      for (i32 i=count-2; i >= 0; i--)
-      {
-        Token *token = &items[i]->token;
-        CompositeAst *new_out = newAst(arena, CompositeAst, token);
-        new_out->op        = synthesizeAst(arena, rea_cons, token);
-        new_out->arg_count = 2;
-        new_out->args      = pushArray(arena, 2, Ast*);
-        new_out->args[0]   = items[i];
-        new_out->args[1]   = out;
-        out = new_out;
-      }
-    }
+    out = newAst(arena, ListAst, first_token);
+    out->count = count;
+    out->items = items;
+    out->tail  = tail;
   }
   return out;
 }
@@ -6018,7 +6083,7 @@ parseOperand(Arena *arena)
 
     case Token_Keyword_ctor:
     {
-      operand = parseCtor(arena);
+      operand = parseCtorAst(arena);
     } break;
 
     case Token_Keyword_seek:
@@ -6187,6 +6252,25 @@ addGlobalHint(Function *fun)
   global_state.hints = new_hint;
 }
 
+internal void
+addBuiltinFunction(Function *fun)
+{
+  String fun_name = fun->global_name->string;
+  b32 installed = false;
+  for (i32 i=0;
+       !installed && i < arrayCount(builtin_table);
+       i++)
+  {
+    BuiltinEntry entry = builtin_table[i];
+    if (equal(fun_name, entry.name))
+    {
+      installed = true;
+      *entry.term = fun;
+    }
+  }
+  assert(installed);
+}
+
 internal Function *
 buildGlobalFunction(Typer *typer, FunctionAst *in)
 {
@@ -6206,6 +6290,10 @@ buildGlobalFunction(Typer *typer, FunctionAst *in)
         if (checkFlag(in->function_flags, FunctionFlag_is_global_hint))
         {
           addGlobalHint(out);
+        }
+        if (checkFlag(in->function_flags, FunctionFlag_is_builtin))
+        {
+          addBuiltinFunction(out);
         }
       }
     }
@@ -6243,7 +6331,7 @@ parseTopLevel(EngineState *state)
     Typer *typer  = &typer_;
     if (should_fail_active)
     {
-      setFlag(&typer->expected_errors, ExpectError_WrongType);
+      setFlag(&typer->expected_errors, Error_WrongType);
     }
 
     switch (token_.kind)
@@ -6280,6 +6368,34 @@ parseTopLevel(EngineState *state)
           }
         }
         popContext();
+      } break;
+
+      case Token_Directive_primitive:
+      {
+        if (requireIdentifier())
+        {
+          Token primitive_name = *lastToken();
+          if (requireChar(':'))
+          {
+            if (Term *primitive_type = parseAndBuildGlobal(typer))
+            {
+              b32 installed = false;
+              for (i32 i=0;
+                   !installed && i < arrayCount(builtin_table);
+                   i++)
+              {
+                BuiltinEntry entry = builtin_table[i];
+                if (equal(primitive_name, entry.name))
+                {
+                  installed = true;
+                  *entry.term = newTerm(arena, Primitive, primitive_type);
+                  addBuiltinGlobalBinding(primitive_name.string, *entry.term);
+                }
+              }
+              // assert(installed);
+            }
+          }
+        }
       } break;
 
       case Token_Directive_print:
@@ -6320,7 +6436,7 @@ parseTopLevel(EngineState *state)
 
       case Token_Keyword_test_eval:
       {
-        if (Term *expr = parseAndBuildTemp())
+        if (Term *expr = parseAndBuildTemp(typer))
         {
           normalize(typer, expr);
         }
@@ -6333,7 +6449,7 @@ parseTopLevel(EngineState *state)
         {
           setFlag(&flags, PrintFlag_LockDetailed);
         }
-        if (Term *expr = parseAndBuildTemp())
+        if (Term *expr = parseAndBuildTemp(typer))
         {
           Term *norm = normalize(0, expr);
           print(0, norm, {.flags=flags, .print_type_depth=1});
@@ -6343,7 +6459,7 @@ parseTopLevel(EngineState *state)
 
       case Token_Keyword_print_raw:
       {
-        if (Term *parsing = parseAndBuildTemp())
+        if (Term *parsing = parseAndBuildTemp(typer))
           print(0, parsing, {.flags = PrintFlag_Detailed|PrintFlag_LockDetailed,
                              .print_type_depth = 1});
         print(0, "\n");
@@ -6364,7 +6480,7 @@ parseTopLevel(EngineState *state)
         {
           if (optionalChar(':'))
           {
-            if (Term *type = parseAndBuildTemp())
+            if (Term *type = parseAndBuildTemp(typer))
             {
               expected_type = type;
             }
@@ -6379,7 +6495,7 @@ parseTopLevel(EngineState *state)
 
       case Token_Keyword_check_truth:
       {
-        if (Term *goal = parseAndBuildTemp())
+        if (Term *goal = parseAndBuildTemp(typer))
         {
           b32 goal_valid = false;
           if (Composite *eq = castTerm(goal, Composite))
@@ -6408,7 +6524,7 @@ parseTopLevel(EngineState *state)
 
       case Token_Keyword_algebra_declare:
       {
-        if (Term *type = parseAndBuildGlobal())
+        if (Term *type = parseAndBuildGlobal(typer))
         {
           AlgebraDatabase *new_algebras = pushStruct(global_state.top_level_arena, AlgebraDatabase);
           new_algebras->tail            = global_state.algebras;
@@ -6436,34 +6552,6 @@ parseTopLevel(EngineState *state)
         }
       } break;
 
-      case Token_Keyword_primitive:
-      {
-        if (requireIdentifier())
-        {
-          Token primitive_name = *lastToken();
-          if (requireChar(':'))
-          {
-            if (Term *primitive_type = parseAndBuildGlobal())
-            {
-              b32 installed = false;
-              for (i32 i=0;
-                   !installed && i < arrayCount(primitive_table);
-                   i++)
-              {
-                PrimitiveEntry entry = primitive_table[i];
-                if (equal(primitive_name, entry.name))
-                {
-                  installed = true;
-                  *entry.term = newTerm(arena, Primitive, primitive_type);
-                  addBuiltinGlobalBinding(primitive_name.string, *entry.term);
-                }
-              }
-              assert(installed);
-            }
-          }
-        }
-      } break;
-
       default:
       {
         if (isIdentifier(token))
@@ -6481,7 +6569,7 @@ parseTopLevel(EngineState *state)
             case Token_ColonEqual:
             {
               pushContext("constant definition: CONSTANT := VALUE;");
-              if (Term *rhs = parseAndBuildGlobal())
+              if (Term *rhs = parseAndBuildGlobal(typer))
               {
                 addGlobalBinding(token, rhs);
               }
@@ -6517,11 +6605,11 @@ parseTopLevel(EngineState *state)
 
             case ':':
             {
-              if (Term *type = parseAndBuildGlobal())
+              if (Term *type = parseAndBuildGlobal(typer))
               {
                 if (requireKind(Token_ColonEqual, "require :=, syntax: name : type := value"))
                 {
-                  if (Term *rhs = parseAndBuildGlobal(type))
+                  if (Term *rhs = parseAndBuildGlobal(typer, type))
                   {
                     addGlobalBinding(token, rhs);
                   }
@@ -6678,15 +6766,10 @@ beginInterpreterSession(Arena *top_level_arena, FilePath input_path)
     rea_False = newTerm(arena, Union, rea_Type);  // NOTE: "union {}"
     addBuiltinGlobalBinding("False", rea_False);
 
-    auto path = platformGetFileFullPath(arena, "../data/builtin0.rea");
-    interpretFile(&global_state, path, true);
-
-    path = platformGetFileFullPath(arena, "../data/builtin10.rea");
+    auto path = platformGetFileFullPath(arena, "../data/builtin.rea");
     interpretFile(&global_state, path, true);
 
 #define LOOKUP_BUILTIN(name) rea_##name = lookupBuiltin(#name);
-
-    LOOKUP_BUILTIN(falseImpliesAll);
 
 #if 0
     // TODO #cleanup These List builtins are going too far...
@@ -6746,7 +6829,6 @@ int engineMain()
   temp_arena_ = newArena(temp_arena_size, temp_arena_base);
 
   char *files[] = {
-    "../data/array.rea",
     "../data/test.rea",
     "../data/z.rea",
     "../data/z-slider.rea",

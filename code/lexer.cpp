@@ -601,27 +601,40 @@ eatUntilMatchingPair(Tokenizer *tk)
   return found;
 }
 
+inline Token *
+lastToken()
+{
+  return &global_tokenizer->last_token;
+}
+
+inline i32
+toInt32(Token *token)
+{
+  i32 out = 0;
+  String string = token->string;
+  i32 length = string.length;
+  for (int char_i=0;
+       noError() && char_i < length;
+       char_i++)
+  {
+    char c = string.chars[char_i];
+    if ('0' <= c && c <= '9')
+    {
+      out = out*10 + (c - '0');
+    }
+    else
+    {
+      tokenError("expected a 32-bit integer");
+    }
+  }
+  return out;
+}
+
 inline i32
 parseInt32()
 {
-  Token token = nextToken();
-  i32 out = 0;
-  char first_char = token.string.chars[0];
-  if ('0' <= first_char && first_char <= '9')
-  {
-    for (int char_id=0; char_id < token.string.length; char_id++)
-    {
-      char c = token.string.chars[char_id];
-      if ('0' <= c && c <= '9')
-      {
-        out += out*10 + (c - '0');
-      }
-      else
-        invalidCodePath;
-    }
-  }
-  else
-    tokenError("expected a 32-bit integer");
+  eatToken();
+  i32 out = toInt32(lastToken());
   return out;
 }
 
