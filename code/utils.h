@@ -411,10 +411,9 @@ belongsToArena(Arena *arena, u8 *memory)
 #define maximum(a, b) ((a < b) ? b : a)
 #define minimum(a, b) ((a < b) ? a : b)
 
-// bunch of metaprogramming tags
+// Metaprogramming tags
 #define forward_declare
 #define embed_struct
-#define check_switch(tag)
 
 inline char
 toLowerCase(char c)

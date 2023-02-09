@@ -230,7 +230,15 @@ check_truth fold(overload(+, Nat), 1, 2 cons nil()) = 3;
 test_eval((1 cons nil()) + (2 cons nil()));
 check_truth ((1 cons 2 cons nil()) + (3 cons nil())) = (1 cons 2 cons 3 cons nil());
 
-test_eval test_sort([0]);
+permuteTest :: (a,b,c: Nat) -> Permute(Nat, [c,a,b], [a,b,c])
+{
+ prove Permute(Nat, [c,a,b], [a,c,b]) {return permuteSwap(...)}
+ prove Permute(Nat, [c,b], [b,c])     {return permuteSwap(...)}
+ prove Permute(Nat, [a,c,b], [a,b,c]) {return permuteSkip(...)}
+ return permuteChain([c,a,b], [a,c,b], [a,b,c], _, _)
+ }
+
+;; test_eval test_sort([0]);
 ;; test_eval test_sort([2, 0]);
 ;; test_eval test_sort([0, 2]);
 

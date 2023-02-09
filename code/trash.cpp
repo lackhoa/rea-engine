@@ -823,4 +823,3 @@ newConjunctionN(Arena *arena, i32 count, Term **conjuncts)
     rea_Int = newTerm(arena, Primitive, rea_Type);
     addBuiltinGlobalBinding("Int", rea_Int);
 #endif
-

@@ -207,7 +207,7 @@ printFunctionSignature(Arena *buffer, CXCursor cursor)
 }
 
 internal CXChildVisitResult
-structVisitor(CXCursor cursor, CXCursor parent, CXClientData client_data)
+printStructVisitor(CXCursor cursor, CXCursor parent, CXClientData client_data)
 {
   (void)parent;
   Arena *arena = permanent_arena;
@@ -228,14 +228,14 @@ structVisitor(CXCursor cursor, CXCursor parent, CXClientData client_data)
     case CXCursor_UnionDecl:
     {
       concat(out, print(arena, "union {"));
-      clang_visitChildren(cursor, structVisitor, out);
+      clang_visitChildren(cursor, printStructVisitor, out);
       concat(out, print(arena, "}; "));
     } break;
 
     case CXCursor_StructDecl:
     {
       concat(out, print(arena, "struct {"));
-      clang_visitChildren(cursor, structVisitor, out);
+      clang_visitChildren(cursor, printStructVisitor, out);
       concat(out, print(arena, "}; "));
     } break;
 
@@ -245,9 +245,40 @@ structVisitor(CXCursor cursor, CXCursor parent, CXClientData client_data)
 }
 
 internal void
-printStructFields(CXCursor cursor, String *out)
+printStructFields(CXCursor cursor, String *buffer)
 {
-  clang_visitChildren(cursor, structVisitor, out);
+  clang_visitChildren(cursor, printStructVisitor, buffer);
+}
+
+internal CXChildVisitResult
+builtinTableVisitor(CXCursor cursor, CXCursor parent, CXClientData client_data)
+{
+  (void)parent;
+  StringBuffer *buffer = (StringBuffer *)client_data;
+  CXCursorKind cursor_kind = clang_getCursorKind(cursor);
+  switch (cursor_kind)
+  {
+    case CXCursor_FieldDecl:
+    {
+      const char *cursor_spelling = clang_getCString(clang_getCursorSpelling(cursor));
+      print(buffer, "{\"%s\", &rea_builtins.%s},\n", cursor_spelling, cursor_spelling);
+    } break;
+  }
+  return CXChildVisit_Continue;
+}
+
+internal String
+generateBuiltinTable(CXCursor cursor)
+{
+  auto start_string = startString(temp_arena);
+  StringBuffer *buffer = start_string.buffer;
+  print(buffer, "global_variable BuiltinEntry rea_builtin_names[] = {\n");
+
+  clang_visitChildren(cursor, builtinTableVisitor, start_string.buffer);
+
+  print(buffer, "};");
+  String output = endString(start_string);
+  return output;
 }
 
 internal CXChildVisitResult
@@ -337,8 +368,6 @@ topLevelVisitor(CXCursor cursor, CXCursor parent, CXClientData client_data)
             {
               b32 match_line = (cursor_line >= lines->line) && (cursor_line < lines->line+3);
               b32 match_file = equal(file_name, lines->file_name);
-              if (equal(struct_name, "Ast"))
-                breakhere;
               if (match_line && match_file)
               {// struct was asked to be embedded
 #if 0
@@ -354,9 +383,28 @@ topLevelVisitor(CXCursor cursor, CXCursor parent, CXClientData client_data)
                 break;
               }
             }
+
+            if (equal(struct_name, "ReaBuiltins"))
+            {
+              // rea builtins generation.
+              String output = generateBuiltinTable(cursor);
+
+              char *builtin_file_name = "generated/rea_builtin.cpp";
+              FILE *builtin_file;
+              if (fopen_s(&builtin_file, builtin_file_name, "w") == 0)
+              {
+                fprintf(builtin_file, "%s\n", output.chars);
+              }
+              else
+              {
+                printf("cannot open file %s", builtin_file_name);
+                exit(1);
+              }
+            }
           } break;
 
-          default: break;
+          default:
+          {} break;
         }
       }
     }
@@ -389,12 +437,14 @@ int main()
   CXCursor cursor = clang_getTranslationUnitCursor(unit);
 
   State state = {};
-  if (fopen_s(&state.forward_declare_file, "generated/engine_forward.h", "w") == 0)
+  char *forward_declare_file_name = "generated/engine_forward.h";
+  if (fopen_s(&state.forward_declare_file, forward_declare_file_name, "w") == 0)
   {
     clang_visitChildren(cursor, topLevelVisitor, &state);
 
     FILE *embed_file = {};
-    if (fopen_s(&embed_file, "generated/engine_embed.h", "w") == 0)
+    char *embed_file_name = "generated/engine_embed.h";
+    if (fopen_s(&embed_file, embed_file_name, "w") == 0)
     {
       for (EmbedStructs *embed = state.embed_structs; embed; embed = embed->next)
       {
@@ -410,8 +460,18 @@ int main()
         fprintf(embed_file, "%s\n", macro->chars);
       }
     }
+    else
+    {
+      printf("cannot open file %s", embed_file_name);
+      exit(1);
+    }
 
     fclose(state.forward_declare_file);
+  }
+  else
+  {
+    printf("cannot open file %s", forward_declare_file_name);
+    exit(1);
   }
   return 0;
 }

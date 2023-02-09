@@ -2,7 +2,7 @@
 ;; List (Lists that can be empty)
 ;; ----
 
-List :: union($$ListType: Type)
+List :: union($$ListType: Type) #builtin
 {nil,
  cons(head: ListType, tail: List(ListType))}
 
@@ -68,4 +68,4 @@ foldConcat :: (($T: Type, op: binaryOp(T), assoc: isAssociative(op),
 ;;   ,
 ;;   permuteChain
 ;;   }
-;;  }
+;; }

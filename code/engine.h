@@ -74,7 +74,8 @@ enum TermKind {
   Term_Pointer,
 };
 
-const u32 AstFlag_Generated = 1 << 0;
+const u32 AstFlag_Generated  = 1 << 0;
+const u32 AstFlag_is_builtin = 1 << 1;
 
 embed_struct struct Ast {
   AstKind kind;
@@ -436,7 +437,7 @@ const u32 FunctionFlag_is_global_hint    = 1 << 0;
 const u32 FunctionFlag_no_apply          = 1 << 1;
 const u32 FunctionFlag_no_print_as_binop = 1 << 2;
 const u32 FunctionFlag_expand            = 1 << 3;
-const u32 FunctionFlag_is_builtin        = 1 << 4;
+// const u32 FunctionFlag_is_builtin        = 1 << 4;  // moved to ast
 
 struct FunctionAst : Ast {
   ArrowAst *signature;
@@ -487,7 +488,6 @@ struct SolveArgs {i32 arg_count; Term **args;};
 
 #define MAX_SOLVE_DEPTH 3
 struct Solver {
-  Arena  *arena;
   Typer        *typer;
   b32           use_global_hints;
   b32           try_reductio;
