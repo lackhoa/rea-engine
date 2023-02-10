@@ -164,14 +164,16 @@ struct UnifyContext {
   UnifyContext  *outer;
 };
 
+struct Pointer;
+
 struct Scope {
-  Scope  *outer;
-  i32     depth;
-  i32     param_count;
-  Term  **values;
+  Scope    *outer;
+  i32       depth;
+  i32       param_count;
+  Pointer **values;
 };
 
-const u32 Error_Ambiguous = 1 << 0;
+const u32 Error_Ambiguous = 1 << 0;  // NOTE: Maybe a better name would be "missing type info".
 const u32 Error_WrongType = 1 << 1;
 
 struct Typer
@@ -281,8 +283,6 @@ struct Accessor : Term {
   String  debug_field_name;
 };
 
-struct Pointer;
-
 struct StackPointer {
   String name;
   i32    depth;
@@ -375,8 +375,8 @@ struct RewriteAst : Ast {
 struct GoalTransform : Ast {
   Ast *hint;
   Ast *new_goal;
-  Ast *body;
   b32  print_proof;
+  Ast *body;
 };
 
 struct Invert : Ast {

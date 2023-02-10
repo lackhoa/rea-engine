@@ -144,9 +144,13 @@ pushSize(Arena *arena, size_t size, b32 zero = false)
 #define pushItems_2(array, index, item, ...) array[index] = item; pushItems_1(array, index+1, __VA_ARGS__);
 #define pushItems_3(array, index, item, ...) array[index] = item; pushItems_2(array, index+1, __VA_ARGS__);
 #define pushItems_N(N, ...) CONCATENATE(pushItems_, N)
-#define pushItems(array, arena, item, ...) \
-  auto array = (mytypeof(item) *) pushArray(arena, PP_NARG(items), mytypeof(item)); \
+
+#define pushItems(arena, array, item, ...)     \
+  array = (mytypeof(item) *) pushArray(arena, PP_NARG(items), mytypeof(item)); \
   pushItems_N(PP_NARG(item, __VA_ARGS__), __VA_ARGS__)(array, 0, item, __VA_ARGS__)
+
+#define pushItemsAs(...) \
+  auto pushItems(__VA_ARGS__)
 
 inline Arena
 subArena(Arena *parent, size_t size)

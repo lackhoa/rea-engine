@@ -531,19 +531,37 @@ precedenceOf(String op)
 
   // TODO: implement for real
   if (equal(op, "->"))
+  {
+    out = eq_precedence - 20;
+  }
+  else if (equal(op, "/\\"))
+  {
     out = eq_precedence - 10;
+  }
   else if (equal(op, "=") || equal(op, "!="))
+  {
     out = eq_precedence;
+  }
   else if (equal(op, "<") || equal(op, ">") || equal(op, "=?") || equal(op, "=="))
+  {
     out = eq_precedence + 5;
+  }
   else if (equal(op, "+") || equal(op, "-"))
+  {
     out = eq_precedence + 10;
+  }
   else if (equal(op, "|"))
+  {
     out = eq_precedence + 15;
+  }
   else if (equal(op, "&") || equal(op, "*"))
+  {
     out = eq_precedence + 20;
+  }
   else
+  {
     out = eq_precedence + 2;
+  }
 
   return out;
 }
@@ -1254,37 +1272,88 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
     print(buffer, "<NULL>");
 }
 
-inline void
-print(Arena *buffer, Scope *scope)
+inline i32
+getExplicitParamCount(ArrowAst *in)
 {
-  print(buffer, "[");
+  i32 out = 0;
+  for (i32 param_i = 0; param_i < in->param_count; param_i++)
+  {
+    if (!isInferredParameter(in, param_i))
+      out++;
+  }
+  return out;
+}
+
+inline i32
+getExplicitParamCount(Arrow *in)
+{
+  i32 out = 0;
+  for (i32 param_i = 0; param_i < in->param_count; param_i++)
+  {
+    if (!isInferredParameter(in, param_i))
+      out++;
+  }
+  return out;
+}
+
+#if 0
+inline b32
+shouldHideTerm(Term *in0)
+{
+  if (in0 == rea.Type) return true;
+  if (in0->kind == Term_Union) return true;
+  if (Composite *in = castTerm(in0, Composite))
+  {
+    Arrow *signature = getSignature(in->op);
+    if (getExplicitParamCount(signature) == 0)
+    {
+    }
+  }
+  return false;
+}
+#endif
+
+inline void
+prettyPrint(Arena *buffer, Scope *scope)
+{
+  // NOTE: Skip the last scope since we already know
   while (scope)
   {
-    Term **values = scope->values;
-    print(buffer, "(");
+    Pointer **values = scope->values;
     for (int param_i = 0;
          param_i < scope->param_count;
          param_i++)
     {
-      print(buffer, values[param_i], printOptionPrintType());
-      if (param_i < scope->param_count-1)
+      Pointer *pointer = values[param_i];
+      assert(pointer->is_stack_pointer);
+      if (Record *record = castRecord(pointer))
       {
-        print(buffer, ", ");
+        Arrow *signature = getSignature(record->ctor);
+        for (i32 i=0; i < record->member_count; i++)
+        {
+          // NOTE: print the member types.
+          if (!isInferredParameter(signature, i))
+          {
+            Term *member = record->members[i];
+            print(buffer, member, printOptionPrintType());
+            if (i != record->member_count-1) print(buffer, "\n");
+          }
+        }
       }
+      else
+      {
+        if (pointer->stack.name.chars)
+        {
+          print(buffer, pointer->stack.name);
+          print(buffer, ": ");
+        }
+        print(buffer, pointer->type);
+      }
+      print(buffer, "\n");
     }
-    print(buffer, ")");
-
     scope = scope->outer;
-    if (scope)
-    {
-      print(buffer, ",\n ");
-    }
   }
-  print(buffer, "]");
 }
-
-inline void dump(Scope *stack) {print(0, stack);}
-inline void dump(Typer *env) {dump("stack: "); dump(env->scope);}
 
 forward_declare internal void
 print(Arena *buffer, Term *in0)
@@ -1293,7 +1362,7 @@ print(Arena *buffer, Term *in0)
 }
 
 inline Scope *
-newScope(Scope *outer, i32 param_count, Term **values)
+newScope(Scope *outer, i32 param_count, Pointer **values)
 {
   Scope *scope = pushStruct(temp_arena, Scope, true);
   scope->outer       = outer;
@@ -1306,7 +1375,7 @@ newScope(Scope *outer, i32 param_count, Term **values)
 inline Scope *
 newScope(Scope *outer, i32 param_count)
 {
-  Term **values = pushArray(temp_arena, param_count, Term*, true);
+  Pointer **values = pushArray(temp_arena, param_count, Pointer *, true);
   return newScope(outer, param_count, values);
 }
 
@@ -1494,7 +1563,10 @@ evaluate_(EvalContext *ctx, Term *in0)
 inline Term *
 toValue(Scope *scope, Term *in0)
 {
-  EvalContext ctx = {.arg_count=scope->param_count, .args=scope->values, .substitute_only=true};
+  Term **args = (Term **)scope->values;  // NOTE: not gonna write to the scope, so casting is ok
+  EvalContext ctx = {.arg_count = scope->param_count,
+                     .args=args,
+                     .substitute_only=true};
   return evaluate_(&ctx, in0);
 }
 
@@ -2643,6 +2715,7 @@ isExpressionEndMarker(Token *token)
     case Token_DoubleDash:
     case Token_StrongArrow:
     case Token_Keyword_in:
+    case Token_DoubleDot:
     {
       return true;
     }
@@ -2679,30 +2752,6 @@ subExpressionAtPath(Term *in, TreePath *path)
   }
   else
     return in;
-}
-
-inline i32
-getExplicitParamCount(ArrowAst *in)
-{
-  i32 out = 0;
-  for (i32 param_i = 0; param_i < in->param_count; param_i++)
-  {
-    if (!isInferredParameter(in, param_i))
-      out++;
-  }
-  return out;
-}
-
-inline i32
-getExplicitParamCount(Arrow *in)
-{
-  i32 out = 0;
-  for (i32 param_i = 0; param_i < in->param_count; param_i++)
-  {
-    if (!isInferredParameter(in, param_i))
-      out++;
-  }
-  return out;
 }
 
 inline b32
@@ -3154,13 +3203,13 @@ solveGoal(Solver *solver, Term *goal)
 }
 
 inline b32
-typeErrorExpected(Typer *typer)
+expectedWrongType(Typer *typer)
 {
   return checkFlag(typer->expected_errors, Error_WrongType);
 }
 
 inline b32
-ambiguousErrorExpected(Typer *typer)
+expectedAmbiguous(Typer *typer)
 {
   return checkFlag(typer->expected_errors, Error_Ambiguous);
 }
@@ -3201,7 +3250,7 @@ getFunctionOverloads(Typer *typer, Identifier *ident, Term *goal0)
       }
       if (out.count == 0)
       {
-        if (typeErrorExpected(typer)) silentError();
+        if (expectedWrongType(typer)) silentError();
         else
         {
           reportError(ident, "found no matching overload");
@@ -3351,15 +3400,16 @@ parseSequence(b32 require_braces=true)
   if (require_braces) brace_opened = requireChar('{');
   else                brace_opened = optionalChar('{');
 
-  for (b32 expect_sequence_ended = false;
-       noError() && !expect_sequence_ended;
+  for (b32 expect_sequence_to_end = false;
+       noError() && !expect_sequence_to_end;
        )
   {
     // Can't get out of this rewind business, because sometimes the sequence is empty :<
     Tokenizer tk_save = *global_tokenizer;
-    Token token = nextToken();
+    Token  token_ = nextToken();
+    Token *token  = &token_;
     Ast *ast0 = 0;
-    String tactic = token.string;
+    String tactic = token->string;
     if (equal(tactic, "norm"))
     {
       pushContext("norm [EXPRESSION]");
@@ -3381,17 +3431,17 @@ parseSequence(b32 require_braces=true)
 
       if (noError())
       {
-        NormalizeMeAst *ast_goal = newAst(arena, NormalizeMeAst, &token);
+        NormalizeMeAst *ast_goal = newAst(arena, NormalizeMeAst, token);
         ast_goal->name_to_unfold = name_to_unfold;
         if (seesExpressionEndMarker())
         {// normalize goal
-          GoalTransform *ast = newAst(arena, GoalTransform, &token);
+          GoalTransform *ast = newAst(arena, GoalTransform, token);
           ast->new_goal = ast_goal;
           ast0 = ast;
         }
         else if (Ast *expression = parseExpression())
         {// normalize with let.
-          Let *let = newAst(arena, Let, &token);
+          Let *let = newAst(arena, Let, token);
           let->rhs  = expression;
           let->type = ast_goal;
           ast0 = let;
@@ -3412,7 +3462,7 @@ parseSequence(b32 require_braces=true)
     else if (equal(tactic, "rewrite"))
     {
       pushContext("rewrite EXPRESSION [in EXPRESSION]");
-      RewriteAst *rewrite = newAst(arena, RewriteAst, &token);
+      RewriteAst *rewrite = newAst(arena, RewriteAst, token);
       if (optionalString("<-"))
       {
         rewrite->right_to_left = true;
@@ -3428,7 +3478,7 @@ parseSequence(b32 require_braces=true)
     else if (equal(tactic, "=>"))
     {
       pushContext("Goal transform: => NEW_GOAL [{ EQ_PROOF_HINT }]; ...");
-      GoalTransform *ast = newAst(arena, GoalTransform, &token);
+      GoalTransform *ast = newAst(arena, GoalTransform, token);
       ast0 = ast;
       if (optionalDirective("print_proof"))
       {
@@ -3436,7 +3486,7 @@ parseSequence(b32 require_braces=true)
       }
       if (optionalString("norm"))
       {
-        ast->new_goal = newAst(arena, NormalizeMeAst, &token);
+        ast->new_goal = newAst(arena, NormalizeMeAst, token);
       }
       else
       {
@@ -3470,7 +3520,7 @@ parseSequence(b32 require_braces=true)
           }
           if (noError())
           {
-            Let *let = newAst(arena, Let, &token);
+            Let *let = newAst(arena, Let, token);
             let->lhs  = name;
             let->rhs  = proof;
             let->type = proposition;
@@ -3483,37 +3533,53 @@ parseSequence(b32 require_braces=true)
     else if (equal(tactic, "return"))
     {
       ast0 = parseExpression();
-      expect_sequence_ended = true;
+      expect_sequence_to_end = true;
     }
     else if (equal(tactic, "fork"))
     {
       ast0 = parseFork();
-      expect_sequence_ended = true;
+      expect_sequence_to_end = true;
     }
     else if (equal(tactic, "seek"))
     {
-      SeekAst *ast = newAst(arena, SeekAst, &token);
+      SeekAst *ast = newAst(arena, SeekAst, token);
       ast0 = ast;
-      expect_sequence_ended = true;
+      expect_sequence_to_end = true;
     }
     else if (equal(tactic, "reductio"))
     {
-      ReductioAst *ast = newAst(arena, ReductioAst, &token);
+      ReductioAst *ast = newAst(arena, ReductioAst, token);
       ast0 = ast;
-      expect_sequence_ended = true;
+      expect_sequence_to_end = true;
     }
     else if (equal(tactic, "invert"))
     {
-      Invert *ast = newAst(arena, Invert, &token);
+      Invert *ast = newAst(arena, Invert, token);
       ast->pointer = parseExpression();
       ast0 = ast;
     }
+    else if (equal(tactic, "use"))
+    {
+      if (requireIdentifier())
+      {
+        Token op_name = *lastToken();
+        Ellipsis *ellipsis = newAst(arena, Ellipsis, token);
+
+        CompositeAst *ast = newAst(arena, CompositeAst, token);
+        ast->op = newAst(arena, Identifier, &op_name);
+        ast->arg_count = 1;
+        pushItems(arena, ast->args, ellipsis);
+
+        ast0 = ast;
+        expect_sequence_to_end = true;
+      }
+    }
     else
     {
-      if (isIdentifier(&token))
+      if (isIdentifier(token))
       {
         // NOTE: identifiers can't be tactics, but I don't think that's a concern.
-        Token *name = &token;
+        Token *name = token;
         Token after_name = nextToken();
         switch (after_name.kind)
         {
@@ -3556,11 +3622,11 @@ parseSequence(b32 require_braces=true)
           } break;
         }
       }
-      else if (isExpressionEndMarker(&token))
+      else if (isExpressionEndMarker(token))
       {// synthetic hole
-        ast0  = newAst(arena, Hole, &token);
+        ast0  = newAst(arena, Hole, token);
         *global_tokenizer = tk_save;
-        expect_sequence_ended = true;
+        expect_sequence_to_end = true;
       }
       else
       {
@@ -4245,8 +4311,8 @@ buildWithNewAssets(Typer *typer, i32 asset_count, String *names, Term **assets, 
 inline Term *
 buildWithNewAsset(Typer *typer, String name, Term *asset, Ast *body, Term *goal)
 {
-  pushItems(assets, temp_arena, asset);
-  pushItems(names, temp_arena, name);
+  pushItemsAs(temp_arena, assets, asset);
+  pushItemsAs(temp_arena, names, name);
   Term *out = buildWithNewAssets(typer, 1, names, assets, body, goal);
   return out;
 }
@@ -4279,7 +4345,9 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
       if (in->arg_count == 1 &&
           in->args[0]->kind == Ast_Ellipsis)
       {
-        // Solve all arguments.
+        // Solve all arguments. NOTE: We might invent some syntactic convenience
+        // for this, but in future we might add the ability to specify only some
+        // paramters. So this case will occur anyway.
         if (Identifier *op_ident = castAst(in->op, Identifier))
         {
           value = fillInEllipsis(arena, typer, op_ident, goal);
@@ -4376,7 +4444,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
                 }
                 else
                 {
-                  if (typeErrorExpected(typer)) silentError();
+                  if (expectedWrongType(typer)) silentError();
                   else
                   {
                     reportError(&in0->token, "argument count does not match the number of explicit parameters (expected: %d, got: %d)", explicit_param_count, in->arg_count);
@@ -4395,7 +4463,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
                   b32 ouput_unify = unify(ctx, signature->output_type, goal);
                   if (!ouput_unify)
                   {
-                    if (typeErrorExpected(typer)) silentError();
+                    if (expectedWrongType(typer)) silentError();
                     else
                     {
                       reportError(in0, "cannot unify output");
@@ -4443,7 +4511,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
                         b32 unify_result = unify(ctx, param_type0, arg->type);
                         if (!unify_result)
                         {
-                          if (typeErrorExpected(typer)) silentError();
+                          if (expectedWrongType(typer)) silentError();
                           else
                           {
                             reportError(in_arg, "cannot unify parameter type with argument %d's type", arg_i);
@@ -4489,7 +4557,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
                         {
                           args[arg_i] = fill;
                         }
-                        else if (ambiguousErrorExpected(typer))
+                        else if (expectedAmbiguous(typer))
                         {
                           silentError();
                         }
@@ -4529,7 +4597,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
             }
             else
             {
-              if (typeErrorExpected(typer)) silentError();
+              if (expectedWrongType(typer)) silentError();
               else
               {
                 reportError(in->op, "operator must have an arrow type");
@@ -4587,7 +4655,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
               {
                 if (value)
                 {// ambiguous
-                  if (ambiguousErrorExpected(typer)) silentError();
+                  if (expectedAmbiguous(typer)) silentError();
                   else
                   {
                     tokenError(name, "not enough type information to disambiguate global name");
@@ -4603,7 +4671,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
             }
             if (!value)
             {
-              if (typeErrorExpected(typer)) silentError();
+              if (expectedWrongType(typer)) silentError();
               else
               {
                 tokenError(name, "global name does not match expected type");
@@ -4757,7 +4825,6 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
 
     case Ast_RewriteAst:
     {
-      // should_check_type = false;
       if (goal->kind == Term_Hole)
       {
         reportError(in0, "we do not know what the goal is, so nothing to rewrite");
@@ -5044,55 +5111,30 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
     {
       ListAst *in = (ListAst *)in0;
       auto [uni, uni_args] = castUnion(goal);
-      if (uni == rea.List)
+      // NOTE: The plan is to just lean on the typechecking as much as possible.
+      Ast *tail = in->tail;
+      if (!tail)
       {
-        // NOTE: The plan is to just lean on the typechecking as much as possible.
-        Ast *tail = in->tail;
-        if (!tail)
-        {
-          CompositeAst *nil = newAst(arena, CompositeAst, &in->token);
-          nil->op = newSyntheticAst(rea.nil, &in->token);
-          // NOTE: no arg: we let the typer infer it.
-          tail = nil;
-        }
+        CompositeAst *nil = newAst(arena, CompositeAst, &in->token);
+        nil->op = newSyntheticAst(rea.nil, &in->token);
+        // NOTE: no arg: we let the typer infer it.
+        tail = nil;
+      }
 
-        for (i32 i = in->count-1; i >= 0; i--)
-        {
-          Ast *item = in->items[i];
-          CompositeAst *new_tail = newAst(arena, CompositeAst, &item->token);
-          new_tail->op        = newSyntheticAst(rea.cons, &item->token);
-          new_tail->arg_count = 2;
-          new_tail->args      = pushArray(arena, 2, Ast *);
-          new_tail->args[0]   = item;
-          new_tail->args[1]   = tail;
-          tail = new_tail;
-        }
+      for (i32 i = in->count-1; i >= 0; i--)
+      {
+        Ast *item = in->items[i];
+        CompositeAst *new_tail = newAst(arena, CompositeAst, &item->token);
+        new_tail->op        = newSyntheticAst(rea.cons, &item->token);
+        new_tail->arg_count = 2;
+        new_tail->args      = pushArray(arena, 2, Ast *);
+        new_tail->args[0]   = item;
+        new_tail->args[1]   = tail;
+        tail = new_tail;
+      }
 
-        recursed = true;
-        value = buildTerm(typer, tail, goal);
-      }
-#if 0
-      else if (uni == rea.Array)
-      {
-        todoIncomplete;
-        Term **items = pushArray(arena, in->count, Term *);
-        Primitive *array = newTerm(arena, Primitive, goal);
-        array->prim_kind   = Primitive_Array;
-        array->array.count = in->count;
-        array->array.items = items;
-      }
-#endif
-      else
-      {
-        if (goal->kind == Term_Hole)
-        {
-          reportError(in, "type annotation is needed to decode this list expression");
-        }
-        else
-        {
-          reportError(in, "list syntax is not supported for this type");
-        }
-      }
+      recursed = true;
+      value = buildTerm(typer, tail, goal);
     } break;
 
     case Ast_Invert:
@@ -5149,7 +5191,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
     {
       if (!matchType(actual, goal))
       {
-        if (typeErrorExpected(typer)) silentError();
+        if (expectedWrongType(typer)) silentError();
         else
         {
           reportError(in0, "actual type differs from expected type");
@@ -5171,7 +5213,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
 
         StartString start = startString(error_buffer);
         print(error_buffer, "\n");
-        print(error_buffer, typer->scope);
+        prettyPrint(error_buffer, typer->scope);
         attach("scope", endString(start));
 
         start = startString(error_buffer);
@@ -6064,7 +6106,6 @@ parseList(Arena *arena)
     {
       if (optionalKind(Token_DoubleDot))
       {
-        todoIncomplete;
         tail = parseExpression();
       }
       requireChar(closing);
@@ -6291,9 +6332,13 @@ parseExpression_(ParseExpressionOptions opt)
         }
       }
       else if (isExpressionEndMarker(&op_token))
+      {
         stop = true;
+      }
       else
+      {
         tokenError(&op_token, "expected operator token");
+      }
     }
     if (noError())
       out = operand;

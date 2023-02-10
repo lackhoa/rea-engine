@@ -1,5 +1,10 @@
 #load "builtin-equal.rea"
 
+/\ :: union($$A,$$B: Type)
+{
+ conjunction(a: A, b: B)
+ }
+
 eqChain :: fn($A: Type, $a,$b,$c: A, a=b, b=c) -> a=c {=> b = c {seek(a=b)} seek}
 falseImpliesAll :: fn(f: False, G: Type) -> G #builtin {fork f {}}
 
