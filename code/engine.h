@@ -53,6 +53,7 @@ enum AstKind {
   Ast_Let,
   Ast_UnionAst,
   Ast_GoalTransform,
+  Ast_Invert,
 };
 
 enum TermKind {
@@ -375,6 +376,11 @@ struct GoalTransform : Ast {
   Ast *new_goal;
   Ast *body;
   b32  print_proof;
+};
+
+struct Invert : Ast {
+  Ast *pointer;
+  Ast *body;
 };
 
 struct AccessorAst

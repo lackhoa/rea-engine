@@ -64,6 +64,29 @@ typedef long     i64;
 
 #include "intrinsics.h"
 
+// source: https://groups.google.com/g/comp.std.c/c/d-6Mj5Lko_s
+#define PP_NARG(...) PP_NARG_(__VA_ARGS__,PP_RSEQ_N())
+#define PP_NARG_(...) PP_ARG_N(__VA_ARGS__)
+#define PP_ARG_N(_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12,_13,_14,_15,_16,N,...) N
+#define PP_RSEQ_N() 16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0
+
+#define CONCATENATE(arg1, arg2)   CONCATENATE1(arg1, arg2)
+#define CONCATENATE1(arg1, arg2)  CONCATENATE2(arg1, arg2)
+#define CONCATENATE2(arg1, arg2)  arg1##arg2
+
+#define DUMP_1(x) dump(x)
+#define DUMP_2(x, ...) dump(x); DUMP_1(__VA_ARGS__)
+#define DUMP_3(x, ...) dump(x); DUMP_2(__VA_ARGS__)
+#define DUMP_4(x, ...) dump(x); DUMP_3(__VA_ARGS__)
+#define DUMP_5(x, ...) dump(x); DUMP_4(__VA_ARGS__)
+#define DUMP_6(x, ...) dump(x); DUMP_5(__VA_ARGS__)
+#define DUMP_7(x, ...) dump(x); DUMP_6(__VA_ARGS__)
+#define DUMP_8(x, ...) dump(x); DUMP_7(__VA_ARGS__)
+#define DUMP_9(x, ...) dump(x); DUMP_8(__VA_ARGS__)
+#define DUMP_N(N) CONCATENATE(DUMP_, N)
+#define DUMP(...) DUMP_N(PP_NARG(__VA_ARGS__))(__VA_ARGS__)
+// DUMP(a,b) -> DUMP_N(2,a,b)(a,b) -> DUMP_2()
+
 inline void
 zeroSize(void *base, size_t size)
 {
@@ -108,12 +131,7 @@ pushSize(Arena *arena, size_t size, b32 zero = false)
     void *out = (arena->base + arena->used);
     arena->used += size;
     assert(arena->used <= arena->cap);
-    if (zero)
-        zeroSize(out, size);
-
-    if (arena->used > 9*(arena->cap / 10))
-      invalidCodePath;  // watch the program to see what's going on;
-
+    if (zero) zeroSize(out, size);
     return(out);
 }
 
@@ -121,6 +139,14 @@ pushSize(Arena *arena, size_t size, b32 zero = false)
 #define pushArray(arena, count, type, ...) (type *) pushSize(arena, (count)*sizeof(type), __VA_ARGS__)
 #define allocate(arena, x, ...) x = (mytypeof(x)) pushSize(arena, sizeof(*x), __VA_ARGS__)
 #define allocateArray(arena, count, x, ...) x = (mytypeof(x)) pushSize(arena, (count)*sizeof(*x), __VA_ARGS__)
+
+#define pushItems_1(array, index, item) array[index] = item;
+#define pushItems_2(array, index, item, ...) array[index] = item; pushItems_1(array, index+1, __VA_ARGS__);
+#define pushItems_3(array, index, item, ...) array[index] = item; pushItems_2(array, index+1, __VA_ARGS__);
+#define pushItems_N(N, ...) CONCATENATE(pushItems_, N)
+#define pushItems(array, arena, item, ...) \
+  auto array = (mytypeof(item) *) pushArray(arena, PP_NARG(items), mytypeof(item)); \
+  pushItems_N(PP_NARG(item, __VA_ARGS__), __VA_ARGS__)(array, 0, item, __VA_ARGS__)
 
 inline Arena
 subArena(Arena *parent, size_t size)
@@ -475,28 +501,6 @@ concat(String *a, String b)
 {
   a->length += b.length;
 }
-
-// source: https://groups.google.com/g/comp.std.c/c/d-6Mj5Lko_s
-#define PP_NARG(...) PP_NARG_(__VA_ARGS__,PP_RSEQ_N())
-#define PP_NARG_(...) PP_ARG_N(__VA_ARGS__)
-#define PP_ARG_N(_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12,_13,_14,_15,_16,N,...) N
-#define PP_RSEQ_N() 16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0
-
-#define CONCATENATE(arg1, arg2)   CONCATENATE1(arg1, arg2)
-#define CONCATENATE1(arg1, arg2)  CONCATENATE2(arg1, arg2)
-#define CONCATENATE2(arg1, arg2)  arg1##arg2
-
-#define DUMP_1(x) dump(x)
-#define DUMP_2(x, ...) dump(x); DUMP_1(__VA_ARGS__)
-#define DUMP_3(x, ...) dump(x); DUMP_2(__VA_ARGS__)
-#define DUMP_4(x, ...) dump(x); DUMP_3(__VA_ARGS__)
-#define DUMP_5(x, ...) dump(x); DUMP_4(__VA_ARGS__)
-#define DUMP_6(x, ...) dump(x); DUMP_5(__VA_ARGS__)
-#define DUMP_7(x, ...) dump(x); DUMP_6(__VA_ARGS__)
-#define DUMP_8(x, ...) dump(x); DUMP_7(__VA_ARGS__)
-#define DUMP_9(x, ...) dump(x); DUMP_8(__VA_ARGS__)
-#define DUMP_N(N, ...) CONCATENATE(DUMP_, N)
-#define DUMP(...) DUMP_N(PP_NARG(__VA_ARGS__), __VA_ARGS__)(__VA_ARGS__)
 
 inline b32
 checkFlag(u32 flags, u32 flag)

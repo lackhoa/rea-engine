@@ -19,7 +19,7 @@ concatNonEmpty :: (T:Type, l,m: List(T), nonEmpty(l), nonEmpty(m)) -> nonEmpty(l
 #hint
 {fork l {nil, cons}}
 
-Permute :: union($$T: Type, List(T), List(T))
+Permute :: union($$T: Type, List(T), List(T)) #builtin
 {
  permuteNil() -> Permute(nil(T), nil(T))
  ,
@@ -28,6 +28,23 @@ Permute :: union($$T: Type, List(T), List(T))
  permuteSwap(a,b: T, l: List(T)) -> Permute(a cons b cons l, b cons a cons l)
  ,
  permuteChain(l,l1,l2: List(T), Permute(l, l1), Permute(l1, l2)) -> Permute(l, l2)
+ }
+
+permuteConcat :: ((A: Type, a: A, l,l1,l2: List(A), p: Permute(l, l1+l2))
+                  -> Permute(a cons l, l1+(a cons l2)))
+#builtin
+{
+ fork p
+ {
+  permuteNil
+  invert p;
+  ,
+  permuteSkip
+  ,
+  permuteSwap
+  ,
+  permuteChain
+  }
  }
 
 fold :: fn($A: Type, op: binaryOp(A), a: A, tail: List(A)) -> A

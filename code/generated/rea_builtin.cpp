@@ -1,4 +1,5 @@
-global_variable BuiltinEntry rea_builtin_names[] = {{"Type", &rea_builtins.Type},
+global_variable BuiltinEntry rea_builtin_names[] = {
+{"Type", &rea_builtins.Type},
 {"equal", &rea_builtins.equal},
 {"False", &rea_builtins.False},
 {"eqChain", &rea_builtins.eqChain},
@@ -16,6 +17,10 @@ global_variable BuiltinEntry rea_builtin_names[] = {{"Type", &rea_builtins.Type}
 {"fold", &rea_builtins.fold},
 {"concat", &rea_builtins.concat},
 {"Permute", &rea_builtins.Permute},
+{"permuteNil", &rea_builtins.permuteNil},
+{"permuteSkip", &rea_builtins.permuteSkip},
+{"permuteSwap", &rea_builtins.permuteSwap},
+{"permuteChain", &rea_builtins.permuteChain},
 {"foldConcat", &rea_builtins.foldConcat},
 {"foldPermute", &rea_builtins.foldPermute},
 {"permuteSame", &rea_builtins.permuteSame},
