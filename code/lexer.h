@@ -37,45 +37,13 @@ enum TokenKind
   Token_Keyword_algebra_declare,
   Token_Keyword_END,
 
-  // todo #cleanup We don't want token categories for these! Just dispatch when you see "#".
-  Token_Directive_START,
-  Token_Directive_load,
-  Token_Directive_should_fail,
-  Token_Directive_debug,
-  Token_Directive_norm,
-  Token_Directive_hint,
-  Token_Directive_no_apply,
-  Token_Directive_expand,
-  Token_Directive_no_print_as_binop,
-  Token_Directive_print_proof,
-  Token_Directive_unused,
-  Token_Directive_print,
-  Token_Directive_primitive,
-  Token_Directive_builtin,
-  Token_Directive_END,
+  Token_Directive,
 };
 
 const char *language_keywords[] = {
   "", "fn", "union", "ctor", "overload", "prove", "seek", "in",
   "test_eval", "print", "print_raw", "print_ast", "check", "check_truth", "algebra_declare",
 };
-const char *meta_directives[] = {"", "load", "should_fail", "debug", "norm", "hint", "no_apply", "expand", "no_print_as_binop", "print_proof", "unused", "print", "primitive", "builtin"};
-
-#if 0
-enum TacticEnum {
-  Tactic_rewrite = 1,
-  Tactic_goal_transform,
-  Tactic_norm,
-  Tactic_return,
-  Tactic_fork,
-  Tactic_prove,
-  Tactic_seek,
-  Tactic_reductio,
-  Tactic_invert,
-  Tactic_COUNT,
-};
-const char *language_tactics[] = {"", "rewrite", "=>", "norm", "return", "fork", "prove", "seek", "reductio", "invert"};
-#endif
 
 struct Token
 {

@@ -330,7 +330,7 @@ eatToken(Tokenizer *tk = global_tokenizer)
     case '#':
     {
       out.string.chars++; // advance past the hash
-      out.kind = Token_Directive_START;
+      out.kind = Token_Directive;
       while (isAlphaNumeric(*tk->at))
         nextChar(tk);
     } break;
@@ -481,22 +481,6 @@ eatToken(Tokenizer *tk = global_tokenizer)
             break;
           }
         }
-      } break;
-
-      case Token_Directive_START:
-      {
-        b32 found = false;
-        for (int id = 1; id < arrayCount(meta_directives); id++)
-        {
-          if (equal(out.string, meta_directives[id]))
-          {
-            out.kind = (TokenKind)((int)Token_Directive_START + id);
-            found = true;
-            break;
-          }
-        }
-        if (!found)
-          tokenError(&out, "unknown directive");
       } break;
 
       default: {};

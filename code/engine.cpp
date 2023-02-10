@@ -2069,8 +2069,7 @@ struct AbstractContext
   i32    zero_depth;
 };
 
-// NOTE: Guaranteed copy (unless the value is
-// temporary). #toAbstractTerm-guarantee-copy :persistent-global-function
+// :persistent-global-function
 inline Term *
 toAbstractTerm_(AbstractContext *ctx, Term *in0)
 {
@@ -2191,19 +2190,16 @@ toAbstractTerm_(AbstractContext *ctx, Term *in0)
 
       case Term_Variable:
       {
-        // #toAbstractTerm-guarantee-copy
         out0 = copyTerm(arena, (Variable *)in0);
       } break;
 
       case Term_Computation:
       {
-        // #toAbstractTerm-guarantee-copy
         out0 = copyTerm(arena, (Computation *)in0);
       } break;
 
       case Term_Accessor:
       {
-        // #toAbstractTerm-guarantee-copy
         Accessor *in = (Accessor *)in0;
         Accessor *out = copyTerm(arena, in);
         out->record = toAbstractTerm_(ctx, in->record);
@@ -2569,7 +2565,25 @@ optionalKind(TokenKind tc, Tokenizer *tk = global_tokenizer)
       out = true;
       nextToken();
     }
+  return out;
+}
 
+inline b32
+optionalDirective(char *string, Tokenizer *tk = global_tokenizer)
+{
+  b32 out = false;
+  if (hasMore())
+  {
+    Token token = peekToken(tk);
+    if (token.kind == Token_Directive)
+    {
+      if (equal(token.string, string))
+      {
+        out = true;
+        eatToken();
+      }
+    }
+  }
   return out;
 }
 
@@ -2617,8 +2631,7 @@ isExpressionEndMarker(Token *token)
   }
 
   // Halt at all directives
-  if (token->kind > Token_Directive_START &&
-      token->kind < Token_Directive_END)
+  if (token->kind == Token_Directive)
   {
     return true;
   }
@@ -3417,7 +3430,7 @@ parseSequence(b32 require_braces=true)
       pushContext("Goal transform: => NEW_GOAL [{ EQ_PROOF_HINT }]; ...");
       GoalTransform *ast = newAst(arena, GoalTransform, &token);
       ast0 = ast;
-      if (optionalKind(Token_Directive_print_proof))
+      if (optionalDirective("print_proof"))
       {
         ast->print_proof = true;
       }
@@ -4132,7 +4145,6 @@ copyToGlobalArena(Term *in0)
       {
         Computation *in = castTerm(in0, Computation);
         Computation *out = copyTerm(arena, in);
-        out->type = copyToGlobalArena(in->type);
         out0 = out;
       } break;
 
@@ -4146,6 +4158,7 @@ copyToGlobalArena(Term *in0)
 
       invalidDefaultCase;
     }
+
     out0->type = copyToGlobalArena(in0->type);
   }
   return out0;
@@ -5393,7 +5406,7 @@ parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
       while (true)
       {
         // todo #speed calling "optionalKind" repeatedly is slow
-        if (optionalKind(Token_Directive_norm))
+        if (optionalDirective("norm"))
         {
           pushContext("auto normalization: #norm(IDENTIFIER...)");
           if (requireChar('('))
@@ -5421,24 +5434,24 @@ parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
           }
           popContext();
         }
-        else if (optionalKind(Token_Directive_hint))
+        else if (optionalDirective("hint"))
         {
           setFlag(&out->function_flags, FunctionFlag_is_global_hint);
         }
-        else if (optionalKind(Token_Directive_no_apply))
+        else if (optionalDirective("no_apply"))
         {
           // todo: we can automatically infer this!
           setFlag(&out->function_flags, FunctionFlag_no_apply);
         }
-        else if (optionalKind(Token_Directive_no_print_as_binop))
+        else if (optionalDirective("no_print_as_binop"))
         {
           setFlag(&out->function_flags, FunctionFlag_no_print_as_binop);
         }
-        else if (optionalKind(Token_Directive_expand))
+        else if (optionalDirective("expand"))
         {
           setFlag(&out->function_flags, FunctionFlag_expand);
         }
-        else if (optionalKind(Token_Directive_builtin))
+        else if (optionalDirective("builtin"))
         {
           setFlag(&out->flags, AstFlag_is_builtin);
         }
@@ -5551,7 +5564,7 @@ parseArrowType(Arena *arena, b32 is_struct)
         i32 param_i = param_count++;
         assert(param_i < DEFAULT_MAX_LIST_LENGTH);
 
-        if (optionalKind(Token_Directive_unused))
+        if (optionalDirective("unused"))
         {
           setFlag(&param_flags[param_i], ParameterFlag_Unused);
         }
@@ -5703,7 +5716,7 @@ parseUnion(Arena *arena, Token *uni_name)
     }
   }
 
-  if (optionalKind(Token_Directive_builtin))
+  if (optionalDirective("builtin"))
   {
     setFlag(&uni->flags, AstFlag_is_builtin);
   }
@@ -6370,111 +6383,110 @@ parseTopLevel(EngineState *state)
 
     switch (token_.kind)
     {
-      case Token_Directive_load:
+      case Token_Directive:
       {
-        pushContext("load");
-        Token file = nextToken();
-        if (file.kind != Token_StringLiteral)
-          tokenError("expect \"FILENAME\"");
-        else
+        if (equal(token->string, "load"))
         {
-          String load_path = print(arena, global_tokenizer->directory);
-          load_path.length += print(arena, file.string).length;
-          arena->used++;
-
-          // note: this could be made more efficient but we don't care.
-          FilePath full_path = platformGetFileFullPath(arena, load_path.chars);
-
-          b32 already_loaded = false;
-          for (auto file_list = state->file_list;
-               file_list && !already_loaded;
-               file_list = file_list->tail)
+          pushContext("load");
+          Token file = nextToken();
+          if (file.kind != Token_StringLiteral)
+            tokenError("expect \"FILENAME\"");
+          else
           {
-            if (equal(file_list->head_path, load_path))
-              already_loaded = true;
-          }
+            String load_path = print(arena, global_tokenizer->directory);
+            load_path.length += print(arena, file.string).length;
+            arena->used++;
 
-          if (!already_loaded)
-          {
-            auto interp_result = interpretFile(state, full_path, false);
-            if (!interp_result)
-              tokenError("failed loading file");
-          }
-        }
-        popContext();
-      } break;
+            // note: this could be made more efficient but we don't care.
+            FilePath full_path = platformGetFileFullPath(arena, load_path.chars);
 
-      case Token_Directive_primitive:
-      {
-        if (requireIdentifier())
-        {
-          String global_name = lastToken()->string;
-          String primitive_name = global_name;
-          if (optionalString("as"))
-          {
-            if (requireIdentifier())
+            b32 already_loaded = false;
+            for (auto file_list = state->file_list;
+                 file_list && !already_loaded;
+                 file_list = file_list->tail)
             {
-              primitive_name = lastToken()->string;
+              if (equal(file_list->head_path, load_path))
+                already_loaded = true;
+            }
+
+            if (!already_loaded)
+            {
+              auto interp_result = interpretFile(state, full_path, false);
+              if (!interp_result)
+                tokenError("failed loading file");
             }
           }
-
-          if (requireChar(':'))
+          popContext();
+        }
+        else if (equal(token->string, "primitive"))
+        {
+          if (requireIdentifier())
           {
-            if (Term *primitive_type = parseAndBuildGlobal(typer))
+            String global_name = lastToken()->string;
+            String primitive_name = global_name;
+            if (optionalString("as"))
             {
-              b32 installed = false;
-              for (i32 i=0;
-                   !installed && i < arrayCount(rea_builtin_names);
-                   i++)
+              if (requireIdentifier())
               {
-                BuiltinEntry entry = rea_builtin_names[i];
-                if (equal(primitive_name, entry.name))
-                {
-                  installed = true;
-                  *entry.term = newTerm(arena, Primitive, primitive_type);
-                  addBuiltinGlobalBinding(global_name, *entry.term);
-                }
+                primitive_name = lastToken()->string;
               }
-              // assert(installed);
+            }
+
+            if (requireChar(':'))
+            {
+              if (Term *primitive_type = parseAndBuildGlobal(typer))
+              {
+                b32 installed = false;
+                for (i32 i=0;
+                     !installed && i < arrayCount(rea_builtin_names);
+                     i++)
+                {
+                  BuiltinEntry entry = rea_builtin_names[i];
+                  if (equal(primitive_name, entry.name))
+                  {
+                    installed = true;
+                    *entry.term = newTerm(arena, Primitive, primitive_type);
+                    addBuiltinGlobalBinding(global_name, *entry.term);
+                  }
+                }
+                // assert(installed);
+              }
             }
           }
         }
-      } break;
-
-      case Token_Directive_print:
-      {
-        if (optionalString("all_args"))
+        else if (equal(token->string, "print"))
         {
-          print_all_args = !optionalString("off");
+          if (optionalString("all_args"))
+          {
+            print_all_args = !optionalString("off");
+          }
+          else if (optionalString("var_delta"))
+          {
+            print_var_delta = !optionalString("off");
+          }
+          else if (optionalString("var_index"))
+          {
+            print_var_index = !optionalString("off");
+          }
         }
-        else if (optionalString("var_delta"))
+        else if (equal(token->string, "should_fail"))
         {
-          print_var_delta = !optionalString("off");
+          if (optionalString("off"))
+          {
+            should_fail_active = false;
+          }
+          else
+          {
+            should_fail_active = true;
+            silentError();  // #hack just a signal to skip this form
+          }
         }
-        else if (optionalString("var_index"))
+        else if (equal(token->string, "debug"))
         {
-          print_var_index = !optionalString("off");
+          b32 value = !optionalString("off");
+          global_state.top_level_debug_mode = value;
+          print_var_delta                   = value;
         }
-      } break;
-
-      case Token_Directive_should_fail:
-      {
-        if (optionalString("off"))
-        {
-          should_fail_active = false;
-        }
-        else
-        {
-          should_fail_active = true;
-          silentError();  // #hack just a signal to skip this form
-        }
-      } break;
-
-      case Token_Directive_debug:
-      {
-        b32 value = !optionalString("off");
-        global_state.top_level_debug_mode = value;
-        print_var_delta                   = value;
       } break;
 
       case Token_Keyword_test_eval:
@@ -6857,7 +6869,6 @@ int engineMain()
 #endif
 
   assert(arrayCount(language_keywords) == Token_Keyword_END - Token_Keyword_START);
-  assert(arrayCount(meta_directives)   == Token_Directive_END - Token_Directive_START);
 
   void   *top_level_arena_base = (void*)teraBytes(2);
   size_t  top_level_arena_size = megaBytes(256);
