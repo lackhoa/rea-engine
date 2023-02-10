@@ -638,6 +638,7 @@ parseInt32()
   return out;
 }
 
+#if 0
 inline TacticEnum
 matchTactic(String string)
 {
@@ -653,6 +654,7 @@ matchTactic(String string)
   }
   return out;
 }
+#endif
 
 #if 0
 // NOTE: I've decided it's not worth it to incur the complexity, since parsing

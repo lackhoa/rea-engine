@@ -61,6 +61,7 @@ const char *language_keywords[] = {
 };
 const char *meta_directives[] = {"", "load", "should_fail", "debug", "norm", "hint", "no_apply", "expand", "no_print_as_binop", "print_proof", "unused", "print", "primitive", "builtin"};
 
+#if 0
 enum TacticEnum {
   Tactic_rewrite = 1,
   Tactic_goal_transform,
@@ -71,10 +72,10 @@ enum TacticEnum {
   Tactic_seek,
   Tactic_reductio,
   Tactic_invert,
-
   Tactic_COUNT,
 };
 const char *language_tactics[] = {"", "rewrite", "=>", "norm", "return", "fork", "prove", "seek", "reductio", "invert"};
+#endif
 
 struct Token
 {

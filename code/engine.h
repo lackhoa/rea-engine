@@ -9,6 +9,7 @@
 // NOTE: This should work like the function stack, we'll clean it after every top-level form.
 global_variable Arena  temp_arena_;
 global_variable Arena *temp_arena = &temp_arena_;
+global_variable Arena *parse_arena = &temp_arena_;
 global_variable StringBuffer  error_buffer_;
 global_variable StringBuffer *error_buffer = &error_buffer_;
 
