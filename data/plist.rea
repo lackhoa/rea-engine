@@ -1,0 +1,20 @@
+PList :: union($$ListType: Type)
+{single(head: ListType),
+ cons(head: ListType, tail: PList(ListType))}
+
+Permute :: union($$T: Type, PList(T), PList(T))
+{
+ permuteSingle(a: T) -> Permute(single(a), single(a))
+ ,
+ permuteSkip(a: T, l,m: PList(T), p: Permute(l, m)) -> Permute(a cons l, a cons m)
+ ,
+ permuteSwap(a,b: T, l: PList(T)) -> Permute(a cons b cons l, b cons a cons l)
+ ,
+ permuteChain(l,l1,l2: PList(T), p1: Permute(l, l1), p2: Permute(l1, l2)) -> Permute(l, l2)
+ }
+
++ :: fn($T: Type, l,m: PList(T)) -> PList(T)
+{fork l
+ {single return l.head cons m,
+  cons   return l.head cons (l.tail + m)
+  }}

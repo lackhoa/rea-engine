@@ -15,7 +15,9 @@
 #include "lexer.cpp"
 #include "debug_config.h"
 
-Term dummy_function_being_built = {};
+global_variable Function  *current_global_function       = 0;
+global_variable Pointer  **current_global_function_args = 0;
+
 Term  holev_ = {.kind = Term_Hole};
 Term *holev = &holev_;
 
@@ -1325,31 +1327,34 @@ prettyPrint(Arena *buffer, Scope *scope)
          param_i++)
     {
       Pointer *pointer = values[param_i];
-      assert(pointer->is_stack_pointer);
-      if (Record *record = castRecord(pointer))
+      if (pointer)  // sometimes we error out, and the scope is hosed
       {
-        Arrow *signature = getSignature(record->ctor);
-        for (i32 i=0; i < record->member_count; i++)
+        assert(pointer->is_stack_pointer);
+        if (Record *record = castRecord(pointer))
         {
-          // NOTE: print the member types.
-          if (!isInferredParameter(signature, i))
+          Arrow *signature = getSignature(record->ctor);
+          for (i32 i=0; i < record->member_count; i++)
           {
-            Term *member = record->members[i];
-            print(buffer, member, printOptionPrintType());
-            if (i != record->member_count-1) print(buffer, "\n");
+            // NOTE: print the member types.
+            if (!isInferredParameter(signature, i))
+            {
+              Term *member = record->members[i];
+              print(buffer, member, printOptionPrintType());
+              if (i != record->member_count-1) print(buffer, "\n");
+            }
           }
         }
-      }
-      else
-      {
-        if (pointer->stack.name.chars)
+        else
         {
-          print(buffer, pointer->stack.name);
-          print(buffer, ": ");
+          if (pointer->stack.name.chars)
+          {
+            print(buffer, pointer->stack.name);
+            print(buffer, ": ");
+          }
+          print(buffer, pointer->type);
         }
-        print(buffer, pointer->type);
+        print(buffer, "\n");
       }
-      print(buffer, "\n");
     }
     scope = scope->outer;
   }
@@ -1643,9 +1648,85 @@ isGround(Term *in0)
   }
 }
 
+inline b32
+isRootedFrom(Term *ap0, Pointer *a)
+{
+  assert(a->is_stack_pointer);
+  if (Pointer *ap = castTerm(ap0, Pointer))
+  {
+    Pointer *root = ap;
+    while (!root->is_stack_pointer)
+    {
+      root = root->heap.record;
+    }
+    return root == a;
+  }
+  return false;
+}
+
+inline b32
+recursiveCallAccepted(i32 arg_count, Term **args)
+{
+  b32 rejected        = false;
+  b32 component_found = false;
+  for (i32 i=0; !rejected && i < arg_count; i++)
+  {
+    Term *arg = args[i];
+    rejected = true;
+    // for (i32 j=0; rejected && j < arg_count; j++)
+    i32 j = i;
+    {
+      Pointer *global_arg = current_global_function_args[j];
+      if (arg == global_arg)
+      {
+        rejected = false;
+      }
+      else if (isRootedFrom(arg, global_arg))
+      {
+        rejected        = false;
+        component_found = true;
+      }
+    }
+  }
+  return !rejected && component_found;
+}
+
+inline void
+checkRecursiveCall(Term *op, i32 arg_count, Term **args)
+{
+  if (Function *fun = castTerm(op, Function))
+  {
+    if (fun == current_global_function)
+    {
+      if (!recursiveCallAccepted(arg_count, args))
+      {
+        DUMP("RECURSION REJECTED!\n");
+
+        DUMP("scope: ");
+        for (i32 i=0; i < arg_count; i++)
+        {
+          DUMP(current_global_function_args[i], ", ");
+        }
+        DUMP("\n");
+
+        DUMP("args : ");
+        for (i32 i=0; i < arg_count; i++)
+        {
+          DUMP(args[i], ", ");
+        }
+        DUMP("\n");
+
+        assert(false);
+      }
+    }
+  }
+}
+
 inline Composite *
 newComposite(Arena *arena, Term *op, i32 arg_count, Term **args)
 {
+  checkRecursiveCall(op, arg_count, args);
+
   Composite *out = 0;
   Arrow *signature = castTerm(getType(op), Arrow);
   assert(signature->param_count == arg_count);
@@ -1810,9 +1891,9 @@ apply(Term *op, i32 arg_count, Term **args, String name_to_unfold)
   if (Function *fun = castTerm(op, Function))
   {// Function application
     b32 should_apply_function = true;
-    if (fun->body == &dummy_function_being_built)
+    if (fun == current_global_function)
     {
-      should_apply_function = false;
+      should_apply_function = false;  // NOTE: not strictly needed
     }
     if (checkFlag(fun->function_flags, FunctionFlag_no_apply))
     {
@@ -4242,14 +4323,8 @@ buildFunctionGivenSignature(Typer *typer, Arrow *signature, Ast *in_body,
   // invalidated (TODO: maybe the copier should know about self-reference).
   Arena *arena = global_name ? global_state.top_level_arena : temp_arena;
 
-  Function *out = newTerm(arena, Function, signature);
-  out->body = &dummy_function_being_built;
+  Function *out       = newTerm(arena, Function, signature);
   out->function_flags = function_flags;
-  if (global_name)
-  {
-    // NOTE: add binding first to support recursion
-    addGlobalBinding(global_name, out);
-  }
 
   Term *body = 0;
   Typer new_typer = *typer;
@@ -4257,6 +4332,15 @@ buildFunctionGivenSignature(Typer *typer, Arrow *signature, Ast *in_body,
     Typer *typer = &new_typer;
     typer->scope = introduceSignature(typer->scope, signature);
     extendBindings(typer);
+
+    if (global_name)
+    {
+      // NOTE: add binding first to support recursion
+      addGlobalBinding(global_name, out);
+      current_global_function      = out;
+      current_global_function_args = typer->scope->values;
+    }
+
     for (i32 index=0; index < signature->param_count; index++)
     {
       String name = signature->param_names[index];
@@ -4264,6 +4348,9 @@ buildFunctionGivenSignature(Typer *typer, Arrow *signature, Ast *in_body,
     }
     Term *body_type = toValue(typer->scope, signature->output_type);
     body = buildTerm(typer, in_body, body_type);
+
+    current_global_function       = 0;
+    current_global_function_args = 0;
   }
 
   if (body)
@@ -5110,7 +5197,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
     case Ast_ListAst:
     {
       ListAst *in = (ListAst *)in0;
-      auto [uni, uni_args] = castUnion(goal);
+      // auto [uni, uni_args] = castUnion(goal);
       // NOTE: The plan is to just lean on the typechecking as much as possible.
       Ast *tail = in->tail;
       if (!tail)
@@ -5253,22 +5340,38 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
   if (Term *subject = buildTerm(typer, in->subject, holev).value)
   {
     out->subject = subject;
-    i32 case_count = in->case_count;
-
     Term *subject_type = subject->type;
     if (Union *uni = getUnionOrPolyUnion(subject_type))
     {
-      if (uni->ctor_count == case_count)
+      Term **ordered_bodies = pushArray(arena, uni->ctor_count, Term *, true);
+
+      // NOTE: For ux reason, we don't care if you have less cases, just
+      // typecheck what we have.
+      if (in->case_count > uni->ctor_count)
       {
-        Term **ordered_bodies = pushArray(arena, case_count, Term *, true);
+        reportError("fork provides more cases than expected!");
+      }
 
-        for (i32 input_case_i = 0;
-             input_case_i < case_count && noError();
-             input_case_i++)
+      for (i32 input_case_i = 0;
+           input_case_i < in->case_count && noError();
+           input_case_i++)
+      {
+        Token *ctor_name = in->ctors + input_case_i;
+
+        i32 ctor_i = -1;
+        if (equal(ctor_name, "auto"))
         {
-          Token *ctor_name = in->ctors + input_case_i;
-
-          i32 ctor_i = -1;
+          for (i32 i=0; i < in->case_count; i++)
+          {
+            if (!ordered_bodies[i])
+            {
+              ctor_i = i;
+              break;
+            }
+          }
+        }
+        else
+        {
           for (i32 i = 0; i < uni->ctor_count; i++)
           {
             if (equal(getConstructorName(uni, i), ctor_name->string))
@@ -5277,56 +5380,59 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
               break;
             }
           }
+        }
 
-          if (ctor_i != -1)
+        if (ctor_i != -1)
+        {
+          if (instantiate(subject, ctor_i))
           {
-            if (instantiate(subject, ctor_i))
+            if (ordered_bodies[ctor_i])
             {
-              if (ordered_bodies[ctor_i])
-              {
-                reportError(in->bodies[input_case_i], "fork case handled twice");
-                attach("constructor", getConstructorName(uni, ctor_i));
-              }
-              else
-              {
-                typer->try_reductio = true;
-                if (Term *body = buildTerm(typer, in->bodies[input_case_i], goal).value)
-                {
-                  ordered_bodies[ctor_i] = body;
-                }
-              }
-              uninstantiate(subject);
+              reportError(in->bodies[input_case_i], "fork case handled twice");
+              attach("constructor", getConstructorName(uni, ctor_i));
             }
             else
             {
-              reportError(in->subject, "cannot fork this term");
+              typer->try_reductio = true;
+              if (Term *body = buildTerm(typer, in->bodies[input_case_i], goal).value)
+              {
+                ordered_bodies[ctor_i] = body;
+              }
             }
+            uninstantiate(subject);
           }
           else
           {
-            tokenError(ctor_name, "not a valid constructor");  // todo print them out
-            attach("union", uni);
-
-            StartString ctor_names = startString(error_buffer);
-            for (i32 id=0; id < uni->ctor_count; id++)
-            {
-              print(error_buffer, getConstructorName(uni, id));
-              if (id != uni->ctor_count-1)
-                print(error_buffer, ", ");
-            }
-            attach("valid constructors", endString(ctor_names));
+            reportError(in->subject, "cannot fork this term");
           }
         }
+        else
+        {
+          tokenError(ctor_name, "not a valid constructor");
+          attach("union", uni);
 
-        out->bodies = ordered_bodies;
+          StartString ctor_names = startString(error_buffer);
+          for (i32 id=0; id < uni->ctor_count; id++)
+          {
+            print(error_buffer, getConstructorName(uni, id));
+            if (id != uni->ctor_count-1)
+              print(error_buffer, ", ");
+          }
+          attach("valid constructors", endString(ctor_names));
+        }
       }
-      else
+
+      out->bodies = ordered_bodies;
+
+      if (noError() && in->case_count != uni->ctor_count)
+      {
         reportError(in, "wrong number of cases, expected: %d, got: %d",
-                   uni->ctor_count, in->case_count);
+                    uni->ctor_count, in->case_count);
+      }
     }
     else
     {
-      reportError(in->subject, "cannot fork expression of type");
+      reportError(in->subject, "cannot fork expression of this type");
       attach("type", subject_type);
     }
   }
@@ -6928,7 +7034,7 @@ int engineMain()
 
   char *files[] = {
     "../data/test.rea",
-    "../data/z.rea",
+    "../data/natp.rea",
     "../data/z-slider.rea",
   };
   for (i32 file_id=0; file_id < arrayCount(files); file_id++)

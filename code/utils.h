@@ -41,13 +41,13 @@ typedef long     i64;
 #define arrayCount(array) (sizeof(array) / sizeof((array)[0]))
 
 #if COMPILER_MSVC
-#  define crash_the_program __debugbreak()
+#  define crashTheProgram __debugbreak()
 #else
-#  define crash_the_program __builtin_trap()
+#  define crashTheProgram __builtin_trap()
 #endif
 
 #if REA_INTERNAL
-#  define assert(claim) if (!(claim)) { printf("%s:%d: assertion fired!", __FILE__, __LINE__); fflush(stdout); crash_the_program; }
+#  define assert(claim) if (!(claim)) { printf("%s:%d: assertion fired!", __FILE__, __LINE__); fflush(stdout); crashTheProgram; }
 #else
 #  define assert(claim)
 #endif
