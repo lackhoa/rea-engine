@@ -3,6 +3,8 @@
 #include "engine.h"
 #include "lexer.h"
 
+global_variable Tokenizer *TK;
+
 inline Token
 newToken(String text)
 {
@@ -18,19 +20,6 @@ inline Token
 newToken(const char *text)
 {
   return newToken(toString(text));
-}
-
-inline Tokenizer
-newTokenizer(char *input, String directory=toString("<dir_not_provided>"))
-{
-  Tokenizer out = {};
-  out.line         = 1;
-  out.column       = 1;
-  out.directory    = directory;
-  out.at           = input;
-  if (input)
-    eatAllSpaces(&out);
-  return out;
 }
 
 inline char
@@ -113,16 +102,14 @@ printCharToBufferRepeat(char *buffer, char c, i32 repeat)
   buffer[repeat] = 0;
 }
 
-global_variable Tokenizer *global_tokenizer;
-
 inline void
-pushContext(String string, b32 is_important, Tokenizer *tk=global_tokenizer)
+pushContext(String string, b32 is_important)
 {
   InterpContext *context = pushStruct(temp_arena, InterpContext);
   context->first        = string;
   context->is_important = is_important;
-  context->next         = tk->context;
-  tk->context = context;
+  context->next         = TK->context;
+  TK->context = context;
 }
 
 inline void
@@ -138,14 +125,15 @@ pushContext(const char *string, b32 is_important=false)
 }
 
 internal void
-popContext(Tokenizer *tk = global_tokenizer)
+popContext()
 {
-  tk->context = tk->context->next;
+  TK->context = TK->context->next;
 }
 
 inline b32
-hasMore(Tokenizer *tk = global_tokenizer)
+hasMore()
 {
+  auto tk = TK;
   b32 out = ((*tk->at != 0) && (!tk->error));
 #if 0
   if (out && (peekToken(tk).cat == 0))
@@ -157,56 +145,56 @@ hasMore(Tokenizer *tk = global_tokenizer)
 InterpError SILENT_ERROR;
 
 inline void
-wipeError(Tokenizer *tk = global_tokenizer)
+wipeError()
 {
   resetArena(error_buffer);
-  tk->error       = 0;
+  TK->error       = 0;
 }
 
 inline b32
-noError(Tokenizer *tk = global_tokenizer)
+noError()
 {
-  return !tk->error;
+  return !TK->error;
 }
 
 inline InterpError *
-getError(Tokenizer *tk=global_tokenizer)
+getError()
 {
-  return tk->error;
+  return TK->error;
 }
 
 inline InterpError *
-hasError(Tokenizer *tk=global_tokenizer)
+hasError()
 {
-  return tk->error;
+  return TK->error;
 }
 
 inline void
-silentError(Tokenizer *tk=global_tokenizer)
+silentError()
 {
-  tk->error = &SILENT_ERROR;
+  TK->error = &SILENT_ERROR;
 }
 
 inline b32
-hasSilentError(Tokenizer *tk=global_tokenizer)
+hasSilentError()
 {
-  return tk->error == &SILENT_ERROR;
+  return TK->error == &SILENT_ERROR;
 }
 
 inline char
-nextChar(Tokenizer *tk=global_tokenizer)
+nextChar()
 {
   char out;
-  if (*tk->at)
+  if (*TK->at)
   {
-    out = *tk->at++;
+    out = *TK->at++;
     if (out == '\n')
     {
-      tk->line++;
-      tk->column = 1;
+      TK->line++;
+      TK->column = 1;
     }
     else
-      tk->column++;
+      TK->column++;
   }
   else
     out = 0;
@@ -214,9 +202,10 @@ nextChar(Tokenizer *tk=global_tokenizer)
 }
 
 internal void
-eatAllSpaces(Tokenizer *tk)
+eatAllSpaces()
 {
   b32 stop = false;
+  auto tk = TK;
   while ((*tk->at) && (!stop))
   {
     switch (*tk->at)
@@ -225,17 +214,17 @@ eatAllSpaces(Tokenizer *tk)
       case '\t':
       case ' ':
       {
-        nextChar(tk);
+        nextChar();
       } break;
 
       case ';':
       {
         if (*(tk->at+1) == ';')
         {
-          nextChar(tk);
-          nextChar(tk);
+          nextChar();
+          nextChar();
           while ((*tk->at) && (*tk->at != '\n'))
-            nextChar(tk);
+            nextChar();
         }
         else
         {
@@ -249,9 +238,22 @@ eatAllSpaces(Tokenizer *tk)
   }
 }
 
-internal void
-reportErrorVA(i32 line, i32 column, char *format, va_list arg_list, Tokenizer *tk = global_tokenizer)
+inline void
+initTokenizer(Tokenizer *tk, char *input, String directory)
 {
+  tk->line      = 1;
+  tk->column    = 1;
+  tk->directory = directory;
+  tk->at        = input;
+  TK = tk;
+  if (input)
+    eatAllSpaces();
+}
+
+internal void
+reportErrorVA(i32 line, i32 column, char *format, va_list arg_list)
+{
+  auto tk = TK;
   assert(!tk->error);  // note: prevent parser from doing useless work after failure.
 
   InterpContext *context = 0;
@@ -282,34 +284,6 @@ reportError(Ast *in, char *format, ...)
 }
 
 internal void
-reportError(Tokenizer *tk, Token *token, char *format, ...)
-{
-  va_list arg_list;
-  __crt_va_start(arg_list, format);
-  reportErrorVA(token->line, token->column, format, arg_list, tk);
-  __crt_va_end(arg_list);
-}
-
-// todo cleanup always use the global tokenizer, so we can get rid of this function
-internal void
-tokenError(Token *token, char *message, Tokenizer *tk=global_tokenizer)
-{
-  reportError(tk, token, "%s", message);
-}
-
-internal void
-tokenError(char *message, Tokenizer *tk=global_tokenizer)
-{
-  tokenError(&tk->last_token, message, tk);
-}
-
-internal void
-reportError(char *message, Tokenizer *tk=global_tokenizer)
-{
-  reportError(tk, &tk->last_token, message);
-}
-
-internal void
 reportError(Token *token, char *format, ...)
 {
   va_list arg_list;
@@ -318,22 +292,42 @@ reportError(Token *token, char *format, ...)
   __crt_va_end(arg_list);
 }
 
-forward_declare inline void
-eatToken(Tokenizer *tk = global_tokenizer)
+// todo cleanup always use the global tokenizer, so we can get rid of this function
+internal void
+tokenError(Token *token, char *message)
 {
+  reportError(token, "%s", message);
+}
+
+internal void
+tokenError(char *message)
+{
+  tokenError(&TK->last_token, message);
+}
+
+internal void
+reportError(char *message)
+{
+  reportError(&TK->last_token, message);
+}
+
+forward_declare inline void
+eatToken()
+{
+  auto tk = TK;
   Token out = {};
   out.string.chars = tk->at;
   out.line         = tk->line;
   out.column       = tk->column;
 
-  switch (char first_char = nextChar(tk))
+  switch (char first_char = nextChar())
   {
     case '#':
     {
       out.string.chars++; // advance past the hash
       out.kind = Token_Directive;
       while (isAlphaNumeric(*tk->at))
-        nextChar(tk);
+        nextChar();
     } break;
 
     case '"':
@@ -341,9 +335,9 @@ eatToken(Tokenizer *tk = global_tokenizer)
       out.string.chars++; // advance past the opening double quote
       out.kind = Token_StringLiteral;
       while (*tk->at != '"')
-        nextChar(tk);
+        nextChar();
       // handle the closing double quote
-      nextChar(tk);
+      nextChar();
       out.string.length = (i32)(tk->at - out.string.chars - 1);
     } break;
 
@@ -351,13 +345,13 @@ eatToken(Tokenizer *tk = global_tokenizer)
     {
       if ((*tk->at == '.') && (*(tk->at+1) == '.'))
       {
-        nextChar(tk);
-        nextChar(tk);
+        nextChar();
+        nextChar();
         out.kind = Token_Ellipsis;
       }
       else if (*tk->at == '.')
       {
-        nextChar(tk);
+        nextChar();
         out.kind = Token_DoubleDot;
       }
       else
@@ -371,14 +365,14 @@ eatToken(Tokenizer *tk = global_tokenizer)
         case '>':
         {
           out.kind = Token_StrongArrow;
-          nextChar(tk);
+          nextChar();
         } break;
 
         default:
         {
           out.kind = Token_Special;
           while (isSpecial(*tk->at))
-            nextChar(tk);
+            nextChar();
         } break;
       }
     } break;
@@ -390,20 +384,20 @@ eatToken(Tokenizer *tk = global_tokenizer)
         case '-':
         {
           out.kind = Token_DoubleDash;
-          nextChar(tk);
+          nextChar();
         } break;
 
         case '>':
         {
           out.kind = Token_Arrow;
-          nextChar(tk);
+          nextChar();
         } break;
 
         default:
         {
           out.kind = Token_Special;
           while (isSpecial(*tk->at))
-            nextChar(tk);
+            nextChar();
         } break;
       }
     } break;
@@ -415,13 +409,13 @@ eatToken(Tokenizer *tk = global_tokenizer)
         case ':':
         {
           out.kind = Token_DoubleColon;
-          nextChar(tk);
+          nextChar();
         } break;
 
         case '=':
         {
           out.kind = Token_ColonEqual;
-          nextChar(tk);
+          nextChar();
         } break;
 
         default:
@@ -437,7 +431,7 @@ eatToken(Tokenizer *tk = global_tokenizer)
       b32 advanced = false;
       while (isAlphaNumeric(*tk->at))
       {
-        nextChar(tk);
+        nextChar();
         advanced = true;
       }
       if (!advanced)
@@ -450,13 +444,13 @@ eatToken(Tokenizer *tk = global_tokenizer)
       {
         out.kind = Token_Alphanumeric;
         while (isAlphaNumeric(*tk->at))
-          nextChar(tk);
+          nextChar();
       }
       else if (isSpecial(first_char))
       {
         out.kind = Token_Special;
         while (isSpecial(*tk->at))
-          nextChar(tk);
+          nextChar();
       }
       else
         out.kind = (TokenKind)first_char;
@@ -491,40 +485,41 @@ eatToken(Tokenizer *tk = global_tokenizer)
   tk->last_token = out;
   // NOTE: :always-eat-spaces We eat spaces afterward, so that we can always
   // check *tk->at to see if there's anything left to parse.
-  eatAllSpaces(tk);
+  eatAllSpaces();
 }
 
 // todo just return the token pointer!
 forward_declare inline Token
-nextToken(Tokenizer *tk=global_tokenizer)
+nextToken()
 {
-  eatToken(tk);
-  return tk->last_token;
+  eatToken();
+  return TK->last_token;
 }
 
 forward_declare inline Token
-peekToken(Tokenizer *tk = global_tokenizer)
+peekToken()
 {
-    auto tk_copy = *tk;
-    return nextToken(&tk_copy);
+    auto tk_save = *TK;
+    Token token = nextToken();
+    *TK = tk_save;
+    return token;
 }
 
-
 inline char
-peekChar(Tokenizer *tk = global_tokenizer)
+peekChar()
 {
-  return *tk->at;  // :always-eat-spaces
+  return *TK->at;  // :always-eat-spaces
 }
 
 inline b32
-eatUntil(char c, Tokenizer *tk)
+eatUntil(char c)
 {
   b32 found = false;
-  while (*tk->at && !found)
+  while (*TK->at && !found)
   {
-    if (*tk->at == c)
+    if (*TK->at == c)
       found = true;
-    nextToken(tk);
+    nextToken();
   }
   return found;
 }
@@ -564,24 +559,27 @@ isIdentifier(Token *token)
 }
 
 inline b32
-eatUntilMatchingPair(Tokenizer *tk)
+eatUntilMatchingPair()
 {
+  auto tk = TK;
   b32 found = false;
   Token opening = tk->last_token;
   char  closing = getMatchingPair(&opening);
   assert(closing);
-  for (; !found && hasMore(tk); )
+  for (; !found && hasMore(); )
   {
-    Token token = nextToken(tk);
+    Token token = nextToken();
     if (getMatchingPair(&token))
-      eatUntilMatchingPair(tk);
+      eatUntilMatchingPair();
 
     else if (equal(&token, closing))
       found = true;
   }
 
-  if (noError(tk) && !found)
-    reportError(tk, &opening, "could not find matching pair for");
+  if (noError() && !found)
+  {
+    reportError(&opening, "could not find matching pair for");
+  }
 
   return found;
 }
@@ -589,7 +587,7 @@ eatUntilMatchingPair(Tokenizer *tk)
 inline Token *
 lastToken()
 {
-  return &global_tokenizer->last_token;
+  return &TK->last_token;
 }
 
 inline i32

@@ -84,5 +84,3 @@ struct Tokenizer
 
   String directory;
 };
-
-void eatAllSpaces(Tokenizer *tk);

@@ -1,6 +1,6 @@
-void eatToken(Tokenizer * tk);
-Token nextToken(Tokenizer * tk);
-Token peekToken(Tokenizer * tk);
+void eatToken();
+Token nextToken();
+Token peekToken();
 Term * getType(Term * in0);
 void dump(Trinary trinary);
 void unwindScope(Typer * env);

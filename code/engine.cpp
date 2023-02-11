@@ -146,9 +146,9 @@ isPolyUnion(Union *in)
 }
 
 inline void
-attach(char *key, String value, Tokenizer *tk=global_tokenizer)
+attach(char *key, String value)
 {
-  InterpError *error = tk->error;
+  InterpError *error = TK->error;
   assert(error->attachment_count < arrayCount(error->attachments));
   error->attachments[error->attachment_count++] = {key, value};
 }
@@ -165,33 +165,34 @@ attach(char *key, i32 count, Term **terms, PrintOptions print_options={})
   attach(key, endString(start));
 }
 
-inline void attach(char *key, Token *token, Tokenizer *tk=global_tokenizer)
+inline void
+attach(char *key, Token *token)
 {
-  attach(key, token->string, tk);
+  attach(key, token->string);
 }
 
 inline void
-attach(char *key, Ast *ast, Tokenizer *tk=global_tokenizer)
+attach(char *key, Ast *ast)
 {
   StartString start = startString(error_buffer);
   print(error_buffer, ast);
-  attach(key, endString(start), tk);
+  attach(key, endString(start));
 }
 
 inline void
-attach(char *key, Term *value, Tokenizer *tk=global_tokenizer)
+attach(char *key, Term *value)
 {
   StartString start = startString(error_buffer);
   print(error_buffer, value);
-  attach(key, endString(start), tk);
+  attach(key, endString(start));
 }
 
 inline void
-attach(char *key, i32 n, Tokenizer *tk=global_tokenizer)
+attach(char *key, i32 n)
 {
   StartString start = startString(error_buffer);
   print(error_buffer, "%d", n);
-  attach(key, endString(start), tk);
+  attach(key, endString(start));
 }
 
 inline String
@@ -2663,36 +2664,36 @@ lookupLocalName(Typer *env, Token *token)
 }
 
 inline b32
-requireChar(char c, char *reason=0, Tokenizer *tk=global_tokenizer)
+requireChar(char c, char *reason=0)
 {
   auto out = false;
   if (!reason)
     reason = "";
-  if (hasMore(tk))
+  if (hasMore())
   {
-    Token token = nextToken(tk);
+    Token token = nextToken();
     if (token.string.length == 1 && token.string.chars[0] == c)
       out = true;
     else
-      reportError(tk, &token, "expected character '%c' (%s)", c, reason);
+      reportError(&token, "expected character '%c' (%s)", c, reason);
   }
   return out;
 }
 
 inline b32
-requireKind(TokenKind tc, char *message=0, Tokenizer *tk=global_tokenizer)
+requireKind(TokenKind tc, char *message=0)
 {
   b32 out = false;
   if (hasMore())
   {
-    if (nextToken(tk).kind == tc) out = true;
-    else tokenError(message, tk);
+    if (nextToken().kind == tc) out = true;
+    else tokenError(message);
   }
   return out;
 }
 
 inline b32
-requireIdentifier(char *message=0, Tokenizer *tk=global_tokenizer)
+requireIdentifier(char *message=0)
 {
   b32 out = false;
   if (!message)
@@ -2701,20 +2702,20 @@ requireIdentifier(char *message=0, Tokenizer *tk=global_tokenizer)
   }
   if (hasMore())
   {
-    Token token = nextToken(tk);
+    Token token = nextToken();
     if (isIdentifier(&token)) out = true;
-    else tokenError(message, tk);
+    else tokenError(message);
   }
   return out;
 }
 
 inline b32
-optionalIdentifier(Tokenizer *tk=global_tokenizer)
+optionalIdentifier()
 {
   b32 out = false;
   if (hasMore())
   {
-    Token token = peekToken(tk);
+    Token token = peekToken();
     if (isIdentifier(&token))
     {
       eatToken();
@@ -2725,11 +2726,11 @@ optionalIdentifier(Tokenizer *tk=global_tokenizer)
 }
 
 inline b32
-optionalKind(TokenKind tc, Tokenizer *tk = global_tokenizer)
+optionalKind(TokenKind tc)
 {
   b32 out = false;
   if (hasMore())
-    if (peekToken(tk).kind == tc)
+    if (peekToken().kind == tc)
     {
       out = true;
       eatToken();
@@ -2738,12 +2739,12 @@ optionalKind(TokenKind tc, Tokenizer *tk = global_tokenizer)
 }
 
 inline b32
-optionalDirective(char *string, Tokenizer *tk = global_tokenizer)
+optionalDirective(char *string)
 {
   b32 out = false;
   if (hasMore())
   {
-    Token token = peekToken(tk);
+    Token token = peekToken();
     if (token.kind == Token_Directive)
     {
       if (equal(token.string, string))
@@ -2757,32 +2758,32 @@ optionalDirective(char *string, Tokenizer *tk = global_tokenizer)
 }
 
 inline b32
-optionalChar(char c, Tokenizer *tk=global_tokenizer)
+optionalChar(char c)
 {
   b32 out = false;
   if (hasMore())
   {
-    Token token = peekToken(tk);
+    Token token = peekToken();
     if (equal(&token, c))
     {
       out = true;
-      nextToken(tk);
+      nextToken();
     }
   }
   return out;
 }
 
 inline b32
-optionalString(char *str, Tokenizer *tk=global_tokenizer)
+optionalString(char *str)
 {
   b32 out = false;
   if (hasMore())
   {
-    Token token = peekToken(tk);
+    Token token = peekToken();
     if (equal(&token, str))
     {
       out = true;
-      nextToken(tk);
+      nextToken();
     }
   }
   return out;
@@ -3463,7 +3464,7 @@ parseSequence(b32 require_braces=true)
        )
   {
     // Can't get out of this rewind business, because sometimes the sequence is empty :<
-    Tokenizer tk_save = *global_tokenizer;
+    Tokenizer tk_save = *TK;
     Token  token_ = nextToken();
     Token *token  = &token_;
     Ast *ast0 = 0;
@@ -3706,7 +3707,7 @@ parseSequence(b32 require_braces=true)
     else if (isExpressionEndMarker(token))
     {// synthetic hole
       ast0  = newAst(arena, Hole, token);
-      *global_tokenizer = tk_save;
+      *TK = tk_save;
       expect_sequence_to_end = true;
     }
     else
@@ -5661,7 +5662,7 @@ parseFork()
 {
   ForkAst *out = 0;
   Arena *arena = parse_arena;
-  Token token = global_tokenizer->last_token;
+  Token token = TK->last_token;
   Ast *subject = parseExpression();
   if (requireChar('{', "to open the typedef body"))
   {
@@ -5755,7 +5756,7 @@ parseArrowType(Arena *arena, b32 is_struct)
           }
         }
 
-        Tokenizer tk_save = *global_tokenizer;
+        Tokenizer tk_save = *TK;
         String param_name = {};
         Token maybe_param_name_token = nextToken();
         if (isIdentifier(&maybe_param_name_token))
@@ -5794,9 +5795,9 @@ parseArrowType(Arena *arena, b32 is_struct)
         }
         else
         {
-          *global_tokenizer = tk_save;
+          *TK = tk_save;
           pushContext("anonymous parameter");
-          Token anonymous_parameter_token = global_tokenizer->last_token;
+          Token anonymous_parameter_token = TK->last_token;
           if (Ast *param_type = parseExpression())
           {
             param_types[param_i] = param_type;
@@ -6141,7 +6142,7 @@ buildUnion(Typer *typer, UnionAst *in, Token *global_name)
 inline CtorAst *
 parseCtorAst(Arena *arena)
 {
-  CtorAst *out = newAst(arena, CtorAst, &global_tokenizer->last_token);
+  CtorAst *out = newAst(arena, CtorAst, &TK->last_token);
   if (requireChar('['))
   {
     out->ctor_i = parseInt32();
@@ -6153,7 +6154,7 @@ parseCtorAst(Arena *arena)
 inline SeekAst *
 parseSeek(Arena *arena)
 {
-  SeekAst *seek = newAst(arena, SeekAst, &global_tokenizer->last_token);
+  SeekAst *seek = newAst(arena, SeekAst, &TK->last_token);
   if (!seesExpressionEndMarker())
   {
     seek->proposition = parseExpression();
@@ -6382,7 +6383,7 @@ parseOperand()
     }
     else if (optionalChar('.'))
     {// member accessor
-      AccessorAst *accessor = newAst(arena, AccessorAst, &global_tokenizer->last_token);
+      AccessorAst *accessor = newAst(arena, AccessorAst, &TK->last_token);
       accessor->record      = operand;
       if (requireIdentifier("expected identifier as field name"))
       {
@@ -6400,11 +6401,15 @@ inline b32
 seesArrowExpression()
 {
   b32 out = false;
-  Tokenizer tk_ = *global_tokenizer;
-  Tokenizer *tk = &tk_;
-  if (equal(nextToken(tk), '('))
-    if (eatUntilMatchingPair(tk))
-      out = (nextToken(tk).kind == Token_Arrow);
+  Tokenizer tk_save = *TK;
+  if (equal(nextToken(), '('))
+  {
+    if (eatUntilMatchingPair())
+    {
+      out = (nextToken().kind == Token_Arrow);
+    }
+  }
+  *TK = tk_save;
   return out;
 }
 
@@ -6568,7 +6573,7 @@ parseTopLevel(EngineState *state)
             tokenError("expect \"FILENAME\"");
           else
           {
-            String load_path = print(arena, global_tokenizer->directory);
+            String load_path = print(arena, TK->directory);
             load_path.length += print(arena, file.string).length;
             arena->used++;
 
@@ -6903,11 +6908,10 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
     new_file_list->tail         = state->file_list;
     state->file_list            = new_file_list;
 
-    Tokenizer  tk_ = newTokenizer(read.content, input_path.directory);
+    Tokenizer *tk_save = TK;
+    Tokenizer  tk_ = {};
     Tokenizer *tk  = &tk_;
-
-    Tokenizer *old_tokenizer = global_tokenizer;
-    global_tokenizer         = tk;
+    initTokenizer(tk, read.content, input_path.directory);
 
     parseTopLevel(state);
     if (InterpError *error = tk->error)
@@ -6957,7 +6961,7 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
 #endif
     }
 
-    global_tokenizer = old_tokenizer;
+    TK = tk_save;
   }
   else
   {
