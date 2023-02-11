@@ -222,6 +222,9 @@ testPolymorphSolver :: fn(n: Nat) -> Nat
 
 check_truth testPolymorphSolver(3) = 6;
 
+testEllipsis :: (x,y,z: Bool, p: x=y, q: y=z) -> x=z
+{use eqChain with b=y}
+
 ;; ---------------------------
 ;; The Manhattan algebra test!
 ;; ---------------------------
@@ -232,9 +235,9 @@ check_truth ((1 cons 2 cons nil()) + (3 cons nil())) = (1 cons 2 cons 3 cons nil
 
 permuteTest :: (a,b,c: Nat) -> Permute(Nat, [c,a,b], [a,b,c])
 {
- prove Permute(Nat, [c,a,b], [a,c,b]) {return permuteSwap(...)}
- prove Permute(Nat, [c,b], [b,c])     {return permuteSwap(...)}
- prove Permute(Nat, [a,c,b], [a,b,c]) {return permuteSkip(...)}
+ prove Permute(Nat, [c,a,b], [a,c,b]) {use permuteSwap}
+ prove Permute(Nat, [c,b], [b,c])     {use permuteSwap}
+ prove Permute(Nat, [a,c,b], [a,b,c]) {use permuteSkip}
  return permuteChain([c,a,b], [a,c,b], [a,b,c], _, _)
  }
 

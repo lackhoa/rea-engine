@@ -31,7 +31,6 @@ struct DataMap;
 enum AstKind {
   Ast_Hole = 1,                 // hole left in for type-checking
   Ast_NormalizeMeAst,
-  Ast_Ellipsis,
   Ast_SyntheticAst,
   Ast_Identifier,
 
@@ -118,7 +117,6 @@ struct Identifier : Ast {
 };
 
 typedef Ast Hole;
-typedef Ast Ellipsis;
 typedef Ast AlgebraicManipulation;
 
 struct NormalizeMeAst : Ast {
@@ -305,9 +303,11 @@ struct Pointer : Term {
 };
 
 struct CompositeAst : Ast {
-  Ast  *op;
-  i32   arg_count;
-  Ast **args;
+  Ast     *op;
+  i32      arg_count;
+  Ast    **args;
+  String  *keywords;
+  b32      partial_args;
 };
 
 struct Composite : Term {

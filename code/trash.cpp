@@ -823,3 +823,57 @@ newConjunctionN(Arena *arena, i32 count, Term **conjuncts)
     rea_Int = newTerm(arena, Primitive, rea_Type);
     addBuiltinGlobalBinding("Int", rea_Int);
 #endif
+
+#if 0
+inline Term *
+fillInEllipsis(Typer *typer, Identifier *op_ident, Term *goal)
+{
+  Arena *arena = temp_arena;
+  Term *out = 0;
+  pushContext(__func__);
+  i32 serial = DEBUG_SERIAL++;
+
+  if (goal->kind == Term_Hole)
+  {
+    reportError(op_ident, "cannot solve for arguments since we do know what the output type of this function should be");
+  }
+  else if (lookupLocalName(typer, &op_ident->token))
+  {
+    todoIncomplete;
+  }
+  else if (GlobalBinding *slot = lookupGlobalNameSlot(op_ident, false))
+  {
+    for (int slot_i=0;
+         slot_i < slot->count && noError() && !out;
+         slot_i++)
+    {
+      Term *item = slot->items[slot_i];
+      SolveArgs solution = solveArgs(Solver{.typer=typer}, item, goal, &op_ident->token);
+      if (solution.args)
+      {
+        // NOTE: we don't care which function matches, just grab whichever
+        // matches first.
+        Term **args = copyArray(arena, solution.arg_count, solution.args);
+        out = newComposite(arena, slot->items[slot_i], solution.arg_count, args);
+        assert(equal(getType(out), goal));
+      }
+    }
+    if (!out && noError())
+    {
+      // :solveArgs-only-error-if-unification-succeeds
+      reportError(op_ident, "either no matching overload was found, or failed to solve args");
+      attach("available_overloads", slot->count, slot->items, printOptionPrintType());
+      attach("serial", serial);
+    }
+  }
+  else
+  {
+    reportError(op_ident, "identifier not found");
+    attach("identifier", op_ident->token.string);
+  }
+  
+  popContext();
+  return out;
+}
+#endif
+

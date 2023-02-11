@@ -68,7 +68,7 @@ Permute :: union($$T: Type, List(T), List(T)) #builtin
  ,
  permuteSwap(a,b: T, l: List(T)) -> Permute(a cons b cons l, b cons a cons l)
  ,
- permuteChain(l,l1,l2: List(T), p1: Permute(l, l1), p2: Permute(l1, l2)) -> Permute(l, l2)
+ permuteChain(l,chain,m: List(T), p1: Permute(l, chain), p2: Permute(chain, m)) -> Permute(l, m)
  }
 
 permuteSame :: (A: Type, l: List(A)) -> Permute(l, l)
@@ -101,10 +101,10 @@ permuteSwap :: (A: Type, l,m: List(A), p: l Permute m) -> Permute(m, l)
   use permuteSwap;
   ,
   permuteChain
-  invert p; rewrite seek(l = p.l); rewrite seek(m = p.l2);
-  prove p.l2 Permute p.l1 {use permuteSwap}
-  prove p.l1 Permute p.l {use permuteSwap}
-  return permuteChain(p.l2, p.l1, p.l, _, _);
+  invert p; rewrite seek(l = p.l); rewrite seek(m = p.m);
+  prove p.m Permute p.chain {use permuteSwap}
+  prove p.chain Permute p.l {use permuteSwap}
+  return permuteChain(p.m, p.chain, p.l, _, _);
   }
  }
 
@@ -161,11 +161,11 @@ permuteOfNil :: (A: Type, l: List(A), p: l Permute []) -> l = []
   ,
   permuteChain
   invert p;
-  prove p.l1 = []
-  {prove p.l1 Permute [] {=> p.l1 Permute p.l2}
+  prove p.chain = []
+  {prove p.chain Permute [] {=> p.chain Permute p.m}
    use permuteOfNil}
   prove (p.l = [])
-  {prove p.l Permute [] {=> p.l Permute p.l1}
+  {prove p.l Permute [] {=> p.l Permute p.chain}
    use permuteOfNil}
   => p.l = []
   }

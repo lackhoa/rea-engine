@@ -2709,6 +2709,22 @@ requireIdentifier(char *message=0, Tokenizer *tk=global_tokenizer)
 }
 
 inline b32
+optionalIdentifier(Tokenizer *tk=global_tokenizer)
+{
+  b32 out = false;
+  if (hasMore())
+  {
+    Token token = peekToken(tk);
+    if (isIdentifier(&token))
+    {
+      eatToken();
+      out = true;
+    }
+  }
+  return out;
+}
+
+inline b32
 optionalKind(TokenKind tc, Tokenizer *tk = global_tokenizer)
 {
   b32 out = false;
@@ -2716,7 +2732,7 @@ optionalKind(TokenKind tc, Tokenizer *tk = global_tokenizer)
     if (peekToken(tk).kind == tc)
     {
       out = true;
-      nextToken();
+      eatToken();
     }
   return out;
 }
@@ -3228,6 +3244,11 @@ solveGoal(Solver *solver, Term *goal)
 
     if (!out)
     {
+      out = seekGoal(solver, goal, try_reductio);
+    }
+
+    if (!out)
+    {
       b32 tried_global_hints = false;
       for (HintDatabase *hints = solver->local_hints;
            !out;
@@ -3245,7 +3266,7 @@ solveGoal(Solver *solver, Term *goal)
         if (hints)
         {
           Term *hint = hints->head;
-          if (getType(hint)->kind == Term_Arrow)
+          if (hint->type->kind == Term_Arrow)
           {
             SolveArgs solve_args = solveArgs(solver, hint, goal);
             if (solve_args.args)
@@ -3253,7 +3274,7 @@ solveGoal(Solver *solver, Term *goal)
               out = newComposite(arena, hint, solve_args.arg_count, solve_args.args);
             }
           }
-          else if (equal(getType(hint), goal))
+          else if (equal(hint->type, goal))
           {
             out = hint;
           }
@@ -3263,14 +3284,9 @@ solveGoal(Solver *solver, Term *goal)
       }
     }
 
-    if (!out)
-    {
-      out = seekGoal(solver, goal, try_reductio);
-    }
-
     if (out)
     {
-      assert(equal(getType(out), goal));
+      assert(equal(out->type, goal));
     }
 
     if (DEBUG_LOG_solve)
@@ -3351,56 +3367,6 @@ getFunctionOverloads(Typer *typer, Identifier *ident, Term *goal0)
   return out;
 }
 
-inline Term *
-fillInEllipsis(Arena *arena, Typer *typer, Identifier *op_ident, Term *goal)
-{
-  Term *out = 0;
-  pushContext(__func__);
-  i32 serial = DEBUG_SERIAL++;
-
-  if (goal->kind == Term_Hole)
-  {
-    reportError(op_ident, "cannot solve for arguments since we do know what the output type of this function should be");
-  }
-  else if (lookupLocalName(typer, &op_ident->token))
-  {
-    todoIncomplete;
-  }
-  else if (GlobalBinding *slot = lookupGlobalNameSlot(op_ident, false))
-  {
-    for (int slot_i=0;
-         slot_i < slot->count && noError() && !out;
-         slot_i++)
-    {
-      Term *item = slot->items[slot_i];
-      SolveArgs solution = solveArgs(Solver{.typer=typer}, item, goal, &op_ident->token);
-      if (solution.args)
-      {
-        // NOTE: we don't care which function matches, just grab whichever
-        // matches first.
-        Term **args = copyArray(arena, solution.arg_count, solution.args);
-        out = newComposite(arena, slot->items[slot_i], solution.arg_count, args);
-        assert(equal(getType(out), goal));
-      }
-    }
-    if (!out && noError())
-    {
-      // :solveArgs-only-error-if-unification-succeeds
-      reportError(op_ident, "either no matching overload was found, or failed to solve args");
-      attach("available_overloads", slot->count, slot->items, printOptionPrintType());
-      attach("serial", serial);
-    }
-  }
-  else
-  {
-    reportError(op_ident, "identifier not found");
-    attach("identifier", op_ident->token.string);
-  }
-  
-  popContext();
-  return out;
-}
-
 internal SearchOutput
 searchExpression(Arena *arena, Typer *env, Term *lhs, Term* in0)
 {
@@ -3464,6 +3430,17 @@ searchExpression(Arena *arena, Typer *env, Term *lhs, Term* in0)
     }
   }
   return {.found=found, .path=path};
+}
+
+inline b32
+eitherOrChar(char optional, char require)
+{
+  b32 out = false;
+  if (!optionalChar(optional))
+  {
+    out = requireChar(require);
+  }
+  return out;
 }
 
 inline Ast *
@@ -3644,75 +3621,97 @@ parseSequence(b32 require_braces=true)
       if (requireIdentifier())
       {
         Token op_name = *lastToken();
-        Ellipsis *ellipsis = newAst(arena, Ellipsis, token);
 
         CompositeAst *ast = newAst(arena, CompositeAst, token);
-        ast->op = newAst(arena, Identifier, &op_name);
-        ast->arg_count = 1;
-        pushItems(arena, ast->args, ellipsis);
+        ast->op           = newAst(arena, Identifier, &op_name);
+        ast->partial_args = true;
+
+        if (optionalString("with"))
+        {
+          ast->keywords = pushArray(arena, DEFAULT_MAX_LIST_LENGTH, String);
+          ast->args     = pushArray(arena, DEFAULT_MAX_LIST_LENGTH, Ast *);
+          for (; noError();)
+          {
+            if (optionalIdentifier())
+            {
+              i32 arg_i = ast->arg_count++;
+              assert(arg_i < DEFAULT_MAX_LIST_LENGTH);
+              ast->keywords[arg_i] = lastToken()->string;
+              if (requireChar('='))
+              {
+                if (Ast *arg = parseExpression())
+                {
+                  ast->args[arg_i] = arg;
+                }
+
+                if (!optionalChar(','))
+                  break;
+              }
+            }
+            else
+              break;
+          }
+        }
 
         ast0 = ast;
         expect_sequence_to_end = true;
       }
     }
-    else
+    else if (isIdentifier(token))
     {
-      if (isIdentifier(token))
+      // NOTE: identifiers can't be tactics, but I don't think that's a concern.
+      Token *name = token;
+      Token after_name = nextToken();
+      switch (after_name.kind)
       {
-        // NOTE: identifiers can't be tactics, but I don't think that's a concern.
-        Token *name = token;
-        Token after_name = nextToken();
-        switch (after_name.kind)
+        case Token_ColonEqual:
         {
-          case Token_ColonEqual:
+          pushContext("let: NAME := VALUE");
+          if (Ast *rhs = parseExpression())
           {
-            pushContext("let: NAME := VALUE");
-            if (Ast *rhs = parseExpression())
-            {
-              Let *let = newAst(arena, Let, name);
-              ast0 = let;
-              let->lhs = name->string;
-              let->rhs = rhs;
-            }
-            popContext();
-          } break;
+            Let *let = newAst(arena, Let, name);
+            ast0 = let;
+            let->lhs = name->string;
+            let->rhs = rhs;
+          }
+          popContext();
+        } break;
 
-          case Token_Colon:
+        case Token_Colon:
+        {
+          pushContext("typed let: NAME : TYPE := VALUE");
+          if (Ast *type = parseExpression())
           {
-            pushContext("typed let: NAME : TYPE := VALUE");
-            if (Ast *type = parseExpression())
+            if (requireKind(Token_ColonEqual, ""))
             {
-              if (requireKind(Token_ColonEqual, ""))
+              if (Ast *rhs = parseExpression())
               {
-                if (Ast *rhs = parseExpression())
-                {
-                  Let *let = newAst(arena, Let, name);
-                  let->lhs  = name->string;
-                  let->rhs  = rhs;
-                  let->type = type;
-                  ast0 = let;
-                }
+                Let *let = newAst(arena, Let, name);
+                let->lhs  = name->string;
+                let->rhs  = rhs;
+                let->type = type;
+                ast0 = let;
               }
             }
-            popContext();
-          } break;
+          }
+          popContext();
+        } break;
 
-          default:
-          {
-            reportError("invalid syntax for sequence item (keep in mind that we're in a sequence, so you need to use the \"return\" keyword to return an expression)");
-          } break;
-        }
+        default:
+        {
+          reportError("invalid syntax for sequence item (keep in mind that we're in a sequence, so you need to use the \"return\" keyword to return an expression)");
+        } break;
       }
-      else if (isExpressionEndMarker(token))
-      {// synthetic hole
-        ast0  = newAst(arena, Hole, token);
-        *global_tokenizer = tk_save;
-        expect_sequence_to_end = true;
-      }
-      else
-      {
-        reportError("expected a sequence item");
-      }
+    }
+    else if (isExpressionEndMarker(token))
+    {// synthetic hole
+      ast0  = newAst(arena, Hole, token);
+      *global_tokenizer = tk_save;
+      expect_sequence_to_end = true;
+    }
+    else
+    {
+      reportError("expected a sequence item");
     }
 
     if (noError())
@@ -3775,7 +3774,7 @@ copyArrow(Arena *arena, Arrow *in)
 }
 
 inline Term *
-buildCtorAst(Arena *arena, CtorAst *in, Term *output_type)
+buildCtorAst(CtorAst *in, Term *output_type)
 {
   Term *out = 0;
   if (Union *uni = getUnionOrPolyUnion(output_type))
@@ -4404,6 +4403,318 @@ buildWithNewAsset(Typer *typer, String name, Term *asset, Ast *body, Term *goal)
   return out;
 }
 
+internal Term *
+buildComposite(Typer *typer, CompositeAst *in, Term *goal)
+{
+  Arena *arena = temp_arena;
+  i32 serial = DEBUG_SERIAL++;
+  Term *value = 0;
+
+  if (equal(in->op->token, "test_sort"))
+  {
+    // macro interception
+    value = buildTestSort(typer, in);
+  }
+  else if (equal(in->op->token, "algebra_norm"))
+  {
+    // macro interception
+    todoIncomplete;
+    // out0 = buildAlgebraNorm(arena, typer, in);
+  }
+  else
+  {
+    TermArray op_list = {};
+    b32 should_build_op = true;
+    if (Identifier *op_ident = castAst(in->op, Identifier))
+    {
+      if (!lookupLocalName(typer, &in->op->token))
+      {
+        should_build_op = false;
+        op_list = getFunctionOverloads(typer, op_ident, goal);
+      }
+    }
+    else if (CtorAst *op_ctor = castAst(in->op, CtorAst))
+    {
+      if (Term *ctor = buildCtorAst(op_ctor, goal))
+      {
+        should_build_op = false;
+        allocateArray(temp_arena, 1, op_list.items);
+        op_list.count    = 1;
+        op_list.items[0] = ctor;
+      }
+    }
+
+    if (noError() && should_build_op)
+    {
+      if (Term *op0 = buildTerm(typer, in->op, holev).value)
+      {
+        op_list.count = 1;
+        allocateArray(temp_arena, 1, op_list.items);
+        op_list.items[0] = op0;
+      }
+    }
+
+    Typer new_typer = *typer;
+    {
+      Typer *typer = &new_typer;
+      if (op_list.count > 1)
+      {
+        setFlag(&typer->expected_errors, Error_WrongType);
+      }
+
+      for (i32 attempt=0;
+           (attempt < op_list.count) && (!value) && noError();
+           attempt++)
+      {
+        Term *op = op_list.items[attempt];
+        if (Arrow *signature = getSignature(op))
+        {
+          i32 param_count = signature->param_count;
+          Ast **expanded_args = in->args;
+          if (param_count != in->arg_count)
+          {
+            allocateArray(arena, param_count, expanded_args);
+            i32 explicit_param_count = getExplicitParamCount(signature);
+            if (in->partial_args)
+            {
+              for (i32 param_i = 0; param_i < param_count; param_i++)
+              {
+                expanded_args[param_i] = newAst(arena, Hole, &in->op->token);
+              }
+
+              if (in->keywords)
+              {
+                assert(in->args);
+                for (i32 arg_i = 0;
+                     arg_i < in->arg_count && noError();
+                     arg_i++)
+                {
+                  String keyword = in->keywords[arg_i];
+                  b32 filled = false;
+                  for (i32 param_i = 0; param_i < param_count && !filled; param_i++)
+                  {
+                    String param_name = signature->param_names[param_i];
+                    if (equal(keyword, param_name))
+                    {
+                      expanded_args[param_i] = in->args[arg_i];
+                      filled = true;
+                    }
+                  }
+
+                  if (!filled)
+                  {
+                    if (expectedWrongType(typer)) silentError();
+                    else
+                    {
+                      reportError(in->args[arg_i], "keyword argument does not correspond to any parameter name");
+                    }
+                  }
+                }
+              }
+            }
+            else if (in->arg_count == explicit_param_count)
+            {
+              for (i32 param_i = 0, arg_i = 0;
+                   param_i < param_count;
+                   param_i++)
+              {
+                if (isInferredParameter(signature, param_i))
+                {
+                  // NOTE: We fill the missing argument with synthetic holes,
+                  // because the user input might also have actual holes, so
+                  // this makes the code more uniform.
+                  expanded_args[param_i] = newAst(arena, Hole, &in->op->token);
+                }
+                else
+                {
+                  assert(arg_i < explicit_param_count);
+                  expanded_args[param_i] = in->args[arg_i++];
+                }
+              }
+            }
+            else
+            {
+              if (expectedWrongType(typer)) silentError();
+              else
+              {
+                reportError(&in->token, "argument count does not match the number of explicit parameters (expected: %d, got: %d)", explicit_param_count, in->arg_count);
+              }
+            }
+          }
+
+          if (noError())
+          {
+            UnifyContext *ctx = newUnifyContext(signature, getScopeDepth(typer->scope));
+            Term **args = ctx->values;
+            b32 stack_has_hole = false;  // This var is an optimization: in case we can just solve all the args in one pass.
+
+            if (goal->kind != Term_Hole)
+            {
+              b32 ouput_unify = unify(ctx, signature->output_type, goal);
+              if (!ouput_unify)
+              {
+                if (expectedWrongType(typer)) silentError();
+                else
+                {
+                  reportError(in, "cannot unify output");
+                  attach("signature->output_type", signature->output_type);
+                  attach("serial", serial);
+                }
+              }
+            }
+
+            for (int arg_i = 0;
+                 (arg_i < param_count) && noError();
+                 arg_i++)
+            {
+              // First round: Build and Infer arguments.
+              Term *param_type0 = signature->param_types[arg_i];
+              Ast *in_arg = expanded_args[arg_i];
+              b32 arg_was_filled = false;
+              if (args[arg_i])
+              {
+                arg_was_filled = true;
+                if (in_arg->kind != Ast_Hole)
+                {
+                  Term *already_filled_arg_type = args[arg_i]->type;
+                  if (Term *arg = buildTerm(typer, in_arg, already_filled_arg_type))
+                  {
+                    if (!equal(arg, args[arg_i]))
+                    {
+                      reportError(in_arg, "actual arg differs from inferred arg");
+                      attach("actual", arg);
+                      attach("inferred", args[arg_i]);
+                    }
+                  }
+                }
+              }
+              else if (in_arg->kind != Ast_Hole)
+              {
+                if (stack_has_hole)
+                {
+                  Typer new_typer = *typer;
+                  setFlag(&new_typer.expected_errors, Error_Ambiguous);
+                  if (Term *arg = buildTerm(&new_typer, in_arg, holev))
+                  {
+                    args[arg_i] = arg;
+                    arg_was_filled = true;
+                    b32 unify_result = unify(ctx, param_type0, arg->type);
+                    if (!unify_result)
+                    {
+                      if (expectedWrongType(typer)) silentError();
+                      else
+                      {
+                        reportError(in_arg, "cannot unify parameter type with argument %d's type", arg_i);
+                        attach("serial", serial);
+                        attach("parameter_type", param_type0);
+                        attach("argument_type", arg->type);
+                      }
+                    }
+                  }
+                  else if (hasSilentError())
+                  {
+                    wipeError();  // :argument-builds-retried-in-round-two
+                  }
+                }
+                else
+                {
+                  Term *expected_arg_type = substitute(param_type0, param_count, args);
+                  if (Term *arg = buildTerm(typer, in_arg, expected_arg_type).value)
+                  {
+                    args[arg_i] = arg;
+                    arg_was_filled = true;
+                  }
+                }
+              }
+              stack_has_hole = stack_has_hole || !arg_was_filled;
+            }
+
+            if (noError() && stack_has_hole)
+            {
+              // Second round, Build and Solve the remaining args.
+              for (int arg_i = 0;
+                   (arg_i < param_count) && noError();
+                   arg_i++)
+              {
+                if (!args[arg_i])
+                {
+                  Ast *in_arg = expanded_args[arg_i];
+                  Term *param_type0 = signature->param_types[arg_i];
+                  Term *expected_arg_type = substitute(param_type0, param_count, args);
+                  if (in_arg->kind == Ast_Hole)
+                  {
+                    if (Term *fill = solveGoal(Solver{.typer=typer, .use_global_hints=true}, expected_arg_type))
+                    {
+                      args[arg_i] = fill;
+                    }
+                    else if (expectedAmbiguous(typer))
+                    {
+                      silentError();
+                    }
+                    else
+                    {
+                      reportError(in_arg, "cannot solve for argument %d", arg_i);
+                      attach("parameter_name", signature->param_names[arg_i]);
+                      attach("expected_arg_type", expected_arg_type);
+                      attach("serial", serial);
+                    }
+                  }
+                  else if (Term *arg = buildTerm(typer, in_arg, expected_arg_type))
+                  {
+                    // :argument-builds-retried-in-round-two
+                    args[arg_i] = arg;
+                  }
+                }
+              }
+            }
+
+            if (noError())
+            {
+              assert(!value);
+              if (Function *fun = castTerm(op, Function))
+              {
+                if (checkFlag(fun->function_flags, FunctionFlag_expand))
+                {
+                  value = substitute(fun->body, param_count, args);
+                }
+              }
+              if (!value)
+              {
+                args = copyArray(arena, param_count, args);
+                value = newComposite(arena, op, param_count, args);
+              }
+            }
+          }
+        }
+        else
+        {
+          if (expectedWrongType(typer)) silentError();
+          else
+          {
+            reportError(in->op, "operator must have an arrow type");
+            attach("operator type", getType(op));
+          }
+        }
+
+        if (op_list.count > 1)
+        {
+          if (hasSilentError())
+          {
+            wipeError();
+            if (attempt == op_list.count-1)
+            {
+              reportError(in->op, "found no suitable overload");
+              attach("available_overloads", op_list.count, op_list.items, printOptionPrintType());
+              attach("serial", serial);
+            }
+          }
+        }
+      }
+    }
+  }
+  return value;
+}
+
 forward_declare internal BuildTerm
 buildTerm(Typer *typer, Ast *in0, Term *goal)
 {
@@ -4427,287 +4738,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
   {
     case Ast_CompositeAst:
     {
-      CompositeAst *in  = castAst(in0, CompositeAst);
-
-      if (in->arg_count == 1 &&
-          in->args[0]->kind == Ast_Ellipsis)
-      {
-        // Solve all arguments. NOTE: We might invent some syntactic convenience
-        // for this, but in future we might add the ability to specify only some
-        // paramters. So this case will occur anyway.
-        if (Identifier *op_ident = castAst(in->op, Identifier))
-        {
-          value = fillInEllipsis(arena, typer, op_ident, goal);
-        }
-        else
-        {
-          reportError(in->args[0], "todo: ellipsis only works with identifier atm");
-        }
-      }
-      else if (equal(in->op->token, "test_sort"))
-      {
-        // macro interception
-        value = buildTestSort(typer, in);
-      }
-      else if (equal(in->op->token, "algebra_norm"))
-      {
-        // macro interception
-        todoIncomplete;
-        // out0 = buildAlgebraNorm(arena, typer, in);
-      }
-      else
-      {
-        TermArray op_list = {};
-        b32 should_build_op = true;
-        if (Identifier *op_ident = castAst(in->op, Identifier))
-        {
-          if (!lookupLocalName(typer, &in->op->token))
-          {
-            should_build_op = false;
-            op_list = getFunctionOverloads(typer, op_ident, goal);
-          }
-        }
-        else if (CtorAst *op_ctor = castAst(in->op, CtorAst))
-        {
-          if (Term *ctor = buildCtorAst(arena, op_ctor, goal))
-          {
-            should_build_op = false;
-            allocateArray(temp_arena, 1, op_list.items);
-            op_list.count    = 1;
-            op_list.items[0] = ctor;
-          }
-        }
-
-        if (noError() && should_build_op)
-        {
-          if (Term *op0 = buildTerm(typer, in->op, holev).value)
-          {
-            op_list.count = 1;
-            allocateArray(temp_arena, 1, op_list.items);
-            op_list.items[0] = op0;
-          }
-        }
-
-        Typer new_typer = *typer;
-        {
-          Typer *typer = &new_typer;
-          if (op_list.count > 1)
-          {
-            setFlag(&typer->expected_errors, Error_WrongType);
-          }
-
-          for (i32 attempt=0;
-               (attempt < op_list.count) && (!value) && noError();
-               attempt++)
-          {
-            Term *op = op_list.items[attempt];
-            if (Arrow *signature = getSignature(op))
-            {
-              i32 param_count = signature->param_count;
-              Ast **expanded_args = in->args;
-              if (param_count != in->arg_count)
-              {
-                i32 explicit_param_count = getExplicitParamCount(signature);
-                if (in->arg_count == explicit_param_count)
-                {
-                  allocateArray(arena, param_count, expanded_args);
-                  for (i32 param_i = 0, arg_i = 0;
-                       param_i < param_count;
-                       param_i++)
-                  {
-                    if (isInferredParameter(signature, param_i))
-                    {
-                      // NOTE: We fill the missing argument with synthetic holes,
-                      // because the user input might also have actual holes, so
-                      // this makes the code more uniform.
-                      expanded_args[param_i] = newAst(arena, Hole, &in->op->token);
-                    }
-                    else
-                    {
-                      assert(arg_i < explicit_param_count);
-                      expanded_args[param_i] = in->args[arg_i++];
-                    }
-                  }
-                }
-                else
-                {
-                  if (expectedWrongType(typer)) silentError();
-                  else
-                  {
-                    reportError(&in0->token, "argument count does not match the number of explicit parameters (expected: %d, got: %d)", explicit_param_count, in->arg_count);
-                  }
-                }
-              }
-
-              if (noError())
-              {
-                UnifyContext *ctx = newUnifyContext(signature, getScopeDepth(typer->scope));
-                Term **args = ctx->values;
-                b32 stack_has_hole = false;  // This var is an optimization: in case we can just solve all the args in one pass.
-
-                if (goal->kind != Term_Hole)
-                {
-                  b32 ouput_unify = unify(ctx, signature->output_type, goal);
-                  if (!ouput_unify)
-                  {
-                    if (expectedWrongType(typer)) silentError();
-                    else
-                    {
-                      reportError(in0, "cannot unify output");
-                      attach("signature->output_type", signature->output_type);
-                      attach("serial", serial);
-                    }
-                  }
-                }
-
-                for (int arg_i = 0;
-                     (arg_i < param_count) && noError();
-                     arg_i++)
-                {
-                  // First round: Build and Infer arguments.
-                  Term *param_type0 = signature->param_types[arg_i];
-                  Ast *in_arg = expanded_args[arg_i];
-                  b32 arg_was_filled = false;
-                  if (args[arg_i])
-                  {
-                    arg_was_filled = true;
-                    if (in_arg->kind != Ast_Hole)
-                    {
-                      Term *already_filled_arg_type = args[arg_i]->type;
-                      if (Term *arg = buildTerm(typer, in_arg, already_filled_arg_type))
-                      {
-                        if (!equal(arg, args[arg_i]))
-                        {
-                          reportError(in_arg, "actual arg differs from inferred arg");
-                          attach("actual", arg);
-                          attach("inferred", args[arg_i]);
-                        }
-                      }
-                    }
-                  }
-                  else if (in_arg->kind != Ast_Hole)
-                  {
-                    if (stack_has_hole)
-                    {
-                      Typer new_typer = *typer;
-                      setFlag(&new_typer.expected_errors, Error_Ambiguous);
-                      if (Term *arg = buildTerm(&new_typer, in_arg, holev))
-                      {
-                        args[arg_i] = arg;
-                        arg_was_filled = true;
-                        b32 unify_result = unify(ctx, param_type0, arg->type);
-                        if (!unify_result)
-                        {
-                          if (expectedWrongType(typer)) silentError();
-                          else
-                          {
-                            reportError(in_arg, "cannot unify parameter type with argument %d's type", arg_i);
-                            attach("serial", serial);
-                            attach("parameter_type", param_type0);
-                            attach("argument_type", arg->type);
-                          }
-                        }
-                      }
-                      else if (hasSilentError())
-                      {
-                        wipeError();  // :argument-builds-retried-in-round-two
-                      }
-                    }
-                    else
-                    {
-                      Term *expected_arg_type = substitute(param_type0, param_count, args);
-                      if (Term *arg = buildTerm(typer, in_arg, expected_arg_type).value)
-                      {
-                        args[arg_i] = arg;
-                        arg_was_filled = true;
-                      }
-                    }
-                  }
-                  stack_has_hole = stack_has_hole || !arg_was_filled;
-                }
-
-                if (noError() && stack_has_hole)
-                {
-                  // Second round, Build and Solve the remaining args.
-                  for (int arg_i = 0;
-                       (arg_i < param_count) && noError();
-                       arg_i++)
-                  {
-                    if (!args[arg_i])
-                    {
-                      Ast *in_arg = expanded_args[arg_i];
-                      Term *param_type0 = signature->param_types[arg_i];
-                      Term *expected_arg_type = substitute(param_type0, param_count, args);
-                      if (in_arg->kind == Ast_Hole)
-                      {
-                        if (Term *fill = solveGoal(Solver{.typer=typer, .use_global_hints=true}, expected_arg_type))
-                        {
-                          args[arg_i] = fill;
-                        }
-                        else if (expectedAmbiguous(typer))
-                        {
-                          silentError();
-                        }
-                        else
-                        {
-                          reportError(in_arg, "cannot solve argument %d", arg_i);
-                          attach("expected_arg_type", expected_arg_type);
-                          attach("serial", serial);
-                        }
-                      }
-                      else if (Term *arg = buildTerm(typer, in_arg, expected_arg_type))
-                      {
-                        // :argument-builds-retried-in-round-two
-                        args[arg_i] = arg;
-                      }
-                    }
-                  }
-                }
-
-                if (noError())
-                {
-                  assert(!value);
-                  if (Function *fun = castTerm(op, Function))
-                  {
-                    if (checkFlag(fun->function_flags, FunctionFlag_expand))
-                    {
-                      value = substitute(fun->body, param_count, args);
-                    }
-                  }
-                  if (!value)
-                  {
-                    args = copyArray(arena, param_count, args);
-                    value = newComposite(arena, op, param_count, args);
-                  }
-                }
-              }
-            }
-            else
-            {
-              if (expectedWrongType(typer)) silentError();
-              else
-              {
-                reportError(in->op, "operator must have an arrow type");
-                attach("operator type", getType(op));
-              }
-            }
-
-            if (op_list.count > 1)
-            {
-              if (hasSilentError())
-              {
-                wipeError();
-                if (attempt == op_list.count-1)
-                {
-                  reportError(in->op, "found no suitable overload");
-                  attach("available_overloads", op_list.count, op_list.items, printOptionPrintType());
-                  attach("serial", serial);
-                }
-              }
-            }
-          }
-        }
-      }
+      value = buildComposite(typer, (CompositeAst*)in0, goal);
     } break;
 
     case Ast_Identifier:
@@ -5705,8 +5736,7 @@ parseArrowType(Arena *arena, b32 is_struct)
          !stop && hasMore();
          )
     {
-      if (optionalChar(end_arg_char))
-        stop = true;
+      if (optionalChar(end_arg_char)) stop = true;
       else
       {
         i32 param_i = param_count++;
@@ -5825,17 +5855,6 @@ inline b32
 areSequential(Token *first, Token *next)
 {
   return next->string.chars == first->string.chars + first->string.length;
-}
-
-inline b32
-eitherOrChar(char optional, char require)
-{
-  b32 out = false;
-  if (!optionalChar(optional))
-  {
-    out = requireChar(require);
-  }
-  return out;
 }
 
 internal UnionAst *
@@ -6334,12 +6353,17 @@ parseOperand()
           i32 arg_i = new_operand->arg_count++;
           if (optionalKind(Token_Ellipsis))
           {
+            new_operand->partial_args = true;
             if (arg_i == 0)
-              args[0] = newAst(arena, Ellipsis, &global_tokenizer->last_token);
+            {
+              // bookmark change this
+              requireChar(')', "ellipsis must be the only argument");
+            }
             else
-              reportError("ellipsis must be the only argument");
-
-            requireChar(')', "ellipsis must be the only argument");
+            {
+              // bookmark change this
+              reportError("ellipsis must be the first argument");
+            }
             break;
           }
           else
@@ -6852,8 +6876,8 @@ parseTopLevel(EngineState *state)
     if (hasMore())
     {
       token_ = nextToken();
-      while (equal(token_.string, ";"))
-      {// todo: should we do "eat all semicolons after the first one?"
+      while (equal(token_.string, ';'))
+      {
         token_ = nextToken();
       }
     }
