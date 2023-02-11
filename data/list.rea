@@ -38,7 +38,7 @@ concatToNil :: (A: Type, l,l1: List(A), l+l1 = []) -> l=[] /\ l1=[]
  {
   nil
   norm seek([] + l1 = []);
-  return conjunction(...)
+  use conjunction
   ,
   cons
   norm seek(cons(l.head, l.tail) + l1 = [])
@@ -79,7 +79,7 @@ permuteSame :: (A: Type, l: List(A)) -> Permute(l, l)
   nil  return permuteNil(),
   cons
   prove Permute(l.tail, l.tail) {use permuteSame};
-  return permuteSkip(...),
+  use permuteSkip,
   }
  }
 
