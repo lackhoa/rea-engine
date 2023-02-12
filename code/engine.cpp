@@ -3859,6 +3859,25 @@ copyToGlobalArena(Term *in0)
         Rewrite *out = copyTerm(arena, in);
         out->eq_proof = copyToGlobalArena(in->eq_proof);
         out->body     = copyToGlobalArena(in->body);
+
+        out->path = 0;
+        TreePath *path = 0;
+        for (TreePath *iter = in->path; iter; iter = iter->tail)
+        {
+          TreePath *new_path = pushStruct(arena, TreePath);
+          new_path->head = iter->head;
+          new_path->tail = 0;
+          if (path)
+          {
+            path->tail = new_path;
+            path = new_path;
+          }
+          else
+          {
+            out->path = path = new_path;
+          }
+        }
+
         out0 = out;
       } break;
 
