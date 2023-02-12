@@ -419,26 +419,26 @@ inline i32 getScopeDepth(Scope *scope) {return scope ? scope->depth : 0;}
 inline i32 getScopeDepth(Typer *env)   {return (env && env->scope) ? env->scope->depth : 0;}
 
 internal Term *
-rewriteTerm(Arena *arena, Term *from, Term *to, TreePath *path, Term *in0)
+rewriteTerm(Term *from, Term *to, TreePath *path, Term *in0)
 {
   Term *out0 = 0;
   maybeDeref(&in0);
   if (path)
   {
     Composite *in  = castTerm(in0, Composite);
-    Composite *out = copyTerm(arena, in);
+    Composite *out = copyTerm(temp_arena, in);
     if (path->head == -1)
     {
-      out->op = rewriteTerm(arena, from, to, path->tail, in->op);
+      out->op = rewriteTerm(from, to, path->tail, in->op);
     }
     else
     {
       assert((path->head >= 0) && (path->head < out->arg_count));
-      allocateArray(arena, out->arg_count, out->args);
+      allocateArray(temp_arena, out->arg_count, out->args);
       for (i32 arg_i=0; arg_i < out->arg_count; arg_i++)
       {
         if (arg_i == (i32)path->head)
-          out->args[arg_i] = rewriteTerm(arena, from, to, path->tail, in->args[arg_i]);
+          out->args[arg_i] = rewriteTerm(from, to, path->tail, in->args[arg_i]);
         else
           out->args[arg_i] = in->args[arg_i];
       }
@@ -455,6 +455,18 @@ rewriteTerm(Arena *arena, Term *from, Term *to, TreePath *path, Term *in0)
     out0 = to;
   }
   return out0;
+}
+
+internal Term *
+rewriteTerm(Term *eq_proof, TreePath *path, b32 right_to_left, Term *in0)
+{
+  auto [l,r] = getEqualitySides(eq_proof->type);
+  Term *to_rewrite = 0;
+  Term *rewrite_to = 0;   // lol naming
+  if (right_to_left) {to_rewrite = r; rewrite_to = l;}
+  else               {to_rewrite = l; rewrite_to = r;}
+
+  return rewriteTerm(to_rewrite, rewrite_to, path, in0);
 }
 
 forward_declare inline Term *
@@ -1678,8 +1690,24 @@ checkRecursiveCall(Term *op, i32 arg_count, Term **args)
   }
 }
 
+inline Term *
+newRewrite(Term *eq_proof, Term *body, TreePath *path, b32 right_to_left)
+{
+  auto [lhs, rhs] = getEqualitySides(eq_proof->type);
+  Term *from = right_to_left ? lhs : rhs;
+  Term *to   = right_to_left ? rhs : lhs;
+  Term *type = rewriteTerm(from, to, path, body->type);
+
+  Rewrite *out = newTerm(temp_arena, Rewrite, type);
+  out->eq_proof      = eq_proof;
+  out->body          = body;
+  out->path          = path;
+  out->right_to_left = right_to_left;
+  return out;
+}
+
 inline Composite *
-newComposite(Arena *arena, Term *op, i32 arg_count, Term **args)
+newComposite(Term *op, i32 arg_count, Term **args)
 {
   checkRecursiveCall(op, arg_count, args);
 
@@ -1695,7 +1723,7 @@ newComposite(Arena *arena, Term *op, i32 arg_count, Term **args)
     assertEqual(actual_type, expected_type);
   }
 
-  out = newTerm(arena, Composite, type);
+  out = newTerm(temp_arena, Composite, type);
   out->op        = op;
   out->arg_count = arg_count;
   out->args      = args;
@@ -1718,7 +1746,7 @@ reaComposite_(Term *op, i32 param_count, ...)
   }
   __crt_va_end(arg_list);
 
-  return newComposite(arena, op, param_count, args);
+  return newComposite(op, param_count, args);
 }
 
 #define reaComposite(op, ...) reaComposite_(op, PP_NARG(__VA_ARGS__), __VA_ARGS__)
@@ -1757,7 +1785,7 @@ instantiate(Term *in0, i32 ctor_i)
         member->heap.debug_field_name = signature->param_names[mem_i];
         members[mem_i] = member;
       }
-      pointer->ref = newComposite(arena, ctor, member_count, members);
+      pointer->ref = newComposite(ctor, member_count, members);
       success = true;
     }
   }
@@ -2942,7 +2970,6 @@ inline Term *
 seekGoal(Solver *solver, Term *goal, b32 try_reductio=false)
 {
   Term *out = 0;
-  Arena *arena = temp_arena;
   if (solver->typer)  // no typer -> no local context
   {
     i32 delta = 0;
@@ -2983,7 +3010,7 @@ seekGoal(Solver *solver, Term *goal, b32 try_reductio=false)
               SolveArgs solve_args = solveArgs(solver, value, rea.False);
               if (solve_args.args)
               {
-                Term *f = newComposite(arena, value, solve_args.arg_count, solve_args.args);
+                Term *f = newComposite(value, solve_args.arg_count, solve_args.args);
                 out = reaComposite(rea.falseImpliesAll, f, goal);
               }
             }
@@ -3000,7 +3027,6 @@ forward_declare internal Term *
 solveGoal(Solver *solver, Term *goal)
 {
   Term *out = 0;
-  Arena *arena = temp_arena;
   solver->depth++;
   b32 try_reductio = solver->try_reductio;
   solver->try_reductio = false;
@@ -3062,7 +3088,7 @@ solveGoal(Solver *solver, Term *goal)
             SolveArgs solve_args = solveArgs(solver, hint, goal);
             if (solve_args.args)
             {
-              out = newComposite(arena, hint, solve_args.arg_count, solve_args.args);
+              out = newComposite(hint, solve_args.arg_count, solve_args.args);
             }
           }
           else if (equal(hint->type, goal))
@@ -3453,7 +3479,7 @@ inline Term *
 transformSubExpression(Term *eq_proof, TreePath *path, Term *in)
 {
   Term *id = newIdentity(in);
-  return newRewrite(temp_arena, eq_proof, id, treePath(2, path), true);
+  return newRewrite(eq_proof, id, treePath(2, path), true);
 }
 
 inline Term *
@@ -3879,7 +3905,7 @@ buildWithNewAssets(Typer *typer, i32 asset_count, String *names, Term **assets, 
 
     if (Function *fun = buildFunctionGivenSignature(typer, signature, body))
     {
-      out = newComposite(arena, fun, asset_count, assets);
+      out = newComposite(fun, asset_count, assets);
     }
   }
   else
@@ -4176,7 +4202,7 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
               if (!value)
               {
                 args = copyArray(arena, param_count, args);
-                value = newComposite(arena, op, param_count, args);
+                value = newComposite(op, param_count, args);
               }
             }
           }
@@ -4313,7 +4339,7 @@ buildSubst(Typer *typer, SubstAst *in, Term *goal)
             assert(pointer != eq_proof);
             if (SearchOutput search = searchExpression(to_rewrite, pointer->type))
             {
-              Term *asset = newRewrite(arena, eq_proof, pointer, search.path, !right_to_left);
+              Term *asset = newRewrite(eq_proof, pointer, search.path, !right_to_left);
               ignorePointer(scope, pointer_i);
 
               assets[asset_count++] = asset;
@@ -4329,7 +4355,7 @@ buildSubst(Typer *typer, SubstAst *in, Term *goal)
         Term *asset = assets[asset_i];
         if (SearchOutput search = searchExpression(to_rewrite, asset->type))
         {
-          assets[asset_i] = newRewrite(arena, eq_proof, asset, search.path, !right_to_left);
+          assets[asset_i] = newRewrite(eq_proof, asset, search.path, !right_to_left);
         }
       }
     }
@@ -4340,21 +4366,15 @@ buildSubst(Typer *typer, SubstAst *in, Term *goal)
       auto [to_rewrite, eq_proof, right_to_left] = substitutions[sub_i];
       if (SearchOutput search = searchExpression(to_rewrite, goal))
       {
-          auto [l,r] = getEqualitySides(eq_proof->type);
-          Term *to_rewrite = 0;
-          Term *rewrite_to = 0;   // lol naming
-          if (right_to_left) {to_rewrite = r; rewrite_to = l;}
-          else               {to_rewrite = l; rewrite_to = r;}
-
-          goal = rewriteTerm(arena, to_rewrite, rewrite_to, search.path, goal);
-          rewrite_chain = newRewriteChain(eq_proof, search.path, right_to_left, rewrite_chain);
+        goal = rewriteTerm(eq_proof, search.path, right_to_left, goal);
+        rewrite_chain = newRewriteChain(eq_proof, search.path, right_to_left, rewrite_chain);
       }
     }
 
     value = buildWithNewAssets(typer, asset_count, 0, assets, in->body, goal);
     for (auto chain = rewrite_chain;  chain && noError();  chain = chain->next)
     {
-      value = newRewrite(arena, chain->eq_proof, value, chain->path, chain->right_to_left);
+      value = newRewrite(chain->eq_proof, value, chain->path, chain->right_to_left);
     }
   }
   return value;
@@ -4607,7 +4627,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
                 if (SearchOutput search = searchExpression(from, in_expression->type))
                 {
                   b32 right_to_left = !in->right_to_left;  // since we rewrite the body, not the goal.
-                  Term *asset = newRewrite(arena, eq_proof, in_expression, search.path, right_to_left);
+                  Term *asset = newRewrite(eq_proof, in_expression, search.path, right_to_left);
                   String name = {};
                   Pointer *var = castTerm(in_expression, Pointer);
                   if (var && var->is_stack_pointer)
@@ -4633,10 +4653,10 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
               SearchOutput search = searchExpression(from, goal0);
               if (search.found)
               {
-                Term *new_goal = rewriteTerm(arena, from, to, search.path, goal0);
+                Term *new_goal = rewriteTerm(from, to, search.path, goal0);
                 if (Term *body = buildTerm(typer, in->body, new_goal))
                 {
-                  value = newRewrite(arena, eq_proof, body, search.path, in->right_to_left);
+                  value = newRewrite(eq_proof, body, search.path, in->right_to_left);
                 }
               }
               else
@@ -4753,7 +4773,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
       {
         if (Term *body = buildTerm(typer, in->body, new_goal).value)
         {
-          value = newRewrite(arena, eq_proof, body, rewrite_path, right_to_left);
+          value = newRewrite(eq_proof, body, rewrite_path, right_to_left);
         }
       }
 
@@ -4796,7 +4816,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
               {
                 Term *computation = newComputation_(norm_rhs_type, rhs_type);
                 rhs_type = norm_rhs_type;
-                rhs = newRewrite(arena, computation, rhs, 0, false);
+                rhs = newRewrite(computation, rhs, 0, false);
               }
             }
           }
@@ -4810,7 +4830,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
     } break;
 
     case Ast_ForkAst:
-    {// no need to return value since nobody uses the value of a fork
+    {
       ForkAst *fork = castAst(in0, ForkAst);
       value = buildFork(typer, fork, goal0);
       recursed = true;
@@ -5125,22 +5145,6 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
   return out;
 }
 
-forward_declare inline Term *
-newRewrite(Arena *arena, Term *eq_proof, Term *body, TreePath *path, b32 right_to_left)
-{
-  auto [lhs, rhs] = getEqualitySides(eq_proof->type);
-  Term *from = right_to_left ? lhs : rhs;
-  Term *to   = right_to_left ? rhs : lhs;
-  Term *type = rewriteTerm(arena, from, to, path, body->type);
-
-  Rewrite *out = newTerm(arena, Rewrite, type);
-  out->eq_proof      = eq_proof;
-  out->body          = body;
-  out->path          = path;
-  out->right_to_left = right_to_left;
-  return out;
-}
-
 inline Term *
 parseAndBuildTemp(Typer *typer, Term *expected_type=holev)
 {
@@ -5423,7 +5427,8 @@ buildUnion(Typer *typer, UnionAst *in, Token *global_name)
         if (struc->param_count == 0)
         {
           // todo: need to rethink "no-arg composite" thing
-          term_to_bind = newComposite(arena, ctor, 0, 0);
+          term_to_bind = newComposite(ctor, 0, 0);
+          term_to_bind = copyToGlobalArena(term_to_bind);
         }
         addGlobalBinding(&in->ctor_names[ctor_i], term_to_bind);
         uni->constructors[ctor_i] = ctor;
