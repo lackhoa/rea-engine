@@ -62,13 +62,6 @@ mulDistributive :: (a,b,c: Natp) -> a*c+b*c = (a+b)*c
   }
  }
 
-mulAssociative :: (a,b,c: Natp) -> (a*b)*c = a*b*c
-{fork a
- {1 : ,
-  ++:
-  rewrite <- mulDistributive(b, (a.p * b), c);
-  rewrite mulAssociative(a.p, b, c)}}
-
 mul1 :: (a: Natp) -> a*1 = a
 {fork a
  {1 : ,

@@ -3206,10 +3206,6 @@ getFunctionOverloads(Typer *typer, Identifier *ident, Term *goal0)
 {
   i32 UNUSED_VAR serial = DEBUG_SERIAL;
   TermArray out = {};
-  if (equal(ident->token, "toArray"))
-  {
-    breakhere;
-  }
   if (GlobalBinding *slot = lookupGlobalNameSlot(ident, false))
   {
     if (goal0->kind == Term_Hole)
@@ -4016,13 +4012,22 @@ buildWithNewAsset(Typer *typer, String name, Term *asset, Ast *body, Term *goal)
   return out;
 }
 
+inline Function *
+isAlwaysExpandFunction(Term *op)
+{
+  if (Function *fun = castTerm(op, Function))
+  {
+    if (checkFlag(fun->function_flags, FunctionFlag_expand))
+      return fun;
+  }
+  return 0;
+}
+
 internal Term *
 buildComposite(Typer *typer, CompositeAst *in, Term *goal)
 {
   Arena *arena = temp_arena;
   i32 serial = DEBUG_SERIAL++;
-  if (serial == 2856)
-    breakhere;
   Term *value = 0;
 
   if (equal(in->op->token, "test_sort"))
@@ -4075,10 +4080,11 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
       if (op_list.count > 1)
       {
         setFlag(&typer->expected_errors, Error_WrongType);
+        setFlag(&typer->expected_errors, Error_Ambiguous);
       }
 
       for (i32 attempt=0;
-           (attempt < op_list.count) && (!value) && noError();
+           (attempt < op_list.count) && noError();
            attempt++)
       {
         Term *op = op_list.items[attempt];
@@ -4088,8 +4094,6 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
           Ast **expanded_args = in->args;
           if (param_count != in->arg_count)
           {
-              if (serial == 3134)
-                breakhere;
             allocateArray(arena, param_count, expanded_args);
             i32 explicit_param_count = getExplicitParamCount(signature);
             if (in->partial_args)
@@ -4216,7 +4220,15 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
                     args[arg_i] = arg;
                     arg_was_filled = true;
                     b32 unify_result = unify(ctx, param_type0, arg->type);
-                    if (!unify_result)
+                    if (unify_result)
+                    {
+                      stack_has_hole = false;
+                      for (i32 i=0; i <= arg_i && !stack_has_hole; i++)
+                      {
+                        if (!args[i]) stack_has_hole = true;
+                      }
+                    }
+                    else
                     {
                       if (expectedWrongType(typer)) silentError();
                       else
@@ -4236,7 +4248,7 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
                 else
                 {
                   Term *expected_arg_type = substitute(param_type0, param_count, args);
-                  if (Term *arg = buildTerm(typer, in_arg, expected_arg_type).value)
+                  if (Term *arg = buildTerm(typer, in_arg, expected_arg_type))
                   {
                     args[arg_i] = arg;
                     arg_was_filled = true;
@@ -4287,15 +4299,19 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
 
             if (noError())
             {
-              assert(!value);
-              if (Function *fun = castTerm(op, Function))
+              if (value)
               {
-                if (checkFlag(fun->function_flags, FunctionFlag_expand))
+                if (expectedAmbiguous(typer)) silentError();
+                else
                 {
-                  value = substitute(fun->body, param_count, args);
+                  reportError(in->op, "composite is ambiguous");
                 }
               }
-              if (!value)
+              else if (Function *fun = isAlwaysExpandFunction(op))
+              {
+                value = substitute(fun->body, param_count, args);
+              }
+              else
               {
                 args = copyArray(arena, param_count, args);
                 value = newComposite(op, param_count, args);
@@ -4318,7 +4334,7 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
           if (hasSilentError())
           {
             wipeError();
-            if (attempt == op_list.count-1)
+            if (attempt == op_list.count-1 && !value)
             {
               reportError(in->op, "found no suitable overload");
               attach("available_overloads", op_list.count, op_list.items, printOptionPrintType());
@@ -4329,6 +4345,7 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
       }
     }
   }
+  NULL_WHEN_ERROR(value);
   return value;
 }
 
@@ -4851,28 +4868,31 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
 
             if (!is_global_identifier)
             {
-              if ((eq_proof = buildTerm(typer, in->hint, holev).value))
+              if ((eq_proof = buildTerm(typer, in->hint, holev)))
               {
                 hints = addHint(temp_arena, hints, eq_proof);
               }
             }
           }
 
-          Term *lr_eq = newEquality(from, to);
-          Term *rl_eq = newEquality(to, from);
-
-          Solver solver = Solver{.typer=typer, .local_hints=hints, .use_global_hints=true};
-          if (!(eq_proof = solveGoal(&solver, lr_eq)))
+          if (noError())
           {
-            if ((eq_proof = solveGoal(&solver, rl_eq)))
+            Term *lr_eq = newEquality(from, to);
+            Term *rl_eq = newEquality(to, from);
+
+            Solver solver = Solver{.typer=typer, .local_hints=hints, .use_global_hints=true};
+            if (!(eq_proof = solveGoal(&solver, lr_eq)))
             {
-              right_to_left = true;
-            }
-            else
-            {
-              reportError(in0, "cannot solve for equality proof");
-              attach("equality", lr_eq);
-              attach("serial", serial);
+              if ((eq_proof = solveGoal(&solver, rl_eq)))
+              {
+                right_to_left = true;
+              }
+              else
+              {
+                reportError(in0, "cannot solve for equality proof");
+                attach("equality", lr_eq);
+                attach("serial", serial);
+              }
             }
           }
         }
@@ -4999,20 +5019,20 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
 
     case Ast_ListAst:
     {
-      ListAst *in = (ListAst *)in0;
-      // auto [uni, uni_args] = castUnion(goal);
       // NOTE: The plan is to just lean on the typechecking as much as possible.
+      ListAst *in = (ListAst *)in0;
       Ast *list = in->tail;
-      if (!list && in->count == 0)
+      if (in->count == 0)
       {
+        assert(!in->tail);
         CompositeAst *nil = newAst(arena, CompositeAst, &in->token);
-        nil->op = newSyntheticAst(rea.nil, &in->token);
-        // NOTE: no arg: we let the typer infer it.
+        nil->op           = newIdentifier("nil");
         list = nil;
       }
       else
       {
-        if (in->count > 0)
+        i32 loop_start = in->count-1;
+        if (!in->tail)
         {
           Ast *item = in->items[in->count-1];
           CompositeAst *final_item = newAst(arena, CompositeAst, &item->token);
@@ -5020,9 +5040,11 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
           final_item->arg_count = 1;
           pushItems(arena, final_item->args, item);
           list = final_item;
+
+          loop_start = in->count-2;
         }
 
-        for (i32 i = in->count-2; i >= 0; i--)
+        for (i32 i = loop_start; i >= 0; i--)
         {
           Ast *item = in->items[i];
           CompositeAst *new_list = newAst(arena, CompositeAst, &item->token);
@@ -5445,8 +5467,6 @@ buildUnion(Typer *typer, UnionAst *in, Token *global_name)
   Arena *arena = global_state.top_level_arena;
   Union *uni = newTerm(arena, Union, rea.Type);
   b32 UNUSED_VAR serial = DEBUG_SERIAL++;
-  if (serial == 2815)
-    breakhere;
 
   i32 ctor_count = in->ctor_count;
   uni->ctor_count = ctor_count;

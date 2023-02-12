@@ -6,6 +6,11 @@ List :: union($$ListType: Type)
 {nil,
  cons(head: ListType, tail: List(ListType))}
 
+;; support parsing list syntax!
+single :: fn($A: Type, a: A) -> List(A)
+#expand
+{return a cons nil()}
+
 nonEmpty :: fn ($A: Type, list: List(A)) -> Type
 #expand
 {return list != nil(A)}
@@ -101,6 +106,7 @@ permuteSwap :: (A: Type, l,m: List(A), p: l Permute m) -> Permute(m, l)
   permuteSwap
   invert p;
   subst l, m;
+  ;; argument 3 is obviously "p.l", there are 2 permuteSwaps
   use permuteSwap;
   ,
   permuteChain

@@ -19,6 +19,10 @@ Permute :: union($$T: Type, PList(T), PList(T)) #builtin
  permuteChain(l,chain,m: PList(T), p1: Permute(l, chain), p2: Permute(chain, m)) -> Permute(l, m)
  }
 
+#print full_list;
+#print all_args;
+;; print (a,b: False, l: PList(False)) -> [a,b .. l];
+
 permuteMiddle :: ((A: Type, a: A, l,m: PList(A))
                   -> [a .. l+m] Permute l + [a .. m])
 {fork l
