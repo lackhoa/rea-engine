@@ -168,6 +168,34 @@ optionalString(char *str)
   return out;
 }
 
+inline Ast **
+getAstBody(Ast *item0)
+{
+  // todo Puzzler: How do we make this nicer?
+  if (Let *let = castAst(item0, Let))
+  {
+    return &let->body;
+  }
+  if (RewriteAst *rewrite = castAst(item0, RewriteAst))
+  {
+    return &rewrite->body;
+  }
+  if (GoalTransform *item = castAst(item0, GoalTransform))
+  {
+    return &item->body;
+  }
+  if (Invert *item = castAst(item0, Invert))
+  {
+    return &item->body;
+  }
+  if (SubstAst *item = castAst(item0, SubstAst))
+  {
+    return &item->body;
+  }
+
+  invalidCodePath;
+  return 0;
+}
 
 inline Ast *
 parseSequence(b32 require_braces=true)
@@ -492,29 +520,7 @@ parseSequence(b32 require_braces=true)
       Ast *item0 = list->head;
       if (item_i > 0)
       {
-        // todo maybe make a class with "body" or something idk
-        if (Let *let = castAst(item0, Let))
-        {
-          let->body = previous;
-        }
-        else if (RewriteAst *rewrite = castAst(item0, RewriteAst))
-        {
-          rewrite->body = previous;
-        }
-        else if (GoalTransform *item = castAst(item0, GoalTransform))
-        {
-          item->body = previous;
-        }
-        else if (Invert *item = castAst(item0, Invert))
-        {
-          item->body = previous;
-        }
-        else if (SubstAst *item = castAst(item0, SubstAst))
-        {
-          item->body = previous;
-        }
-        else
-          invalidCodePath;
+        *getAstBody(item0) = previous;
       }
       previous = item0;
       if (item_i != count-1)
@@ -900,7 +906,7 @@ parseOperand()
       if (requireIdentifier("expected identifier as field name"))
       {
         accessor->field_name = *lastToken();
-        operand              = &accessor->a;
+        operand              = accessor;
       }
     }
     else break;

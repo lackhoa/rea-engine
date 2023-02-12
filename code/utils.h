@@ -147,7 +147,7 @@ pushSize(Arena *arena, size_t size, b32 zero = false)
 #define pushItems_N(N, ...) CONCATENATE(pushItems_, N)
 
 #define pushItems(arena, array, item, ...)     \
-  array = (mytypeof(item) *) pushArray(arena, PP_NARG(items), mytypeof(item)); \
+  array = (mytypeof(item) *) pushArray(arena, PP_NARG(item, __VA_ARGS__), mytypeof(item)); \
   pushItems_N(PP_NARG(item, __VA_ARGS__), __VA_ARGS__)(array, 0, item, __VA_ARGS__)
 
 #define pushItemsAs(...) \

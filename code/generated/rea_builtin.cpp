@@ -10,6 +10,7 @@ global_variable BuiltinEntry rea_builtin_names[] = {
 {"swap", &rea_builtins.swap},
 {"toNat", &rea_builtins.toNat},
 {"get", &rea_builtins.get},
+{"PList", &rea_builtins.PList},
 {"List", &rea_builtins.List},
 {"nil", &rea_builtins.nil},
 {"single", &rea_builtins.single},

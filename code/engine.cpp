@@ -41,10 +41,12 @@ struct ReaBuiltins {
   Term *toNat;
   Term *get;
 
+  Term *PList;
   Term *List;
   Term *nil;
   Term *single;
   Term *cons;
+
   Term *fold;
   Term *concat;
   Term *Permute;
@@ -587,7 +589,8 @@ printComposite(Arena *buffer, Composite *in, PrintOptions opt)
 
   if (Composite *type = castTerm(type0, Composite))
   {
-    if (type->op == rea.List && ctor)
+    if (!print_full_list &&
+        ((type->op == rea.List) || (type->op == rea.PList)) && ctor)
     {
       print_as_list = true;
     }
@@ -632,9 +635,19 @@ printComposite(Arena *buffer, Composite *in, PrintOptions opt)
   if (print_as_list)
   {// list path
     print(buffer, "[");
-    if (ctor != rea.nil)
+    for (Record *iter = in; iter; )
     {
-      for (Record *iter = in; iter; )
+      if (iter->ctor == rea.nil)
+      {
+        // no need to print anything
+        break;
+      }
+      else if (iter->ctor == rea.single)
+      {
+        print(buffer, reaHead(iter));
+        break;
+      }
+      else
       {
         print(buffer, reaHead(iter));
         Term *tail0 = reaTail(iter);
@@ -4008,6 +4021,8 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
 {
   Arena *arena = temp_arena;
   i32 serial = DEBUG_SERIAL++;
+  if (serial == 2856)
+    breakhere;
   Term *value = 0;
 
   if (equal(in->op->token, "test_sort"))
@@ -4073,6 +4088,8 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
           Ast **expanded_args = in->args;
           if (param_count != in->arg_count)
           {
+              if (serial == 3134)
+                breakhere;
             allocateArray(arena, param_count, expanded_args);
             i32 explicit_param_count = getExplicitParamCount(signature);
             if (in->partial_args)
@@ -4457,6 +4474,19 @@ buildSubst(Typer *typer, SubstAst *in, Term *goal)
     }
   }
   return value;
+}
+
+inline Identifier *
+newIdentifier(Token *token)
+{
+  return newAst(temp_arena, Identifier, token);
+}
+
+inline Identifier *
+newIdentifier(char *name)
+{
+  Token token = newToken(name);
+  return newAst(temp_arena, Identifier, &token);
 }
 
 forward_declare internal BuildTerm
@@ -4972,29 +5002,39 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
       ListAst *in = (ListAst *)in0;
       // auto [uni, uni_args] = castUnion(goal);
       // NOTE: The plan is to just lean on the typechecking as much as possible.
-      Ast *tail = in->tail;
-      if (!tail)
+      Ast *list = in->tail;
+      if (!list && in->count == 0)
       {
         CompositeAst *nil = newAst(arena, CompositeAst, &in->token);
         nil->op = newSyntheticAst(rea.nil, &in->token);
         // NOTE: no arg: we let the typer infer it.
-        tail = nil;
+        list = nil;
       }
-
-      for (i32 i = in->count-1; i >= 0; i--)
+      else
       {
-        Ast *item = in->items[i];
-        CompositeAst *new_tail = newAst(arena, CompositeAst, &item->token);
-        new_tail->op        = newSyntheticAst(rea.cons, &item->token);
-        new_tail->arg_count = 2;
-        new_tail->args      = pushArray(arena, 2, Ast *);
-        new_tail->args[0]   = item;
-        new_tail->args[1]   = tail;
-        tail = new_tail;
+        if (in->count > 0)
+        {
+          Ast *item = in->items[in->count-1];
+          CompositeAst *final_item = newAst(arena, CompositeAst, &item->token);
+          final_item->op        = newIdentifier("single");
+          final_item->arg_count = 1;
+          pushItems(arena, final_item->args, item);
+          list = final_item;
+        }
+
+        for (i32 i = in->count-2; i >= 0; i--)
+        {
+          Ast *item = in->items[i];
+          CompositeAst *new_list = newAst(arena, CompositeAst, &item->token);
+          new_list->op        = newIdentifier("cons");
+          new_list->arg_count = 2;
+          pushItems(arena, new_list->args, item, list);
+          list = new_list;
+        }
       }
 
       recursed = true;
-      value = buildTerm(typer, tail, goal0);
+      value = buildTerm(typer, list, goal0);
     } break;
 
     case Ast_Invert:
@@ -5603,7 +5643,7 @@ interpretTopLevel(EngineState *state)
     {
       case Token_Directive:
       {
-        if (equal(token->string, "load"))
+        if (equal(token, "load"))
         {
           pushContext("load");
           Token file = nextToken();
@@ -5672,7 +5712,7 @@ interpretTopLevel(EngineState *state)
             }
           }
         }
-        else if (equal(token->string, "print"))
+        else if (equal(token, "print"))
         {
           if (optionalString("all_args"))
           {
@@ -5690,8 +5730,12 @@ interpretTopLevel(EngineState *state)
           {
             print_full_scope = !optionalString("off");
           }
+          else if (optionalString("full_list"))
+          {
+            print_full_list = !optionalString("off");
+          }
         }
-        else if (equal(token->string, "should_fail"))
+        else if (equal(token, "should_fail"))
         {
           if (optionalString("off"))
           {
@@ -5703,7 +5747,7 @@ interpretTopLevel(EngineState *state)
             silentError();  // #hack just a signal to skip this form
           }
         }
-        else if (equal(token->string, "debug"))
+        else if (equal(token, "debug"))
         {
           b32 value = !optionalString("off");
           global_state.top_level_debug_mode = value;

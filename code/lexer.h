@@ -47,9 +47,9 @@ const char *language_keywords[] = {
 
 struct Token
 {
-  String        string;
-  i32           line;
-  i32           column;
+  String    string;
+  i32       line;
+  i32       column;
   TokenKind kind;
   operator String() {return string;};
 };

@@ -14,8 +14,6 @@ global_variable Arena *parse_arena = &temp_arena_;
 global_variable StringBuffer  error_buffer_;
 global_variable StringBuffer *error_buffer = &error_buffer_;
 
-global_variable i32 DEBUG_SERIAL;
-
 struct Function;
 struct Union;
 struct Arrow;

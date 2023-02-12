@@ -2,6 +2,8 @@
 
 #include "lexer.h"
 
+global_variable i32 DEBUG_SERIAL;
+
 struct ArrowAst;
 enum AstKind {
   Ast_Hole = 1,                 // hole left in for type-checking
@@ -39,13 +41,17 @@ struct Ast {
   AstKind kind;
   Token token;
   u32   flags;
+  u32   serial;
 };
 
 inline void
 initAst(Ast *in, AstKind cat, Token *token)
 {
   in->kind   = cat;
-  in->token = *token;
+  in->token  = *token;
+  in->serial = DEBUG_SERIAL++;
+  if (in->serial == 3129)
+    breakhere;
 }
 
 inline Ast *
@@ -65,6 +71,9 @@ newAst_(Arena *arena, AstKind cat, Token *token, size_t size)
 struct Identifier : Ast {
   // NOTE: Since the ast has a token, which already has the identifier in it, we
   // don't need to put it in the identifier struct.
+
+  // An exception would be when you need to generate an Identifier for whatever
+  // messed up reason, then you can just make a fake token.
 };
 
 typedef Ast Hole;
@@ -130,10 +139,7 @@ struct Invert : Ast {
   Ast *body;
 };
 
-struct AccessorAst
-{
-  Ast    a;
-
+struct AccessorAst : Ast {
   Ast   *record;
   Token  field_name;           // parsing info
 };

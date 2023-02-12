@@ -2,7 +2,7 @@
 ;; List (Lists that can be empty)
 ;; ----
 
-List :: union($$ListType: Type) #builtin
+List :: union($$ListType: Type)
 {nil,
  cons(head: ListType, tail: List(ListType))}
 
@@ -60,7 +60,7 @@ concatAssoc :: ($A: Type, l,m,n: List(A)) -> (l+m)+n = l+m+n
 ;; permute
 ;; permute
 
-Permute :: union($$T: Type, List(T), List(T)) #builtin
+Permute :: union($$T: Type, List(T), List(T))
 {
  permuteNil() -> Permute(nil(T), nil(T))
  ,

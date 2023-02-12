@@ -1,8 +1,14 @@
-PList :: union($$ListType: Type)
+PList :: union($$ListType: Type) #builtin
 {single(head: ListType),
  cons(head: ListType, tail: PList(ListType))}
 
-Permute :: union($$T: Type, PList(T), PList(T))
++ :: fn($T: Type, l,m: PList(T)) -> PList(T)
+{fork l
+ {single return l.head cons m,
+  cons   return l.head cons (l.tail + m)
+  }}
+
+Permute :: union($$T: Type, PList(T), PList(T)) #builtin
 {
  permuteSingle(a: T) -> Permute(single(a), single(a))
  ,
@@ -10,11 +16,19 @@ Permute :: union($$T: Type, PList(T), PList(T))
  ,
  permuteSwap(a,b: T, l: PList(T)) -> Permute(a cons b cons l, b cons a cons l)
  ,
- permuteChain(l,l1,l2: PList(T), p1: Permute(l, l1), p2: Permute(l1, l2)) -> Permute(l, l2)
+ permuteChain(l,chain,m: PList(T), p1: Permute(l, chain), p2: Permute(chain, m)) -> Permute(l, m)
  }
 
-+ :: fn($T: Type, l,m: PList(T)) -> PList(T)
+permuteMiddle :: ((A: Type, a: A, l,m: PList(A))
+                  -> [a .. l+m] Permute l + [a .. m])
 {fork l
- {single return l.head cons m,
-  cons   return l.head cons (l.tail + m)
-  }}
+ {single use permuteSwap,
+  cons
+  prove [a, l.head .. l.tail + m] Permute [l.head, a .. l.tail + m] {use permuteSwap}
+  prove [l.head, a .. l.tail + m] Permute [l.head .. l.tail + [a .. m]]
+  {prove [a .. l.tail + m] Permute l.tail + [a .. m] {use permuteMiddle}
+   use permuteSkip}
+  return permuteChain([a, l.head .. l.tail + m],
+                      [l.head, a .. l.tail + m],
+                      [l.head .. l.tail + [a .. m]],
+                      _, _)}}
