@@ -408,6 +408,26 @@ getPolyParamCount(ArrowAst *params)
   return param_count;
 }
 
+inline i32
+getPolyParamCount(Union *uni)
+{
+  if (Arrow *signature = castTerm(uni->type, Arrow))
+  {
+    return getPolyParamCount(signature);
+  }
+  return 0;
+}
+
+inline i32
+getNonPolyParamCount(Union *uni)
+{
+  if (Arrow *signature = castTerm(uni->type, Arrow))
+  {
+    return signature->param_count - getPolyParamCount(signature);
+  }
+  return 0;
+}
+
 inline String
 getConstructorName(Union *uni, i32 ctor_index)
 {
@@ -1283,8 +1303,42 @@ shouldHideTerm(Term *in0)
 }
 #endif
 
+internal b32
+shouldPrintType(Term *type)
+{
+  if (!print_full_scope)
+  {
+    if (type == rea.Type)
+    {
+      return false;
+    }
+
+    if (Union *uni = castTerm(type, Union))
+    {
+      if (uni->ctor_count)
+      {
+        return false;  // if you have no constructor, you're suddenly the VIP.
+      }
+    }
+
+    if (auto [uni, _] = castUnion(type))
+    {
+      if (getNonPolyParamCount(uni) == 0)
+      {
+        return false;
+      }
+    }
+
+    if (type->kind == Term_Pointer)
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
 inline void
-prettyPrintScope(Arena *buffer, Scope *scope)
+prettyPrintScope(StringBuffer *buffer, Scope *scope)
 {
   // NOTE: Skip the last scope since we already know
   while (scope)
@@ -1298,13 +1352,16 @@ prettyPrintScope(Arena *buffer, Scope *scope)
       if (pointer)  // sometimes we error out, and the scope is hosed
       {
         assert(pointer->is_stack_pointer);
-        if (pointer->stack.name.chars)
+        if (shouldPrintType(pointer->type))
         {
-          print(buffer, pointer->stack.name);
-          print(buffer, ": ");
+          if (pointer->stack.name.chars)
+          {
+            print(buffer, pointer->stack.name);
+            print(buffer, ": ");
+          }
+          print(buffer, pointer->type);
+          print(buffer, "\n");
         }
-        print(buffer, pointer->type);
-        print(buffer, "\n");
 
         if (Record *record = castRecord(pointer))
         {
@@ -1315,8 +1372,11 @@ prettyPrintScope(Arena *buffer, Scope *scope)
             if (!isInferredParameter(signature, i))
             {
               Term *member = record->members[i];
-              print(buffer, member, printOptionPrintType());
-              if (i != record->member_count-1) print(buffer, "\n");
+              if (shouldPrintType(member->type))
+              {
+                print(buffer, member, printOptionPrintType());
+                if (i != record->member_count-1) print(buffer, "\n");
+              }
             }
           }
           print(buffer, "\n");
@@ -5201,11 +5261,9 @@ parseUnion(Arena *arena, Token *uni_name)
 
   if (requireChar('{'))
   {
-    allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, uni->ctor_signatures);
-    if (uni_name)
-    {
-      allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, uni->ctor_names);
-    }
+    i32 ctor_cap = 16;  // todo #grow
+    allocateArray(arena, ctor_cap, uni->ctor_signatures);
+    allocateArray(arena, ctor_cap, uni->ctor_names);
 
     Ast *auto_ctor_output_type = 0;
     if (!non_poly_count)
@@ -5257,7 +5315,7 @@ parseUnion(Arena *arena, Token *uni_name)
           if (noError())
           {
             // modification to add poly variables
-            assert((sig->param_count + poly_count) < DEFAULT_MAX_LIST_LENGTH);
+            assert((sig->param_count + poly_count) < ctor_cap);
             for (i32 i = sig->param_count-1; i >= 0; i--)
             {
               sig->param_names[i+poly_count] = sig->param_names[i];
@@ -5608,6 +5666,10 @@ interpretTopLevel(EngineState *state)
           else if (optionalString("var_index"))
           {
             print_var_index = !optionalString("off");
+          }
+          else if (optionalString("full_scope"))
+          {
+            print_full_scope = !optionalString("off");
           }
         }
         else if (equal(token->string, "should_fail"))

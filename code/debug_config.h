@@ -11,9 +11,10 @@ global_variable b32 DEBUG_LOG_unify          = 0;
 global_variable b32 DEBUG_LOG_solve          = 0;
 global_variable b32 DEBUG_LOG_search         = 0;
 
-global_variable b32 print_all_args  = 0;
-global_variable b32 print_var_delta = 0;
-global_variable b32 print_var_index = 0;
+global_variable b32 print_all_args   = 0;
+global_variable b32 print_var_delta  = 0;
+global_variable b32 print_var_index  = 0;
+global_variable b32 print_full_scope = 0;
 
 #define DEBUG_H
 #endif

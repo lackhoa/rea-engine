@@ -362,14 +362,15 @@ parseSequence(b32 require_braces=true)
 
         if (optionalString("with"))
         {
-          ast->keywords = pushArray(arena, DEFAULT_MAX_LIST_LENGTH, String);
-          ast->args     = pushArray(arena, DEFAULT_MAX_LIST_LENGTH, Ast *);
+          i32 cap = 16;  // todo #grow
+          ast->keywords = pushArray(arena, cap, String);
+          ast->args     = pushArray(arena, cap, Ast *);
           for (; noError();)
           {
             if (optionalIdentifier())
             {
               i32 arg_i = ast->arg_count++;
-              assert(arg_i < DEFAULT_MAX_LIST_LENGTH);
+              assert(arg_i < cap);
               ast->keywords[arg_i] = lastToken()->string;
               if (requireChar('='))
               {
@@ -394,13 +395,14 @@ parseSequence(b32 require_braces=true)
     else if (equal(tactic, "subst"))
     {
       SubstAst *ast = newAst(arena, SubstAst, token);
-      ast->to_rewrite = pushArray(arena, DEFAULT_MAX_LIST_LENGTH, Ast *);
+      i32 cap = 16;  // todo #grow
+      ast->to_rewrite = pushArray(arena, cap, Ast *);
       for (; noError(); )
       {
         if (Ast *expression = parseExpression())
         {
           i32 i = ast->count++;
-          assert(i < DEFAULT_MAX_LIST_LENGTH);
+          assert(i < cap);
           ast->to_rewrite[i] = expression;
           lastToken();
         }
@@ -580,10 +582,11 @@ parseArrowType(Arena *arena, b32 is_struct)
   char end_arg_char   = ')';
   if (requireChar(begin_arg_char))
   {
+    i32 cap = 16;  // todo grow
     // :arrow-copy-done-later
-    allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, param_names, true);
-    allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, param_flags, true);
-    allocateArray(arena, DEFAULT_MAX_LIST_LENGTH, param_types, true);
+    allocateArray(arena, cap, param_names, true);
+    allocateArray(arena, cap, param_flags, true);
+    allocateArray(arena, cap, param_types, true);
 
     i32 typeless_run = 0;
     Token typeless_token;
@@ -595,7 +598,7 @@ parseArrowType(Arena *arena, b32 is_struct)
       else
       {
         i32 param_i = param_count++;
-        assert(param_i < DEFAULT_MAX_LIST_LENGTH);
+        assert(param_i < cap);
 
         if (optionalDirective("unused"))
         {
@@ -742,7 +745,8 @@ parseList(Arena *arena)
   // :list-opening-brace-eaten
   Token *first_token = lastToken();
   i32 count = 0;
-  Ast **items = pushArray(arena, DEFAULT_MAX_LIST_LENGTH, Ast*);
+  i32 cap = 16;  // todo #grow
+  Ast **items = pushArray(arena, cap, Ast*);
   char closing = ']';
   Ast *tail = 0;
   for (; noError(); )
@@ -863,7 +867,8 @@ parseOperand()
     if (optionalChar('('))
     {// function call syntax, let's keep going
       Ast *op = operand;
-      Ast **args = pushArray(arena, DEFAULT_MAX_LIST_LENGTH, Ast*);
+      i32 cap = 16;  // todo #grow
+      Ast **args = pushArray(arena, cap, Ast*);
       CompositeAst *new_operand = newAst(arena, CompositeAst, &op->token);
       new_operand->op        = op;
       new_operand->arg_count = 0;
@@ -876,6 +881,7 @@ parseOperand()
         else
         {
           i32 arg_i = new_operand->arg_count++;
+          assert(arg_i < cap);
           if ((args[arg_i] = parseExpression()))
           {
             if (!optionalChar(','))
@@ -1113,7 +1119,8 @@ parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
           pushContext("auto normalization: #norm(IDENTIFIER...)");
           if (requireChar('('))
           {
-            norm_list.items = pushArray(temp_arena, DEFAULT_MAX_LIST_LENGTH, Identifier*);
+            i32 cap = 16;  // todo #grow
+            norm_list.items = pushArray(temp_arena, cap, Identifier*);
             for (; noError(); )
             {
               if (optionalChar(')'))
@@ -1124,7 +1131,7 @@ parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
                 // should be in the function signature.
                 Token *name = lastToken();
                 i32 norm_i = norm_list.count++;
-                assert(norm_i < DEFAULT_MAX_LIST_LENGTH);
+                assert(norm_i < cap);
                 norm_list.items[norm_i] = newAst(arena, Identifier, name);
                 if (!optionalChar(','))
                 {
@@ -1188,8 +1195,9 @@ parseFork()
   Ast *subject = parseExpression();
   if (requireChar('{', "to open the typedef body"))
   {
-    Token *ctors = pushArray(arena, DEFAULT_MAX_LIST_LENGTH, Token);
-    Ast **bodies = pushArray(arena, DEFAULT_MAX_LIST_LENGTH, Ast*);
+    i32 cap = 16;  // todo #grow
+    Token *ctors = pushArray(arena, cap, Token);
+    Ast **bodies = pushArray(arena, cap, Ast*);
 
     i32 actual_case_count = 0;
     for (b32 stop = false;
@@ -1201,11 +1209,16 @@ parseFork()
       {
         pushContext("fork case: CASE: BODY");
         i32 input_case_i = actual_case_count++;
+        assert(input_case_i < cap)
         Token ctor = nextToken();
         if (isIdentifier(&ctor))
+        {
           ctors[input_case_i] = ctor;
+        }
         else
+        {
           tokenError(&ctor, "expected a constructor name");
+        }
 
         optionalChar(':');  // just decoration
         if (Ast *body = parseSequence(false))

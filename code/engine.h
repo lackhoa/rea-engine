@@ -371,8 +371,6 @@ struct LookupPolyParameter {
   operator bool() { return found; }
 };
 
-#define DEFAULT_MAX_LIST_LENGTH 64  // todo
-
 String number_to_string[] = {
   toString("0"), toString("1"), toString("2"), toString("3"),
   toString("4"), toString("5"), toString("6"), toString("7"),
