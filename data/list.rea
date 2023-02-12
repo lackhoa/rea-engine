@@ -28,7 +28,7 @@ concatNil :: ($A: Type, l: List(A)) -> l+[] = l
 {fork l
  {nil,
   cons prove (l.tail + [] = l.tail) {use concatNil}
-  rewrite seek(l.tail + [] = l.tail);
+  subst l.tail + [];
   }}
 
 concatToNil :: (A: Type, l,l1: List(A), l+l1 = []) -> l=[] /\ l1=[]
@@ -89,19 +89,23 @@ permuteSwap :: (A: Type, l,m: List(A), p: l Permute m) -> Permute(m, l)
  fork p
  {
   permuteNil
-  invert p; rewrite seek(l=[]); rewrite seek(m=[])
+  invert p;
+  subst l, m;
   ,
   permuteSkip
-  invert p; rewrite seek(l = [p.a .. p.l]); rewrite seek(m = [p.a .. p.l1]);
+  invert p;
+  subst l, m;
   prove (p.l1 Permute p.l) {use permuteSwap}
   use permuteSkip;
   ,
   permuteSwap
-  invert p; rewrite seek(l = [p.a, p.b .. p.l]); rewrite seek(m = [p.b, p.a .. p.l]);
+  invert p;
+  subst l, m;
   use permuteSwap;
   ,
   permuteChain
-  invert p; rewrite seek(l = p.l); rewrite seek(m = p.m);
+  invert p;
+  subst l, m;
   prove p.m Permute p.chain {use permuteSwap}
   prove p.chain Permute p.l {use permuteSwap}
   return permuteChain(p.m, p.chain, p.l, _, _);

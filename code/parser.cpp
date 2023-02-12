@@ -173,9 +173,7 @@ inline Ast *
 parseSequence(b32 require_braces=true)
 {
   Arena *arena = temp_arena;
-  i32 serial = DEBUG_SERIAL;
-  if (serial == 41)
-    breakhere;
+  i32 unused_var serial = DEBUG_SERIAL++;
   Ast *out = 0;
   i32 count = 0;
   AstList *list = 0;
@@ -243,7 +241,8 @@ parseSequence(b32 require_braces=true)
 
       popContext();
     }
-    else if (equal(tactic, "rewrite"))
+    else if (equal(tactic, "rewrite") ||
+             equal(tactic, "rewrites"))
     {
       pushContext("rewrite EXPRESSION [in EXPRESSION]");
       RewriteAst *rewrite = newAst(arena, RewriteAst, token);
@@ -251,7 +250,16 @@ parseSequence(b32 require_braces=true)
       {
         rewrite->right_to_left = true;
       }
-      rewrite->eq_proof = parseExpression();
+
+      Ast *eq_proof = parseExpression();
+      if (equal(tactic, "rewrites"))
+      {
+        SeekAst *seek = newAst(arena, SeekAst, token);
+        seek->proposition = eq_proof;
+        eq_proof = seek;
+      }
+      rewrite->eq_proof = eq_proof;
+
       if (optionalKind(Token_Keyword_in))
       {
         rewrite->in_expression = parseExpression();
@@ -383,6 +391,25 @@ parseSequence(b32 require_braces=true)
         expect_sequence_to_end = true;
       }
     }
+    else if (equal(tactic, "subst"))
+    {
+      SubstAst *ast = newAst(arena, SubstAst, token);
+      ast->to_rewrite = pushArray(arena, DEFAULT_MAX_LIST_LENGTH, Ast *);
+      for (; noError(); )
+      {
+        if (Ast *expression = parseExpression())
+        {
+          i32 i = ast->count++;
+          assert(i < DEFAULT_MAX_LIST_LENGTH);
+          ast->to_rewrite[i] = expression;
+          lastToken();
+        }
+
+        if (!optionalChar(','))
+          break;
+      }
+      ast0 = ast;
+    }
     else if (isIdentifier(token))
     {
       // NOTE: identifiers can't be tactics, but I don't think that's a concern.
@@ -463,14 +490,27 @@ parseSequence(b32 require_braces=true)
       Ast *item0 = list->head;
       if (item_i > 0)
       {
+        // todo maybe make a class with "body" or something idk
         if (Let *let = castAst(item0, Let))
+        {
           let->body = previous;
+        }
         else if (RewriteAst *rewrite = castAst(item0, RewriteAst))
+        {
           rewrite->body = previous;
+        }
         else if (GoalTransform *item = castAst(item0, GoalTransform))
+        {
           item->body = previous;
+        }
         else if (Invert *item = castAst(item0, Invert))
+        {
           item->body = previous;
+        }
+        else if (SubstAst *item = castAst(item0, SubstAst))
+        {
+          item->body = previous;
+        }
         else
           invalidCodePath;
       }
@@ -1194,5 +1234,3 @@ parseFork()
 
   return out;
 }
-
-

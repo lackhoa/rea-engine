@@ -5,6 +5,7 @@
 #include "utils.h"
 #include "memory.h"
 #include "lexer.h"
+#include "parser.h"
 
 // NOTE: This should work like the function stack, we'll clean it after every top-level form.
 global_variable Arena  temp_arena_;
@@ -24,37 +25,8 @@ struct Composite;
 typedef Composite Record;
 struct Constructor;
 struct Term;
-struct ArrowAst;
 struct LocalBindings;
 struct DataMap;
-
-enum AstKind {
-  Ast_Hole = 1,                 // hole left in for type-checking
-  Ast_NormalizeMeAst,
-  Ast_SyntheticAst,
-  Ast_Identifier,
-
-  // Expressions
-  Ast_TypedExpression,
-  Ast_CompositeAst,
-  Ast_ArrowAst,
-  Ast_AccessorAst,
-  Ast_FunctionAst,
-  Ast_OverloadAst,
-  Ast_CtorAst,
-  Ast_SeekAst,
-  Ast_ReductioAst,
-  Ast_ListAst,
-
-  // Sequence
-  Ast_ForkAst,
-  Ast_RewriteAst,
-  Ast_FunctionDecl,
-  Ast_Let,
-  Ast_UnionAst,
-  Ast_GoalTransform,
-  Ast_Invert,
-};
 
 enum TermKind {
   Term_Hole = 1,
@@ -73,61 +45,6 @@ enum TermKind {
   Term_Rewrite,
 
   Term_Pointer,
-};
-
-const u32 AstFlag_Generated  = 1 << 0;
-const u32 AstFlag_is_builtin = 1 << 1;
-
-embed_struct struct Ast {
-  AstKind kind;
-  Token token;
-  u32   flags;
-};
-
-inline Ast **
-toAsts(Term **values)
-{
-  return (Ast **) values;
-}
-
-inline void
-initAst(Ast *in, AstKind cat, Token *token)
-{
-  in->kind   = cat;
-  in->token = *token;
-}
-
-inline Ast *
-newAst_(Arena *arena, AstKind cat, Token *token, size_t size)
-{
-  Ast *out = (Ast *)pushSize(arena, size, true);
-  initAst(out, cat, token);
-  return out;
-}
-
-#define newAst(arena, cat, token)        \
-  ((cat *) newAst_(arena, Ast_##cat, token, sizeof(cat)))
-
-#define castAst(exp, Cat) ((exp)->kind == Ast_##Cat ? (Cat*)(exp) : 0)
-#define castTerm(exp, Cat) ((exp)->kind == Term_##Cat ? (Cat*)(exp) : 0)
-
-struct Identifier : Ast {
-  // NOTE: Since the ast has a token, which already has the identifier in it, we
-  // don't need to put it in the identifier struct.
-};
-
-typedef Ast Hole;
-typedef Ast AlgebraicManipulation;
-
-struct NormalizeMeAst : Ast {
-  String name_to_unfold;
-};
-
-struct ForkAst : Ast {
-  Ast    *subject;
-  i32     case_count;
-  Ast   **bodies;
-  Token  *ctors;
 };
 
 struct ParseExpressionOptions
@@ -168,7 +85,8 @@ struct Scope {
   Scope    *outer;
   i32       depth;
   i32       param_count;
-  Pointer **values;
+  Pointer **pointers;
+  b32      *ignored;
 };
 
 const u32 Error_Ambiguous = 1 << 0;  // NOTE: Maybe a better name would be "missing type info".
@@ -182,12 +100,6 @@ struct Typer
   u32            expected_errors;  // ExpectError
 };
 
-struct AstList
-{
-  Ast     *head;
-  AstList *tail;
-};
-
 struct TermList
 {
   Term     *head;
@@ -199,6 +111,10 @@ struct Term {
   i32       serial;
   Term     *type;
   Token    *global_name;
+};
+
+struct SyntheticAst : Ast {
+  Term *term;
 };
 
 struct TermArray {
@@ -233,13 +149,6 @@ struct Union : Term {
 struct Function : Term {
   Term *body;
   u32   function_flags;
-};
-
-struct Let : Ast {
-  String  lhs;
-  Ast    *rhs;
-  Ast    *type;
-  Ast    *body;
 };
 
 struct LocalBinding
@@ -302,14 +211,6 @@ struct Pointer : Term {
   };
 };
 
-struct CompositeAst : Ast {
-  Ast     *op;
-  i32      arg_count;
-  Ast    **args;
-  String  *keywords;
-  b32      partial_args;
-};
-
 struct Composite : Term {
   union {
     struct {
@@ -328,14 +229,6 @@ struct Composite : Term {
 u32 ParameterFlag_Inferred = 1 << 0;
 u32 ParameterFlag_Unused   = 1 << 1;
 u32 ParameterFlag_Poly     = 1 << 2;
-
-struct ArrowAst : Ast {
-  i32     param_count;
-  String *param_names;
-  Ast   **param_types;
-  u32    *param_flags;
-  Ast    *output_type;
-};
 
 struct Arrow : Term {
   i32     param_count;
@@ -362,34 +255,6 @@ struct BuildTerm
   Term *value;
   operator bool()   { return value; }
   operator Term*() { return value; }
-};
-
-struct RewriteAst : Ast {
-  Ast *eq_proof;
-  Ast *new_goal;
-  Ast *body;
-  b32  right_to_left;
-  Ast *in_expression;
-};
-
-struct GoalTransform : Ast {
-  Ast *hint;
-  Ast *new_goal;
-  b32  print_proof;
-  Ast *body;
-};
-
-struct Invert : Ast {
-  Ast *pointer;
-  Ast *body;
-};
-
-struct AccessorAst
-{
-  Ast    a;
-
-  Ast   *record;
-  Token  field_name;           // parsing info
 };
 
 struct FileList {
@@ -421,11 +286,6 @@ printOptionPrintType(PrintOptions options={})
   return options;
 }
 
-struct AstArray {
-  i32   count;
-  Term *items;
-};
-
 // NOTE: Rewrite is done on the type of the whole expression, resulting in the type of the body.
 struct Rewrite : Term {
   TreePath *path;
@@ -446,12 +306,6 @@ const u32 FunctionFlag_no_print_as_binop = 1 << 2;
 const u32 FunctionFlag_expand            = 1 << 3;
 // const u32 FunctionFlag_is_builtin        = 1 << 4;  // moved to ast
 
-struct FunctionAst : Ast {
-  ArrowAst *signature;
-  Ast      *body;
-  u32       function_flags;
-};
-
 struct TermPair
 {
   Term *lhs;
@@ -464,32 +318,6 @@ struct Fork : Term {
   i32     case_count;
   Term  **bodies;
 };
-
-struct SyntheticAst : Ast {
-  Term *term;
-};
-
-struct UnionAst : Ast {
-  i32        ctor_count;
-  Token     *ctor_names;
-  ArrowAst **ctor_signatures;
-  ArrowAst  *signature;
-};
-
-struct OverloadAst : Ast {
-  Token  function_name;
-  Ast   *distinguisher;
-};
-
-struct CtorAst : Ast {
-  i32  ctor_i;
-};
-
-struct SeekAst : Ast {
-  Ast *proposition;
-};
-
-struct ReductioAst : Ast {};
 
 struct SolveArgs {i32 arg_count; Term **args;};
 
@@ -543,24 +371,13 @@ struct LookupPolyParameter {
   operator bool() { return found; }
 };
 
-struct TypedExpression : Ast {
-  Ast *type;
-  Ast *expression;
-};
-
-#define DEFAULT_MAX_LIST_LENGTH 64
+#define DEFAULT_MAX_LIST_LENGTH 64  // todo
 
 String number_to_string[] = {
   toString("0"), toString("1"), toString("2"), toString("3"),
   toString("4"), toString("5"), toString("6"), toString("7"),
   toString("8"), toString("9"), toString("10"), toString("11"),
   toString("12"), toString("13"), toString("14"), toString("15"),
-};
-
-struct ListAst : Ast {
-  i32   count;
-  Ast **items;
-  Ast  *tail;
 };
 
 #include "generated/engine_forward.h"

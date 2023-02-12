@@ -214,7 +214,7 @@ lookupStack(Typer *typer, i32 delta, i32 index)
   }
   assert(scope->depth == typer->scope->depth - delta);
   assert(index < scope->param_count);
-  return scope->values[index];
+  return scope->pointers[index];
 }
 
 inline Arrow *
@@ -1272,12 +1272,12 @@ shouldHideTerm(Term *in0)
 #endif
 
 inline void
-prettyPrint(Arena *buffer, Scope *scope)
+prettyPrintScope(Arena *buffer, Scope *scope)
 {
   // NOTE: Skip the last scope since we already know
   while (scope)
   {
-    Pointer **values = scope->values;
+    Pointer **values = scope->pointers;
     for (int param_i = 0;
          param_i < scope->param_count;
          param_i++)
@@ -1286,6 +1286,14 @@ prettyPrint(Arena *buffer, Scope *scope)
       if (pointer)  // sometimes we error out, and the scope is hosed
       {
         assert(pointer->is_stack_pointer);
+        if (pointer->stack.name.chars)
+        {
+          print(buffer, pointer->stack.name);
+          print(buffer, ": ");
+        }
+        print(buffer, pointer->type);
+        print(buffer, "\n");
+
         if (Record *record = castRecord(pointer))
         {
           Arrow *signature = getSignature(record->ctor);
@@ -1299,17 +1307,8 @@ prettyPrint(Arena *buffer, Scope *scope)
               if (i != record->member_count-1) print(buffer, "\n");
             }
           }
+          print(buffer, "\n");
         }
-        else
-        {
-          if (pointer->stack.name.chars)
-          {
-            print(buffer, pointer->stack.name);
-            print(buffer, ": ");
-          }
-          print(buffer, pointer->type);
-        }
-        print(buffer, "\n");
       }
     }
     scope = scope->outer;
@@ -1328,8 +1327,9 @@ newScope(Scope *outer, i32 param_count, Pointer **values)
   Scope *scope = pushStruct(temp_arena, Scope, true);
   scope->outer       = outer;
   scope->depth       = outer ? outer->depth+1 : 1;
-  scope->values      = values;
+  scope->pointers    = values;
   scope->param_count = param_count;
+  scope->ignored     = pushArray(temp_arena, param_count, b32, true);
   return scope;
 }
 
@@ -1524,7 +1524,7 @@ evaluate_(EvalContext *ctx, Term *in0)
 inline Term *
 toValue(Scope *scope, Term *in0)
 {
-  Term **args = (Term **)scope->values;  // NOTE: not gonna write to the scope, so casting is ok
+  Term **args = (Term **)scope->pointers;  // NOTE: not gonna write to the scope, so casting is ok
   EvalContext ctx = {.arg_count = scope->param_count,
                      .args=args,
                      .substitute_only=true};
@@ -1898,7 +1898,7 @@ apply(Term *op, i32 arg_count, Term **args, String name_to_unfold)
 
   if(DEBUG_LOG_apply)
   {
-    DEBUG_DEDENT(); DUMP("=> ", out0, "\n");
+    DEBUG_DEDENT(); DUMP("=> ", out0);
   }
 
   return out0;
@@ -2539,7 +2539,7 @@ introduceSignature(Scope *outer_scope, Arrow *signature)
   {
     String  name = signature->param_names[param_i];
     Term   *type = toValue(scope, signature->param_types[param_i]);
-    scope->values[param_i] = newStackPointer(name, scope->depth, param_i, type);
+    scope->pointers[param_i] = newStackPointer(name, scope->depth, param_i, type);
   }
   return scope;
 }
@@ -2954,7 +2954,7 @@ seekGoal(Solver *solver, Term *goal, b32 try_reductio=false)
            (scope_i < scope->param_count) && !out;
            scope_i++)
       {
-        Term *value = scope->values[scope_i];
+        Term *value = scope->pointers[scope_i];
         if (equal(value->type, rea.False))
         {
           out = reaComposite(rea.falseImpliesAll, value, goal);
@@ -3159,10 +3159,17 @@ getFunctionOverloads(Typer *typer, Identifier *ident, Term *goal0)
 }
 
 internal SearchOutput
-searchExpression(Arena *arena, Typer *env, Term *lhs, Term* in0)
+searchExpression(Term *lhs, Term* in0)
 {
+  if (DEBUG_LOG_search)
+  {
+    i32 serial = DEBUG_SERIAL++;
+    DEBUG_INDENT(); DUMP("search(", serial, "): ", lhs, " in ", "in0");
+  }
+
   b32       found = false;
   TreePath *path  = 0;
+  Arena *arena = temp_arena;
   if (equal(in0, lhs))
   {
     found = true;
@@ -3175,7 +3182,7 @@ searchExpression(Arena *arena, Typer *env, Term *lhs, Term* in0)
       case Term_Composite:
       {
         Composite *in = castTerm(in0, Composite);
-        SearchOutput op = searchExpression(arena, env, lhs, in->op);
+        SearchOutput op = searchExpression(lhs, in->op);
         if (op.found)
         {
           allocate(arena, path);
@@ -3187,7 +3194,7 @@ searchExpression(Arena *arena, Typer *env, Term *lhs, Term* in0)
         {
           for (int arg_i=0; arg_i < in->arg_count; arg_i++)
           {
-            SearchOutput arg = searchExpression(arena, env, lhs, in->args[arg_i]);
+            SearchOutput arg = searchExpression(lhs, in->args[arg_i]);
             if (arg.found)
             {
               allocate(arena, path);
@@ -3202,7 +3209,7 @@ searchExpression(Arena *arena, Typer *env, Term *lhs, Term* in0)
       case Term_Accessor:
       {
         Accessor* in = castTerm(in0, Accessor);
-        SearchOutput recurse = searchExpression(arena, env, lhs, in->record);
+        SearchOutput recurse = searchExpression(lhs, in->record);
         found = recurse.found;
         path  = recurse.path;
       } break;
@@ -3220,6 +3227,12 @@ searchExpression(Arena *arena, Typer *env, Term *lhs, Term* in0)
       {} break;
     }
   }
+
+  if(DEBUG_LOG_search)
+  {
+    DEBUG_DEDENT(); DUMP("=> ", found);
+  }
+
   return {.found=found, .path=path};
 }
 
@@ -3813,7 +3826,7 @@ buildFunctionGivenSignature(Typer *typer, Arrow *signature, Ast *in_body,
       // NOTE: add binding first to support recursion
       addGlobalBinding(global_name, out);
       current_global_function      = out;
-      current_global_function_args = typer->scope->values;
+      current_global_function_args = typer->scope->pointers;
     }
 
     for (i32 index=0; index < signature->param_count; index++)
@@ -3843,30 +3856,36 @@ inline Term *
 buildWithNewAssets(Typer *typer, i32 asset_count, String *names, Term **assets, Ast *body, Term *goal)
 {
   Term *out = 0;
-  Arena *arena = temp_arena;
-  Arrow *signature = newTerm(arena, Arrow, rea.Type);
-  signature->param_count = asset_count;
-  allocateArray(arena, asset_count, signature->param_names);
-  allocateArray(arena, asset_count, signature->param_types);
-  allocateArray(arena, asset_count, signature->param_flags, true);
-
-  signature->param_names = names;
-  if (!names)
+  if (asset_count)
   {
-    allocateArray(arena, asset_count, signature->param_names, true);
-  }
+    Arena *arena = temp_arena;
+    Arrow *signature = newTerm(arena, Arrow, rea.Type);
+    signature->param_count = asset_count;
+    allocateArray(arena, asset_count, signature->param_names);
+    allocateArray(arena, asset_count, signature->param_types);
+    allocateArray(arena, asset_count, signature->param_flags, true);
 
-  for (i32 i=0; i < asset_count; i++)
+    signature->param_names = names;
+    if (!names)
+    {
+      allocateArray(arena, asset_count, signature->param_names, true);
+    }
+
+    for (i32 i=0; i < asset_count; i++)
+    {
+      signature->param_types[i] = assets[i]->type;
+    }
+    signature->output_type = goal;
+
+    if (Function *fun = buildFunctionGivenSignature(typer, signature, body))
+    {
+      out = newComposite(arena, fun, asset_count, assets);
+    }
+  }
+  else
   {
-    signature->param_types[i] = assets[i]->type;
+    out = buildTerm(typer, body, goal);
   }
-  signature->output_type = goal;
-
-  if (Function *fun = buildFunctionGivenSignature(typer, signature, body))
-  {
-    out = newComposite(arena, fun, asset_count, assets);
-  }
-
   return out;
 }
 
@@ -4191,13 +4210,163 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
   return value;
 }
 
+inline void
+ignorePointer(Scope *scope, i32 pointer_i)
+{
+  assert(pointer_i < scope->param_count);
+  scope->ignored[pointer_i] = true;
+}
+
+inline b32
+isPointerIgnored(Scope *scope, i32 pointer_i)
+{
+  assert(pointer_i < scope->param_count);
+  return scope->ignored[pointer_i];
+}
+
+internal Term *
+buildSubst(Typer *typer, SubstAst *in, Term *goal)
+{
+  // todo #cleanup I think there is a super structure here: we add asset, and we
+  // change the goal. Currently we use the stack and recursion to keep track of
+  // that but maybe the typer can help with that, and we just push stuff onto it.
+
+  struct RewriteChain {
+    Term         *eq_proof;
+    TreePath     *path;
+    b32           right_to_left;
+    RewriteChain *next;
+  };
+
+  auto newRewriteChain =
+    [](Term *eq_proof, TreePath *path, b32 right_to_left, RewriteChain *next)
+  {
+    RewriteChain *new_chain  = pushStruct(temp_arena, RewriteChain);
+    new_chain->eq_proof      = eq_proof;
+    new_chain->path          = path;
+    new_chain->right_to_left = right_to_left;
+    new_chain->next          = next;
+    return new_chain;
+  };
+
+  struct Substitution {
+    Term *to_rewrite;
+    Term *eq_proof;
+    b32   right_to_left;
+  };
+
+  Term *value = 0;
+  Arena *arena = temp_arena;
+  i32           sub_cap       = 16; // todo: #grow
+  i32           sub_count     = 0;
+  Substitution *substitutions = pushArray(arena, sub_cap, Substitution);
+
+  i32    asset_cap   = 16; // todo: #grow
+  i32    asset_count = 0;
+  Term **assets      = pushArray(arena, asset_cap, Term *);
+
+  for (i32 expr_i=0; expr_i < in->count && noError(); expr_i++)
+  {
+    // building expressions and storing substitutions
+    Ast *to_rewrite_ast = in->to_rewrite[expr_i];
+    if (Term *to_rewrite = buildTerm(typer, to_rewrite_ast, holev))
+    {
+      Pointer *eq_proof      = 0;
+      b32      right_to_left = 0;
+      for (Scope *scope = typer->scope; scope && !eq_proof; scope = scope->outer)
+      {
+        for (i32 pointer_i=0; pointer_i < scope->param_count && !eq_proof; pointer_i++)
+        {
+          Pointer *pointer = scope->pointers[pointer_i];
+          if (auto [l,r]= getEqualitySides(pointer->type, false))
+          {
+            b32 equal_lhs = equal(l, to_rewrite);
+            b32 equal_rhs = equal(r, to_rewrite);
+            if (equal_lhs || equal_rhs)
+            {
+              eq_proof      = pointer;
+              right_to_left = equal_rhs;
+              ignorePointer(scope, pointer_i);
+
+              substitutions[sub_count++] = {to_rewrite, eq_proof, right_to_left};
+              assert(sub_count <= sub_cap);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (noError())
+  {
+    for (i32 sub_i = 0; sub_i < sub_count; sub_i++)
+    {
+      auto [to_rewrite, eq_proof, right_to_left] = substitutions[sub_i];
+      for (Scope *scope = typer->scope; scope; scope = scope->outer)
+      {
+        // search the scope for stuff to rewrite
+        for (i32 pointer_i=0; pointer_i < scope->param_count; pointer_i++)
+        {
+          Pointer *pointer = scope->pointers[pointer_i];
+          if (!isPointerIgnored(scope, pointer_i))
+          {
+            assert(pointer != eq_proof);
+            if (SearchOutput search = searchExpression(to_rewrite, pointer->type))
+            {
+              Term *asset = newRewrite(arena, eq_proof, pointer, search.path, !right_to_left);
+              ignorePointer(scope, pointer_i);
+
+              assets[asset_count++] = asset;
+              assert(asset_count <= asset_cap);
+            }
+          }
+        }
+      }
+
+      for (i32 asset_i=0; asset_i < asset_count; asset_i++)
+      {
+        // search the existing assets we just created
+        Term *asset = assets[asset_i];
+        if (SearchOutput search = searchExpression(to_rewrite, asset->type))
+        {
+          assets[asset_i] = newRewrite(arena, eq_proof, asset, search.path, !right_to_left);
+        }
+      }
+    }
+
+    RewriteChain *rewrite_chain = 0;
+    for (i32 sub_i = 0; sub_i < sub_count; sub_i++)
+    {
+      auto [to_rewrite, eq_proof, right_to_left] = substitutions[sub_i];
+      if (SearchOutput search = searchExpression(to_rewrite, goal))
+      {
+          auto [l,r] = getEqualitySides(eq_proof->type);
+          Term *to_rewrite = 0;
+          Term *rewrite_to = 0;   // lol naming
+          if (right_to_left) {to_rewrite = r; rewrite_to = l;}
+          else               {to_rewrite = l; rewrite_to = r;}
+
+          goal = rewriteTerm(arena, to_rewrite, rewrite_to, search.path, goal);
+          rewrite_chain = newRewriteChain(eq_proof, search.path, right_to_left, rewrite_chain);
+      }
+    }
+
+    value = buildWithNewAssets(typer, asset_count, 0, assets, in->body, goal);
+    for (auto chain = rewrite_chain;  chain && noError();  chain = chain->next)
+    {
+      value = newRewrite(arena, chain->eq_proof, value, chain->path, chain->right_to_left);
+    }
+  }
+  return value;
+}
+
 forward_declare internal BuildTerm
-buildTerm(Typer *typer, Ast *in0, Term *goal)
+buildTerm(Typer *typer, Ast *in0, Term *goal0)
 {
   // beware: Usually we mutate in-place, but we may also allocate anew.
   i32 UNUSED_VAR serial = DEBUG_SERIAL++;
 
-  assert(goal);
+  assert(goal0);
   Arena *arena = temp_arena;
   Term *value = 0;
   b32 should_check_type = true;
@@ -4214,14 +4383,14 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
   {
     case Ast_CompositeAst:
     {
-      value = buildComposite(typer, (CompositeAst*)in0, goal);
+      value = buildComposite(typer, (CompositeAst*)in0, goal0);
     } break;
 
     case Ast_Identifier:
     {
       Identifier *in = castAst(in0, Identifier);
       Token *name = &in->token;
-      if (goal == rea.U32)
+      if (goal0 == rea.U32)
       {
         i32 number = toInt32(name);  // todo: wrong number type.
         if (noError())
@@ -4245,7 +4414,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
             for (i32 value_id = 0; value_id < globals->count; value_id++)
             {
               Term *slot_value = globals->items[value_id];
-              if (matchType(getType(slot_value), goal))
+              if (matchType(getType(slot_value), goal0))
               {
                 if (value)
                 {// ambiguous
@@ -4270,7 +4439,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
               {
                 tokenError(name, "global name does not match expected type");
                 attach("name", name);
-                attach("expected_type", goal);
+                attach("expected_type", goal0);
                 attach("serial", serial);
                 if (globals->count == 1)
                 {
@@ -4291,14 +4460,12 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
     case Ast_Hole:
     {
       Solver solver = {.typer=typer, .use_global_hints=true, .try_reductio=try_reductio};
-      if (Term *solution = solveGoal(&solver, goal))
+      if (Term *solution = solveGoal(&solver, goal0))
       {
         value = solution;
       }
       else
       {
-        if (serial == 33873)
-          breakhere;
         reportError(in0, "please provide an expression here");
         attach("serial", serial);
       }
@@ -4328,7 +4495,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
           if (Term *param_type = buildTerm(typer, in->param_types[i], holev).value)
           {
             out->param_types[i] = toAbstractTerm(arena, param_type, getScopeDepth(scope->outer));
-            scope->values[i] = newStackPointer(out->param_names[i], scope->depth, i, param_type);
+            scope->pointers[i] = newStackPointer(out->param_names[i], scope->depth, i, param_type);
             String name = in->param_names[i];
             addLocalBinding(typer, name, i);
           }
@@ -4396,7 +4563,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
     case Ast_FunctionAst:
     {
       FunctionAst *in = castAst(in0, FunctionAst);
-      Term *type = goal;
+      Term *type = goal0;
       if (in->signature)
       {
         type = buildTerm(typer, in->signature, holev).value;
@@ -4419,7 +4586,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
 
     case Ast_RewriteAst:
     {
-      if (goal->kind == Term_Hole)
+      if (goal0->kind == Term_Hole)
       {
         reportError(in0, "we do not know what the goal is, so nothing to rewrite");
       }
@@ -4437,7 +4604,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
             {
               if (Term *in_expression = buildTerm(typer, in->in_expression, holev).value)
               {
-                if (SearchOutput search = searchExpression(arena, typer, from, getType(in_expression)))
+                if (SearchOutput search = searchExpression(from, in_expression->type))
                 {
                   b32 right_to_left = !in->right_to_left;  // since we rewrite the body, not the goal.
                   Term *asset = newRewrite(arena, eq_proof, in_expression, search.path, right_to_left);
@@ -4451,7 +4618,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
                   {
                     todoIncomplete;
                   }
-                  value = buildWithNewAsset(typer, name, asset, in->body, goal);
+                  value = buildWithNewAsset(typer, name, asset, in->body, goal0);
                 }
                 else
                 {
@@ -4463,11 +4630,11 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
             }
             else
             {
-              SearchOutput search = searchExpression(arena, typer, from, goal);
+              SearchOutput search = searchExpression(from, goal0);
               if (search.found)
               {
-                Term *new_goal = rewriteTerm(arena, from, to, search.path, goal);
-                if (Term *body = buildTerm(typer, in->body, new_goal).value)
+                Term *new_goal = rewriteTerm(arena, from, to, search.path, goal0);
+                if (Term *body = buildTerm(typer, in->body, new_goal))
                 {
                   value = newRewrite(arena, eq_proof, body, search.path, in->right_to_left);
                 }
@@ -4498,23 +4665,23 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
 
       if (NormalizeMeAst *in_new_goal = castAst(in->new_goal, NormalizeMeAst))
       {// just normalize the goal, no need for tactics (for now).
-        Term *norm_goal = normalize(typer, goal, in_new_goal->name_to_unfold);
+        Term *norm_goal = normalize(typer, goal0, in_new_goal->name_to_unfold);
         if (checkFlag(in->flags, AstFlag_Generated) &&
-            equal(goal, norm_goal))
+            equal(goal0, norm_goal))
         {// superfluous auto-generated transforms.
-          value = buildTerm(typer, in->body, goal).value;
+          value = buildTerm(typer, in->body, goal0).value;
           recursed = true;
         }
         else
         {
-          eq_proof = newComputation_(goal, norm_goal);
+          eq_proof = newComputation_(goal0, norm_goal);
           new_goal = norm_goal;
           rewrite_path = 0;
         }
       }
       else if ((new_goal = buildTerm(typer, in->new_goal, holev).value))
       {
-        CompareTerms compare = compareTerms(arena, goal, new_goal);
+        CompareTerms compare = compareTerms(arena, goal0, new_goal);
         if (compare.result == Trinary_True)
         {
           reportError(in0, "new goal is exactly the same as current goal");
@@ -4526,7 +4693,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
         else
         {
           rewrite_path = compare.diff_path;
-          Term *from = subExpressionAtPath(goal, compare.diff_path);
+          Term *from = subExpressionAtPath(goal0, compare.diff_path);
           Term *to   = subExpressionAtPath(new_goal, compare.diff_path);
 
           HintDatabase *hints = 0;
@@ -4622,7 +4789,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
               if (checkFlag(in->flags, AstFlag_Generated) &&
                   equal(rhs_type, norm_rhs_type))
               {// superfluous auto-generated transforms.
-                value = buildTerm(typer, in->body, goal).value;
+                value = buildTerm(typer, in->body, goal0).value;
                 recursed = true;
               }
               else
@@ -4636,7 +4803,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
 
           if (!recursed)
           {
-            value = buildWithNewAsset(typer, in->lhs, rhs, in->body, goal);
+            value = buildWithNewAsset(typer, in->lhs, rhs, in->body, goal0);
           }
         }
       }
@@ -4645,7 +4812,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
     case Ast_ForkAst:
     {// no need to return value since nobody uses the value of a fork
       ForkAst *fork = castAst(in0, ForkAst);
-      value = buildFork(typer, fork, goal);
+      value = buildFork(typer, fork, goal0);
       recursed = true;
     } break;
 
@@ -4657,7 +4824,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
     case Ast_SeekAst:
     {
       SeekAst *in = castAst(in0, SeekAst);
-      Term *proposition = goal;
+      Term *proposition = goal0;
       if (in->proposition)
       {
         proposition = buildTerm(typer, in->proposition, holev).value;
@@ -4696,7 +4863,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
 
     case Ast_ReductioAst:
     {
-      value = reductioAdAbsurdum(Solver{.typer=typer}, goal);
+      value = reductioAdAbsurdum(Solver{.typer=typer}, goal0);
       if (!value)
         reportError(in0, "no contradiction found");
     } break;
@@ -4728,7 +4895,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
       }
 
       recursed = true;
-      value = buildTerm(typer, tail, goal);
+      value = buildTerm(typer, tail, goal0);
     } break;
 
     case Ast_Invert:
@@ -4755,7 +4922,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
                 Term *ref_arg = ref_type->args[poly_count+i];
                 eqs[i] = newComputation_(uni_arg, ref_arg);
               }
-              value = buildWithNewAssets(typer, eq_count, 0, eqs, in->body, goal);
+              value = buildWithNewAssets(typer, eq_count, 0, eqs, in->body, goal0);
               recursed = true;
             }
             else
@@ -4775,6 +4942,12 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
       }
     } break;
 
+    case Ast_SubstAst:
+    {
+      SubstAst *in = (SubstAst *)in0;
+      value = buildSubst(typer, in, goal0);
+    } break;
+
     invalidDefaultCase;
   }
 
@@ -4783,7 +4956,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
     Term *actual = value->type;
     if (should_check_type && !recursed)
     {
-      if (!matchType(actual, goal))
+      if (!matchType(actual, goal0))
       {
         if (expectedWrongType(typer)) silentError();
         else
@@ -4803,11 +4976,11 @@ buildTerm(Typer *typer, Ast *in0, Term *goal)
       if (!error->goal_attached)
       {
         error->goal_attached = true;
-        attach("goal", goal);
+        attach("goal", goal0);
 
         StartString start = startString(error_buffer);
         print(error_buffer, "\n");
-        prettyPrint(error_buffer, typer->scope);
+        prettyPrintScope(error_buffer, typer->scope);
         attach("scope", endString(start));
 
         start = startString(error_buffer);

@@ -84,7 +84,8 @@ typedef long     i64;
 #define DUMP_8(x, ...) dump(x); DUMP_7(__VA_ARGS__)
 #define DUMP_9(x, ...) dump(x); DUMP_8(__VA_ARGS__)
 #define DUMP_N(N) CONCATENATE(DUMP_, N)
-#define DUMP(...) DUMP_N(PP_NARG(__VA_ARGS__))(__VA_ARGS__)
+#define DUMP_NO_NEWLINE(...) DUMP_N(PP_NARG(__VA_ARGS__))(__VA_ARGS__)
+#define DUMP(...) DUMP_NO_NEWLINE(__VA_ARGS__, "\n")
 // DUMP(a,b) -> DUMP_N(2,a,b)(a,b) -> DUMP_2()
 
 inline void
