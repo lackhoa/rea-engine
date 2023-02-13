@@ -376,4 +376,9 @@ String number_to_string[] = {
   toString("12"), toString("13"), toString("14"), toString("15"),
 };
 
+struct NormalizeContext {
+  i32    depth;
+  String name_to_unfold;
+};
+
 #include "generated/engine_forward.h"

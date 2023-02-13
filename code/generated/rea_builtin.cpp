@@ -19,6 +19,7 @@ global_variable BuiltinEntry rea_builtin_names[] = {
 {"concat", &rea_builtins.concat},
 {"Permute", &rea_builtins.Permute},
 {"permuteNil", &rea_builtins.permuteNil},
+{"permuteSingle", &rea_builtins.permuteSingle},
 {"permuteSkip", &rea_builtins.permuteSkip},
 {"permuteSwap", &rea_builtins.permuteSwap},
 {"permuteChain", &rea_builtins.permuteChain},

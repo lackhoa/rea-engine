@@ -257,12 +257,12 @@ permuteTest :: (a,b,c: Nat) -> Permute(Nat, [c,a,b], [a,b,c])
  prove Permute(Nat, [c,a,b], [a,c,b]) {use permuteSwap}
  prove Permute(Nat, [c,b], [b,c])     {use permutePair}
  prove Permute(Nat, [a,c,b], [a,b,c]) {use permuteSkip}
- return permuteChain([c,a,b], [a,c,b], [a,b,c], _, _)
+ use permuteChain with chain=[a,c,b]
  }
 
-;; test_eval test_sort([0]);
-;; test_eval test_sort([2, 0]);
-;; test_eval test_sort([0, 2]);
+check test_sort([0])   : [0] Permute [0];
+check test_sort([0,2]) : [0,2] Permute [0,2];
+check test_sort([2,0]) : [2,0] Permute [0,2];
 
 ;; testSortList :: () -> (Permute([2, 0, 4, 3, 1], [0, 1, 2, 3, 4]))
 ;; {

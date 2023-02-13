@@ -49,11 +49,15 @@ struct ReaBuiltins {
 
   Term *fold;
   Term *concat;
+
   Term *Permute;
   Term *permuteNil;
+  Term *permuteSingle;
   Term *permuteSkip;
   Term *permuteSwap;
   Term *permuteChain;
+  Term *permuteConsSwap;
+
   Term *foldConcat;
   Term *foldPermute;
   Term *permuteSame;
@@ -1437,9 +1441,15 @@ internal Term *
 evaluate_(EvalContext *ctx, Term *in0)
 {
   Term *out0 = 0;
-  i32 unused_var serial = DEBUG_SERIAL++;
   Arena *arena = temp_arena;
   b32 substitute_only = ctx->offset || ctx->substitute_only;
+
+  i32 unused_var serial = DEBUG_SERIAL++;
+  if (DEBUG_LOG_evaluate)
+  {
+    DEBUG_INDENT(); DUMP("evaluate(", serial, "): ", in0);
+  }
+
   if (isGlobalValue(in0))
   {
     out0 = in0;
@@ -1600,6 +1610,11 @@ evaluate_(EvalContext *ctx, Term *in0)
       default:
         todoIncomplete;
     }
+  }
+
+  if (DEBUG_LOG_evaluate)
+  {
+    DEBUG_DEDENT(); DUMP("=> ", out0);
   }
 
   if (substitute_only) assert(out0);
@@ -1782,9 +1797,11 @@ newRewrite(Term *eq_proof, Term *body, TreePath *path, b32 right_to_left)
 inline Composite *
 newComposite(Term *op, i32 arg_count, Term **args)
 {
-  checkRecursiveCall(op, arg_count, args);
+  i32 unused_var serial = DEBUG_SERIAL++;
 
+  checkRecursiveCall(op, arg_count, args);
   Composite *out = 0;
+
   Arrow *signature = castTerm(getType(op), Arrow);
   assert(signature->param_count == arg_count);
   Term  *type      = substitute(signature->output_type, arg_count, args);
@@ -1902,6 +1919,20 @@ castRecord(Term *record0)
   return out;
 }
 
+inline b32
+reaIsSingle(Term *in0)
+{
+  Record *in = castRecord(in0);
+  return in->ctor == rea.single;
+}
+
+inline b32
+reaIsCons(Term *in0)
+{
+  Record *in = castRecord(in0);
+  return in->ctor == rea.cons;
+}
+
 inline Term *
 reaSingle(Term *head)
 {
@@ -2014,7 +2045,7 @@ compareTerms(Arena *arena, Term *l0, Term *r0)
   i32 serial = DEBUG_SERIAL++;
   if (DEBUG_LOG_compare)
   {
-    DEBUG_INDENT(); DUMP("comparing(", serial, "): ", l0, " and ", r0, "\n");
+    DEBUG_INDENT(); DUMP("comparing(", serial, "): ", l0, " and ", r0);
   }
 
   if (l0 == r0)
@@ -2169,7 +2200,7 @@ compareTerms(Arena *arena, Term *l0, Term *r0)
 
   if (DEBUG_LOG_compare)
   {
-    DEBUG_DEDENT(); DUMP("=>(", serial, ") ", out.result, "\n");
+    DEBUG_DEDENT(); DUMP("=>(", serial, ") ", out.result);
   }
 
   return out;
@@ -2473,11 +2504,6 @@ newStackPointer(String name, i32 depth, i32 index, Term *type)
   return out;
 }
 
-struct NormalizeContext {
-  i32    depth;
-  String name_to_unfold;
-};
-
 internal Term *
 normalize_(NormalizeContext *ctx, Term *in0) 
 {
@@ -2487,7 +2513,7 @@ normalize_(NormalizeContext *ctx, Term *in0)
   i32 serial = DEBUG_SERIAL++;
   if (DEBUG_LOG_normalize)
   {
-    DEBUG_INDENT(); DUMP("normalize(", serial, "): ", in0, "\n");
+    DEBUG_INDENT(); DUMP("normalize(", serial, "): ", in0);
   }
 
   if (!isGlobalValue(in0))
@@ -2602,7 +2628,7 @@ normalize_(NormalizeContext *ctx, Term *in0)
 
   if (DEBUG_LOG_normalize)
   {
-    DEBUG_DEDENT(); DUMP("=> ", out0, "\n");
+    DEBUG_DEDENT(); DUMP("=> ", out0);
   }
 
   // assert(isSequenced(in0) || out0);
@@ -2610,6 +2636,8 @@ normalize_(NormalizeContext *ctx, Term *in0)
   return out0;
 }
 
+// TODO: Remove typer dependency?
+// Technically we could make up a depth that is only reachable by the typer.
 internal Term *
 normalize(Typer *typer, Term *in0, String name_to_unfold)
 {
@@ -2618,9 +2646,9 @@ normalize(Typer *typer, Term *in0, String name_to_unfold)
 }
 
 internal Term *
-normalize(Typer *env, Term *in0)
+normalize(Typer *typer, Term *in0)
 {
-  NormalizeContext ctx = {.depth=getScopeDepth(env)};
+  NormalizeContext ctx = {.depth=getScopeDepth(typer)};
   return normalize_(&ctx, in0);
 }
 
@@ -3535,10 +3563,16 @@ getTransformResult(Term *in)
 }
 
 inline Term *
+getPermuteRhs(Term *in)
+{
+  return getArg(in->type, 2);
+}
+
+inline Term *
 eqChain(Term *e1, Term *e2)
 {
-  auto [a,b] = getEqualitySides(getType(e1));
-  auto [_,c] = getEqualitySides(getType(e2));
+  auto [a,b] = getEqualitySides(e1->type);
+  auto [_,c] = getEqualitySides(e2->type);
   Term *A = getType(a);
   Term *out = reaComposite(rea.eqChain, A, a,b,c, e1,e2);
   return out;
@@ -3621,34 +3655,33 @@ getFoldList(Typer *typer, Algebra *algebra, Term *in0)
 }
 
 internal TermArray
-toCArray(Arena *arena, Term *list0)
+toCArray(Term *list0)
 {
-  TermArray out = {};
-  const i32 MAX_TERM_ARRAY_LENGTH = 20;
-  allocateArray(arena, MAX_TERM_ARRAY_LENGTH, out.items);
+  i32    count = 0;
+  Term **items = 0;
+  const i32 cap = 32;  // todo #grow
+  allocateArray(temp_arena, cap, items);
 
-  b32 stop=false;
-  for (Term *iter0=list0; !stop; )
+  for (Term *iter0=list0; ; )
   {
-    Composite *iter = castTerm(iter0, Composite);
-    Term *head = iter->args[0];
-    out.items[out.count++] = head;
-    assert(out.count <= MAX_TERM_ARRAY_LENGTH);
+    Record *iter = castRecord(iter0);
+    Term *head = reaHead(iter);
+    assert(count < cap);
+    items[count++] = head;
 
-    Constructor *ctor = castTerm(iter->op, Constructor);
-    if (ctor->index == 0)
+    if (iter->ctor == rea.single)
     {
-      stop = true;
+      break;
     }
     else
     {
-      assert(ctor->index == 1);
-      Term *tail = iter->args[1];
+      assert(iter->ctor == rea.cons);
+      Term *tail = reaTail(iter);
       iter0 = tail;
     }
   }
 
-  return out;
+  return {count, items};
 }
 
 internal Term *
@@ -3694,44 +3727,105 @@ quickSort(Term **in, i32 *indexes, i32 count)
   }
 }
 
-inline b32
-reaIsNil(Term *in0)
-{
-  todoIncomplete;
-}
-
 internal Term *
-algebraSort(Record *in)
+provePermute_(Typer *typer, Term *al, Term **Cbac, i32 *indexes, i32 count)
 {
+  i32 UNUSED_VAR serial = DEBUG_SERIAL++;
+  Arena *arena = temp_arena;
   Term *out = 0;
-  Term *list_type = reaListType(in);
-  if (reaIsNil(in))
+  assert(count > 0);
+  // local_persist Term *helper = lookupBuiltin("provePermuteHelper");
+
+  Term *T = getType(Cbac[0]);
+  Term *bac = toReaList(Cbac, count);
+
+  // DUMP("provePermute_: (", al, ") and (", bac, ") \n");
+
+  if (count == 1)
   {
-    out = reaComposite(rea.permuteNil);
+    out = reaComposite(rea.permuteSame, T, al);
   }
   else
   {
-    Term *head = reaHead(in);
-    Term *tail = reaTail(in);
-    if (reaIsNil(tail))
+    i32 a_index = indexes[0];
+    Term *l = reaTail(al);
+
+    Term **Cbc = pushArray(arena, count-1, Term *);
+    for (i32 i=0; i < a_index; i++)
     {
-      out = reaComposite(rea.permuteSame, in);
+      Cbc[i] = Cbac[i];
+    }
+    for (i32 i=a_index+1; i < count; i++)
+    {
+      assert(i-1 < count-1);
+      Cbc[i-1] = Cbac[i];
+    }
+    Term *b_concat_c = toReaList(Cbc, count-1);
+
+    Term *a = reaHead(al);
+    Term *b = (a_index > 0)       ? toReaList(Cbc, a_index)                   : 0;
+    Term *c = (a_index+1 < count) ? toReaList(Cbc+a_index, count-(a_index+1)) : 0;
+
+    Term *recurse = provePermute_(typer, l, Cbc, indexes+1, count-1);
+
+    if (b && c)
+    {// permuteMiddle
+      todoIncomplete;
+      // Term *b_plus_c = reaConcat(arena, b, c);
+      // recurse = newCompositeN(arena, helper, T, l,bc,b_plus_c, recurse,e);
+      // out = reaComposite(rea.permuteMiddle, T,al,bac,
+      //                    a,l,b,c, al_destruct,bac_destruct, recurse);
+    }
+    else if (c)
+    {// permuteFirst
+      out = reaComposite(rea.permuteFirst, T,a,l,c, recurse);
     }
     else
-    {
-      Term *tail_sort = algebraSort(castRecord(tail));
-      Term *new_tail = getTransformResult(tail_sort);
-      if (algebraLessThan(head, reaHead(new_tail)))
-      {
-        // insertion goes here...
-      }
-      else
-      {
-        out = reaComposite(rea.permuteSkip, list_type, head, tail, new_tail, tail_sort);
-      }
+    {// permuteLast
+      out = reaComposite(rea.permuteLast, T,a,l,b, recurse);
     }
   }
   return out;
+}
+
+internal Term *
+provePermute(Typer *typer, Term **in, Term **sorted, i32 *indexes, i32 count)
+{
+  Term *al = toReaList(in, count);
+  Term *out = provePermute_(typer, al, sorted, indexes, count);
+  return out;
+}
+
+// array version
+internal Term *
+algebraSort(Typer *typer, i32 count, Term **in)
+{
+  Arena *arena = temp_arena;
+  Term **sorted = copyArray(arena, count, in);
+
+  i32 *tmp_indexes = pushArray(arena, count, i32);
+  for (i32 i=0; i < count; i++) { tmp_indexes[i] = i; }
+
+  quickSort(sorted, tmp_indexes, count);
+
+  i32 *inverse = pushArray(arena, count, i32);
+  for (i32 i=0; i < count; i++) { inverse[tmp_indexes[i]] = i; }
+
+  i32 *indexes = pushArray(arena, count, i32);
+  for (i32 i=0; i < count; i++)
+  {
+    indexes[i] = inverse[i];
+    for (i32 left_index=0; left_index < i; left_index++)
+    {
+      if (inverse[left_index] < inverse[i])
+      {
+        indexes[i]--;
+      }
+    }
+  }
+
+  Term *proof = provePermute(typer, in, sorted, indexes, count);
+  return proof;
 }
 
 internal Term *
@@ -3741,14 +3835,8 @@ buildTestSort(Typer *typer, CompositeAst *ast)
   assert(ast->arg_count == 1);
   if (Term *list0 = buildTerm(typer, ast->args[0], holev))
   {
-    if (Record *list = castRecord(list0))
-    {
-      out = algebraSort(list);
-    }
-    else
-    {
-      reportError(ast, "please pass me a list");
-    }
+    auto [count, array] = toCArray(list0);
+    out = algebraSort(typer, count, array);
   }
   return out;
 }
@@ -4748,6 +4836,11 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
         else if (Term *eq = buildTerm(typer, in->eq, holev))
         {
           eq_proof = seekGoal(Solver{.typer=typer}, eq);
+          if (!eq_proof)
+          {
+            reportError("cannot find the proof for this proposition in scope");
+            attach("equality", eq);
+          }
         }
 
         if (noError())
@@ -5598,6 +5691,8 @@ buildUnion(Typer *typer, UnionAst *in, Token *global_name)
   b32 is_builtin = checkFlag(in->flags, AstFlag_is_builtin);
   if (is_builtin && noError())
   {
+    if (equal(global_name, "Permute"))
+      breakhere;
     addBuiltinTerm(uni);
     for (i32 i=0; i < uni->ctor_count; i++)
     {

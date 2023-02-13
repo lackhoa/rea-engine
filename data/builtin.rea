@@ -36,4 +36,4 @@ commutative :: fn($T: Type, op: binaryOp(T)) -> Type
 {return (a,b: T) -> a op b = b op a}
 
 #load "plist.rea"
-#load "list.rea"
+;; #load "list.rea"
