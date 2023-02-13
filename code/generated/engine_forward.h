@@ -3,7 +3,6 @@ Token nextToken();
 Token peekToken();
 Ast * parseExpression();
 Ast * parseFork();
-Term * getType(Term * in0);
 void dump(Trinary trinary);
 void unwindScope(Typer * env);
 void unwindBindingsAndScope(Typer * env);

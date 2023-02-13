@@ -148,7 +148,7 @@ isGlobalValue(Term *in0)
 inline b32
 isPolyUnion(Union *in)
 {
-  return getType(in)->kind == Term_Arrow;
+  return (in)->type->kind == Term_Arrow;
 }
 
 inline void
@@ -239,7 +239,7 @@ getConstructorSignature(Union *uni, i32 ctor_index)
 inline i32
 getParameterCount(Term *in)
 {
-  Arrow *signature = castTerm(getType(in), Arrow);
+  Arrow *signature = castTerm((in)->type, Arrow);
   return signature->param_count;
 }
 
@@ -479,12 +479,6 @@ rewriteTerm(Term *eq_proof, TreePath *path, b32 right_to_left, Term *in0)
   return rewriteTerm(to_rewrite, rewrite_to, path, in0);
 }
 
-forward_declare inline Term *
-getType(Term *in0)
-{
-  return in0->type;
-}
-
 inline LocalBindings *
 extendBindings(Typer *env)
 {
@@ -571,7 +565,7 @@ printComposite(Arena *buffer, Composite *in, PrintOptions opt)
   b32 no_print_as_binop = false;
   op_signature = 0;
   arg_count    = in->arg_count;
-  Term *type0 = getType(in);
+  Term *type0 = (in)->type;
 
   Constructor *ctor = castTerm(in->op, Constructor);
 
@@ -589,7 +583,7 @@ printComposite(Arena *buffer, Composite *in, PrintOptions opt)
     no_print_as_binop = checkFlag(fun->function_flags, FunctionFlag_no_print_as_binop);
   }
 
-  op_signature = castTerm(getType(in->op), Arrow);
+  op_signature = castTerm((in->op)->type, Arrow);
 
   String op_name = {};
   if (Token *global_name = in->op->global_name)
@@ -1190,11 +1184,11 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
         case Term_Rewrite:
         {
           Rewrite *rewrite = castTerm(in0, Rewrite);
-          print(buffer, getType(rewrite), new_opt);
+          print(buffer, (rewrite)->type, new_opt);
           skip_print_type = true;
           print(buffer, " <=>");
           newlineAndIndent(buffer, opt.indentation);
-          print(buffer, getType(rewrite->body), new_opt);
+          print(buffer, (rewrite->body)->type, new_opt);
           newlineAndIndent(buffer, opt.indentation);
 
           print(buffer, "rewrite");
@@ -1209,7 +1203,6 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
           newlineAndIndent(buffer, opt.indentation);
 
           print(buffer, "body: ");
-          // print(buffer, getTypeNoEnv(temp_arena, rewrite->body), new_opt);
           newlineAndIndent(buffer, new_opt.indentation);
           print(buffer, rewrite->body, new_opt);
         } break;
@@ -1217,7 +1210,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
         case Term_Computation:
         {
           print(buffer, "computation: ");
-          print(buffer, getType(in0), new_opt);
+          print(buffer, (in0)->type, new_opt);
           skip_print_type = true;
         } break;
 
@@ -1228,7 +1221,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
           print(buffer, in->subject, new_opt);
           newlineAndIndent(buffer, opt.indentation);
           print(buffer, "{");
-          Union *uni = getUnionOrPolyUnion(getType(in->subject));
+          Union *uni = getUnionOrPolyUnion((in->subject)->type);
           for (i32 ctor_id = 0;
                ctor_id < uni->ctor_count;
                ctor_id++)
@@ -1256,7 +1249,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
     {
       print(buffer, ": ");
       new_opt.print_type_depth = 0;
-      print(buffer, getType(in0), new_opt);
+      print(buffer, (in0)->type, new_opt);
     }
   }
   else
@@ -2392,7 +2385,7 @@ normalize(Term *in0, String name_to_unfold={})
 }
 
 inline b32
-normEqual(Term *l, Term *r)
+equalNorm(Term *l, Term *r)
 {
   if (equal(l, r))  // todo: #speed I just think this improves this
   {
@@ -2411,7 +2404,7 @@ normEqual(Term *l, Term *r)
 inline void
 assertNormEqual(Term *l, Term *r)
 {
-  if (!normEqual(l, r))
+  if (!equalNorm(l, r))
   {
     print_var_delta = true;
     DUMP("l: ", l, "\n");
@@ -2431,7 +2424,7 @@ newComposite(Term *op, i32 arg_count, Term **args)
   checkRecursiveCall(op, arg_count, args);
   Composite *out = 0;
 
-  Arrow *signature = castTerm(getType(op), Arrow);
+  Arrow *signature = castTerm((op)->type, Arrow);
   assert(signature->param_count == arg_count);
   Term  *type      = substitute(signature->output_type, arg_count, args);
 
@@ -2557,13 +2550,13 @@ castRecord(Term *record0)
 inline Term *
 reaSingle(Term *head)
 {
-  return reaComposite(rea.single, getType(head), head);
+  return reaComposite(rea.single, (head)->type, head);
 }
 
 inline Term *
 reaCons(Term *head, Term *tail)
 {
-  return reaComposite(rea.cons, getType(head), head, tail);
+  return reaComposite(rea.cons, (head)->type, head, tail);
 }
 
 inline Term *
@@ -2774,7 +2767,7 @@ inline b32
 matchType(Term *actual, Term *goal)
 {
   if (goal->kind == Term_Hole) {return true;}
-  if (normEqual(actual, goal)) {return true;}
+  if (equalNorm(actual, goal)) {return true;}
   return false;
 }
 
@@ -2932,7 +2925,7 @@ solveArgs(Solver *solver, Term *op, Term *goal0, Token *blame_token=0)
 
   i32 serial = DEBUG_SERIAL++;
 
-  if (Arrow *signature = castTerm(getType(op), Arrow))
+  if (Arrow *signature = castTerm((op)->type, Arrow))
   {
     UnifyContext *ctx = newUnifyContext(signature, getScopeDepth(solver->typer));
     b32 unify_success = unify(ctx, signature->output_type, goal0);
@@ -3014,7 +3007,7 @@ reductioAdAbsurdum(Solver *solver, Term *goal)
   Term *out = 0;
   todoIncomplete;
 #if 0
-  if (getType(goal) != rea_Type) {todoIncomplete}
+  if ((goal)->type != rea_Type) {todoIncomplete}
   auto temp = beginTemporaryMemory(solver->arena);
   if (solver->typer)
   {
@@ -3030,7 +3023,7 @@ reductioAdAbsurdum(Solver *solver, Term *goal)
            param_i++)
       {
         Term *var = newVariable(solver->arena, solver->typer, delta, param_i);
-        Term *var_type = getType(var);
+        Term *var_type = (var)->type;
         if (equal(var_type, rea_False))
         {
           out = reaComposite(solver->arena, rea_falseImpliesAll, var, goal);
@@ -3241,7 +3234,7 @@ getOverloads(Typer *typer, Identifier *ident, Term *goal0)
       for (int slot_i=0; slot_i < slot->count; slot_i++)
       {
         Term *item = slot->items[slot_i];
-        if (Arrow *signature = castTerm(getType(item), Arrow))
+        if (Arrow *signature = castTerm((item)->type, Arrow))
         {
           UnifyContext *ctx = newUnifyContext(signature, getScopeDepth(typer->scope));
           matches = unify(ctx, signature->output_type, goal0);
@@ -3420,7 +3413,7 @@ getOverloadFromDistinguisher(GlobalBinding *lookup, Term *distinguisher)
        slot_i++)
   {
     Term *item = lookup->items[slot_i];
-    if (Arrow *signature = castTerm(getType(item), Arrow))
+    if (Arrow *signature = castTerm((item)->type, Arrow))
     {
       for (i32 param_i=0; param_i < signature->param_count && !out; param_i++)
       {
@@ -3490,10 +3483,37 @@ algebraLessThan(Term *a0, Term *b0)
     {
       case Term_Variable:
       {
-        Variable *a = castTerm(a0, Variable);
+        Variable *a = (Variable *)a0;
         if (Variable *b = castTerm(b0, Variable))
+        {
           out = stringLessThan(a->name, b->name);
+        }
+        else
+          todoIncomplete;
       } break;
+
+      case Term_Pointer:
+      {
+        Pointer *a = (Pointer *)a0;
+        if (Pointer *b = castTerm(b0, Pointer))
+        {
+          if (a->is_stack_pointer && b->is_stack_pointer)
+          {
+            out = stringLessThan(a->stack.name, b->stack.name);
+          }
+          else
+            todoIncomplete;
+        }
+        else
+          todoIncomplete;
+      } break;
+
+      default:
+      {
+        DUMP("a0: ", a0);
+        DUMP("b0: ", b0);
+        todoIncomplete;
+      }
     }
   }
   return out;
@@ -3565,7 +3585,7 @@ eqChain(Term *e1, Term *e2)
 {
   auto [a,b] = getEqualitySides(e1->type);
   auto [_,c] = getEqualitySides(e2->type);
-  Term *A = getType(a);
+  Term *A = (a)->type;
   Term *out = reaComposite(rea.eqChain, A, a,b,c, e1,e2);
   return out;
 }
@@ -3577,65 +3597,15 @@ transformSubExpression(Term *eq_proof, TreePath *path, Term *in)
   return newRewrite(eq_proof, id, treePath(2, path), true);
 }
 
-inline Term *
-algebraFlatten(Typer *typer, Algebra *algebra, Term *in0)
-{
-  Term *out = 0;
-  Term *expression0 = in0;
-
-  if (Composite *expression = castTerm(expression0, Composite))
-  {
-    if (equal(expression->op, algebra->add))
-    {
-      Term *r = expression->args[1];
-      if (Term *norm_r = algebraFlatten(typer, algebra, r))
-      {
-        out = transformSubExpression(norm_r, treePath(1, 0), expression0);
-        expression0 = getTransformResult(out);
-      }
-    }
-  }
-
-  for (b32 stop = false; !stop; )
-  {
-    stop = true;
-    if (Composite *expression = castTerm(expression0, Composite))
-    {
-      if (equal(expression->op, algebra->add))
-      {
-        Term *l0 = expression->args[0];
-        Term *r  = expression->args[1];
-
-        if (Composite *l = castTerm(l0, Composite))
-        {
-          if (equal(l->op, algebra->add))
-          {
-            stop = false;
-            Term *new_proof = reaComposite(algebra->addAssociative, l->args[0], l->args[1], r);
-            if (out)
-              out = eqChain(out, new_proof);
-            else
-              out = new_proof;
-            expression0 = getTransformResult(out);
-          }
-        }
-      }
-    }
-  }
-
-  return out;
-}
-
 internal Term *
-getFoldList(Typer *typer, Algebra *algebra, Term *in0)
+reaFoldList(Term *op, Term *in0)
 {
-  // todo need to pass the operator in here.
   Term *out = 0;
   if (Composite *in = castTerm(in0, Composite))
   {
-    if (equal(in->op, algebra->add))
+    if (in->op == op)
     {
-      Term *tail = getFoldList(typer, algebra, in->args[1]);
+      Term *tail = reaFoldList(op, in->args[1]);
       out = reaCons(in->args[0], tail);
     }
   }
@@ -3680,12 +3650,62 @@ internal Term *
 toReaList(Term **array, i32 count)
 {
   assert(count > 0);
-  Term *T = getType(array[0]);
+  Term *T = (array[0])->type;
   Term *out = reaComposite(rea.single, T, array[count-1]);
   for (i32 i=count-2; i >= 0; i--)
   {
     out = reaComposite(rea.cons, T, array[i], out);
   }
+  return out;
+}
+
+
+inline Term *
+algebraFlatten_(Term *op, Term *associative, Term *in0)
+{
+  Term *out = 0;
+  Term *expression0 = in0;
+
+  if (Composite *expression = castTerm(expression0, Composite))
+  {
+    if (expression->op == op)
+    {
+      Term *r = expression->args[1];
+      if (Term *norm_r = algebraFlatten_(op, associative, r))
+      {
+        out = transformSubExpression(norm_r, treePath(1, 0), expression0);
+        expression0 = getTransformResult(out);
+      }
+    }
+  }
+
+  for (b32 stop = false; !stop; )
+  {
+    stop = true;
+    if (Composite *expression = castTerm(expression0, Composite))
+    {
+      if (expression->op == op)
+      {
+        Term *l0 = expression->args[0];
+        Term *r  = expression->args[1];
+
+        if (Composite *l = castTerm(l0, Composite))
+        {
+          if (l->op == op)
+          {
+            stop = false;
+            Term *new_proof = reaComposite(associative, l->args[0], l->args[1], r);
+            if (out)
+              out = eqChain(out, new_proof);
+            else
+              out = new_proof;
+            expression0 = getTransformResult(out);
+          }
+        }
+      }
+    }
+  }
+
   return out;
 }
 
@@ -3719,19 +3739,21 @@ quickSort(Term **in, i32 *indexes, i32 count)
   }
 }
 
+inline void
+changeType(Term *in, Term *type)
+{
+  assert(equalNorm(in->type, type));
+  in->type = type;
+}
+
 internal Term *
-provePermute_(Typer *typer, Term *al, Term **Cbac, i32 *indexes, i32 count)
+provePermute_(Term *al, Term **Cbac, i32 *indexes, i32 count)
 {
   i32 UNUSED_VAR serial = DEBUG_SERIAL++;
   Arena *arena = temp_arena;
   Term *out = 0;
   assert(count > 0);
-  // local_persist Term *helper = lookupBuiltin("provePermuteHelper");
-
-  Term *T = getType(Cbac[0]);
-  Term *bac = toReaList(Cbac, count);
-
-  // DUMP("provePermute_: (", al, ") and (", bac, ") \n");
+  Term *T = (Cbac[0])->type;
 
   if (count == 1)
   {
@@ -3752,17 +3774,19 @@ provePermute_(Typer *typer, Term *al, Term **Cbac, i32 *indexes, i32 count)
       assert(i-1 < count-1);
       Cbc[i-1] = Cbac[i];
     }
-    Term *b_concat_c = toReaList(Cbc, count-1);
 
     Term *a = reaHead(al);
     Term *b = (a_index > 0)       ? toReaList(Cbc, a_index)                   : 0;
     Term *c = (a_index+1 < count) ? toReaList(Cbc+a_index, count-(a_index+1)) : 0;
 
-    Term *recurse = provePermute_(typer, l, Cbc, indexes+1, count-1);
+    Term *recurse = provePermute_(l, Cbc, indexes+1, count-1);
 
     if (b && c)
     {// permuteMiddle
       out = reaComposite(rea.permuteMiddle, T,a,l,b,c, recurse);
+      Term *bac = toReaList(Cbac, count);  // todo: can this be passed along?
+      Term *type = reaComposite(rea.Permute, T,al,bac);
+      changeType(out, type);
     }
     else if (c)
     {// permuteFirst
@@ -3771,25 +3795,27 @@ provePermute_(Typer *typer, Term *al, Term **Cbac, i32 *indexes, i32 count)
     else
     {// permuteLast
       out = reaComposite(rea.permuteLast, T,a,l,b, recurse);
+      Term *bac = toReaList(Cbac, count);  // todo: can this be passed along?
+      Term *type = reaComposite(rea.Permute, T,al,bac);
+      changeType(out, type);
     }
   }
   return out;
 }
 
 internal Term *
-provePermute(Typer *typer, Term **in, Term **sorted, i32 *indexes, i32 count)
+provePermute(Term *rea_list, Term **sorted, i32 *indexes, i32 count)
 {
-  Term *al = toReaList(in, count);
-  Term *out = provePermute_(typer, al, sorted, indexes, count);
+  Term *out = provePermute_(rea_list, sorted, indexes, count);
   return out;
 }
 
-// array version
 internal Term *
-algebraSort(Typer *typer, i32 count, Term **in)
+algebraSort(Term *rea_list)
 {
   Arena *arena = temp_arena;
-  Term **sorted = copyArray(arena, count, in);
+  auto [count, array] = toCArray(rea_list);
+  Term **sorted = copyArray(arena, count, array);
 
   i32 *tmp_indexes = pushArray(arena, count, i32);
   for (i32 i=0; i < count; i++) { tmp_indexes[i] = i; }
@@ -3812,7 +3838,7 @@ algebraSort(Typer *typer, i32 count, Term **in)
     }
   }
 
-  Term *proof = provePermute(typer, in, sorted, indexes, count);
+  Term *proof = provePermute(rea_list, sorted, indexes, count);
   return proof;
 }
 
@@ -3823,37 +3849,75 @@ buildTestSort(Typer *typer, CompositeAst *ast)
   assert(ast->arg_count == 1);
   if (Term *list0 = buildTerm(typer, ast->args[0], holev))
   {
-    auto [count, array] = toCArray(list0);
-    out = algebraSort(typer, count, array);
+    out = algebraSort(list0);
   }
   return out;
 }
 
 inline Term *
-buildAlgebraNorm(Typer *typer, CompositeAst *in)
+algebraNorm(Algebra *algebra, Term *in0)
 {
   Term *out = 0;
-  if (in->arg_count == 1)
+  Term *T = algebra->type;
+
+  if (Composite *in = castTerm(in0, Composite))
   {
-    if (Term *expression0 = buildTerm(typer, in->args[0], holev).value)
+    Term *op          = in->op;
+    Term *associative = 0;
+    Term *commutative = 0;
+
+    if (op == algebra->add || op == algebra->mul)
     {
+      if (op == algebra->add)
+      {
+        associative = algebra->addAssociative;
+        commutative = algebra->addCommutative;
+      }
+      else
+      {
+        associative = algebra->mulAssociative;
+        commutative = algebra->mulCommutative;
+      }
+
+      out = algebraFlatten_(op, associative, in0);
+      Term *flattened = out ? getTransformResult(out) : in0;
+      Term *list      = reaFoldList(op, flattened);
+
+      Term *folded    = reaComposite(rea.fold, T, op, list);
+      Term *eq_folded = reaEqualByComputation(flattened, folded);
+      out = out ? eqChain(out, eq_folded) : eq_folded;
+
+      Term *sort      = algebraSort(list);
+      Term *sorted    = getPermuteRhs(sort);
+      Term *eq_sorted = reaComposite(rea.foldPermute, T, op,
+                                     associative, commutative,
+                                     list, sorted, sort);
+      out = eqChain(out, eq_sorted);
+    }
+  }
+
+  return out;
+}
+
+inline Term *
+buildAlgebraNorm(Typer *typer, CompositeAst *composite_ast)
+{
+  Term *out = 0;
+  if (composite_ast->arg_count == 1)
+  {
+    if (Term *in = buildTerm(typer, composite_ast->args[0], holev).value)
+    {
+      Term *T = in->type;
       b32 found_algebra_match = false;
       for (AlgebraDatabase *algebras = global_state.algebras;
            algebras && !found_algebra_match;
            algebras = algebras->tail)
       {
         Algebra *algebra = &algebras->head;
-        if (equal(getType(expression0), algebra->type))
+        if (T == algebra->type)
         {
           found_algebra_match = true;
-
-          Term *eq_flattened = algebraFlatten(typer, algebra, expression0);
-          Term *flattened    = eq_flattened ? getTransformResult(eq_flattened) : expression0;
-          Term *list         = getFoldList(typer, algebra, flattened);
-
-          Term *folded    = reaComposite(rea.fold, algebra->type, algebra->add, list);
-          Term *eq_folded = reaEqualByComputation(flattened, folded);
-          out = eq_flattened ? eqChain(eq_flattened, eq_folded) : eq_folded;
+          out = algebraNorm(algebra, in);
         }
       }
     }
@@ -3862,7 +3926,7 @@ buildAlgebraNorm(Typer *typer, CompositeAst *in)
     reportError("expected 1 argument");
 
   if (!out && noError())
-    reportError(in, "expression is already algebraically normalized");
+    reportError(composite_ast, "expression is already algebraically normalized");
 
   return out;
 }
@@ -4114,8 +4178,7 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
   else if (equal(in->op->token, "algebra_norm"))
   {
     // macro interception
-    todoIncomplete;
-    // out0 = buildAlgebraNorm(arena, typer, in);
+    value = buildAlgebraNorm(typer, in);
   }
   else
   {
@@ -4402,7 +4465,7 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
           else
           {
             reportError(in->op, "operator must have an arrow type");
-            attach("operator type", getType(op));
+            attach("operator type", (op)->type);
           }
         }
 
@@ -4642,7 +4705,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
             for (i32 value_id = 0; value_id < globals->count; value_id++)
             {
               Term *slot_value = globals->items[value_id];
-              if (matchType(getType(slot_value), goal0))
+              if (matchType((slot_value)->type, goal0))
               {
                 if (value)
                 {// ambiguous
@@ -4671,7 +4734,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
                 attach("serial", serial);
                 if (globals->count == 1)
                 {
-                  attach("actual_type", getType(globals->items[0]));
+                  attach("actual_type", (globals->items[0])->type);
                 }
               }
             }
@@ -4760,7 +4823,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
 
         if (noError())
         {
-          Union *uni = getUnionOrPolyUnion(getType(record0));
+          Union *uni = getUnionOrPolyUnion((record0)->type);
           Arrow *struc = getConstructorSignature(uni, ctor_i);
           i32 param_count = struc->param_count;
           b32 valid_param_name = false;
@@ -4867,7 +4930,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
                 {
                   reportError(in0, "cannot find a place to apply the rewrite");
                   attach("substitution", eq);
-                  attach("in_expression_type", getType(in_expression));
+                  attach("in_expression_type", (in_expression)->type);
                 }
               }
             }
@@ -5025,7 +5088,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
       {
         if (Term *rhs = buildTerm(typer, in->rhs, type_hint).value)
         {
-          Term *rhs_type = (type_hint->kind == Term_Hole) ? getType(rhs) : type_hint;
+          Term *rhs_type = (type_hint->kind == Term_Hole) ? (rhs)->type : type_hint;
 
           if (in->type)
           {// type coercion
@@ -5762,7 +5825,7 @@ interpretTopLevel(EngineState *state)
     TemporaryMemory top_level_temp = beginTemporaryMemory(temp_arena);
     error_buffer_ = subArena(temp_arena, 2048);
 #endif
-    i32 serial = DEBUG_SERIAL++;
+    i32 unused_var serial = DEBUG_SERIAL++;
 
     // NOTE: We don't wanna persist the typer across top-level forms, even if it
     // happens to work.
