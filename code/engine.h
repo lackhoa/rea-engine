@@ -376,7 +376,15 @@ String number_to_string[] = {
   toString("12"), toString("13"), toString("14"), toString("15"),
 };
 
-struct NormalizeContext {
+struct EvalContext {
+  Term **args;
+  i32    arg_count;
+  i32    offset;
+  b32    substitute_only;
+  operator EvalContext*() {return this;};
+};
+
+struct NormContext {
   i32    depth;
   String name_to_unfold;
 };

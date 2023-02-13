@@ -1429,14 +1429,6 @@ newScope(Scope *outer, i32 param_count)
   return newScope(outer, param_count, values);
 }
 
-struct EvalContext {
-  Term **args;
-  i32    arg_count;
-  i32    offset;
-  b32    substitute_only;
-  operator EvalContext*() {return this;};
-};
-
 internal Term *
 evaluate_(EvalContext *ctx, Term *in0)
 {
@@ -2321,7 +2313,7 @@ toAbstractTerm_(AbstractContext *ctx, Term *in0)
   i32 serial = DEBUG_SERIAL++;
   if (DEBUG_LOG_toAbstractTerm)
   {
-    DEBUG_INDENT(); DUMP("abstract(", serial, "): ", in0, "\n");
+    DEBUG_INDENT(); DUMP("abstract(", serial, "): ", in0);
   }
 
   if (isGlobalValue(in0))
@@ -2479,7 +2471,7 @@ toAbstractTerm_(AbstractContext *ctx, Term *in0)
 
   if (DEBUG_LOG_toAbstractTerm)
   {
-    DEBUG_DEDENT(); DUMP("=> ", out0, "\n");
+    DEBUG_DEDENT(); DUMP("=> ", out0);
   }
 
   return out0;
@@ -2504,8 +2496,14 @@ newStackPointer(String name, i32 depth, i32 index, Term *type)
   return out;
 }
 
+inline b32
+isDebugOn()
+{
+  return global_state.top_level_debug_mode;
+}
+
 internal Term *
-normalize_(NormalizeContext *ctx, Term *in0) 
+normalize_(NormContext *ctx, Term *in0) 
 {
   Term *out0 = in0;
   Arena *arena = temp_arena;
@@ -2557,9 +2555,9 @@ normalize_(NormalizeContext *ctx, Term *in0)
         Term *output_type = 0;
         Term **param_types = pushArray(arena, param_count, Term *);
 
-        NormalizeContext new_ctx = *ctx;
+        NormContext new_ctx = *ctx;
         {
-          NormalizeContext *ctx  = &new_ctx;
+          NormContext *ctx  = &new_ctx;
           ctx->depth++;
           for (i32 i=0; i < param_count; i++)
           {
@@ -2639,16 +2637,11 @@ normalize_(NormalizeContext *ctx, Term *in0)
 // TODO: Remove typer dependency?
 // Technically we could make up a depth that is only reachable by the typer.
 internal Term *
-normalize(Typer *typer, Term *in0, String name_to_unfold)
+normalize(Term *in0, String name_to_unfold={})
 {
-  NormalizeContext ctx = {.depth=getScopeDepth(typer), .name_to_unfold=name_to_unfold};
-  return normalize_(&ctx, in0);
-}
-
-internal Term *
-normalize(Typer *typer, Term *in0)
-{
-  NormalizeContext ctx = {.depth=getScopeDepth(typer)};
+  i32 arbitrary_init_depth = 1000;
+  NormContext ctx = {.depth=arbitrary_init_depth,
+                     .name_to_unfold=name_to_unfold};
   return normalize_(&ctx, in0);
 }
 
@@ -2986,11 +2979,10 @@ newComputation_(Term *lhs, Term *rhs)
 }
 
 inline Term *
-maybeEqualByComputation(Typer *typer, Term *lhs, Term *rhs)
+maybeEqualByComputation(Term *lhs, Term *rhs)
 {
   Term *out = 0;
-  if (equal(normalize(typer, lhs),
-            normalize(typer, rhs)))
+  if (equal(normalize(lhs), normalize(rhs)))
   {
     out = newComputation_(lhs, rhs);
   }
@@ -2998,9 +2990,9 @@ maybeEqualByComputation(Typer *typer, Term *lhs, Term *rhs)
 }
 
 inline Term *
-reaEqualByComputation(Typer *typer, Term *lhs, Term *rhs)
+reaEqualByComputation(Term *lhs, Term *rhs)
 {
-  Term *out = maybeEqualByComputation(typer, lhs, rhs);
+  Term *out = maybeEqualByComputation(lhs, rhs);
   if (!out)
   {
     DUMP("lhs: ", lhs, " =/= rhs: ", rhs, "\n");
@@ -3157,7 +3149,7 @@ solveGoal(Solver *solver, Term *goal)
 
     if (auto [l,r] = getEqualitySides(goal, false))
     {
-      out = maybeEqualByComputation(solver->typer, l, r);
+      out = maybeEqualByComputation(l, r);
     }
 
     if (!out)
@@ -3864,7 +3856,7 @@ buildAlgebraNorm(Typer *typer, CompositeAst *in)
           Term *list         = getFoldList(typer, algebra, flattened);
 
           Term *folded    = reaComposite(rea.fold, algebra->type, algebra->add, list);
-          Term *eq_folded = reaEqualByComputation(typer, flattened, folded);
+          Term *eq_folded = reaEqualByComputation(flattened, folded);
           out = eq_flattened ? eqChain(eq_flattened, eq_folded) : eq_folded;
         }
       }
@@ -4915,7 +4907,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
 
       if (NormalizeMeAst *in_new_goal = castAst(in->new_goal, NormalizeMeAst))
       {// just normalize the goal, no need for tactics (for now).
-        Term *norm_goal = normalize(typer, goal0, in_new_goal->name_to_unfold);
+        Term *norm_goal = normalize(goal0, in_new_goal->name_to_unfold);
         if (checkFlag(in->flags, AstFlag_Generated) &&
             equal(goal0, norm_goal))
         {// superfluous auto-generated transforms.
@@ -5038,7 +5030,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
           {// type coercion
             if (NormalizeMeAst *in_type = castAst(in->type, NormalizeMeAst))
             {
-              Term *norm_rhs_type = normalize(typer, rhs_type, in_type->name_to_unfold);
+              Term *norm_rhs_type = normalize(rhs_type, in_type->name_to_unfold);
               if (checkFlag(in->flags, AstFlag_Generated) &&
                   equal(rhs_type, norm_rhs_type))
               {// superfluous auto-generated transforms.
@@ -5896,7 +5888,7 @@ interpretTopLevel(EngineState *state)
       {
         if (Term *expr = parseAndBuildTemp(typer))
         {
-          normalize(typer, expr);
+          normalize(expr);
         }
       } break;
 
@@ -5909,7 +5901,7 @@ interpretTopLevel(EngineState *state)
         }
         if (Term *expr = parseAndBuildTemp(typer))
         {
-          Term *norm = normalize(0, expr);
+          Term *norm = normalize(expr);
           print(0, norm, {.flags=flags, .print_type_depth=1});
           print(0, "\n");
         }
@@ -5961,12 +5953,12 @@ interpretTopLevel(EngineState *state)
             if (eq->op == rea.equal)
             {
               goal_valid = true;
-              Term *lhs = normalize(typer, eq->args[1]);
-              Term *rhs = normalize(typer, eq->args[2]);
+              Term *lhs = normalize(eq->args[1]);
+              Term *rhs = normalize(eq->args[2]);
               if (!equal(lhs, rhs))
               {
                 tokenError(token, "equality cannot be proven by computation");
-                Term *lhs = normalize(typer, eq->args[1]);
+                Term *lhs = normalize(eq->args[1]);
                 attach("lhs", lhs);
                 attach("rhs", rhs);
               }
