@@ -114,7 +114,6 @@ permuteConcatLeft :: (A: Type, l,m,m': PList(A), p: m Permute m') -> l+m Permute
 
 permuteMiddle :: ((A: Type, a: A, l,m: PList(A))
                   -> [a .. l+m] Permute l + [a .. m])
-#builtin
 {fork l
  {single use permuteSwap,
   cons

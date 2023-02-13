@@ -64,18 +64,14 @@ reproLet :: fn (a: Nat) -> Nat {b : Bool := true; return b}
 #should_fail off
 
 #should_fail
-testCurryingWeird :: fn (a: Nat) -> (b, c: Nat) -> (a+b)+c = a+(b+c)
+testCurryingWeird :: fn (a: Nat) -> (b: Nat) -> a+b = b+a
 {fork a
  {++:
-  ;; NOTE: the "a.p" is the weird part, which depends on rewrite rule to work,
-  ;; and we need to support it.
-  out : (b',c': Nat) -> ((a.p+0)+b')+c' = (a.p+0)+b'+c' := fn { return addAssociative(a.p+0, b', c') };
-  return out
+  return addCommutative(a.p, b');
   ,
 
   0:
-  out : (b, c: Nat) -> (a+b)+c = a+b+c := fn { return addAssociative(a, b, c) };
-  return out}}
+  return addCommutative(0, b)}}
 #should_fail off
 
 testCurrying2 :: fn (a, b, c: Nat) -> (a+b)+c = a+(b+c)
@@ -261,14 +257,11 @@ permuteTest :: (a,b,c: Nat) -> Permute(Nat, [c,a,b], [a,b,c])
  use permuteChain with chain=[a,c,b]
  }
 
-check test_sort([0])   : [0] Permute [0];
-check test_sort([0,2]) : [0,2] Permute [0,2];
-check test_sort([2,0]) : [2,0] Permute [0,2];
-
-;; testSortList :: () -> (Permute([2, 0, 4, 3, 1], [0, 1, 2, 3, 4]))
-;; {
-;;  return test_sort([2, 0, 4, 3, 1]);
-;;  }
+check test_sort([0])             : [0] Permute [0];
+check test_sort([0,2])           : [0,2] Permute [0,2];
+check test_sort([2,0])           : [2,0] Permute [0,2];
+check test_sort([1,2,0])         : [1,2,0] Permute [0,1,2];
+check test_sort([2, 0, 4, 3, 1]) : Permute([2, 0, 4, 3, 1], [0, 1, 2, 3, 4])
 
 ;; algebraTest :: (a,b,c,d,e,f: Nat) -> ((a+b)+c)+(d+e)+f = fold(+, [a,b,c,d,e,f])
 ;; {

@@ -57,13 +57,13 @@ struct ReaBuiltins {
   Term *permuteSwap;
   Term *permuteChain;
   Term *permuteConsSwap;
+  Term *permuteMiddle;
+  Term *permuteFirst;
+  Term *permuteLast;
 
   Term *foldConcat;
   Term *foldPermute;
   Term *permuteSame;
-  Term *permute;
-  Term *permuteFirst;
-  Term *permuteLast;
   Term *falseImpliesAll;
 };
 global_variable ReaBuiltins rea_builtins;
@@ -2394,7 +2394,7 @@ normalize(Term *in0, String name_to_unfold={})
 inline b32
 normEqual(Term *l, Term *r)
 {
-  if (equal(l, r))  // todo: #speed do we really wanna early out here?
+  if (equal(l, r))  // todo: #speed I just think this improves this
   {
     return true;
   }
@@ -2404,6 +2404,7 @@ normEqual(Term *l, Term *r)
     Term *rnorm = normalize(r);
     return equal(lnorm, rnorm);
   }
+  return false;
 }
 
 #if REA_INTERNAL
@@ -2772,8 +2773,8 @@ subExpressionAtPath(Term *in, TreePath *path)
 inline b32
 matchType(Term *actual, Term *goal)
 {
-  if (goal->kind == Term_Hole) return true;
-  if (normEqual(actual, goal)) return true;
+  if (goal->kind == Term_Hole) {return true;}
+  if (normEqual(actual, goal)) {return true;}
   return false;
 }
 
@@ -3761,11 +3762,7 @@ provePermute_(Typer *typer, Term *al, Term **Cbac, i32 *indexes, i32 count)
 
     if (b && c)
     {// permuteMiddle
-      todoIncomplete;
-      // Term *b_plus_c = reaConcat(arena, b, c);
-      // recurse = newCompositeN(arena, helper, T, l,bc,b_plus_c, recurse,e);
-      // out = reaComposite(rea.permuteMiddle, T,al,bac,
-      //                    a,l,b,c, al_destruct,bac_destruct, recurse);
+      out = reaComposite(rea.permuteMiddle, T,a,l,b,c, recurse);
     }
     else if (c)
     {// permuteFirst
@@ -5227,8 +5224,6 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
         else
         {
           reportError(in0, "actual type differs from expected type");
-          // DEBUG_LOG_compare = 1;
-          // equal(actual, goal0);
           attach("got", actual);
           attach("serial", serial);
         }
