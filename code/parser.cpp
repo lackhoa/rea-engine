@@ -153,6 +153,25 @@ optionalChar(char c)
 }
 
 inline b32
+requireString(char *str)
+{
+  b32 out = false;
+  if (hasMore())
+  {
+    eatToken();
+    if (equal(lastToken(), str))
+    {
+      out = true;
+    }
+    else
+    {
+      reportError(lastToken(), "expected string %s", str);
+    }
+  }
+  return out;
+}
+
+inline b32
 optionalString(char *str)
 {
   b32 out = false;
@@ -269,30 +288,30 @@ parseSequence(b32 require_braces=true)
 
       popContext();
     }
-    else if (equal(tactic, "rewrite") ||
-             equal(tactic, "rewrites"))
+    else if (equal(tactic, "rewrite"))
     {
-      pushContext("rewrite EXPRESSION [in EXPRESSION]");
+      // todo maybe "with" should be "using", since we take "rewrite a with b"
+      // to mean "replace a by b"
+      pushContext("rewrite [with] EXPRESSION [in EXPRESSION]");
       RewriteAst *rewrite = newAst(arena, RewriteAst, token);
       if (optionalString("<-"))
       {
         rewrite->right_to_left = true;
       }
+      b32 has_with = optionalString("with");
 
-      Ast *eq_proof = parseExpression();
-      if (equal(tactic, "rewrites"))
+      if (Ast *expression = parseExpression())
       {
-        SeekAst *seek = newAst(arena, SeekAst, token);
-        seek->proposition = eq_proof;
-        eq_proof = seek;
-      }
-      rewrite->eq_proof = eq_proof;
+        if (has_with) rewrite->eq_proof = expression;
+        else          rewrite->eq       = expression;
 
-      if (optionalKind(Token_Keyword_in))
-      {
-        rewrite->in_expression = parseExpression();
+        if (optionalKind(Token_Keyword_in))
+        {
+          rewrite->in_expression = parseExpression();
+        }
+        ast0 = rewrite;
       }
-      ast0 = rewrite;
+
       popContext();
     }
     else if (equal(tactic, "=>"))

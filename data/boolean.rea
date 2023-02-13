@@ -20,13 +20,13 @@ andTrue :: (a: Bool) -> a & true = a
 {fork a {false, true}}
 
 andCommutative :: (a,b: Bool) -> a & b = b & a
-{fork a {false rewrite andFalse(b),
-         true  rewrite andTrue(b)}}
+{fork a {false rewrite with andFalse(b),
+         true  rewrite with andTrue(b)}}
 
 ;; todo #removeme
 trueNotFalse :: (a: Bool, p: a=true, q: a=false) -> False
 {
  => true = false {}
- rewrite <- p;
- rewrite <- q;
+ rewrite <- with p;
+ rewrite <- with q;
  }

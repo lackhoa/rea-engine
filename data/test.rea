@@ -144,7 +144,7 @@ test_eval mulPos(1,1,oneIsNotZero,oneIsNotZero);
 somethingWicked :: fn (a,b,c: Nat) -> Type {return (p: a=b) -> (q: b=c) -> a=c}
 somethingWickedUsage :: () -> (x,y,z: Nat) -> somethingWicked(x,y,z)
 {norm;
- return fn {return fn {return fn {rewrite p; rewrite q}}}}
+ return fn {return fn {return fn {rewrite with p; rewrite with q}}}}
 
 StructWithFunction :: union {makeStructWithFunction(a: Nat, b: (E: a=0) -> False)}
 oneEqualZeroImpliesFalse : ((E: 1=0) -> False) := prove {norm; return fn {return E}};

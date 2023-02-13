@@ -184,7 +184,7 @@ permuteOfNil :: (A: Type, l: List(A), p: l Permute []) -> l = []
 permuteConcatSwap :: (A: Type, l,m: List(A)) -> Permute(l+m, m+l)
 #hint
 {fork l
- {nil  rewrite concatNil(m),
+ {nil  rewrite with concatNil(m),
   cons
   ;; [l.head .. l.tail + m] Permute m + [l.head .. l.tail]
   prove m + [l.head .. l.tail] Permute [l.head .. l.tail + m]

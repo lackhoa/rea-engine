@@ -4740,10 +4740,20 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
       else
       {
         RewriteAst *in  = castAst(in0, RewriteAst);
-        if (Term *eq_proof = buildTerm(typer, in->eq_proof, holev).value)
+        Term *eq_proof = 0;
+        if (in->eq_proof)
         {
-          Term *proof_type = getType(eq_proof);
-          if (auto [lhs, rhs] = getEqualitySides(proof_type, false))
+          eq_proof = buildTerm(typer, in->eq_proof, holev);
+        }
+        else if (Term *eq = buildTerm(typer, in->eq, holev))
+        {
+          eq_proof = seekGoal(Solver{.typer=typer}, eq);
+        }
+
+        if (noError())
+        {
+          Term *eq = eq_proof->type;
+          if (auto [lhs, rhs] = getEqualitySides(eq, false))
           {
             Term *from = in->right_to_left ? rhs : lhs;
             Term *to   = in->right_to_left ? lhs : rhs;
@@ -4770,7 +4780,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
                 else
                 {
                   reportError(in0, "cannot find a place to apply the rewrite");
-                  attach("substitution", proof_type);
+                  attach("substitution", eq);
                   attach("in_expression_type", getType(in_expression));
                 }
               }
@@ -4789,14 +4799,14 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
               else
               {
                 reportError(in0, "cannot find a place to apply the rewrite");
-                attach("substitution", proof_type);
+                attach("substitution", eq);
               }
             }
           }
           else
           {
             reportError(in->eq_proof, "please provide a proof of equality for rewrite");
-            attach("got", proof_type);
+            attach("got", eq);
           }
         }
       }
