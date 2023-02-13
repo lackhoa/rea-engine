@@ -220,6 +220,10 @@ permuteConcatRight :: (A: Type, l,l',m: List(A), p: l Permute l') -> l+m Permute
  return permuteChain(_,m + l', _, _,_)
  }
 
+;;
+;; fold (I just can't make it work! it's just too ugly)
+;;
+
 ;; fold :: fn($A: Type, op: binaryOp(A), a: A, l: List(A)) -> A
 ;; #no_print_as_binop
 ;; {fork l

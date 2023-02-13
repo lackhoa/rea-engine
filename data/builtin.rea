@@ -27,9 +27,13 @@ binaryOp :: fn(T: Type) -> Type
 #expand
 {return (a,b: T) -> T}
 
-isAssociative :: fn($T: Type, op: binaryOp(T)) -> Type
+associative :: fn($T: Type, op: binaryOp(T)) -> Type
 #expand
 {return (a,b,c: T) -> (a op b) op c = a op b op c}
 
-;; #load "plist.rea"
+commutative :: fn($T: Type, op: binaryOp(T)) -> Type
+#expand
+{return (a,b: T) -> a op b = b op a}
+
+#load "plist.rea"
 #load "list.rea"

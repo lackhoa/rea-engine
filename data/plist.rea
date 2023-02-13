@@ -8,20 +8,109 @@ PList :: union($$ListType: Type) #builtin
   cons   return l.head cons (l.tail + m)
   }}
 
+;; concat
+;; concat
+;; concat
+
+concatAssoc :: ($A: Type, l,m,n: PList(A)) -> (l+m)+n = l+m+n
+#hint
+{
+ fork l
+ {
+  single ,
+  cons
+  => [l.head .. l.tail + m + n] = [l.head .. l.tail + m + n] {concatAssoc}
+  }
+ }
+
+;; permute
+;; permute
+;; permute
+
 Permute :: union($$T: Type, PList(T), PList(T)) #builtin
 {
  permuteSingle(a: T) -> Permute(single(a), single(a))
  ,
+ permutePair(a,b: T) -> Permute([a,b], [b,a])
+ ,
  permuteSkip(a: T, l,m: PList(T), p: Permute(l, m)) -> Permute(a cons l, a cons m)
  ,
- permuteSwap(a,b: T, l: PList(T)) -> Permute(a cons b cons l, b cons a cons l)
+ permuteSwap(a,b: T, l: PList(T)) -> Permute([a,b .. l], [b,a .. l])
  ,
  permuteChain(l,chain,m: PList(T), p1: Permute(l, chain), p2: Permute(chain, m)) -> Permute(l, m)
  }
 
-#print full_list;
-#print all_args;
-;; print (a,b: False, l: PList(False)) -> [a,b .. l];
+permuteSame :: (A: Type, l: PList(A)) -> Permute(l, l)
+#hint
+{
+ fork l
+ {
+  single use permuteSingle,
+  cons
+  prove Permute(l.tail, l.tail) {use permuteSame};
+  use permuteSkip,
+  }
+ }
+
+permuteSwap :: (A: Type, l,m: PList(A), p: l Permute m) -> Permute(m, l)
+#hint
+{
+ fork p
+ {
+  permuteSingle
+  invert p;
+  subst l, m;
+  ,
+  permutePair
+  invert p;
+  subst l,m;
+  use permutePair;
+  ,
+  permuteSkip
+  invert p;
+  subst l, m;
+  prove (p.m Permute p.l) {use permuteSwap}
+  use permuteSkip;
+  ,
+  permuteSwap
+  invert p;
+  subst l, m;
+  ;; argument 3 is obviously "p.l", there are 2 permuteSwaps
+  use permuteSwap;
+  ,
+  permuteChain
+  invert p;
+  subst l, m;
+  prove p.m Permute p.chain {use permuteSwap}
+  prove p.chain Permute p.l {use permuteSwap}
+  return permuteChain(p.m, p.chain, p.l, _, _);
+  }
+ }
+
+permuteConsSwap :: (A: Type, a: A, l: PList(A)) -> [a .. l] Permute l+[a]
+#hint
+{fork l
+ {single use permutePair,
+  cons
+  prove (Permute(A, [a, l.head .. l.tail], [l.head, a .. l.tail])) {use permuteSwap}
+  ;; [l.head, a .. l.tail]
+  prove (Permute(A, [a .. l.tail], l.tail+[a])) {use permuteConsSwap}
+  prove (Permute(A, [l.head, a .. l.tail], [l.head .. l.tail+[a]])) {use permuteSkip}
+  ;; [l.head .. l.tail+[a]]
+  return permuteChain([a, l.head .. l.tail], [l.head, a .. l.tail], [l.head .. l.tail+[a]], _, _)}}
+
+permuteConcatLeft :: (A: Type, l,m,m': PList(A), p: m Permute m') -> l+m Permute l+m'
+{
+ fork l
+ {
+  single
+  use permuteSkip
+  ,
+  cons 
+  prove (l.tail + m Permute l.tail + m') {use permuteConcatLeft}
+  use permuteSkip
+  }
+ }
 
 permuteMiddle :: ((A: Type, a: A, l,m: PList(A))
                   -> [a .. l+m] Permute l + [a .. m])
@@ -32,7 +121,95 @@ permuteMiddle :: ((A: Type, a: A, l,m: PList(A))
   prove [l.head, a .. l.tail + m] Permute [l.head .. l.tail + [a .. m]]
   {prove [a .. l.tail + m] Permute l.tail + [a .. m] {use permuteMiddle}
    use permuteSkip}
-  return permuteChain([a, l.head .. l.tail + m],
-                      [l.head, a .. l.tail + m],
-                      [l.head .. l.tail + [a .. m]],
-                      _, _)}}
+  use permuteChain with chain=[l.head, a .. l.tail + m]}}
+
+permuteConcatSwap :: (A: Type, l,m: PList(A)) -> Permute(l+m, m+l)
+#hint
+{fork l
+ {single
+  ,
+  cons
+  ;; [l.head .. l.tail + m] Permute m + [l.head .. l.tail]
+  prove m + [l.head .. l.tail] Permute [l.head .. l.tail + m]
+  {
+   prove m + [l.head .. l.tail] Permute [l.head .. m + l.tail]
+   {prove [l.head .. m + l.tail] Permute m + [l.head .. l.tail]
+    {use permuteMiddle}
+    use permuteSwap}
+
+   prove [l.head .. m + l.tail] Permute [l.head .. l.tail + m]
+   {prove m + l.tail Permute l.tail + m
+    {use permuteConcatSwap}
+    use permuteSkip}
+
+   return permuteChain(_, [l.head .. m + l.tail], _, _, _)
+   }
+  use permuteSwap
+  }
+ }
+
+permuteConcatRight :: (A: Type, l,l',m: PList(A), p: l Permute l') -> l+m Permute l'+m
+{
+ prove l + m Permute m + l'
+ {prove l + m Permute m + l
+  {}
+  prove m + l Permute m + l'
+  {use permuteConcatLeft}
+  return permuteChain(_,m + l, _, _,_)}
+
+ prove m + l' Permute l' + m
+ {}
+
+ return permuteChain(_,m + l', _, _,_)
+ }
+
+;;
+;; fold
+;;
+
+fold :: fn($A: Type, op: binaryOp(A), l: PList(A)) -> A
+#no_print_as_binop
+{fork l
+ {single return l.head,
+  cons
+  return l.head op fold(op, l.tail)}}
+
+foldConcat :: (($T: Type, op: binaryOp(T), assoc: associative(op),
+                l,m: PList(T))
+               -> (fold(op, l+m) =
+                   fold(op, l) op fold(op, m)))
+#hint
+{fork l
+ {single,
+  cons
+  ;; l.head op fold(op, l.tail + m) = (l.head op fold(op, l.tail)) op fold(op, m)
+  => l.head op fold(op, l.tail + m) = l.head op fold(op, l.tail) op fold(op, m) {assoc}
+  => l.head op fold(op, l.tail + m) = l.head op fold(op, l.tail + m) {foldConcat}
+  }}
+
+foldPermute :: ($T: Type, op: binaryOp(T),
+                assoc: associative(op), commu: commutative(op),
+                l,m: PList(T),
+                p: Permute(l, m)) -> fold(op, l) = fold(op, m)
+{
+ fork p
+ {
+  permuteSingle invert p; subst l,m;
+  ,
+  permutePair invert p; subst l,m; norm;
+  use commu;
+  ,
+  permuteSkip invert p; subst l,m; norm;
+  rewrite (prove fold(op, p.l) = fold(op, p.m) {use foldPermute})
+  ,
+  permuteSwap invert p; subst l,m; norm;
+  => (p.a op p.b) op fold(op, p.l) = p.b op p.a op fold(op, p.l) {assoc}
+  => (p.b op p.a) op fold(op, p.l) = p.b op p.a op fold(op, p.l) {commu}
+  => p.b op p.a op fold(op, p.l) = p.b op p.a op fold(op, p.l)   {assoc}
+  ,
+  permuteChain invert p; subst l, m;
+  prove fold(op, p.l) = fold(op, p.chain) {use foldPermute}
+  prove fold(op, p.chain) = fold(op, p.m) {use foldPermute}
+  rewrites fold(op, p.l) = fold(op, p.chain);
+  }
+}

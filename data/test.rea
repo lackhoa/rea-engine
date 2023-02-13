@@ -243,18 +243,19 @@ testSubstFinal :: (x,y,z,w: Bool, p: Foo(x,z), p: x=y, q: y=z, r: x=w) -> Foo(y,
  subst w, x, z;
  }
 
+check_truth [true, false] = true cons single(false);
+
 ;; ---------------------------
 ;; The Manhattan algebra test!
 ;; ---------------------------
 
-check_truth fold(overload(+, Nat), 1, 2 cons nil()) = 3;
-test_eval((1 cons nil()) + (2 cons nil()));
-check_truth ((1 cons 2 cons nil()) + (3 cons nil())) = (1 cons 2 cons 3 cons nil());
+check_truth fold(overload(+, Nat), [2,1]) = 3;
+check_truth ([1, 2] + [3]) = [1,2,3];
 
 permuteTest :: (a,b,c: Nat) -> Permute(Nat, [c,a,b], [a,b,c])
 {
  prove Permute(Nat, [c,a,b], [a,c,b]) {use permuteSwap}
- prove Permute(Nat, [c,b], [b,c])     {use permuteSwap}
+ prove Permute(Nat, [c,b], [b,c])     {use permutePair}
  prove Permute(Nat, [a,c,b], [a,b,c]) {use permuteSkip}
  return permuteChain([c,a,b], [a,c,b], [a,b,c], _, _)
  }

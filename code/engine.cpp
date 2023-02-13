@@ -2772,7 +2772,7 @@ unify(UnifyContext *ctx, Term *in0, Term *goal0)
   i32 UNUSED_VAR serial = DEBUG_SERIAL++;
   if (DEBUG_LOG_unify)
   {
-    DEBUG_INDENT(); DUMP("unify(", serial, ") ", in0, " with ", goal0, "\n");
+    DEBUG_INDENT(); DUMP("unify(", serial, ") ", in0, " with ", goal0);
   }
 
   if (isGrounded(in0))
@@ -2897,7 +2897,7 @@ unify(UnifyContext *ctx, Term *in0, Term *goal0)
 
   if (DEBUG_LOG_unify)
   {
-    DEBUG_DEDENT(); DUMP("=>(", serial, ") ", ((char *)(success ? "true\n" : "false\n")));
+    DEBUG_DEDENT(); DUMP("=>(", serial, ") ", ((char *)(success ? "true" : "false")));
   }
 
   return success;
@@ -3202,7 +3202,7 @@ expectedAmbiguous(Typer *typer)
 }
 
 inline TermArray
-getFunctionOverloads(Typer *typer, Identifier *ident, Term *goal0)
+getOverloads(Typer *typer, Identifier *ident, Term *goal0)
 {
   i32 UNUSED_VAR serial = DEBUG_SERIAL;
   TermArray out = {};
@@ -3238,7 +3238,7 @@ getFunctionOverloads(Typer *typer, Identifier *ident, Term *goal0)
         {
           reportError(ident, "found no matching overload");
           attach("serial", serial);
-          attach("function", ident->token.string);
+          attach("operator", ident->token.string);
           attach("output_type_goal", goal0);
           attach("available_overloads", slot->count, slot->items, printOptionPrintType());
         }
@@ -4050,7 +4050,7 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
       if (!lookupLocalName(typer, &in->op->token))
       {
         should_build_op = false;
-        op_list = getFunctionOverloads(typer, op_ident, goal);
+        op_list = getOverloads(typer, op_ident, goal);
       }
     }
     else if (CtorAst *op_ctor = castAst(in->op, CtorAst))
@@ -4222,6 +4222,7 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
                     b32 unify_result = unify(ctx, param_type0, arg->type);
                     if (unify_result)
                     {
+                      // NOTE: recheck the stack as an optimization
                       stack_has_hole = false;
                       for (i32 i=0; i <= arg_i && !stack_has_hole; i++)
                       {
@@ -5123,6 +5124,8 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
         else
         {
           reportError(in0, "actual type differs from expected type");
+          // DEBUG_LOG_compare = 1;
+          // equal(actual, goal0);
           attach("got", actual);
           attach("serial", serial);
         }
@@ -5267,8 +5270,17 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
 
       if (noError() && in->case_count != uni->ctor_count)
       {
-        reportError(in, "wrong number of cases, expected: %d, got: %d",
-                    uni->ctor_count, in->case_count);
+        reportError(in, "wrong number of cases");
+        StartString start = startString(error_buffer);
+        for (i32 ctor_i=0; ctor_i < uni->ctor_count; ctor_i++)
+        {
+          if (!ordered_bodies[ctor_i])
+          {
+            print(error_buffer, getConstructorName(uni, ctor_i));
+            print(error_buffer, ", ");
+          }
+        }
+        attach("constructors_remaining", endString(start));
       }
     }
     else
