@@ -243,22 +243,6 @@ getParameterCount(Term *in)
   return signature->param_count;
 }
 
-#if REA_INTERNAL
-inline void
-assertEqual(Term *l, Term *r)
-{
-  if (!equal(l, r))
-  {
-    print_var_delta = true;
-    DUMP("l: ", l, "\n");
-    DUMP("r: ", r, "\n");
-    invalidCodePath;
-  }
-}
-#else
-inline void assertEqual(Term *l, Term *r) {}
-#endif
-
 inline Term *
 newArrow(Arena *arena,
          i32 param_count, String *param_names, Term **param_types, u32 *param_flags,
@@ -1786,131 +1770,6 @@ newRewrite(Term *eq_proof, Term *body, TreePath *path, b32 right_to_left)
   return out;
 }
 
-inline Composite *
-newComposite(Term *op, i32 arg_count, Term **args)
-{
-  i32 unused_var serial = DEBUG_SERIAL++;
-
-  checkRecursiveCall(op, arg_count, args);
-  Composite *out = 0;
-
-  Arrow *signature = castTerm(getType(op), Arrow);
-  assert(signature->param_count == arg_count);
-  Term  *type      = substitute(signature->output_type, arg_count, args);
-
-  for (i32 arg_i=0; arg_i < arg_count; arg_i++)
-  {
-    Term *actual_type   = args[arg_i]->type;
-    Term *expected_type = substitute(signature->param_types[arg_i], arg_count, args);
-    assertEqual(actual_type, expected_type);
-  }
-
-  out = newTerm(temp_arena, Composite, type);
-  out->op        = op;
-  out->arg_count = arg_count;
-  out->args      = args;
-
-  return out;
-}
-
-inline Composite *
-reaComposite_(Term *op, i32 param_count, ...)
-{
-  // assert(param_count == getParameterCount(op));
-  Arena *arena = temp_arena;
-  Term **args = pushArray(arena, param_count, Term*);
-
-  va_list arg_list;
-  __crt_va_start(arg_list, param_count);
-  for (i32 i=0; i < param_count; i++)
-  {
-    args[i] = __crt_va_arg(arg_list, Term*);
-  }
-  __crt_va_end(arg_list);
-
-  return newComposite(op, param_count, args);
-}
-
-#define reaComposite(op, ...) reaComposite_(op, PP_NARG(__VA_ARGS__), __VA_ARGS__)
-
-internal b32
-instantiate(Term *in0, i32 ctor_i)
-{
-  b32 success = false;
-  Arena *arena = temp_arena;
-  if (Pointer *pointer = castTerm(in0, Pointer))
-  {
-    auto [uni, args] = castUnion(in0->type);
-    if (!pointer->ref)
-    {
-      i32 poly_count = 0;
-      if (Arrow *uni_params = castTerm(uni->type, Arrow))
-      {
-        poly_count = getPolyParamCount(uni_params);
-      }
-
-      Constructor *ctor = uni->constructors[ctor_i];
-      Arrow *signature = getSignature(ctor);
-      i32 member_count = signature->param_count;
-      Term **members = pushArray(arena, member_count, Term *);
-      for (i32 mem_i = 0; mem_i < poly_count; mem_i++)
-      {
-        members[mem_i] = args[mem_i];
-      }
-      for (i32 mem_i=poly_count; mem_i < member_count; mem_i++)
-      {
-        Term *member_type = signature->param_types[mem_i];
-        member_type = substitute(member_type, member_count, members);
-        Pointer *member          = newTerm(arena, Pointer, member_type);
-        member->heap.record           = pointer;
-        member->heap.index            = mem_i;
-        member->heap.debug_field_name = signature->param_names[mem_i];
-        members[mem_i] = member;
-      }
-      pointer->ref = newComposite(ctor, member_count, members);
-      success = true;
-    }
-  }
-  return success;
-}
-
-inline void
-uninstantiate(Term *in0)
-{
-  Pointer *pointer = castTerm(in0, Pointer);
-  assert(pointer->ref);
-  pointer->ref = 0;
-}
-
-forward_declare inline Record *
-castRecord(Term *record0)
-{
-  Record *out = {};
-  if (Composite *record = castTerm(record0, Composite))
-  {
-    if (Constructor *ctor = castTerm(record->op, Constructor))
-    {
-      out = record;
-    }
-  }
-  else if (Pointer *pointer = castTerm(record0, Pointer))
-  {
-    if (!pointer->ref)
-    {
-      if (Union *uni = getUnionOrPolyUnion(pointer->type))
-      {
-        if (uni->ctor_count == 1)
-        {
-          // lazy instantiation
-          instantiate(pointer, 0);
-        }
-      }
-    }
-    out = pointer->ref;
-  }
-  return out;
-}
-
 inline b32
 reaIsSingle(Term *in0)
 {
@@ -1925,109 +1784,6 @@ reaIsCons(Term *in0)
   return in->ctor == rea.cons;
 }
 
-inline Term *
-reaSingle(Term *head)
-{
-  return reaComposite(rea.single, getType(head), head);
-}
-
-inline Term *
-reaCons(Term *head, Term *tail)
-{
-  return reaComposite(rea.cons, getType(head), head, tail);
-}
-
-inline Term *
-reaConcat(Arena *arena, Term *a, Term *b)
-{
-  return reaComposite(rea.concat, reaListType(a), a, b);
-}
-
-inline Composite *
-newEquality(Term *lhs, Term *rhs)
-{
-  return reaComposite(rea.equal, getType(lhs), lhs, rhs);
-}
-
-inline Term *
-newIdentity(Term *term)
-{
-  Term *eq = newEquality(term, term);
-  Computation *out = newTerm(temp_arena, Computation, eq);
-  return out;
-}
-
-forward_declare internal Term *
-apply(Term *op, i32 arg_count, Term **args, String name_to_unfold)
-{
-  Term *out0 = 0;
-
-  if (DEBUG_LOG_apply)
-  {
-    i32 serial = DEBUG_SERIAL++;
-    DEBUG_INDENT(); DUMP("apply(", serial, "): ", op, "(...)\n");
-  }
-
-  if (Function *fun = castTerm(op, Function))
-  {// Function application
-    b32 should_apply_function = true;
-    if (fun == current_global_function)
-    {
-      should_apply_function = false;  // NOTE: not strictly needed
-    }
-    if (checkFlag(fun->function_flags, FunctionFlag_no_apply))
-    {
-      should_apply_function = (name_to_unfold.chars && equal(fun->global_name->string, name_to_unfold));
-    }
-
-    if (should_apply_function)
-    {
-      out0 = evaluate(fun->body, arg_count, args);
-    }
-  }
-  else if (op == rea.equal)
-  {// special case for equality
-    Term *l0 = args[1];
-    Term *r0 = args[2];
-
-    b32 can_destruct = false;
-    // todo #hack I'm just gonna put the "auto-destruct" here for testing since
-    // we rely on that in our scripts, definitely will rethink that.
-    if (Record *l = castRecord(l0))
-    {
-      if (Record *r = castRecord(r0))
-      {
-        if (l->ctor == r->ctor)
-        {
-          can_destruct = true;
-          assert(l->arg_count == r->arg_count);
-          if (l->arg_count == 1)
-          {
-            Composite *eq = newEquality(l->args[0], r->args[0]);
-            out0 = apply(eq->op, eq->arg_count, eq->args, name_to_unfold);
-            if (!out0) out0 = eq;
-          }
-        }
-      }
-    }
-
-    if (!can_destruct)
-    {
-      Trinary compare = equalTrinary(l0, r0);
-      // #hack to handle inconsistency
-      if (compare == Trinary_False)
-        out0 = rea.False;
-    }
-  }
-
-  if(DEBUG_LOG_apply)
-  {
-    DEBUG_DEDENT(); DUMP("=> ", out0);
-  }
-
-  return out0;
-}
-
 // todo #cleanup "same_type" doesn't need to be passed down all the time.
 internal CompareTerms
 compareTerms(Arena *arena, Term *l0, Term *r0)
@@ -2037,7 +1793,7 @@ compareTerms(Arena *arena, Term *l0, Term *r0)
   i32 serial = DEBUG_SERIAL++;
   if (DEBUG_LOG_compare)
   {
-    DEBUG_INDENT(); DUMP("comparing(", serial, "): ", l0, " and ", r0);
+    DEBUG_INDENT(); DUMP("compare(", serial, "): ", l0, " and ", r0);
   }
 
   if (l0 == r0)
@@ -2295,14 +2051,6 @@ lookupCurrentFrame(LocalBindings *bindings, String key, b32 add_if_missing)
   return out;
 }
 
-struct AbstractContext
-{
-  Arena *arena;
-  i32    env_depth;
-  i32    zero_depth;
-};
-
-// :persistent-global-function
 inline Term *
 toAbstractTerm_(AbstractContext *ctx, Term *in0)
 {
@@ -2634,8 +2382,6 @@ normalize_(NormContext *ctx, Term *in0)
   return out0;
 }
 
-// TODO: Remove typer dependency?
-// Technically we could make up a depth that is only reachable by the typer.
 internal Term *
 normalize(Term *in0, String name_to_unfold={})
 {
@@ -2643,6 +2389,265 @@ normalize(Term *in0, String name_to_unfold={})
   NormContext ctx = {.depth=arbitrary_init_depth,
                      .name_to_unfold=name_to_unfold};
   return normalize_(&ctx, in0);
+}
+
+inline b32
+normEqual(Term *l, Term *r)
+{
+  if (equal(l, r))  // todo: #speed do we really wanna early out here?
+  {
+    return true;
+  }
+  else
+  {
+    Term *lnorm = normalize(l);
+    Term *rnorm = normalize(r);
+    return equal(lnorm, rnorm);
+  }
+}
+
+#if REA_INTERNAL
+inline void
+assertNormEqual(Term *l, Term *r)
+{
+  if (!normEqual(l, r))
+  {
+    print_var_delta = true;
+    DUMP("l: ", l, "\n");
+    DUMP("r: ", r, "\n");
+    invalidCodePath;
+  }
+}
+#else
+inline void assertNormEqual(Term *l, Term *r) {}
+#endif
+
+inline Composite *
+newComposite(Term *op, i32 arg_count, Term **args)
+{
+  i32 unused_var serial = DEBUG_SERIAL++;
+
+  checkRecursiveCall(op, arg_count, args);
+  Composite *out = 0;
+
+  Arrow *signature = castTerm(getType(op), Arrow);
+  assert(signature->param_count == arg_count);
+  Term  *type      = substitute(signature->output_type, arg_count, args);
+
+  for (i32 arg_i=0; arg_i < arg_count; arg_i++)
+  {
+    Term *actual_type   = args[arg_i]->type;
+    Term *expected_type = substitute(signature->param_types[arg_i], arg_count, args);
+    assertNormEqual(actual_type, expected_type);
+  }
+
+  out = newTerm(temp_arena, Composite, type);
+  out->op        = op;
+  out->arg_count = arg_count;
+  out->args      = args;
+
+  return out;
+}
+
+inline Composite *
+reaComposite_(Term *op, i32 param_count, ...)
+{
+  // assert(param_count == getParameterCount(op));
+  Arena *arena = temp_arena;
+  Term **args = pushArray(arena, param_count, Term*);
+
+  va_list arg_list;
+  __crt_va_start(arg_list, param_count);
+  for (i32 i=0; i < param_count; i++)
+  {
+    args[i] = __crt_va_arg(arg_list, Term*);
+  }
+  __crt_va_end(arg_list);
+
+  return newComposite(op, param_count, args);
+}
+
+#define reaComposite(op, ...) reaComposite_(op, PP_NARG(__VA_ARGS__), __VA_ARGS__)
+
+inline Composite *
+newEquality(Term *lhs, Term *rhs)
+{
+  return reaComposite(rea.equal, lhs->type, lhs, rhs);
+}
+
+internal b32
+instantiate(Term *in0, i32 ctor_i)
+{
+  b32 success = false;
+  Arena *arena = temp_arena;
+  if (Pointer *pointer = castTerm(in0, Pointer))
+  {
+    auto [uni, args] = castUnion(in0->type);
+    if (!pointer->ref)
+    {
+      i32 poly_count = 0;
+      if (Arrow *uni_params = castTerm(uni->type, Arrow))
+      {
+        poly_count = getPolyParamCount(uni_params);
+      }
+
+      Constructor *ctor = uni->constructors[ctor_i];
+      Arrow *signature = getSignature(ctor);
+      i32 member_count = signature->param_count;
+      Term **members = pushArray(arena, member_count, Term *);
+      for (i32 mem_i = 0; mem_i < poly_count; mem_i++)
+      {
+        members[mem_i] = args[mem_i];
+      }
+      for (i32 mem_i=poly_count; mem_i < member_count; mem_i++)
+      {
+        Term *member_type = signature->param_types[mem_i];
+        member_type = substitute(member_type, member_count, members);
+        Pointer *member          = newTerm(arena, Pointer, member_type);
+        member->heap.record           = pointer;
+        member->heap.index            = mem_i;
+        member->heap.debug_field_name = signature->param_names[mem_i];
+        members[mem_i] = member;
+      }
+      pointer->ref = newComposite(ctor, member_count, members);
+      success = true;
+    }
+  }
+  return success;
+}
+
+inline void
+uninstantiate(Term *in0)
+{
+  Pointer *pointer = castTerm(in0, Pointer);
+  assert(pointer->ref);
+  pointer->ref = 0;
+}
+
+forward_declare inline Record *
+castRecord(Term *record0)
+{
+  Record *out = {};
+  if (Composite *record = castTerm(record0, Composite))
+  {
+    if (Constructor *ctor = castTerm(record->op, Constructor))
+    {
+      out = record;
+    }
+  }
+  else if (Pointer *pointer = castTerm(record0, Pointer))
+  {
+    if (!pointer->ref)
+    {
+      if (Union *uni = getUnionOrPolyUnion(pointer->type))
+      {
+        if (uni->ctor_count == 1)
+        {
+          // lazy instantiation
+          instantiate(pointer, 0);
+        }
+      }
+    }
+    out = pointer->ref;
+  }
+  return out;
+}
+
+inline Term *
+reaSingle(Term *head)
+{
+  return reaComposite(rea.single, getType(head), head);
+}
+
+inline Term *
+reaCons(Term *head, Term *tail)
+{
+  return reaComposite(rea.cons, getType(head), head, tail);
+}
+
+inline Term *
+reaConcat(Arena *arena, Term *a, Term *b)
+{
+  return reaComposite(rea.concat, reaListType(a), a, b);
+}
+
+inline Term *
+newIdentity(Term *term)
+{
+  Term *eq = newEquality(term, term);
+  Computation *out = newTerm(temp_arena, Computation, eq);
+  return out;
+}
+
+forward_declare internal Term *
+apply(Term *op, i32 arg_count, Term **args, String name_to_unfold)
+{
+  Term *out0 = 0;
+
+  if (DEBUG_LOG_apply)
+  {
+    i32 serial = DEBUG_SERIAL++;
+    DEBUG_INDENT(); DUMP("apply(", serial, "): ", op, "(...)\n");
+  }
+
+  if (Function *fun = castTerm(op, Function))
+  {// Function application
+    b32 should_apply_function = true;
+    if (fun == current_global_function)
+    {
+      should_apply_function = false;  // NOTE: not strictly needed
+    }
+    if (checkFlag(fun->function_flags, FunctionFlag_no_apply))
+    {
+      should_apply_function = (name_to_unfold.chars && equal(fun->global_name->string, name_to_unfold));
+    }
+
+    if (should_apply_function)
+    {
+      out0 = evaluate(fun->body, arg_count, args);
+    }
+  }
+  else if (op == rea.equal)
+  {// special case for equality
+    Term *l0 = args[1];
+    Term *r0 = args[2];
+
+    b32 can_destruct = false;
+    // todo #hack I'm just gonna put the "auto-destruct" here for testing since
+    // we rely on that in our scripts, definitely will rethink that.
+    if (Record *l = castRecord(l0))
+    {
+      if (Record *r = castRecord(r0))
+      {
+        if (l->ctor == r->ctor)
+        {
+          can_destruct = true;
+          assert(l->arg_count == r->arg_count);
+          if (l->arg_count == 1)
+          {
+            Composite *eq = newEquality(l->args[0], r->args[0]);
+            out0 = apply(eq->op, eq->arg_count, eq->args, name_to_unfold);
+            if (!out0) out0 = eq;
+          }
+        }
+      }
+    }
+
+    if (!can_destruct)
+    {
+      Trinary compare = equalTrinary(l0, r0);
+      // #hack to handle inconsistency
+      if (compare == Trinary_False)
+        out0 = rea.False;
+    }
+  }
+
+  if(DEBUG_LOG_apply)
+  {
+    DEBUG_DEDENT(); DUMP("=> ", out0);
+  }
+
+  return out0;
 }
 
 inline void
@@ -2767,15 +2772,9 @@ subExpressionAtPath(Term *in, TreePath *path)
 inline b32
 matchType(Term *actual, Term *goal)
 {
-  b32 out = false;
-  if (goal->kind == Term_Hole)
-    out = true;
-  else
-  {
-    if (equal(actual, goal))
-      out = true;
-  }
-  return out;
+  if (goal->kind == Term_Hole) return true;
+  if (normEqual(actual, goal)) return true;
+  return false;
 }
 
 inline b32
@@ -4593,6 +4592,11 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
   // beware: Usually we mutate in-place, but we may also allocate anew.
   i32 UNUSED_VAR serial = DEBUG_SERIAL++;
 
+  if (serial == 141657)
+  {
+    DUMP("goal0: ", goal0);
+  }
+
   assert(goal0);
   Arena *arena = temp_arena;
   Term *value = 0;
@@ -5213,6 +5217,10 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
     Term *actual = value->type;
     if (should_check_type && !recursed)
     {
+      if (serial == 141657)
+      {
+        DEBUG_LOG_compare = 1;
+      }
       if (!matchType(actual, goal0))
       {
         if (expectedWrongType(typer)) silentError();
@@ -5225,6 +5233,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
           attach("serial", serial);
         }
       }
+      DEBUG_LOG_compare = 0;
     }
   }
 
@@ -5758,6 +5767,7 @@ interpretTopLevel(EngineState *state)
     TemporaryMemory top_level_temp = beginTemporaryMemory(temp_arena);
     error_buffer_ = subArena(temp_arena, 2048);
 #endif
+    i32 serial = DEBUG_SERIAL++;
 
     // NOTE: We don't wanna persist the typer across top-level forms, even if it
     // happens to work.

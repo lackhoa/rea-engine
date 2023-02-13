@@ -63,17 +63,18 @@ check_truth testComplexFork(1, 1) = 1;
 reproLet :: fn (a: Nat) -> Nat {b : Bool := true; return b}
 #should_fail off
 
-#should_fail 
+#should_fail
 testCurryingWeird :: fn (a: Nat) -> (b, c: Nat) -> (a+b)+c = a+(b+c)
 {fork a
  {++:
   ;; NOTE: the "a.p" is the weird part, which depends on rewrite rule to work,
   ;; and we need to support it.
-  out : (b',c': Nat) -> (a.p+b')+c' = a.p+b'+c' := fn { return addAssociative(a.p, b', c') };
-  return out,
+  out : (b',c': Nat) -> ((a.p+0)+b')+c' = (a.p+0)+b'+c' := fn { return addAssociative(a.p+0, b', c') };
+  return out
+  ,
 
   0:
-  out : (b, c: Nat) -> (a+b)+c = a+b+c := fn { return addAssociative(a, b, c) }
+  out : (b, c: Nat) -> (a+b)+c = a+b+c := fn { return addAssociative(a, b, c) };
   return out}}
 #should_fail off
 

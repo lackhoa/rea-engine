@@ -376,6 +376,12 @@ String number_to_string[] = {
   toString("12"), toString("13"), toString("14"), toString("15"),
 };
 
+struct AbstractContext {
+  Arena *arena;
+  i32    env_depth;
+  i32    zero_depth;
+};
+
 struct EvalContext {
   Term **args;
   i32    arg_count;
