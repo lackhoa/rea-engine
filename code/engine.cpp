@@ -3999,32 +3999,47 @@ algebraNorm_(Algebra *algebra, Transformation *transform)
   }
 }
 
-inline void
-algebraNorm(Algebra *algebra, Transformation *transform)
+internal void
+applyMulDistributive(Algebra *algebra, Transformation *tform)
 {
-  if (Composite *comp = castTerm(transform->term, Composite))
+  if (Composite *comp = castTerm(tform->term, Composite))
   {
-    // apply distributive property everywhere (incomplete)
+    // apply distributive property everywhere (todoIncomplete)
     if (comp->op == algebra->mul)
     {
       if (Composite *l = castTerm(getArg(comp, 0), Composite))
       {
         if (l->op == algebra->add)
         {
-          Term *dist = reaComposite(algebra->mulDistributive, getArg(l, 0), getArg(l, 1), getArg(comp, 1));
-          eqChain(dist, transform);
+          Term *dist = reaComposite(algebra->mulDistributiveRight,
+                                    getArg(l, 0), getArg(l, 1), getArg(comp, 1));
+          eqChain(dist, tform);
         }
       }
       else if (Composite *r = castTerm(getArg(comp, 1), Composite))
       {
         if (r->op == algebra->add)
         {
-          Term *dist = reaComposite(algebra->mulDistributive, getArg(r, 0), getArg(l, 1), getArg(comp, 1));
-          eqChain(dist, transform);
+          Term *dist = reaComposite(algebra->mulDistributiveLeft,
+                                    getArg(r, 0), getArg(l, 1), getArg(comp, 1));
+          eqChain(dist, tform);
         }
       }
     }
+
+    for (i32 arg_i=0; arg_i < comp->arg_count; arg_i++)
+    {
+      descend(tform, arg_i);
+      applyMulDistributive(algebra, tform);
+      ascend(tform);
+    }
   }
+}
+
+inline void
+algebraNorm(Algebra *algebra, Transformation *transform)
+{
+  applyMulDistributive(algebra, transform);
   algebraNorm_(algebra, transform);
 }
 
@@ -6175,28 +6190,45 @@ interpretTopLevel(EngineState *state)
 
           Algebra *algebra = &new_algebras->head;
           algebra->type = type;
-          const i32 function_count = 7;
-          const char *function_names[function_count] = {
-            "+", "addCommutative", "addAssociative",
-            "*", "mulCommutative", "mulAssociative",
-            "mulDistributive",
-          };
+          const i32 function_count = 8;
           Term **functions[function_count] = {
             &algebra->add, &algebra->addCommutative, &algebra->addAssociative,
             &algebra->mul, &algebra->mulCommutative, &algebra->mulAssociative,
-            &algebra->mulDistributive,
+            &algebra->mulDistributiveLeft, &algebra->mulDistributiveRight,
+          };
+          const char *function_names[function_count] = {
+            "+", "addCommutative", "addAssociative",
+            "*", "mulCommutative", "mulAssociative",
+            "mulDistributive", "mulDistributive",
+          };
+          const char *function_tags[function_count] = {
+            0, 0, 0,
+            0, 0, 0,
+            "left", "right"
           };
 
-          for (i32 i=0; i < function_count && noError(); i++)
+          for (i32 fun_i=0; fun_i < function_count && noError(); fun_i++)
           {
-            String function_name = toString(function_names[i]);
+            String function_name = toString(function_names[fun_i]);
             if (GlobalBinding *lookup = lookupGlobalNameSlot(function_name, false))
             {
               assert(type->global_name);
-              pushItemsAs(arena, tags, type->global_name->string);
-              if (Term *function = getOverloadFromTags(lookup, 1, tags))
+              i32     tag_count = 0;
+              String *tags      = 0;
+              if (function_tags[fun_i])
               {
-                *functions[i] = function;
+                tag_count = 2;
+                pushItems(arena, tags, type->global_name->string, toString(function_tags[fun_i]));
+              }
+              else
+              {
+                tag_count = 1;
+                pushItems(arena, tags, type->global_name->string);
+              }
+
+              if (Term *function = getOverloadFromTags(lookup, tag_count, tags))
+              {
+                *functions[fun_i] = function;
               }
               else
               {

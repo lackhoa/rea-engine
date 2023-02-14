@@ -344,7 +344,8 @@ struct Algebra {
   Term *mulCommutative;
   Term *mulAssociative;
 
-  Term *mulDistributive;
+  Term *mulDistributiveLeft;
+  Term *mulDistributiveRight;
 };
 
 struct AlgebraDatabase {

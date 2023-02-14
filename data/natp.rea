@@ -49,7 +49,7 @@ addAssociative :: (a,b,c: Natp) -> (a+b)+c = a+b+c
   ++ rewrite with addAssociative(a.p, b, c)}}
 
 mulDistributive :: (a,b,c: Natp) -> (a+b)*c = a*c+b*c
-#hint #tag(Natp)
+#hint #tag(Natp, right)
 {fork a
  {1,
   ++
@@ -276,6 +276,14 @@ differentFromPlus :: (a: Natp, b: Natp, p: a = a+b) -> False
   1  return p,
   ++ return differentFromPlus(a.p, b, p)
   }
+ }
+
+mulDistributive :: (a,b,c: Natp) -> c*(a+b) = c*a+c*b
+#hint #tag(Natp, left)
+{
+ => (a+b)*c = c*a+c*b
+ => (a+b)*c = a*c+c*b
+ => (a+b)*c = a*c+b*c
  }
 
 algebra_declare Natp;

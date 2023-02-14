@@ -82,6 +82,11 @@ addAssociative :: (a,b,c: Nat) -> (a+b)+c = a+b+c
   ++:
   rewrite with addAssociative(a.p,b,c)}}
 
+mul0 :: (a: Nat) -> a * 0 = 0
+{fork a
+ {0: ,
+  ++: rewrite with mul0(a.p),}}
+
 mulDistributive :: (a,b,c: Nat) -> (a+b)*c = a*c+b*c
 #hint #tag(Nat, right)
 {fork a
@@ -116,11 +121,6 @@ mulPos :: (a,b: Nat, apos: a!=0, bpos: b!=0) -> a*b != 0
                                 norm seek(a * b = 0);
                                 return seek(False)}}}}
 
-mul0 :: (a: Nat) -> a * 0 = 0
-{fork a
- {0: ,
-  ++: rewrite with mul0(a.p),}}
-
 
 mulSRight :: (a,b: Nat) -> a * ++(b) = a + a*b
 {fork a
@@ -152,5 +152,13 @@ eqReflexive :: (a: Nat) -> a==a = true
 {fork a
  {0 : return true,
   ++: fork b {0: return false, ++: return a.p <= b.p}}}
+
+mulDistributive :: (a,b,c: Nat) -> c*(a+b) = c*a+c*b
+#hint #tag(Nat, left)
+{
+ => (a+b)*c = c*a+c*b
+ => (a+b)*c = a*c+c*b
+ => (a+b)*c = a*c+b*c
+ }
 
 algebra_declare Nat;
