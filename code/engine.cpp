@@ -3747,11 +3747,14 @@ toReaList(Term **array, i32 count)
 inline void
 descend(Transformation *transform, TreePath *path)
 {
-  Transformation *up = pushCopy(temp_arena, transform);
-  transform->term     = getPath(transform->term, path);
-  transform->eq_proof = 0;
-  transform->path     = path;
-  transform->up       = up;
+  if (path)
+  {
+    Transformation *up = pushCopy(temp_arena, transform);
+    transform->term     = getPath(transform->term, path);
+    transform->eq_proof = 0;
+    transform->path     = path;
+    transform->up       = up;
+  }
 }
 
 inline void
@@ -3763,36 +3766,24 @@ descend(Transformation *transform, i32 index)
 inline void
 ascend(Transformation *transform)
 {
-  Term     *eq_proof = transform->eq_proof;
   TreePath *path     = transform->path;
-  *transform = *transform->up;
-  if (eq_proof)
+  if (path)
   {
-    Term *id = newIdentity(transform->term);
-    TreePath *rewrite_path = treePath(2, path);
-    Term *rewrite = newRewrite(eq_proof, id, rewrite_path, true);
-    eqChain(rewrite, transform);
+    Term     *eq_proof = transform->eq_proof;
+    *transform = *transform->up;
+    if (eq_proof)
+    {
+      Term *id = newIdentity(transform->term);
+      TreePath *rewrite_path = treePath(2, path);
+      Term *rewrite = newRewrite(eq_proof, id, rewrite_path, true);
+      eqChain(rewrite, transform);
+    }
   }
 }
 
 inline void
 algebraFlatten(Term *op, Term *associative, Transformation *transform)
 {
-  if (DEBUG_SERIAL >= 576101)
-  {
-    DUMP(transform->term);
-  }
-
-  if (Composite *in = castTerm(transform->term, Composite))
-  {
-    if (in->op == op)
-    {
-      descend(transform, 1);
-      algebraFlatten(op, associative, transform);
-      ascend(transform);
-    }
-  }
-
   for (b32 stop = false; !stop; )
   {
     stop = true;
@@ -3808,10 +3799,20 @@ algebraFlatten(Term *op, Term *associative, Transformation *transform)
           if (l->op == op)
           {
             stop = false;
-            eqChain(reaComposite(associative, l->args[0], l->args[1], r), transform);
+            eqChain(reaComposite(associative, getArg(l, 0), getArg(l, 1), r), transform);
           }
         }
       }
+    }
+  }
+
+  if (Composite *in = castTerm(transform->term, Composite))
+  {
+    if (in->op == op)
+    {
+      descend(transform, 1);
+      algebraFlatten(op, associative, transform);
+      ascend(transform);
     }
   }
 }
@@ -4010,10 +4011,6 @@ algebraNorm(Algebra *algebra, Transformation *transform)
  
       comp = castTerm(transform->term, Composite);
       list = getPath(comp, treePath(2));
-      if (isDebugOn())
-      {
-        DUMP(comp);
-      }
       Term *sort      = algebraSort(list);
       Term *sorted    = getPermuteRhs(sort);
       Term *eq_sorted = reaComposite(rea.foldPermute, T, op,
