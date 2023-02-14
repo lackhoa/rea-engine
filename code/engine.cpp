@@ -3481,48 +3481,108 @@ stringLessThan(String a, String b)
   return out;
 }
 
+inline i32
+termKindScore(Term *in0)
+{
+  // NOTE: unfortunately we can't score based on the kind alone, since stack
+  // pointers and heap pointers have the same kind -> lame!
+  switch (in0->kind)
+  {
+    case Term_Pointer:
+    {
+      Pointer *in = (Pointer *)in0;
+      return in->is_stack_pointer ? 0 : 1;
+    } break;
+  };
+  return 10 + in0->kind;
+}
+
 inline b32
 algebraLessThan(Term *a0, Term *b0)
 {
   b32 out = false;
-  b32 unused_var handled = false;
-  if (a0->global_name && b0->global_name)
-  {
-    out = stringLessThan(a0->global_name->string, b0->global_name->string);
-  }
-  else
-  {
-    switch (a0->kind)
-    {
-      case Term_Variable:
-      {
-        Variable *a = (Variable *)a0;
-        if (Variable *b = castTerm(b0, Variable))
-        {
-          out = stringLessThan(a->name, b->name);
-          handled = true;
-        }
-      } break;
 
-      case Term_Pointer:
+  // if (isDebugOn())
+  // {
+  //   DEBUG_INDENT(); DUMP(a0, " < ", b0);
+  // }
+
+  i32 ascore = termKindScore(a0);
+  i32 bscore = termKindScore(b0);
+  if (a0 == b0)
+  {
+  }
+  else if (ascore < bscore)
+  {
+    out = true;
+  }
+  else if (ascore == bscore)
+  {
+    if (a0->global_name && b0->global_name)
+    {
+      out = stringLessThan(a0->global_name->string, b0->global_name->string);
+    }
+    else
+    {
+      switch (a0->kind)
       {
-        Pointer *a = (Pointer *)a0;
-        if (Pointer *b = castTerm(b0, Pointer))
+        case Term_Pointer:
         {
-          if (a->is_stack_pointer && b->is_stack_pointer)
+          Pointer *a = (Pointer *)a0;
+          Pointer *b = (Pointer *)b0;
           {
-            out = stringLessThan(a->stack.name, b->stack.name);
-            handled = true;
+            b32 is_stack_pointer = a->is_stack_pointer;
+            assert(b->is_stack_pointer == is_stack_pointer);
+            if (is_stack_pointer)
+            {
+              out = stringLessThan(a->stack.name, b->stack.name);
+            }
+            else
+            {
+              if (algebraLessThan(a->heap.record, b->heap.record))
+              {
+                out = true;
+              }
+              else if (a->heap.record == b->heap.record)
+              {
+                out = a->heap.index < b->heap.index;
+              }
+            }
           }
-        }
-      } break;
+        } break;
+
+        case Term_Composite:
+        {
+          Composite *a = (Composite *)a0;
+          Composite *b = (Composite *)b0;
+          if (algebraLessThan(a->op, b->op))
+          {
+            out = true;
+          }
+          else if (a->op == b->op)
+          {
+            assert(a->arg_count == b->arg_count);
+            for (i32 i=0; i < a->arg_count; i++)
+            {
+              if (algebraLessThan(a->args[i], b->args[i]))
+              {
+                out = true;
+                break;
+              }
+              if (algebraLessThan(b->args[i], a->args[i]))
+              {
+                break;
+              }
+            }
+          }
+        } break;
+      }
     }
   }
 
-  // if (!handled)
+  // if (isDebugOn())
   // {
-  //   DUMP("a0: ", a0);
-  //   DUMP("b0: ", b0);
+  //   DEBUG_DEDENT(); DUMP("=> ", out);
   // }
 
   return out;
@@ -3617,15 +3677,21 @@ eqChain(Term *f, Transformation *transform)
 }
 
 internal Term *
-reaFoldList(Term *op, Term *in0)
+getFoldList(Term *op, Term *in0)
 {
   Term *out = 0;
   if (Composite *in = castTerm(in0, Composite))
   {
     if (in->op == op)
     {
-      Term *tail = reaFoldList(op, getArg(in, 1));
-      out = reaCons(getArg(in, 0), tail);
+      Term *left_operand  = getArg(in, 0);
+      Term *right_operand = getArg(in, 1);
+      if (Composite *comp = castTerm(left_operand, Composite))
+      {
+        assert(comp->op != op);
+      }
+      Term *tail = getFoldList(op, right_operand);
+      out = reaCons(left_operand, tail);
     }
   }
   if (!out)
@@ -3712,6 +3778,11 @@ ascend(Transformation *transform)
 inline void
 algebraFlatten(Term *op, Term *associative, Transformation *transform)
 {
+  if (DEBUG_SERIAL >= 576101)
+  {
+    DUMP(transform->term);
+  }
+
   if (Composite *in = castTerm(transform->term, Composite))
   {
     if (in->op == op)
@@ -3918,7 +3989,7 @@ algebraNorm(Algebra *algebra, Transformation *transform)
 
       algebraFlatten(op, associative, transform);
 
-      Term *list   = reaFoldList(op, transform->term);
+      Term *list   = getFoldList(op, transform->term);
       Term *folded = reaComposite(rea.fold, T, op, list);
       eqChain(reaEqualByComputation(transform->term, folded), transform);
 
@@ -3939,6 +4010,10 @@ algebraNorm(Algebra *algebra, Transformation *transform)
  
       comp = castTerm(transform->term, Composite);
       list = getPath(comp, treePath(2));
+      if (isDebugOn())
+      {
+        DUMP(comp);
+      }
       Term *sort      = algebraSort(list);
       Term *sorted    = getPermuteRhs(sort);
       Term *eq_sorted = reaComposite(rea.foldPermute, T, op,
@@ -6000,7 +6075,6 @@ interpretTopLevel(EngineState *state)
         {
           b32 value = !optionalString("off");
           global_state.top_level_debug_mode = value;
-          print_var_delta                   = value;
         }
       } break;
 

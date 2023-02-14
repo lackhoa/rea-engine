@@ -352,7 +352,8 @@ parseSequence(b32 require_braces=true)
       {
         if (Ast *proof = parseSequence(true))
         {
-          String name = toString("anon");
+          String name = {};
+          // String name = toString("anon");  // bookmark do we need this?
           if (optionalString("as") && requireIdentifier("expected name for the proof"))
           {
             name = lastToken()->string;
@@ -365,6 +366,20 @@ parseSequence(b32 require_braces=true)
             let->type = proposition;
             ast0 = let;
           }
+        }
+      }
+      popContext();
+    }
+    else if (equal(tactic, "pose"))
+    {
+      pushContext("pose EXPRESSION");
+      if (Ast *expression = parseExpression())
+      {
+        if (noError())
+        {
+          Let *let = newAst(arena, Let, token);
+          let->rhs  = expression;
+          ast0 = let;
         }
       }
       popContext();

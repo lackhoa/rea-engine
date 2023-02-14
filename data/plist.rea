@@ -52,6 +52,7 @@ permuteSame :: (A: Type, l: PList(A)) -> Permute(l, l)
   }
  }
 
+;; todo: rename to "permuteCommutative", since we already have "swap"
 permuteSwap :: (A: Type, l,m: PList(A), p: l Permute m) -> Permute(m, l)
 #hint
 {

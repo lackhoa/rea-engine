@@ -88,6 +88,8 @@ permuteSame :: (A: Type, l: List(A)) -> Permute(l, l)
   }
  }
 
+
+;; todo: rename to "permuteCommutative", since we already have "swap"
 permuteSwap :: (A: Type, l,m: List(A), p: l Permute m) -> Permute(m, l)
 #hint
 {

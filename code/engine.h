@@ -31,6 +31,8 @@ enum TermKind {
 
   Term_Primitive,
 
+  Term_Pointer,
+
   Term_Union,
   Term_Constructor,
   Term_Function,
@@ -41,8 +43,6 @@ enum TermKind {
   Term_Composite,
   Term_Arrow,
   Term_Rewrite,
-
-  Term_Pointer,
 };
 
 struct ParseExpressionOptions
