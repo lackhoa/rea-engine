@@ -239,7 +239,11 @@ struct Arrow : Term {
 struct GlobalBinding {
   String key;
   i32    count;
-  Term *(items[8]);             // todo: #grow
+
+  Term   *terms[8];
+  i32     tag_counts[8];
+  String *tags[8];
+
   GlobalBinding *hash_tail;
 };
 

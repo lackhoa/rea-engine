@@ -151,6 +151,8 @@ struct FunctionAst : Ast {
   ArrowAst *signature;
   Ast      *body;
   u32       function_flags;
+  i32     tag_count;
+  String *tags;
 };
 
 struct UnionAst : Ast {
@@ -161,8 +163,8 @@ struct UnionAst : Ast {
 };
 
 struct OverloadAst : Ast {
-  Token  function_name;
-  Ast   *distinguisher;
+  String function_name;
+  String distinguisher;
 };
 
 struct CtorAst : Ast {

@@ -3,11 +3,13 @@
 Natp :: union {1, ++(p: Natp)}
 
 + :: fn(a,b: Natp) -> Natp
+#tag(Natp)
 {fork a
  {1:  return ++(b),
   ++: return ++(a.p + b)}}
 
 * :: fn(a,b: Natp) -> Natp
+#tag(Natp)
 {
  fork a
  {
@@ -35,40 +37,33 @@ addS :: (a,b: Natp) -> a + ++(b) = ++(a + b)
  }
 
 addCommutative :: (a,b: Natp) -> (a+b = b+a)
-#hint
+#hint #tag(Natp)
 {fork a
  {1: rewrite with add1(b),
   ++: rewrite with addS(b, a.p); rewrite with addCommutative(a.p, b)}}
 
 addAssociative :: (a,b,c: Natp) -> (a+b)+c = a+b+c
-#hint
-{
- fork a
- {
-  1,
-  ++ rewrite with addAssociative(a.p, b, c)
-  }
- }
+#hint #tag(Natp)
+{fork a
+ {1,
+  ++ rewrite with addAssociative(a.p, b, c)}}
 
-mulDistributive :: (a,b,c: Natp) -> a*c+b*c = (a+b)*c
-#hint
-{
- fork a
- {
-  1,
-  ++ ;; (c + a.p * c) + b * c = c + (a.p + b) * c
-  => c + (a.p * c + b * c) = c + (a.p + b) * c {addAssociative}
-  => c + ((a.p + b) * c) = c + (a.p + b) * c {mulDistributive(a.p,b,c)}
-  }
- }
+mulDistributive :: (a,b,c: Natp) -> (a+b)*c = a*c+b*c
+#hint #tag(Natp)
+{fork a
+ {1,
+  ++
+  => c + (a.p + b) * c = c + (a.p * c + b * c) {addAssociative}
+  => c + (a.p + b) * c = c + ((a.p + b) * c) {mulDistributive(a.p,b,c)}}}
 
 mul1 :: (a: Natp) -> a*1 = a
 {fork a
  {1 : ,
   ++: rewrite with mul1(a.p)}}
-;; print mul1;
+test_eval mul1;
 
 mulSRight :: (a,b: Natp) -> a * ++(b) = a + a*b
+#tag(Natp)
 {fork a
  {1:,
   ++:
@@ -77,10 +72,10 @@ mulSRight :: (a,b: Natp) -> a * ++(b) = a + a*b
   => ++((a.p + a.p*b) + b) = ++(a.p + b + a.p*b) { addCommutative }
   => ++(a.p + a.p*b + b)   = ++(a.p + b + a.p*b) { addAssociative(a.p, a.p*b, b) }
   => ++(a.p + a.p*b + b)   = ++(a.p + a.p*b + b) { addCommutative }}}
-;; print(mulSRight);
+test_eval overload(mulSRight, Natp);
 
 mulCommutative :: (a,b: Natp) -> a*b = b*a
-#hint
+#hint #tag(Natp)
 {fork a
  {1 : rewrite with mul1(b),
   ++: ;; b + a.p*b = b * ++(a.p)
@@ -88,7 +83,7 @@ mulCommutative :: (a,b: Natp) -> a*b = b*a
   => b + a.p*b = b + a.p*b { mulCommutative(a.p, b) }}}
 
 mulAssociative :: (a,b,c: Natp) -> (a*b)*c = a*b*c
-#hint
+#hint #tag(Natp)
 {fork a
  {1,
   ++ ;; (b + a.p * b) * c = b * c + a.p * b * c

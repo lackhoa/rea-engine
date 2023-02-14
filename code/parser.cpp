@@ -600,7 +600,10 @@ parseOverload(Arena *arena)
       out->function_name = *lastToken();
       if (requireChar(','))
       {
-        out->distinguisher = parseExpression();
+        if (requireIdentifier())
+        {
+          out->distinguisher = lastToken()->string;
+        }
       }
     }
     requireChar(')');
@@ -1140,6 +1143,17 @@ insertAutoNormalizations(Arena *arena, NormList norm_list, Ast *in0)
   }
 }
 
+inline b32
+eitherOrChar(char optional, char require)
+{
+  b32 out = false;
+  if (!optionalChar(optional))
+  {
+    out = requireChar(require);
+  }
+  return out;
+}
+
 internal FunctionAst *
 parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
 {
@@ -1203,6 +1217,23 @@ parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
         else if (optionalDirective("builtin"))
         {
           setFlag(&out->flags, AstFlag_is_builtin);
+        }
+        else if (optionalDirective("tag"))
+        {
+          if (requireChar('('))
+          {
+            i32 todo_cap = 8;
+            allocateArray(arena, todo_cap, out->tags);
+            for (; hasMore();)
+            {
+              if (requireIdentifier())
+              {
+                out->tags[out->tag_count++] = lastToken()->string;
+                assert(out->tag_count <= todo_cap);
+              }
+              if (eitherOrChar(',', ')')) break;
+            }
+          }
         }
         else
           break;

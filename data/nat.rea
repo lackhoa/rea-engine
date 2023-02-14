@@ -5,6 +5,7 @@ Nat :: union
  ++(p: Nat)}
 
 + :: fn (n, m: Nat) -> Nat
+#tag(Nat)
 {fork n
  {0  : return m,
   ++ : return ++(n.p + m)}}
@@ -36,6 +37,7 @@ check_truth even(4) = true;
 check_truth even(3) = false;
 
 * :: fn (a, b: Nat) -> Nat
+#tag(Nat)
 {fork a
  {0  : return 0,
   ++ : return b + a.p * b}}
@@ -65,7 +67,7 @@ addSRight :: (n, m: Nat) -> n + ++(m) = ++(n+m)
   ++: => ++(n.p + m) = ++(n.p + m) {addSRight}}}
 
 addCommutative :: (a,b: Nat) -> (a+b = b+a)
-#hint
+#hint #tag(Nat)
 {fork a
  {0 : => b = b {add0},
   ++ ;; ++(a.p + b) = b + ++(a.p)
@@ -74,30 +76,30 @@ addCommutative :: (a,b: Nat) -> (a+b = b+a)
   }}
 
 addAssociative :: (a,b,c: Nat) -> (a+b)+c = a+b+c
-#hint
+#hint #tag(Nat)
 {fork a
  {0 : ,
   ++:
   rewrite with addAssociative(a.p,b,c)}}
 
-mulDistributive :: (a,b,c: Nat) -> a*c+b*c = (a+b)*c
-#hint
+mulDistributive :: (a,b,c: Nat) -> (a+b)*c = a*c+b*c
+#hint #tag(Nat, right)
 {fork a
  {0:,
   ++: ;; (c + a.p * c) + b * c = c + (a.p + b) * c
-  => c + a.p*c + b*c = c + (a.p+b)*c {addAssociative(c, a.p * c, b * c)}
+  => c + (a.p+b)*c = c + a.p*c + b*c {addAssociative(c, a.p * c, b * c)}
   => c + (a.p+b)*c   = c + (a.p+b)*c {mulDistributive(a.p, b, c)}
   }}
 test_eval mulDistributive(1+1,0,0);
 
 mulAssociative :: (a,b,c: Nat) -> (a*b)*c = a*b*c
+#tag(Nat)
 {fork a
  {0: ,
   ++:
   => (b + a.p*b)*c  = b*c + (a.p*b)*c {mulAssociative(a.p, b, c)}
   => (b + a.p*b)*c  = (b + a.p*b)*c   {mulDistributive(b, a.p*b, c)}}}
 test_eval mulAssociative(1,0,0);
-;; print mulAssociative(1,0,0);
 
 addPos :: (a,b: Nat, apos: a!=0) -> a+b != 0
 {norm;
@@ -131,6 +133,7 @@ mulSRight :: (a,b: Nat) -> a * ++(b) = a + a*b
   => ++(a.p + a.p*b + b)   = ++(a.p + a.p*b + b) { addCommutative }}}
 
 mulCommutative :: (a,b: Nat) -> a*b = b*a
+#tag(Nat)
 #hint
 {fork a
  {0 : rewrite with mul0(b),

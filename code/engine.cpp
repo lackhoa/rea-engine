@@ -2698,19 +2698,28 @@ lookupBuiltin(char *name)
   Token token = newToken(name);
   GlobalBinding *slot = lookupGlobalName(&token);
   assert(slot->count == 1);
-  return slot->items[0];
+  return slot->terms[0];
 }
 
 inline void
-addGlobalBinding(Token *name, Term *value)
+addGlobalBinding(Token *name, Term *value, i32 tag_count=0, String *tags=0)
 {
-  assert(inArena(global_state.top_level_arena, value));
+  Arena *arena = global_state.top_level_arena;
+  assert(inArena(arena, value));
   GlobalBinding *slot = lookupGlobalNameSlot(name->string, true);
   // TODO #cleanup check for type conflict
-  slot->items[slot->count++] = value;
-  assert(slot->count < arrayCount(slot->items));
-  Token *name_copy = pushCopy(global_state.top_level_arena, name);
+
+  i32 slot_i = slot->count++;
+  slot->terms[slot_i] = value;
+  assert(slot->count <= arrayCount(slot->terms));
+
+  Token *name_copy = pushCopy(arena, name);
   value->global_name = name_copy;
+  if (tags)
+  {
+    slot->tag_counts[slot_i] = tag_count;
+    slot->tags[slot_i]       = copyArray(arena, tag_count, tags);
+  }
 }
 
 inline void
@@ -3236,7 +3245,7 @@ getOverloads(Typer *typer, Identifier *ident, Term *goal0)
     if (goal0->kind == Term_Hole)
     {
       // bypass typechecking.
-      out.items = slot->items;
+      out.items = slot->terms;
       out.count = slot->count;
     }
     else
@@ -3245,7 +3254,7 @@ getOverloads(Typer *typer, Identifier *ident, Term *goal0)
       allocateArray(temp_arena, slot->count, out.items);
       for (int slot_i=0; slot_i < slot->count; slot_i++)
       {
-        Term *item = slot->items[slot_i];
+        Term *item = slot->terms[slot_i];
         if (Arrow *signature = castTerm((item)->type, Arrow))
         {
           UnifyContext *ctx = newUnifyContext(signature, getScopeDepth(typer->scope));
@@ -3253,7 +3262,7 @@ getOverloads(Typer *typer, Identifier *ident, Term *goal0)
         }
         if (matches)
         {
-          out.items[out.count++] = slot->items[slot_i];
+          out.items[out.count++] = slot->terms[slot_i];
         }
       }
       if (out.count == 0)
@@ -3265,7 +3274,7 @@ getOverloads(Typer *typer, Identifier *ident, Term *goal0)
           attach("serial", serial);
           attach("operator", ident->token.string);
           attach("output_type_goal", goal0);
-          attach("available_overloads", slot->count, slot->items, printOptionPrintType());
+          attach("available_overloads", slot->count, slot->terms, printOptionPrintType());
         }
       }
     }
@@ -3356,17 +3365,6 @@ searchExpression(Term *lhs, Term* in0)
   return {.found=found, .path=path};
 }
 
-inline b32
-eitherOrChar(char optional, char require)
-{
-  b32 out = false;
-  if (!optionalChar(optional))
-  {
-    out = requireChar(require);
-  }
-  return out;
-}
-
 inline Ast *
 newSyntheticAst(Term *term, Token *token)
 {
@@ -3412,52 +3410,32 @@ addHint(Arena *arena, HintDatabase *hint_db, Term *term)
 }
 
 inline Term *
-getOverloadFromDistinguisher(GlobalBinding *lookup, Term *distinguisher)
+getOverloadFromTags(GlobalBinding *lookup, i32 query_tag_count, String *query_tags)
 {
   Term *out = 0;
-  if (distinguisher->kind != Term_Union)
+  for (i32 slot_i=0; slot_i < lookup->count && !out; slot_i++)
   {
-    todoIncomplete;
-  }
-
-  for (i32 slot_i=0;
-       slot_i < lookup->count && !out;
-       slot_i++)
-  {
-    Term *item = lookup->items[slot_i];
-    if (Arrow *signature = castTerm((item)->type, Arrow))
+    i32 tag_count = lookup->tag_counts[slot_i];
+    String *tags  = lookup->tags[slot_i];
+    b32 failed = false;
+    for (i32 query_tag_i=0; query_tag_i < query_tag_count && !failed; query_tag_i++)
     {
-      for (i32 param_i=0; param_i < signature->param_count && !out; param_i++)
+      String query_tag = query_tags[query_tag_i];
+      failed = true;
+      for (i32 tag_i=0; tag_i < tag_count && failed; tag_i++)
       {
-        Term *type0 = signature->param_types[param_i];
-        if (equal(type0, distinguisher))
+        String tag = tags[tag_i];
+        if (equal(query_tag, tag))
         {
-          out = item;
-        }
-        else if (Composite *type = castTerm(type0, Composite))
-        {
-          if (equal(type->op, distinguisher))
-          {
-            out = item;
-          }
+          failed = false;
         }
       }
     }
+    if (!failed)
+    {
+      out = lookup->terms[slot_i];
+    }
   }
-  return out;
-}
-
-inline Term *
-getOverloadFromDistinguisher(Token *token, const char *name, Term *distinguisher)
-{
-  Term *out = 0;
-  if (GlobalBinding *lookup = lookupGlobalNameSlot(toString(name), false))
-  {
-    out = getOverloadFromDistinguisher(lookup, distinguisher);
-  }
-  else
-    reportError(token, "no function named \"%s\" found that matches distinguisher", name);
-
   return out;
 }
 
@@ -3964,7 +3942,7 @@ buildTestSort(Typer *typer, CompositeAst *ast)
 }
 
 inline void
-algebraNorm(Algebra *algebra, Transformation *transform)
+algebraNorm_(Algebra *algebra, Transformation *transform)
 {
   i32 unused_var serial = DEBUG_SERIAL++;
   Term *T = algebra->type;
@@ -3998,7 +3976,7 @@ algebraNorm(Algebra *algebra, Transformation *transform)
       for (; ; )
       {
         descend(transform, treePath(path, 1));  // list head
-        algebraNorm(algebra, transform);
+        algebraNorm_(algebra, transform);
         ascend(transform);
 
         Term *list = getPath(transform->term, path);
@@ -4019,6 +3997,35 @@ algebraNorm(Algebra *algebra, Transformation *transform)
       eqChain(eq_sorted, transform);
     }
   }
+}
+
+inline void
+algebraNorm(Algebra *algebra, Transformation *transform)
+{
+  if (Composite *comp = castTerm(transform->term, Composite))
+  {
+    // apply distributive property everywhere (incomplete)
+    if (comp->op == algebra->mul)
+    {
+      if (Composite *l = castTerm(getArg(comp, 0), Composite))
+      {
+        if (l->op == algebra->add)
+        {
+          Term *dist = reaComposite(algebra->mulDistributive, getArg(l, 0), getArg(l, 1), getArg(comp, 1));
+          eqChain(dist, transform);
+        }
+      }
+      else if (Composite *r = castTerm(getArg(comp, 1), Composite))
+      {
+        if (r->op == algebra->add)
+        {
+          Term *dist = reaComposite(algebra->mulDistributive, getArg(r, 0), getArg(l, 1), getArg(comp, 1));
+          eqChain(dist, transform);
+        }
+      }
+    }
+  }
+  algebraNorm_(algebra, transform);
 }
 
 inline Term *
@@ -4180,7 +4187,7 @@ copyToGlobalArena(Term *in0)
 
 inline Function *
 buildFunctionGivenSignature(Typer *typer, Arrow *signature, Ast *in_body,
-                            i32 function_flags=0, Token *global_name=0)
+                            Token *global_name=0, FunctionAst *in_fun=0)
 {
   i32 unused_var serial = DEBUG_SERIAL;
   // :persistent-global-function.
@@ -4190,7 +4197,7 @@ buildFunctionGivenSignature(Typer *typer, Arrow *signature, Ast *in_body,
   Arena *arena = global_name ? global_state.top_level_arena : temp_arena;
 
   Function *out       = newTerm(arena, Function, signature);
-  out->function_flags = function_flags;
+  if (in_fun) out->function_flags = in_fun->function_flags;
 
   Term *body = 0;
   Typer new_typer = *typer;
@@ -4202,7 +4209,7 @@ buildFunctionGivenSignature(Typer *typer, Arrow *signature, Ast *in_body,
     if (global_name)
     {
       // NOTE: add binding first to support recursion
-      addGlobalBinding(global_name, out);
+      addGlobalBinding(global_name, out, in_fun->tag_count, in_fun->tags);
       current_global_function      = out;
       current_global_function_args = typer->scope->pointers;
     }
@@ -4776,11 +4783,6 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
   // beware: Usually we mutate in-place, but we may also allocate anew.
   i32 UNUSED_VAR serial = DEBUG_SERIAL++;
 
-  if (serial == 141657)
-  {
-    DUMP("goal0: ", goal0);
-  }
-
   assert(goal0);
   Arena *arena = temp_arena;
   Term *value = 0;
@@ -4828,7 +4830,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
           {
             for (i32 value_id = 0; value_id < globals->count; value_id++)
             {
-              Term *slot_value = globals->items[value_id];
+              Term *slot_value = globals->terms[value_id];
               if (matchType((slot_value)->type, goal0))
               {
                 if (value)
@@ -4858,7 +4860,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
                 attach("serial", serial);
                 if (globals->count == 1)
                 {
-                  attach("actual_type", (globals->items[0])->type);
+                  attach("actual_type", (globals->terms[0])->type);
                 }
               }
             }
@@ -4988,8 +4990,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
       {
         if (Arrow *signature = castTerm(type, Arrow))
         {
-          Function *fun = buildFunctionGivenSignature(typer, signature, in->body, in->function_flags);
-          value = fun;
+          value = buildFunctionGivenSignature(typer, signature, in->body, 0, in);
         }
         else
         {
@@ -5139,7 +5140,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
                   is_global_identifier = true;
                   for (i32 i=0; i < slot->count; i++)
                   {
-                    hints = addHint(temp_arena, hints, slot->items[i]);
+                    hints = addHint(temp_arena, hints, slot->terms[i]);
                   }
                 }
                 else
@@ -5271,17 +5272,23 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
       }
     } break;
 
+    // todo: remove this syntax, use tags instead.
     case Ast_OverloadAst:
     {
       OverloadAst *in = castAst(in0, OverloadAst);
-      if (GlobalBinding *lookup = lookupGlobalName(&in->function_name))
+      if (GlobalBinding *lookup = lookupGlobalNameSlot(in->function_name, false))
       {
-        if (Term *distinguisher = buildTerm(typer, in->distinguisher, holev).value)
-        {
-          value = getOverloadFromDistinguisher(lookup, distinguisher);
-          if (!value)
-            reportError(in0, "found no overload corresponding to distinguisher");
-        }
+        pushItemsAs(arena, tags, in->distinguisher);
+        value = getOverloadFromTags(lookup, 1, tags);
+      }
+      else
+      {
+        reportError(in, "no function named \"%s\" found", in->function_name);
+      }
+
+      if (!value)
+      {
+        reportError(in, "found no overload corresponding to distinguisher");
       }
     } break;
 
@@ -5401,10 +5408,6 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
     Term *actual = value->type;
     if (should_check_type && !recursed)
     {
-      if (serial == 141657)
-      {
-        DEBUG_LOG_compare = 1;
-      }
       if (!matchType(actual, goal0))
       {
         if (expectedWrongType(typer)) silentError();
@@ -5907,8 +5910,7 @@ buildGlobalFunction(Typer *typer, FunctionAst *in)
     type = copyToGlobalArena(type);
     if (Arrow *signature = castTerm(type, Arrow))
     {
-      out = buildFunctionGivenSignature(typer, signature, in->body,
-                                        in->function_flags, &in->token);
+      out = buildFunctionGivenSignature(typer, signature, in->body, &in->token, in);
       if (out)
       {
         // :persistent-global-function
@@ -6187,8 +6189,21 @@ interpretTopLevel(EngineState *state)
 
           for (i32 i=0; i < function_count && noError(); i++)
           {
-            if (Term *function = getOverloadFromDistinguisher(token, function_names[i], type))
-              *functions[i] = function;
+            String function_name = toString(function_names[i]);
+            if (GlobalBinding *lookup = lookupGlobalNameSlot(function_name, false))
+            {
+              assert(type->global_name);
+              pushItemsAs(arena, tags, type->global_name->string);
+              if (Term *function = getOverloadFromTags(lookup, 1, tags))
+              {
+                *functions[i] = function;
+              }
+              else
+              {
+                reportError(token, "cannot find necessary function for the algebra");
+                attach("function_name", function_name);
+              }
+            }
           }
         }
       } break;
