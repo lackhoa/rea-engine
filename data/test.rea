@@ -275,8 +275,8 @@ algebraTest :: (a,b,c,d,e,f: Nat) -> Nat
  prove ((a*b)*c)*(d*e)*f = fold(*, [a,b,c,d,e,f])
  {return algebra_norm(((a*b)*c)*(d*e)*f)}
 
- ;; prove ((a*b)*c)+(d*e)*f = fold(*, [a,b,c,d,e,f])
- ;; {return algebra_norm(((a*b)*c)+(d*e)*f)}
+ prove ((a * b + c * d) + e * b + f * d) = fold(+, [fold(*, [a, b]), fold(*, [b, e]), fold(*, [c, d]), fold(*, [d, f])])
+ {return algebra_norm((a * b + c * d) + e * b + f * d)}
 
  return 0;
  }

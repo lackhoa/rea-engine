@@ -220,7 +220,7 @@ copySize(Arena *arena, void *src, size_t size)
 #    define mytypeof __typeof__
 #endif
 
-#define copyStruct(arena, src) (mytypeof(src)) copySize(arena, (src), sizeof(*(src)))
+#define pushCopy(arena, src) (mytypeof(src)) copySize(arena, (src), sizeof(*(src)))
 /* #define copyStructNoCast(arena, src) copySize(arena, src, sizeof(*(src))) */
 #define copyArray(arena, count, src) (mytypeof(src)) copySize(arena, (src), count*sizeof(*(src)))
 

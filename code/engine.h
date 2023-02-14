@@ -395,4 +395,11 @@ struct NormContext {
   String name_to_unfold;
 };
 
+struct Transformation {
+  Term           *term;
+  Term           *eq_proof;
+  TreePath       *path;  // NOTE: path relative to the upper frame
+  Transformation *up;
+};
+
 #include "generated/engine_forward.h"

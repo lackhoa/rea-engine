@@ -261,7 +261,7 @@ reportErrorVA(i32 line, i32 column, char *format, va_list arg_list)
   {
     // note: we reverse the context list here, which is convenient for printing.
     // TODO #speed don't do this in here! Since we sometimes recover from error.
-    InterpContext *new_context = copyStruct(temp_arena, it);
+    InterpContext *new_context = pushCopy(temp_arena, it);
     new_context->next = context;
     context = new_context;
   }
