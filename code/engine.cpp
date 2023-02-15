@@ -284,8 +284,7 @@ isEquality(Term *eq0)
 {
   if (Composite *eq = castTerm(eq0, Composite))
   {
-    if (eq->op == rea.equal)
-      return true;
+    return eq->op == rea.equal;
   }
   return false;
 }
@@ -489,6 +488,13 @@ rewriteTerm(Term *eq_proof, TreePath *path, b32 right_to_left, Term *in0)
   else               {to_rewrite = l; rewrite_to = r;}
 
   return rewriteTerm(to_rewrite, rewrite_to, path, in0);
+}
+
+inline void
+addRewrite(ProofState *state, Term *eq_proof, TreePath *path, b32 right_to_left)
+{
+  state->goal     = rewriteTerm(eq_proof, path, right_to_left, state->goal);
+  state->rewrites = newRewriteChain(eq_proof, path, right_to_left, state->rewrites);
 }
 
 inline LocalBindings *
@@ -3615,6 +3621,38 @@ treePath(TreePath *prefix, i32 item)
   return out;
 }
 
+inline TreePath *
+concatPath(TreePath *a, TreePath *b)
+{
+  TreePath *it  = a;
+  TreePath *out = 0;
+  auto &arena = temp_arena;
+  for (;it;)
+  {
+    if (it)
+    {
+      if (out)
+      {
+        out->tail = pushStruct(arena, TreePath);
+        out = out->tail;
+      }
+      else
+      {
+        out = pushStruct(arena, TreePath);
+      }
+      out->head = it->head;
+      out->tail = 0;
+      it = it->tail;
+    }
+    else
+    {
+      if (out) out->tail = b;
+      else     out = b;
+    }
+  }
+  return out;
+}
+
 inline Term *
 getTransformResult(Term *in)
 {
@@ -3635,21 +3673,31 @@ getEqualRhs(Term *in)
 }
 
 inline void
+setEqProof(Term *eq_proof, Transformation *transform)
+{
+  if (eq_proof)
+  {
+    transform->eq_proof = eq_proof;
+    transform->term = getEqualRhs(eq_proof);
+  }
+}
+
+inline void
 eqChain(Term *f, Transformation *transform)
 {
   Term *e = transform->eq_proof;
   if (f)
   {
     transform->term = getEqualRhs(f);
-    if (transform->eq_proof)
+    if (e)
     {
-      auto [a,b] = getEqualitySides(e->type);
-      auto [_,c] = getEqualitySides(f->type);
-      transform->eq_proof = reaComposite(rea.eqChain, a->type, a,b,c, e,f);
+      Term *rewrite = newRewrite(f, e, treePath(2), true);
+      setEqProof(rewrite, transform);
+      assert(transform->term == getEqualRhs(f));
     }
     else
     {
-      transform->eq_proof = f;
+      setEqProof(f, transform);
     }
   }
 }
@@ -3744,18 +3792,18 @@ descend(Transformation *transform, i32 index)
 inline void
 ascend(Transformation *transform)
 {
-  TreePath *path     = transform->path;
-  if (path)
+  TreePath *down_path  = transform->path;
+  Term     *down_proof = transform->eq_proof;
+  *transform = *transform->up;
+  if (!transform->eq_proof)
   {
-    Term     *eq_proof = transform->eq_proof;
-    *transform = *transform->up;
-    if (eq_proof)
-    {
-      Term *id = newIdentity(transform->term);
-      TreePath *rewrite_path = treePath(2, path);
-      Term *rewrite = newRewrite(eq_proof, id, rewrite_path, true);
-      eqChain(rewrite, transform);
-    }
+    transform->eq_proof = newIdentity(transform->term);
+  }
+  if (down_proof)
+  {
+    TreePath *path = treePath(2, down_path); // rewrite on the rhs
+    Term *rewrite = newRewrite(down_proof, transform->eq_proof, path, true);
+    setEqProof(rewrite, transform);
   }
 }
 
@@ -4044,40 +4092,6 @@ algebraNorm(Algebra *algebra, Transformation *transform)
 }
 
 inline Term *
-buildAlgebraNorm(Typer *typer, CompositeAst *composite_ast)
-{
-  Term *out = 0;
-  if (composite_ast->arg_count == 1)
-  {
-    if (Term *in = buildTerm(typer, composite_ast->args[0], holev).value)
-    {
-      Term *T = in->type;
-      b32 found_algebra_match = false;
-      for (AlgebraDatabase *algebras = global_state.algebras;
-           algebras && !found_algebra_match;
-           algebras = algebras->tail)
-      {
-        Algebra *algebra = &algebras->head;
-        if (T == algebra->type)
-        {
-          found_algebra_match = true;
-          Transformation transform = {.term=in};
-          algebraNorm(algebra, &transform);
-          out = transform.eq_proof;
-        }
-      }
-    }
-  }
-  else
-    reportError("expected 1 argument");
-
-  if (!out && noError())
-    reportError(composite_ast, "expression is already algebraically normalized");
-
-  return out;
-}
-
-inline Term *
 copyToGlobalArena(Term *in0)
 {
   Term *out0 = 0;
@@ -4320,11 +4334,6 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
   {
     // macro interception
     value = buildTestSort(typer, in);
-  }
-  else if (equal(in->op->token, "algebra_norm"))
-  {
-    // macro interception
-    value = buildAlgebraNorm(typer, in);
   }
   else
   {
@@ -4649,30 +4658,26 @@ isPointerIgnored(Scope *scope, i32 pointer_i)
   return scope->ignored[pointer_i];
 }
 
+inline Term *
+buildWithState(ProofState *state, Ast *body)
+{
+  Term *value = buildWithNewAssets(state->typer, state->asset_count, 0, state->assets, body, state->goal);
+  if (noError())
+  {
+    for (auto chain = state->rewrites; chain; chain = chain->next)
+    {
+      value = newRewrite(chain->eq_proof, value, chain->path, chain->right_to_left);
+    }
+  }
+  return value;
+}
+
 internal Term *
-buildSubst(Typer *typer, SubstAst *in, Term *goal)
+buildSubst(Typer *typer, SubstAst *in, Term *goal0)
 {
   // todo #cleanup I think there is a super structure here: we add asset, and we
   // change the goal. Currently we use the stack and recursion to keep track of
   // that but maybe the typer can help with that, and we just push stuff onto it.
-
-  struct RewriteChain {
-    Term         *eq_proof;
-    TreePath     *path;
-    b32           right_to_left;
-    RewriteChain *next;
-  };
-
-  auto newRewriteChain =
-    [](Term *eq_proof, TreePath *path, b32 right_to_left, RewriteChain *next)
-  {
-    RewriteChain *new_chain  = pushStruct(temp_arena, RewriteChain);
-    new_chain->eq_proof      = eq_proof;
-    new_chain->path          = path;
-    new_chain->right_to_left = right_to_left;
-    new_chain->next          = next;
-    return new_chain;
-  };
 
   struct Substitution {
     Term *to_rewrite;
@@ -4686,9 +4691,8 @@ buildSubst(Typer *typer, SubstAst *in, Term *goal)
   i32           sub_count     = 0;
   Substitution *substitutions = pushArray(arena, sub_cap, Substitution);
 
-  i32    asset_cap   = 16; // todo: #grow
-  i32    asset_count = 0;
-  Term **assets      = pushArray(arena, asset_cap, Term *);
+  ProofState state_ = newProofState(typer, goal0);
+  auto state = &state_;
 
   for (i32 expr_i=0; expr_i < in->count && noError(); expr_i++)
   {
@@ -4740,41 +4744,33 @@ buildSubst(Typer *typer, SubstAst *in, Term *goal)
             {
               Term *asset = newRewrite(eq_proof, pointer, search.path, !right_to_left);
               ignorePointer(scope, pointer_i);
-
-              assets[asset_count++] = asset;
-              assert(asset_count <= asset_cap);
+              addAsset(state, asset);
             }
           }
         }
       }
 
-      for (i32 asset_i=0; asset_i < asset_count; asset_i++)
+      for (i32 asset_i=0; asset_i < state->asset_count; asset_i++)
       {
         // search the existing assets we just created
-        Term *asset = assets[asset_i];
+        Term *asset = state->assets[asset_i];
         if (SearchOutput search = searchExpression(to_rewrite, asset->type))
         {
-          assets[asset_i] = newRewrite(eq_proof, asset, search.path, !right_to_left);
+          state->assets[asset_i] = newRewrite(eq_proof, asset, search.path, !right_to_left);
         }
       }
     }
 
-    RewriteChain *rewrite_chain = 0;
     for (i32 sub_i = 0; sub_i < sub_count; sub_i++)
     {
       auto [to_rewrite, eq_proof, right_to_left] = substitutions[sub_i];
-      if (SearchOutput search = searchExpression(to_rewrite, goal))
+      if (SearchOutput search = searchExpression(to_rewrite, state->goal))
       {
-        goal = rewriteTerm(eq_proof, search.path, right_to_left, goal);
-        rewrite_chain = newRewriteChain(eq_proof, search.path, right_to_left, rewrite_chain);
+        addRewrite(state, eq_proof, search.path, right_to_left);
       }
     }
 
-    value = buildWithNewAssets(typer, asset_count, 0, assets, in->body, goal);
-    for (auto chain = rewrite_chain;  chain && noError();  chain = chain->next)
-    {
-      value = newRewrite(chain->eq_proof, value, chain->path, chain->right_to_left);
-    }
+    value = buildWithState(state, in->body);
   }
   return value;
 }
@@ -4791,6 +4787,46 @@ newIdentifier(char *name)
   Token token = newToken(name);
   return newAst(temp_arena, Identifier, &token);
 }
+
+inline Term *
+buildAlgebraNorm(Typer *typer, AlgebraNormAst *ast, Term *goal0)
+{
+  Term *value = 0;
+  ProofState state_ = newProofState(typer, goal0);
+  auto state = &state_;
+
+  // todo: well this goal search isn't recursive;
+  if (Composite *goal = castTerm(goal0, Composite))
+  {
+    for (i32 arg_i=0; arg_i < goal->arg_count; arg_i++)
+    {
+      Term *arg = goal->args[arg_i];
+      Term *T = arg->type;
+      Algebra *algebra = 0;
+      for (AlgebraDatabase *algebras = global_state.algebras;
+           algebras && !algebra;
+           algebras = algebras->tail)
+      {
+        Algebra *it = &algebras->head;
+        if (T == it->type) algebra = it;
+      }
+
+      if (algebra)
+      {
+        Transformation transform = {.term=arg};
+        algebraNorm(algebra, &transform);
+        if (transform.eq_proof)
+        {
+          addRewrite(state, transform.eq_proof, treePath(arg_i), false);
+        }
+      }
+    }
+  }
+
+  value = buildWithState(state, ast->body);
+  return value;
+}
+
 
 forward_declare internal BuildTerm
 buildTerm(Typer *typer, Ast *in0, Term *goal0)
@@ -5413,6 +5449,12 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
     {
       SubstAst *in = (SubstAst *)in0;
       value = buildSubst(typer, in, goal0);
+    } break;
+
+    case Ast_AlgebraNormAst:
+    {
+      AlgebraNormAst *in = (AlgebraNormAst *)in0;
+      value = buildAlgebraNorm(typer, in, goal0);
     } break;
 
     invalidDefaultCase;

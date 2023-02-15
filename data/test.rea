@@ -268,22 +268,22 @@ algebraTest :: (a,b,c,d,e,f: Nat) -> Nat
 {
 
  prove ((a+b)+c)+(d+e)+f = fold(+, [a,b,c,d,e,f])
- {return algebra_norm(((a+b)+c)+(d+e)+f)}
+ {algebra_norm}
 
- prove (((c+e)+a)+(b+f)+d) = fold(+, [a,b,c,d,e,f])
- {return algebra_norm(((c+e)+a)+(b+f)+d)}
+ ;; prove (((c+e)+a)+(b+f)+d) = fold(+, [a,b,c,d,e,f])
+ ;; {return algebra_norm(((c+e)+a)+(b+f)+d)}
 
- prove ((a*b)*c)*(d*e)*f = fold(*, [a,b,c,d,e,f])
- {return algebra_norm(((a*b)*c)*(d*e)*f)}
+ ;; prove ((a*b)*c)*(d*e)*f = fold(*, [a,b,c,d,e,f])
+ ;; {return algebra_norm(((a*b)*c)*(d*e)*f)}
 
- prove ((a * b + c * d) + e * b + f * d) = fold(+, [fold(*, [a, b]), fold(*, [b, e]), fold(*, [c, d]), fold(*, [d, f])])
- {return algebra_norm((a * b + c * d) + e * b + f * d)}
+ ;; prove ((a * b + c * d) + e * b + f * d) = fold(+, [fold(*, [a, b]), fold(*, [b, e]), fold(*, [c, d]), fold(*, [d, f])])
+ ;; {return algebra_norm((a * b + c * d) + e * b + f * d)}
 
- prove (a + b + c) + f = fold(+, [a, b, c, f])
- {return algebra_norm((a + b + c) + f)}
+ ;; prove (a + b + c) + f = fold(+, [a, b, c, f])
+ ;; {return algebra_norm((a + b + c) + f)}
 
- prove (a + b) * (c + d) = a * c + a * d + b * c + b * d
- {rewrite  algebra_norm((a + b) * (c + d));}
+ ;; prove (a + b) * (c + d) = a * c + a * d + b * c + b * d
+ ;; {return algebra_norm((a + b) * (c + d));}
 
  return 0;
  }

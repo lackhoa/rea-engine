@@ -407,4 +407,50 @@ struct Transformation {
   Transformation *up;
 };
 
+struct RewriteChain {
+  Term         *eq_proof;
+  TreePath     *path;
+  b32           right_to_left;
+  RewriteChain *next;
+};
+
+inline RewriteChain *
+newRewriteChain(Term *eq_proof, TreePath *path, b32 right_to_left, RewriteChain *next)
+{
+  RewriteChain *new_chain  = pushStruct(temp_arena, RewriteChain);
+  new_chain->eq_proof      = eq_proof;
+  new_chain->path          = path;
+  new_chain->right_to_left = right_to_left;
+  new_chain->next          = next;
+  return new_chain;
+};
+
+struct ProofState {
+  Typer        *typer;
+  Term         *goal;
+  RewriteChain *rewrites;
+
+  i32            asset_count;
+  i32            asset_cap;  // todo: #grow
+  Term         **assets;
+};
+
+inline ProofState
+newProofState(Typer *typer, Term *goal)
+{
+  ProofState state = {};
+  state.typer     = typer;
+  state.goal      = goal;
+  state.asset_cap = 16;
+  state.assets    = pushArray(temp_arena, state.asset_cap, Term*);
+  return state;
+}
+
+inline void
+addAsset(ProofState *state, Term *asset)
+{
+  state->assets[state->asset_count++] = asset;
+  assert(state->asset_count <= state->asset_cap);
+}
+
 #include "generated/engine_forward.h"

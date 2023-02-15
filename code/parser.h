@@ -23,6 +23,7 @@ enum AstKind {
   Ast_ReductioAst,
   Ast_ListAst,
   Ast_SubstAst,
+  Ast_AlgebraNormAst,
 
   // Sequence
   Ast_ForkAst,
@@ -190,6 +191,11 @@ struct SubstAst : Ast {
   i32   count;
   Ast **to_rewrite;
   Ast  *body;
+};
+
+struct AlgebraNormAst : Ast {
+  Ast *expression;
+  Ast *body;
 };
 
 #define PARSER_H

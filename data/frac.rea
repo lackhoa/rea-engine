@@ -15,6 +15,6 @@ addCommutative :: (a,b: Frac) -> a+b == b+a
 #hint
 {
  norm;
- rewrite algebra_norm((a.n * b.d + a.d * b.n) * b.d * a.d);
- rewrite algebra_norm((a.d * b.d) * (b.n * a.d + b.d * a.n));
+ algebra_norm;
+ algebra_norm;
  }

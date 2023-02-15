@@ -211,7 +211,10 @@ getAstBody(Ast *item0)
   {
     return &item->body;
   }
-
+  if (AlgebraNormAst *item = castAst(item0, AlgebraNormAst))
+  {
+    return &item->body;
+  }
   invalidCodePath;
   return 0;
 }
@@ -469,6 +472,11 @@ parseSequence(b32 require_braces=true)
         if (!optionalChar(','))
           break;
       }
+      ast0 = ast;
+    }
+    else if (equal(tactic, "algebra_norm"))
+    {
+      AlgebraNormAst *ast = newAst(arena, AlgebraNormAst, token);
       ast0 = ast;
     }
     else if (isIdentifier(token))
