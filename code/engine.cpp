@@ -4052,11 +4052,22 @@ applyMulDistributive(Algebra *algebra, Transformation *tform)
 {
   if (Composite *comp = castTerm(tform->term, Composite))
   {
+    for (i32 arg_i=0; arg_i < comp->arg_count; arg_i++)
+    {
+      descend(tform, arg_i);
+      applyMulDistributive(algebra, tform);
+      ascend(tform);
+    }
+
+    comp = castTerm(tform->term, Composite);
+    assert(comp);
     if (comp->op == algebra->mul)
     {
+      b32 changed = false;
       Composite *lcomp = castTerm(getArg(comp, 0), Composite);
       if (lcomp && (lcomp->op == algebra->add))
       {
+        changed = true;
         Term *dist = reaComposite(algebra->mulDistributiveRight,
                                   getArg(lcomp, 0), getArg(lcomp, 1), getArg(comp, 1));
         eqChain(dist, tform);
@@ -4066,20 +4077,23 @@ applyMulDistributive(Algebra *algebra, Transformation *tform)
         Composite *rcomp = castTerm(getArg(comp, 1), Composite);
         if (rcomp && (rcomp->op == algebra->add))
         {
+          changed = true;
           Term *dist = reaComposite(algebra->mulDistributiveLeft,
                                     getArg(rcomp, 0), getArg(rcomp, 1), getArg(comp, 0));
           eqChain(dist, tform);
         }
       }
-    }
 
-    comp = castTerm(tform->term, Composite);
-    assert(comp);
-    for (i32 arg_i=0; arg_i < comp->arg_count; arg_i++)
-    {
-      descend(tform, arg_i);
-      applyMulDistributive(algebra, tform);
-      ascend(tform);
+      if (changed)
+      {
+        comp = castTerm(tform->term, Composite);
+        for (i32 arg_i=0; arg_i < comp->arg_count; arg_i++)
+        {
+          descend(tform, arg_i);
+          applyMulDistributive(algebra, tform);
+          ascend(tform);
+        }
+      }
     }
   }
 }

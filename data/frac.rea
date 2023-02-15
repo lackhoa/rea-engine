@@ -16,5 +16,11 @@ addCommutative :: (a,b: Frac) -> a+b == b+a
 {
  norm;
  algebra_norm;
+ }
+
+addAssociative :: (a,b,c: Frac) -> (a+b)+c == a+b+c
+#hint
+{
+ norm;
  algebra_norm;
  }
