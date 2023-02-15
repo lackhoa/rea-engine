@@ -4007,26 +4007,27 @@ applyMulDistributive(Algebra *algebra, Transformation *tform)
     // apply distributive property everywhere (todoIncomplete)
     if (comp->op == algebra->mul)
     {
-      if (Composite *l = castTerm(getArg(comp, 0), Composite))
+      Composite *lcomp = castTerm(getArg(comp, 0), Composite);
+      if (lcomp && (lcomp->op == algebra->add))
       {
-        if (l->op == algebra->add)
-        {
-          Term *dist = reaComposite(algebra->mulDistributiveRight,
-                                    getArg(l, 0), getArg(l, 1), getArg(comp, 1));
-          eqChain(dist, tform);
-        }
+        Term *dist = reaComposite(algebra->mulDistributiveRight,
+                                  getArg(lcomp, 0), getArg(lcomp, 1), getArg(comp, 1));
+        eqChain(dist, tform);
       }
-      else if (Composite *r = castTerm(getArg(comp, 1), Composite))
+      else
       {
-        if (r->op == algebra->add)
+        Composite *rcomp = castTerm(getArg(comp, 1), Composite);
+        if (rcomp && (rcomp->op == algebra->add))
         {
           Term *dist = reaComposite(algebra->mulDistributiveLeft,
-                                    getArg(r, 0), getArg(l, 1), getArg(comp, 1));
+                                    getArg(rcomp, 0), getArg(rcomp, 1), getArg(comp, 0));
           eqChain(dist, tform);
         }
       }
     }
 
+    comp = castTerm(tform->term, Composite);
+    assert(comp);
     for (i32 arg_i=0; arg_i < comp->arg_count; arg_i++)
     {
       descend(tform, arg_i);
@@ -6509,8 +6510,9 @@ int engineMain()
 
   char *files[] = {
     "../data/test.rea",
-    "../data/natp.rea",
+    // "../data/natp.rea",
     "../data/z-slider.rea",
+    "../data/frac.rea",
   };
   for (i32 file_id=0; file_id < arrayCount(files); file_id++)
   {

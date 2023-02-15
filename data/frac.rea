@@ -1,0 +1,21 @@
+#load "natp.rea"
+
+Frac :: union {/(n,d: Natp)}
+
+== :: fn(a,b: Frac) -> Type
+{return a.n*b.d = a.d*b.n}
+
++ :: fn(a,b: Frac) -> Frac
+{return (a.n*b.d + a.d*b.n) / (a.d*b.d)}
+
+* :: fn(a,b: Frac) -> Frac
+{return (a.n*b.n) / (a.d*b.d)}
+
+addCommutative :: (a,b: Frac) -> a+b == b+a
+#hint
+{
+ norm;
+ rewrite with algebra_norm((a.n * b.d + a.d * b.n) * b.d * a.d);
+ rewrite with algebra_norm((a.d * b.d) * (b.n * a.d + b.d * a.n));
+ norm;
+ }
