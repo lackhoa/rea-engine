@@ -120,9 +120,7 @@ struct ArrowAst : Ast {
 };
 
 struct RewriteAst : Ast {
-  // NOTE: these two are mutually exclusive
-  Ast *eq_proof;
-  Ast *eq;
+  Ast *eq_or_proof;
 
   Ast *new_goal;
   Ast *body;

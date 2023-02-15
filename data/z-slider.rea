@@ -47,6 +47,6 @@ mulCommutative :: (a,b: Z) -> b*a == a*b
 mulDistributive :: (a,b,c: Z) -> (a+b)*c == a*c+b*c
 {
  norm;
- rewrite with algebra_norm(((a.l + b.l) * c.r + (a.r + b.r) * c.l) + (a.l * c.l + a.r * c.r) + b.l * c.l + b.r * c.r);
- rewrite with algebra_norm(((a.l + b.l) * c.l + (a.r + b.r) * c.r) + (a.l * c.r + a.r * c.l) + b.l * c.r + b.r * c.l);
+ rewrite  algebra_norm(((a.l + b.l) * c.r + (a.r + b.r) * c.l) + (a.l * c.l + a.r * c.r) + b.l * c.l + b.r * c.r);
+ rewrite  algebra_norm(((a.l + b.l) * c.l + (a.r + b.r) * c.r) + (a.l * c.r + a.r * c.l) + b.l * c.r + b.r * c.l);
  }

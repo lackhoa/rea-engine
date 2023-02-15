@@ -19,7 +19,7 @@ identity :: fn(A: Type) -> (a: A) -> A
 
 alreadyGotFalse :: (A: Type, e: A=False) -> ((A) -> False)
 #hint
-{ return fn (a:A) -> False { rewrite <- with e; return a } }
+{ return fn (a:A) -> False { rewrite <- e; return a } }
 
 Maybe :: union($$A: Type)
 {none,

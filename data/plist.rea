@@ -224,7 +224,7 @@ foldPermute :: ($T: Type, op: binaryOp(T),
   use commu;
   ,
   permuteSkip invert p; subst l,m; norm;
-  rewrite with (prove fold(op, p.l) = fold(op, p.m) {use foldPermute})
+  rewrite (prove fold(op, p.l) = fold(op, p.m) {use foldPermute})
   ,
   permuteSwap invert p; subst l,m; norm;
   => (p.a op p.b) op fold(op, p.l) = p.b op p.a op fold(op, p.l) {assoc}
@@ -232,7 +232,7 @@ foldPermute :: ($T: Type, op: binaryOp(T),
   => p.b op p.a op fold(op, p.l) = p.b op p.a op fold(op, p.l)   {assoc}
   ,
   permuteChain invert p; subst l, m;
-  rewrite with prove fold(op, p.l) = fold(op, p.chain) {use foldPermute};
+  rewrite prove fold(op, p.l) = fold(op, p.chain) {use foldPermute};
   prove fold(op, p.chain) = fold(op, p.m) {use foldPermute}
   }
 }

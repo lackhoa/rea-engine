@@ -292,19 +292,16 @@ parseSequence(b32 require_braces=true)
     {
       // todo maybe "with" should be "using", since we take "rewrite a with b"
       // to mean "replace a by b"
-      pushContext("rewrite [with] EXPRESSION [in EXPRESSION]");
+      pushContext("rewrite EXPRESSION [in EXPRESSION]");
       RewriteAst *rewrite = newAst(arena, RewriteAst, token);
       if (optionalString("<-"))
       {
         rewrite->right_to_left = true;
       }
-      b32 has_with = optionalString("with");
 
       if (Ast *expression = parseExpression())
       {
-        if (has_with) rewrite->eq_proof = expression;
-        else          rewrite->eq       = expression;
-
+        rewrite->eq_or_proof = expression;
         if (optionalKind(Token_Keyword_in))
         {
           rewrite->in_expression = parseExpression();

@@ -80,12 +80,12 @@ addAssociative :: (a,b,c: Nat) -> (a+b)+c = a+b+c
 {fork a
  {0 : ,
   ++:
-  rewrite with addAssociative(a.p,b,c)}}
+  rewrite addAssociative(a.p,b,c)}}
 
 mul0 :: (a: Nat) -> a * 0 = 0
 {fork a
  {0: ,
-  ++: rewrite with mul0(a.p),}}
+  ++: rewrite  mul0(a.p),}}
 
 mulDistributive :: (a,b,c: Nat) -> (a+b)*c = a*c+b*c
 #hint #tag(Nat, right)
@@ -136,7 +136,7 @@ mulCommutative :: (a,b: Nat) -> a*b = b*a
 #tag(Nat)
 #hint
 {fork a
- {0 : rewrite with mul0(b),
+ {0 : rewrite mul0(b),
   ++: ;; b + a.p*b = b * ++(a.p)
   => b + a.p*b = b + b*a.p { mulSRight(b, a.p) }
   => b + a.p*b = b + a.p*b { mulCommutative(a.p, b) }}}

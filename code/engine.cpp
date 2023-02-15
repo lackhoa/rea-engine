@@ -837,7 +837,7 @@ print(Arena *buffer, Ast *in0, PrintOptions opt)
         print(buffer, "rewrite");
         print(buffer, " ");
         if (in->right_to_left) print(buffer, "<- ");
-        print(buffer, in->eq_proof, new_opt);
+        print(buffer, in->eq_or_proof, new_opt);
       } break;
 
       case Ast_CompositeAst:
@@ -4004,7 +4004,6 @@ applyMulDistributive(Algebra *algebra, Transformation *tform)
 {
   if (Composite *comp = castTerm(tform->term, Composite))
   {
-    // apply distributive property everywhere (todoIncomplete)
     if (comp->op == algebra->mul)
     {
       Composite *lcomp = castTerm(getArg(comp, 0), Composite);
@@ -5018,85 +5017,85 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
 
     case Ast_RewriteAst:
     {
+      RewriteAst *in  = castAst(in0, RewriteAst);
       if (goal0->kind == Term_Hole)
       {
         reportError(in0, "we do not know what the goal is, so nothing to rewrite");
       }
-      else
+      else if (Term *eq_or_proof = buildTerm(typer, in->eq_or_proof, holev))
       {
-        RewriteAst *in  = castAst(in0, RewriteAst);
         Term *eq_proof = 0;
-        if (in->eq_proof)
+        Term *eq       = 0;
+        if (isEquality(eq_or_proof))
         {
-          eq_proof = buildTerm(typer, in->eq_proof, holev);
-        }
-        else if (Term *eq = buildTerm(typer, in->eq, holev))
-        {
-          eq_proof = seekGoal(Solver{.typer=typer}, eq);
+          eq = eq_or_proof;
+          eq_proof = seekGoal(Solver{.typer=typer}, eq_or_proof);
           if (!eq_proof)
           {
             reportError("cannot find the proof for this proposition in scope");
-            attach("equality", eq);
+            attach("equality", eq_or_proof);
+          }
+        }
+        else
+        {
+          eq_proof = eq_or_proof;
+          eq       = eq_or_proof->type;
+          if (!isEquality(eq))
+          {
+            reportError(in->eq_or_proof, "please provide a proof of equality for rewrite");
+            attach("got", eq);
           }
         }
 
         if (noError())
         {
-          Term *eq = eq_proof->type;
-          if (auto [lhs, rhs] = getEqualitySides(eq, false))
+          auto [lhs, rhs] = getEqualitySides(eq);
+          Term *from = in->right_to_left ? rhs : lhs;
+          Term *to   = in->right_to_left ? lhs : rhs;
+          if (in->in_expression)
           {
-            Term *from = in->right_to_left ? rhs : lhs;
-            Term *to   = in->right_to_left ? lhs : rhs;
-            if (in->in_expression)
+            if (Term *in_expression = buildTerm(typer, in->in_expression, holev).value)
             {
-              if (Term *in_expression = buildTerm(typer, in->in_expression, holev).value)
+              if (SearchOutput search = searchExpression(from, in_expression->type))
               {
-                if (SearchOutput search = searchExpression(from, in_expression->type))
+                b32 right_to_left = !in->right_to_left;  // since we rewrite the body, not the goal.
+                Term *asset = newRewrite(eq_proof, in_expression, search.path, right_to_left);
+                String name = {};
+                Pointer *var = castTerm(in_expression, Pointer);
+                if (var && var->is_stack_pointer)
                 {
-                  b32 right_to_left = !in->right_to_left;  // since we rewrite the body, not the goal.
-                  Term *asset = newRewrite(eq_proof, in_expression, search.path, right_to_left);
-                  String name = {};
-                  Pointer *var = castTerm(in_expression, Pointer);
-                  if (var && var->is_stack_pointer)
-                  {
-                    name = var->stack.name;
-                  }
-                  else
-                  {
-                    todoIncomplete;
-                  }
-                  value = buildWithNewAsset(typer, name, asset, in->body, goal0);
+                  name = var->stack.name;
                 }
                 else
                 {
-                  reportError(in0, "cannot find a place to apply the rewrite");
-                  attach("substitution", eq);
-                  attach("in_expression_type", (in_expression)->type);
+                  todoIncomplete;
                 }
-              }
-            }
-            else
-            {
-              SearchOutput search = searchExpression(from, goal0);
-              if (search.found)
-              {
-                Term *new_goal = rewriteTerm(from, to, search.path, goal0);
-                if (Term *body = buildTerm(typer, in->body, new_goal))
-                {
-                  value = newRewrite(eq_proof, body, search.path, in->right_to_left);
-                }
+                value = buildWithNewAsset(typer, name, asset, in->body, goal0);
               }
               else
               {
                 reportError(in0, "cannot find a place to apply the rewrite");
                 attach("substitution", eq);
+                attach("in_expression_type", (in_expression)->type);
               }
             }
           }
           else
           {
-            reportError(in->eq_proof, "please provide a proof of equality for rewrite");
-            attach("got", eq);
+            SearchOutput search = searchExpression(from, goal0);
+            if (search.found)
+            {
+              Term *new_goal = rewriteTerm(from, to, search.path, goal0);
+              if (Term *body = buildTerm(typer, in->body, new_goal))
+              {
+                value = newRewrite(eq_proof, body, search.path, in->right_to_left);
+              }
+            }
+            else
+            {
+              reportError(in0, "cannot find a place to apply the rewrite");
+              attach("substitution", eq);
+            }
           }
         }
       }

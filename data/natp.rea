@@ -23,7 +23,7 @@ add1 :: (a: Natp) -> a+1 = ++(a)
  fork a
  {
   1:  ,
-  ++: rewrite with add1(a.p)
+  ++: rewrite  add1(a.p)
   }
  }
 
@@ -32,21 +32,21 @@ addS :: (a,b: Natp) -> a + ++(b) = ++(a + b)
  fork a
  {
   1,
-  ++ rewrite with addS(a.p, b)
+  ++ rewrite  addS(a.p, b)
   }
  }
 
 addCommutative :: (a,b: Natp) -> (a+b = b+a)
 #hint #tag(Natp)
 {fork a
- {1: rewrite with add1(b),
-  ++: rewrite with addS(b, a.p); rewrite with addCommutative(a.p, b)}}
+ {1: rewrite  add1(b),
+  ++: rewrite  addS(b, a.p); rewrite  addCommutative(a.p, b)}}
 
 addAssociative :: (a,b,c: Natp) -> (a+b)+c = a+b+c
 #hint #tag(Natp)
 {fork a
  {1,
-  ++ rewrite with addAssociative(a.p, b, c)}}
+  ++ rewrite  addAssociative(a.p, b, c)}}
 
 mulDistributive :: (a,b,c: Natp) -> (a+b)*c = a*c+b*c
 #hint #tag(Natp, right)
@@ -59,7 +59,7 @@ mulDistributive :: (a,b,c: Natp) -> (a+b)*c = a*c+b*c
 mul1 :: (a: Natp) -> a*1 = a
 {fork a
  {1 : ,
-  ++: rewrite with mul1(a.p)}}
+  ++: rewrite  mul1(a.p)}}
 test_eval mul1;
 
 mulSRight :: (a,b: Natp) -> a * ++(b) = a + a*b
@@ -77,7 +77,7 @@ test_eval overload(mulSRight, Natp);
 mulCommutative :: (a,b: Natp) -> a*b = b*a
 #hint #tag(Natp)
 {fork a
- {1 : rewrite with mul1(b),
+ {1 : rewrite  mul1(b),
   ++: ;; b + a.p*b = b * ++(a.p)
   => b + a.p*b = b + b*a.p { mulSRight(b, a.p) }
   => b + a.p*b = b + a.p*b { mulCommutative(a.p, b) }}}
@@ -148,7 +148,7 @@ addDifferent :: (a,b: Natp, p: a+b = a) -> False
 #norm(p)
 {
  lem1: a + b > a = true := addIncreases(a,b);
- rewrite with p in lem1;
+ rewrite  p in lem1;
  return gtAntiReflexive(a, lem1);
  }
 
@@ -192,14 +192,14 @@ sumCancellation :: (a,b,c: Natp, p: a+b =? a+c = true) -> (b =? c = true)
           {1,
            ++
            prove (a.p + 1 =? a.p + ++(c.p) = false) {return add1DifferentFromAddS(a.p, c.p)} as x;
-           rewrite with x in p;
+           rewrite  x in p;
            norm p;
            },
           ++ fork c
           {1
            lem1 := eqSymmetric(a.p + ++(b.p), a.p + 1, p);
            lem2 := add1DifferentFromAddS(a.p, b.p);
-           rewrite with lem1 in lem2;
+           rewrite  lem1 in lem2;
            norm lem2;
            ,
            ++
@@ -225,7 +225,7 @@ eqCorrect :: (a,b: Natp, p: a =? b = true) -> a = b
  fork a
  {
   1  fork b {1, ++ return p},
-  ++ fork b {1 return p, ++ rewrite with eqCorrect(a.p, b.p, p)}
+  ++ fork b {1 return p, ++ rewrite  eqCorrect(a.p, b.p, p)}
   }
  }
 
@@ -246,7 +246,7 @@ addPreservesGt :: (a,b,c: Natp, p: a>b=true) -> a+c > b+c = true
  fork a
  {
   1  fork p {},
-  ++ fork b {1 rewrite with addCommutative(a.p, c); return addIncreases(c, a.p),
+  ++ fork b {1 rewrite  addCommutative(a.p, c); return addIncreases(c, a.p),
              ++ return addPreservesGt(a.p,b.p,c, p)},
   }
  }
@@ -264,7 +264,7 @@ totalOrder :: (a,b: Natp) -> TotalOrder(a,b)
   {1 return gt(_),
    ++
    ind := totalOrder(a.p, b.p);
-   fork ind {eq return eq(prove{rewrite with ind.p}),
+   fork ind {eq return eq(prove{rewrite  ind.p}),
              gt return gt(prove{norm; return ind.p}),
              lt return lt(prove{norm; return ind.p})}}}}
 
