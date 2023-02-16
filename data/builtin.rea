@@ -1,6 +1,6 @@
 #load "builtin-equal.rea"
 
-/\ :: union($$A,$$B: Type)
+/\ :: union(^A,^B: Type)
 {
  conjunction(a: A, b: B)
  }
@@ -21,7 +21,7 @@ alreadyGotFalse :: (A: Type, e: A=False) -> ((A) -> False)
 #hint
 { return fn (a:A) -> False { rewrite <- e; return a } }
 
-Maybe :: union($$A: Type)
+Maybe :: union(^A: Type)
 {none,
  some(v: A)}
 

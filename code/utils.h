@@ -20,6 +20,7 @@
 
 #define internal        static
 #define global_variable UNUSED_VAR static
+#define global_constant UNUSED_VAR static
 #define local_persist   static
 
 typedef uint8_t  u8;

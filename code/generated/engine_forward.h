@@ -16,6 +16,7 @@ void print(Arena * buffer, Term * in0, PrintOptions opt);
 void print(Arena * buffer, Term * in0);
 b32 equal(Term * lhs, Term * rhs);
 Trinary equalTrinary(Term * lhs0, Term * rhs0);
+b32 equalNorm(Term * l, Term * r);
 Record * castRecord(Term * record0);
 Term * apply(Term * op, i32 arg_count, Term ** args, String name_to_unfold);
 Term * solveGoal(Solver * solver, Term * goal);

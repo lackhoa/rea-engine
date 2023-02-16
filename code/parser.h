@@ -35,8 +35,8 @@ enum AstKind {
   Ast_Invert,
 };
 
-const u32 AstFlag_Generated  = 1 << 0;
-const u32 AstFlag_is_builtin = 1 << 1;
+const u32 AstFlag_Generated = 1 << 0;
+const u32 AstFlag_IsBuiltin = 1 << 1;
 
 struct Ast {
   AstKind kind;

@@ -10,6 +10,11 @@ Bool :: union {false, true}
  {true:  return true,
   false: return b}}
 
+! :: fn (a: Bool) -> Bool
+{fork a
+ {true:  return false,
+  false: return true}}
+
 andAssociative :: (a,b,c: Bool) -> (a&b)&c = a&b&c
 {fork a {false, true}}
 

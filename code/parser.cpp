@@ -652,13 +652,18 @@ parseArrowType(Arena *arena, b32 is_struct)
         {
           setFlag(&param_flags[param_i], ParameterFlag_Unused);
         }
-        if (optionalChar('$'))
+
+        for (;;)
         {
-          setFlag(&param_flags[param_i], ParameterFlag_Inferred);
           if (optionalChar('$'))
+          {
+            setFlag(&param_flags[param_i], ParameterFlag_Inferred);
+          }
+          else if (optionalChar('^'))
           {
             setFlag(&param_flags[param_i], ParameterFlag_Poly);
           }
+          else break;
         }
 
         Tokenizer tk_save = *TK;
@@ -1004,7 +1009,7 @@ precedenceOf(String op)
   {
     out = eq_precedence + 15;
   }
-  else if (equal(op, "&") || equal(op, "*"))
+  else if (equal(op, "&") || equal(op, "*") || equal(op, "/"))
   {
     out = eq_precedence + 20;
   }
@@ -1221,7 +1226,7 @@ parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
         }
         else if (optionalDirective("builtin"))
         {
-          setFlag(&out->flags, AstFlag_is_builtin);
+          setFlag(&out->flags, AstFlag_IsBuiltin);
         }
         else if (optionalDirective("tag"))
         {
@@ -1323,3 +1328,161 @@ parseFork()
 
   return out;
 }
+
+inline i32
+getPolyParamCount(ArrowAst *params)
+{
+  i32 param_count = 0;
+  for (i32 param_i=0; param_i < params->param_count; param_i++)
+  {
+    if (checkFlag(params->param_flags[param_i], ParameterFlag_Poly))
+    {
+      param_count++;
+    }
+    else
+      break;
+  }
+  return param_count;
+}
+
+inline Ast *
+newSyntheticAst(Term *term, Token *token)
+{
+  SyntheticAst *out = newAst(temp_arena, SyntheticAst, token);
+  out->term = term;
+  return out;
+}
+
+internal UnionAst *
+parseUnion(Arena *arena, Token *uni_name)
+{
+  UnionAst *uni = newAst(arena, UnionAst, uni_name);
+
+  i32 uni_param_count = 0;
+  i32 poly_count      = 0;
+  i32 non_poly_count  = 0;
+  if (peekChar() == ('('))
+  {
+    if ((uni->signature = parseArrowType(arena, true)))
+    {
+      if (uni->signature->output_type)
+      {
+        reportError(uni->signature->output_type, "didn't expect an output type");
+      }
+      else
+      {
+        uni->signature->output_type = newSyntheticAst(rea.Type, uni_name);
+        uni_param_count = uni->signature->param_count;
+        poly_count      = getPolyParamCount(uni->signature);
+        non_poly_count  = uni_param_count - poly_count;
+      }
+    }
+  }
+
+  if (optionalDirective("builtin"))
+  {
+    setFlag(&uni->flags, AstFlag_IsBuiltin);
+  }
+
+  if (requireChar('{'))
+  {
+    i32 ctor_cap = 16;  // todo #grow
+    allocateArray(arena, ctor_cap, uni->ctor_signatures);
+    allocateArray(arena, ctor_cap, uni->ctor_names);
+
+    Ast *auto_ctor_output_type = 0;
+    if (!non_poly_count)
+    {
+      if (poly_count)
+      {
+        CompositeAst *output_type = newAst(arena, CompositeAst, uni_name);
+        output_type->arg_count = uni_param_count;
+        allocateArray(arena, uni_param_count, output_type->args);
+        for (i32 i=0; i < uni_param_count; i++)
+        {
+          // we got rid of the param token, so now we gotta make one up...
+          Token token = newToken(uni->signature->param_names[i]);
+          output_type->args[i] = newAst(arena, Identifier, &token);
+        }
+        output_type->op = newAst(arena, Identifier, uni_name);
+        auto_ctor_output_type = output_type;
+      }
+      else
+      {
+        auto_ctor_output_type = newAst(arena, Identifier, uni_name);
+      }
+    }
+
+    for (b32 stop=false; noError() && !stop; )
+    {
+      if (optionalChar('}')) stop=true;
+      else
+      {
+        i32 ctor_i = uni->ctor_count++;
+        Token ctor_name = nextToken();
+        uni->ctor_names[ctor_i] = ctor_name;
+        if (isIdentifier(&ctor_name))
+        {
+          ArrowAst *sig = 0;
+          if (peekChar() == '(')
+          {// composite constructor
+            sig = uni->ctor_signatures[ctor_i] = parseArrowType(arena, true);
+          }
+          else
+          {// atomic constructor
+            sig = newAst(arena, ArrowAst, &ctor_name);
+            uni->ctor_signatures[ctor_i] = sig;
+            allocateArray(arena, poly_count, sig->param_names);
+            allocateArray(arena, poly_count, sig->param_types);
+            allocateArray(arena, poly_count, sig->param_flags);
+          }
+
+          if (noError())
+          {
+            // parameter modification to add poly parameters
+            assert((sig->param_count + poly_count) < ctor_cap);
+            for (i32 i = sig->param_count-1; i >= 0; i--)
+            {
+              sig->param_names[i+poly_count] = sig->param_names[i];
+              sig->param_types[i+poly_count] = sig->param_types[i];
+              sig->param_flags[i+poly_count] = sig->param_flags[i];
+            }
+            for (i32 i=0; i < poly_count; i++)
+            {
+              sig->param_names[i] = uni->signature->param_names[i];
+              sig->param_types[i] = uni->signature->param_types[i];
+              sig->param_flags[i] = uni->signature->param_flags[i] | ParameterFlag_Inferred;
+            }
+            sig->param_count += poly_count;
+
+            // output type modification
+            if (auto_ctor_output_type)
+            {
+              if (sig->output_type)
+              {
+                reportError(sig->output_type, "did not expect output type");
+              }
+              else
+              {
+                sig->output_type = auto_ctor_output_type;
+              }
+            }
+            else if (!sig->output_type)
+            {
+              reportError(sig, "output type required since there are non-poly parameters");
+            }
+          }
+        }
+        else
+        {
+          tokenError("expected an identifier as constructor name");
+        }
+
+        stop = eitherOrChar(',', '}');
+      }
+    }
+  }
+  
+  return uni;
+}
+

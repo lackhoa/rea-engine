@@ -1,0 +1,28 @@
+quotientRemainder :: fn(a,b: Natp) -> QuotientRemainder
+{eq := a == b;
+ fork eq
+ {true  return divideEvenly(1)
+  ,
+  false
+  lt := b < a;
+  fork lt
+  {true
+   recurse := quotientRemainder(a-b, b);
+   fork recurse
+   {invalid
+    return invalid  ;; invalid code path
+    ,
+    divideEvenly
+    return divideEvenly(++(recurse.quotient))
+    ,
+    divideWithRemainder
+    return divideWithRemainder(++(recurse.quotient), recurse.remainder)}
+   ,
+   false return invalid}}}
+
+- :: fn(a,b: Natp) -> Natp
+{fork a
+ {1  return 1  ;; invalid
+  ,
+  ++ fork b {1  return a.p,
+             ++ return a.p - b.p}}}

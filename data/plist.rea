@@ -1,4 +1,4 @@
-PList :: union($$ListType: Type) #builtin
+PList :: union(^ListType: Type) #builtin
 {single(head: ListType),
  cons(head: ListType, tail: PList(ListType))}
 
@@ -27,7 +27,7 @@ concatAssoc :: ($A: Type, l,m,n: PList(A)) -> (l+m)+n = l+m+n
 ;; permute
 ;; permute
 
-Permute :: union($$T: Type, PList(T), PList(T)) #builtin
+Permute :: union(^$T: Type, PList(T), PList(T)) #builtin
 {
  permuteSingle(a: T) -> Permute(single(a), single(a))
  ,
@@ -53,7 +53,7 @@ permuteSame :: (A: Type, l: PList(A)) -> Permute(l, l)
  }
 
 ;; todo: rename to "permuteCommutative", since we already have "swap"
-permuteSwap :: (A: Type, l,m: PList(A), p: l Permute m) -> Permute(m, l)
+permuteSwap :: ($A: Type, l,m: PList(A), p: l Permute m) -> Permute(m, l)
 #hint
 {
  fork p
@@ -76,12 +76,17 @@ permuteSwap :: (A: Type, l,m: PList(A), p: l Permute m) -> Permute(m, l)
   permuteSwap
   invert p;
   subst l, m;
-  ;; argument 3 is obviously "p.l", there are 2 permuteSwaps
   use permuteSwap;
   ,
   permuteChain
   invert p;
   subst l, m;
+
+  ;; NOTE this should be illegal!
+  ;; prove p.l Permute p.m {rewrite <- l=p.l; rewrite <- m=p.m}
+  ;; return permuteSwap(p.l, p.m, seek(p.l Permute p.m));
+  ;; permuteSwap(p.chain, p.m, p.p2)
+
   prove p.m Permute p.chain {use permuteSwap}
   prove p.chain Permute p.l {use permuteSwap}
   use permuteChain with chain=p.chain;
@@ -140,7 +145,9 @@ permuteConcatSwap :: (A: Type, l,m: PList(A)) -> Permute(l+m, m+l)
 
    prove [l.head .. m + l.tail] Permute [l.head .. l.tail + m]
    {prove m + l.tail Permute l.tail + m
-    {use permuteConcatSwap}
+    {prove l.tail + m Permute m + l.tail {use permuteConcatSwap}
+     use permuteSwap}
+
     use permuteSkip}
 
    use permuteChain with chain=[l.head .. m + l.tail]

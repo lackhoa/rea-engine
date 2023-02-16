@@ -15,33 +15,28 @@ addCommutative :: (a,b: Z) -> a+b == b+a
 #hint
 {
  norm;
- ;; (a.l + b.l) + b.r + a.r = (a.r + b.r) + b.l + a.l
- => (b.r + a.r) + a.l + b.l = (a.r + b.r) + b.l + a.l
- => (a.r + b.r) + a.l + b.l = (a.r + b.r) + b.l + a.l
- => (a.r + b.r) + b.l + a.l = (a.r + b.r) + b.l + a.l
+ algebra_norm;
  }
 
 addAssociative :: (a,b,c: Z) -> (a+b)+c == a+b+c
 #hint
 {
  norm;
- ;; ((a.l + b.l) + c.l) + a.r + b.r + c.r = ((a.r + b.r) + c.r) + a.l + b.l + c.l
- => (a.r + b.r + c.r) + (a.l + b.l) + c.l = ((a.r + b.r) + c.r) + a.l + b.l + c.l
- => ((a.r + b.r) + c.r) + (a.l + b.l) + c.l = ((a.r + b.r) + c.r) + a.l + b.l + c.l
- => ((a.r + b.r) + c.r) + a.l + b.l + c.l = ((a.r + b.r) + c.r) + a.l + b.l + c.l
+ algebra_norm;
  }
 
 mulCommutative :: (a,b: Z) -> b*a == a*b
 #hint
 {
  norm;
- ;; (b.l * a.r + b.r * a.l) + a.l * b.l + a.r * b.r = (b.l * a.l + b.r * a.r) + a.l * b.r + a.r * b.l
- => (a.l * b.l + a.r * b.r) + b.l * a.r + b.r * a.l = (b.l * a.l + b.r * a.r) + a.l * b.r + a.r * b.l
- => (b.l * a.l + a.r * b.r) + b.l * a.r + b.r * a.l = (b.l * a.l + b.r * a.r) + a.l * b.r + a.r * b.l
- => (b.l * a.l + b.r * a.r) + b.l * a.r + b.r * a.l = (b.l * a.l + b.r * a.r) + a.l * b.r + a.r * b.l
- => (b.l * a.l + b.r * a.r) + a.r * b.l + b.r * a.l = (b.l * a.l + b.r * a.r) + a.l * b.r + a.r * b.l
- => (b.l * a.l + b.r * a.r) + a.r * b.l + a.l * b.r = (b.l * a.l + b.r * a.r) + a.l * b.r + a.r * b.l
- => (b.l * a.l + b.r * a.r) + a.l * b.r + a.r * b.l = (b.l * a.l + b.r * a.r) + a.l * b.r + a.r * b.l
+ algebra_norm;
+ }
+
+mulAssociative :: (a,b,c: Z) -> (a*b)*c == a*b*c
+#hint
+{
+ norm;
+ algebra_norm;
  }
 
 mulDistributive :: (a,b,c: Z) -> (a+b)*c == a*c+b*c

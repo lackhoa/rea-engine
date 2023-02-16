@@ -454,3 +454,50 @@ addAsset(ProofState *state, Term *asset)
 }
 
 #include "generated/engine_forward.h"
+
+struct BuiltinEntry {
+  char  *name;
+  Term **term;
+};
+
+struct ReaBuiltins {
+  Term *Type;
+  Term *equal;
+  Term *False;
+  Term *eqChain;
+  Term *U32;
+  Term *Array;
+  Term *length;
+  Term *slice;
+  Term *swap;
+  Term *toNat;
+  Term *get;
+
+  Term *PList;
+  Term *List;
+  Term *nil;
+  Term *single;
+  Term *cons;
+
+  Term *fold;
+  Term *concat;
+
+  Term *Permute;
+  Term *permuteNil;
+  Term *permuteSingle;
+  Term *permuteSkip;
+  Term *permuteSwap;
+  Term *permuteChain;
+  Term *permuteConsSwap;
+  Term *permuteMiddle;
+  Term *permuteFirst;
+  Term *permuteLast;
+
+  Term *foldConcat;
+  Term *foldPermute;
+  Term *permuteSame;
+  Term *falseImpliesAll;
+};
+global_variable ReaBuiltins rea_builtins;
+ReaBuiltins &rea = rea_builtins;  // global_variable, but adding it breaks the debugger
+#include "generated/rea_builtin.cpp"

@@ -15,60 +15,20 @@
 #include "parser.cpp"
 #include "debug_config.h"
 
-global_variable Function  *current_global_function       = 0;
-global_variable Pointer  **current_global_function_args = 0;
+global_variable Function  *current_global_function              = 0;
+global_variable Pointer  **current_global_function_args         = 0;
+global_variable Pointer   *current_global_function_fork_subject = 0;
 
 Term  holev_ = {.kind = Term_Hole};
 Term *holev = &holev_;
 
 global_variable EngineState global_state;
 
-struct BuiltinEntry {
-  char  *name;
-  Term **term;
-};
-
-struct ReaBuiltins {
-  Term *Type;
-  Term *equal;
-  Term *False;
-  Term *eqChain;
-  Term *U32;
-  Term *Array;
-  Term *length;
-  Term *slice;
-  Term *swap;
-  Term *toNat;
-  Term *get;
-
-  Term *PList;
-  Term *List;
-  Term *nil;
-  Term *single;
-  Term *cons;
-
-  Term *fold;
-  Term *concat;
-
-  Term *Permute;
-  Term *permuteNil;
-  Term *permuteSingle;
-  Term *permuteSkip;
-  Term *permuteSwap;
-  Term *permuteChain;
-  Term *permuteConsSwap;
-  Term *permuteMiddle;
-  Term *permuteFirst;
-  Term *permuteLast;
-
-  Term *foldConcat;
-  Term *foldPermute;
-  Term *permuteSame;
-  Term *falseImpliesAll;
-};
-global_variable ReaBuiltins rea_builtins;
-ReaBuiltins &rea = rea_builtins;  // global_variable, but adding it breaks the debugger
-#include "generated/rea_builtin.cpp"
+inline b32
+isDebugOn()
+{
+  return global_state.top_level_debug_mode;
+}
 
 inline void
 maybeDeref(Term **in0)
@@ -94,10 +54,10 @@ initTerm(Term *in, TermKind cat, Term *type)
 }
 
 inline Term *
-_newTerm(Arena *arena, TermKind cat, Term *type, size_t size)
+_newTerm(Arena *arena, TermKind kind, Term *type, size_t size)
 {
   Term *out = (Term *)pushSize(arena, size, true);
-  initTerm(out, cat, type);
+  initTerm(out, kind, type);
   out->serial = DEBUG_SERIAL++;
   return out;
 }
@@ -251,7 +211,7 @@ getConstructorSignature(Union *uni, i32 ctor_index)
 inline i32
 getParameterCount(Term *in)
 {
-  Arrow *signature = castTerm((in)->type, Arrow);
+  Arrow *signature = castTerm(in->type, Arrow);
   return signature->param_count;
 }
 
@@ -394,22 +354,6 @@ getPolyParamCount(Arrow *params)
 }
 
 inline i32
-getPolyParamCount(ArrowAst *params)
-{
-  i32 param_count = 0;
-  for (i32 param_i=0; param_i < params->param_count; param_i++)
-  {
-    if (checkFlag(params->param_flags[param_i], ParameterFlag_Poly))
-    {
-      param_count++;
-    }
-    else
-      break;
-  }
-  return param_count;
-}
-
-inline i32
 getPolyParamCount(Union *uni)
 {
   if (Arrow *signature = castTerm(uni->type, Arrow))
@@ -468,7 +412,7 @@ rewriteTerm(Term *from, Term *to, TreePath *path, Term *in0)
   }
   else
   {
-    if (!equal(in0, from))
+    if (!equalNorm(in0, from))
     {
       DUMP("\nin0: ", in0, "\n", "from: ", from, "\n");
       invalidCodePath;
@@ -1692,24 +1636,28 @@ isGround(Term *in0)
 }
 
 inline b32
-isRootedFrom(Term *ap0, Pointer *a)
+isRootedFrom(Term *pointer0, Pointer *test_root)
 {
-  assert(a->is_stack_pointer);
-  if (Pointer *ap = castTerm(ap0, Pointer))
+  assert(test_root->is_stack_pointer);
+  if (Pointer *pointer = castTerm(pointer0, Pointer))
   {
-    Pointer *root = ap;
-    while (!root->is_stack_pointer)
+    if (!pointer->is_stack_pointer)
     {
-      root = root->heap.record;
+      Pointer *root = pointer;
+      while (!root->is_stack_pointer)
+      {
+        root = root->heap.record;
+      }
+      return root == test_root;
     }
-    return root == a;
   }
   return false;
 }
 
 inline b32
-recursiveCallAccepted(i32 arg_count, Term **args)
+recursiveCallValid(i32 arg_count, Term **args)
 {
+#if 0
   b32 rejected        = false;
   b32 component_found = false;
   for (i32 i=0; !rejected && i < arg_count; i++)
@@ -1731,7 +1679,17 @@ recursiveCallAccepted(i32 arg_count, Term **args)
       }
     }
   }
-  return !rejected && component_found;
+#endif
+
+  b32 valid = false;
+  auto &subject = current_global_function_fork_subject;
+  if (subject)
+  {
+    assert(subject->is_stack_pointer);
+    i32 index = subject->stack.index;
+    valid = isRootedFrom(args[index], subject);
+  }
+  return valid;
 }
 
 inline void
@@ -1741,25 +1699,20 @@ checkRecursiveCall(Term *op, i32 arg_count, Term **args)
   {
     if (fun == current_global_function)
     {
-      if (!recursiveCallAccepted(arg_count, args))
+      if (!recursiveCallValid(arg_count, args))
       {
-        DUMP("RECURSION REJECTED!\n");
+        String name = fun->global_name->string;
+        print(0, "RECURSION REJECTED in \"%.*s\"! ", name.length, name.chars);
 
-        DUMP("scope: ");
+        print(0, "(args : ");
         for (i32 i=0; i < arg_count; i++)
         {
-          DUMP(current_global_function_args[i], ", ");
+          print(0, args[i]);
+          if (i != arg_count-1) print(0, ", ");
         }
-        DUMP("\n");
+        print(0, ")\n");
 
-        DUMP("args : ");
-        for (i32 i=0; i < arg_count; i++)
-        {
-          DUMP(args[i], ", ");
-        }
-        DUMP("\n");
-
-        assert(false);
+        // assert(false);  // Let's leave that as a warning for now
       }
     }
   }
@@ -1795,7 +1748,6 @@ reaIsCons(Term *in0)
   return in->ctor == rea.cons;
 }
 
-// todo #cleanup "same_type" doesn't need to be passed down all the time.
 internal CompareTerms
 compareTerms(Arena *arena, Term *l0, Term *r0)
 {
@@ -1867,8 +1819,8 @@ compareTerms(Arena *arena, Term *l0, Term *r0)
             assert(l->arg_count == r->arg_count);
 
             i32 mismatch_count = 0;
-            i32 false_count = 0;
-            int       unique_diff_id   = 0;
+            i32 false_count    = 0;
+            i32       unique_diff_id   = 0;
             TreePath *unique_diff_path = 0;
             out.result = Trinary_True;
             for (i32 arg_i=0; arg_i < count; arg_i++)
@@ -1942,8 +1894,22 @@ compareTerms(Arena *arena, Term *l0, Term *r0)
           out.result = toTrinary(l0 == r0);
         } break;
 
-        case Term_Union:
+        // NOTE: Anonymous functions can appear in terms such as Exist, so we
+        // gotta handle them.
         case Term_Function:
+        {
+          Function *lhs = (Function *)l0;
+          Function *rhs = (Function *)r0;
+          if (equal(lhs->type, rhs->type))
+          {
+            if (equal(lhs->body, rhs->body))
+            {
+              out.result = Trinary_True;
+            }
+          }
+        } break;
+
+        case Term_Union:
         case Term_Hole:
         case Term_Rewrite:
         case Term_Computation:
@@ -2255,12 +2221,6 @@ newStackPointer(String name, i32 depth, i32 index, Term *type)
   return out;
 }
 
-inline b32
-isDebugOn()
-{
-  return global_state.top_level_debug_mode;
-}
-
 internal Term *
 normalize_(NormContext *ctx, Term *in0) 
 {
@@ -2402,10 +2362,10 @@ normalize(Term *in0, String name_to_unfold={})
   return normalize_(&ctx, in0);
 }
 
-inline b32
+forward_declare inline b32
 equalNorm(Term *l, Term *r)
 {
-  if (equal(l, r))  // todo: #speed I just think this improves this
+  if (equal(l, r))
   {
     return true;
   }
@@ -2420,7 +2380,7 @@ equalNorm(Term *l, Term *r)
 
 #if REA_INTERNAL
 inline void
-assertNormEqual(Term *l, Term *r)
+assertEqualNorm(Term *l, Term *r)
 {
   if (!equalNorm(l, r))
   {
@@ -2438,6 +2398,14 @@ inline Composite *
 newComposite(Term *op, i32 arg_count, Term **args)
 {
   i32 unused_var serial = DEBUG_SERIAL++;
+  
+  if (isDebugOn())
+  {
+    if (op->kind == Term_Function)
+    {
+      breakhere;
+    }
+  }
 
   checkRecursiveCall(op, arg_count, args);
   Composite *out = 0;
@@ -2450,7 +2418,7 @@ newComposite(Term *op, i32 arg_count, Term **args)
   {
     Term *actual_type   = args[arg_i]->type;
     Term *expected_type = substitute(signature->param_types[arg_i], arg_count, args);
-    assertNormEqual(actual_type, expected_type);
+    assertEqualNorm(actual_type, expected_type);
   }
 
   out = newTerm(temp_arena, Composite, type);
@@ -3371,14 +3339,6 @@ searchExpression(Term *lhs, Term* in0)
   return {.found=found, .path=path};
 }
 
-inline Ast *
-newSyntheticAst(Term *term, Token *token)
-{
-  SyntheticAst *out = newAst(temp_arena, SyntheticAst, token);
-  out->term = term;
-  return out;
-}
-
 internal Arrow *
 copyArrow(Arena *arena, Arrow *in)
 {
@@ -4265,8 +4225,12 @@ buildFunctionGivenSignature(Typer *typer, Arrow *signature, Ast *in_body,
     Term *body_type = toValue(typer->scope, signature->output_type);
     body = buildTerm(typer, in_body, body_type);
 
-    current_global_function       = 0;
-    current_global_function_args = 0;
+    if (global_name)
+    {
+      assert(current_global_function == out);
+      current_global_function       = 0;
+      current_global_function_args = 0;
+    }
   }
 
   if (body)
@@ -5487,9 +5451,14 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
           reportError(in0, "actual type differs from expected type");
           attach("got", actual);
           attach("serial", serial);
+
+#if 0
+          DEBUG_LOG_compare = 1;
+          matchType(actual, goal0);
+          DEBUG_LOG_compare = 0;
+#endif
         }
       }
-      DEBUG_LOG_compare = 0;
     }
   }
 
@@ -5536,13 +5505,37 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
   Arena *arena = temp_arena;
   if (goal->kind == Term_Hole)
   {
-    reportError(in, "fork expressions require a goal, please provide one (f.ex instead of writing \"a := b\", write \"a: A := b\")");
+    reportError(in, "fork expressions require a goal");
   }
   Fork *out = newTerm(arena, Fork, goal);
   out->case_count = in->case_count;
   i32 UNUSED_VAR serial = DEBUG_SERIAL++;
   if (Term *subject = buildTerm(typer, in->subject, holev).value)
   {
+    Pointer *save_global_fork_subject = current_global_function_fork_subject;
+    if (current_global_function)
+    {
+      // NOTE: massive #hack to mark this subject as "should be decreasing when
+      // calling recursively".
+      if (current_global_function_fork_subject)
+      {
+        breakhere;  // STUDY: multiple fork subjects, what to do...?
+      }
+      else
+      {
+        i32 param_count = getParameterCount(current_global_function);
+        for (i32 param_i=0; param_i < param_count; param_i++)
+        {
+          Pointer *arg = current_global_function_args[param_i];
+          if (subject == arg)
+          {
+            current_global_function_fork_subject = arg;
+            break;
+          }
+        }
+      }
+    }
+
     out->subject = subject;
     Term *subject_type = subject->type;
     if (Union *uni = getUnionOrPolyUnion(subject_type))
@@ -5648,6 +5641,8 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
       reportError(in->subject, "cannot fork expression of this type");
       attach("type", subject_type);
     }
+
+    current_global_function_fork_subject = save_global_fork_subject;
   }
   if (noError())
   {
@@ -5679,139 +5674,6 @@ parseAndBuildGlobal(Typer *typer, Term *expected_type=holev)
     out = copyToGlobalArena(out);
   }
   return out;
-}
-
-internal UnionAst *
-parseUnion(Arena *arena, Token *uni_name)
-{
-  UnionAst *uni = newAst(arena, UnionAst, uni_name);
-
-  i32 uni_param_count = 0;
-  i32 poly_count      = 0;
-  i32 non_poly_count  = 0;
-  if (peekChar() == ('('))
-  {
-    if ((uni->signature = parseArrowType(arena, true)))
-    {
-      if (uni->signature->output_type)
-      {
-        reportError(uni->signature->output_type, "didn't expect an output type");
-      }
-      else
-      {
-        uni->signature->output_type = newSyntheticAst(rea.Type, uni_name);
-        uni_param_count = uni->signature->param_count;
-        poly_count      = getPolyParamCount(uni->signature);
-        non_poly_count  = uni_param_count - poly_count;
-      }
-    }
-  }
-
-  if (optionalDirective("builtin"))
-  {
-    setFlag(&uni->flags, AstFlag_is_builtin);
-  }
-
-  if (requireChar('{'))
-  {
-    i32 ctor_cap = 16;  // todo #grow
-    allocateArray(arena, ctor_cap, uni->ctor_signatures);
-    allocateArray(arena, ctor_cap, uni->ctor_names);
-
-    Ast *auto_ctor_output_type = 0;
-    if (!non_poly_count)
-    {
-      if (poly_count)
-      {
-        CompositeAst *output_type = newAst(arena, CompositeAst, uni_name);
-        output_type->arg_count = uni_param_count;
-        allocateArray(arena, uni_param_count, output_type->args);
-        for (i32 i=0; i < uni_param_count; i++)
-        {
-          // we got rid of the param token, so now we gotta make one up...
-          Token token = newToken(uni->signature->param_names[i]);
-          output_type->args[i] = newAst(arena, Identifier, &token);
-        }
-        output_type->op = newAst(arena, Identifier, uni_name);
-        auto_ctor_output_type = output_type;
-      }
-      else
-      {
-        auto_ctor_output_type = newAst(arena, Identifier, uni_name);
-      }
-    }
-
-    for (b32 stop=false; noError() && !stop; )
-    {
-      if (optionalChar('}')) stop=true;
-      else
-      {
-        i32 ctor_i = uni->ctor_count++;
-        Token ctor_name = nextToken();
-        uni->ctor_names[ctor_i] = ctor_name;
-        if (isIdentifier(&ctor_name))
-        {
-          ArrowAst *sig = 0;
-          if (peekChar() == '(')
-          {// composite constructor
-            sig = uni->ctor_signatures[ctor_i] = parseArrowType(arena, true);
-          }
-          else
-          {// atomic constructor
-            sig = newAst(arena, ArrowAst, &ctor_name);
-            uni->ctor_signatures[ctor_i] = sig;
-            allocateArray(arena, poly_count, sig->param_names);
-            allocateArray(arena, poly_count, sig->param_types);
-            allocateArray(arena, poly_count, sig->param_flags);
-          }
-
-          if (noError())
-          {
-            // modification to add poly variables
-            assert((sig->param_count + poly_count) < ctor_cap);
-            for (i32 i = sig->param_count-1; i >= 0; i--)
-            {
-              sig->param_names[i+poly_count] = sig->param_names[i];
-              sig->param_types[i+poly_count] = sig->param_types[i];
-              sig->param_flags[i+poly_count] = sig->param_flags[i];
-            }
-            for (i32 i=0; i < poly_count; i++)
-            {
-              sig->param_names[i] = uni->signature->param_names[i];
-              sig->param_types[i] = uni->signature->param_types[i];
-              sig->param_flags[i] = uni->signature->param_flags[i];
-            }
-            sig->param_count += poly_count;
-
-            // modification to add output type
-            if (auto_ctor_output_type)
-            {
-              if (sig->output_type)
-              {
-                reportError(sig->output_type, "did not expect output type");
-              }
-              else
-              {
-                sig->output_type = auto_ctor_output_type;
-              }
-            }
-            else if (!sig->output_type)
-            {
-              reportError(sig, "output type required since there are non-poly parameters");
-            }
-          }
-        }
-        else
-        {
-          tokenError("expected an identifier as constructor name");
-        }
-
-        stop = eitherOrChar(',', '}');
-      }
-    }
-  }
-  
-  return uni;
 }
 
 internal void
@@ -5945,7 +5807,7 @@ buildUnion(Typer *typer, UnionAst *in, Token *global_name)
     }
   }
 
-  b32 is_builtin = checkFlag(in->flags, AstFlag_is_builtin);
+  b32 is_builtin = checkFlag(in->flags, AstFlag_IsBuiltin);
   if (is_builtin && noError())
   {
     if (equal(global_name, "Permute"))
@@ -5989,7 +5851,7 @@ buildGlobalFunction(Typer *typer, FunctionAst *in)
         {
           addGlobalHint(out);
         }
-        if (checkFlag(in->flags, AstFlag_is_builtin))
+        if (checkFlag(in->flags, AstFlag_IsBuiltin))
         {
           addBuiltinTerm(out);
         }

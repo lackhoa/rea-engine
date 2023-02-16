@@ -98,22 +98,19 @@ successorIsDifferent :: (a: Natp, P: ++(a) = a) -> False
  fork a
  {
   1:  return P,
-  ++: return successorIsDifferent(a.p, P),
+  ++: return successorIsDifferent(a.p, P)
+  ,
   }
  }
 
 ;; todo this really should be built-in
 differentFromTwoSuccessor :: (a: Natp, P: ++(++(a)) = a) -> False
 #norm(P)
-{
- fork a
- {
-  1:  return P,
-  ++: return differentFromTwoSuccessor(a.p, P),
-  }
- }
+{fork a
+ {1:  return P,
+  ++: return differentFromTwoSuccessor(a.p, P)}}
 
-> :: fn(a, b: Natp) -> Bool
+> :: fn(a,b: Natp) -> Bool
 {fork a
  {1 : return false,
   ++: fork b {1: return true, ++: return a.p > b.p}}}
@@ -251,7 +248,7 @@ addPreservesGt :: (a,b,c: Natp, p: a>b=true) -> a+c > b+c = true
   }
  }
 
-TotalOrder :: union ($$a,$$b: Natp)
+TotalOrder :: union (^a,^b: Natp)
 {eq(p: a = b),
  gt(p: a>b = true),
  lt(p: b>a = true)}
@@ -264,7 +261,7 @@ totalOrder :: (a,b: Natp) -> TotalOrder(a,b)
   {1 return gt(_),
    ++
    ind := totalOrder(a.p, b.p);
-   fork ind {eq return eq(prove{rewrite  ind.p}),
+   fork ind {eq return eq(prove{rewrite ind.p}),
              gt return gt(prove{norm; return ind.p}),
              lt return lt(prove{norm; return ind.p})}}}}
 
@@ -285,5 +282,22 @@ mulDistributive :: (a,b,c: Natp) -> c*(a+b) = c*a+c*b
  => (a+b)*c = a*c+c*b
  => (a+b)*c = a*c+b*c
  }
+
+;; NOTE: ">" is already defined, but there's no reason not to define "<=" too.
+<= :: fn(a,b: Natp) -> Bool
+{fork a
+ {1 : return true,
+  ++: fork b {1: return false, ++: return a.p <= b.p}}}
+
+< :: fn(a,b: Natp) -> Bool
+{return ++(a) <= b}
+
+== :: fn(a,b: Natp) -> Bool
+{fork a
+ {1  fork b {1  return true,
+             ++ return false}
+  ,
+  ++ fork b {1  return false,
+             ++ return a.p == b.p}}}
 
 algebra_declare Natp;
