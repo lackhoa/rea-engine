@@ -465,6 +465,8 @@ struct ReaBuiltins {
   Term *equal;
   Term *False;
   Term *eqChain;
+  Term *Exists;
+
   Term *U32;
   Term *Array;
   Term *length;

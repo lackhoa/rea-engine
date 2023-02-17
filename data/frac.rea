@@ -15,8 +15,8 @@ cancelCommonFactor :: (a,b,r: Natp) -> (a*r)/(b*r) == a/b
 isFactor :: (r,a: Natp) -> Type
 #expand
 {
- return Exists(fn(t: Natp) -> Type {return a = r*t})
- }
+  return exists(t: Natp), a = r*t
+  }
 
 relativelyPrime :: (a,b: Natp) -> Type
 #expand
@@ -24,33 +24,24 @@ relativelyPrime :: (a,b: Natp) -> Type
  return (r: Natp, isFactor(r, a), isFactor(r, b)) -> r = 1
  }
 
-;; ;; TODO: could use "exists" here, but the function application is annoying.
-;; Diff :: union(^a,^b: Natp)
-;; {
-;;  diff(c: Natp, e: a = b+c)
-;;  }
-
-difference :: fn(a,b: Natp, p: a > b = true) -> Exists(fn(c: Natp) -> Type {return a = b+c})
+difference :: fn(a,b: Natp, p: a > b = true) -> exists(c: Natp) a = b+c
 { fork a
   { 1  norm p,
     ++ fork b
     { 1
       prove ++(a.p) = 1 + a.p {};
-      use exists with e=a.p;
+      use evidence with e=a.p;
       ,
       ++
       norm p;
       recurse := difference(a.p,b.p,p);
       prove ++(a.p) = ++(b.p) + recurse.e {norm};
-      use exists with e=recurse.e}}}
+      use evidence with e=recurse.e}}}
 
 QuotientRemainder :: union(^a, ^b: Natp)
 { divideFail(p: b>a = true),
   divideEvenly(quotient: Natp, p: a = quotient*b),
   divideWithRemainder(quotient: Natp, remainder: Natp, p: a = quotient*b + remainder)}
-
-;; Inductive Acc (x: A) : Prop :=
-;;     Acc_intro : (forall y:A, R y x -> Acc y) -> Acc x.
 
 Reachable :: union(^R: (a :Natp, b :Natp) -> Type, ^x: Natp)
 {
@@ -124,7 +115,7 @@ ltChain :: (a,b,c: Natp, p: a lt b, q: b lt c) -> a lt c
 ;; TODO: since we don't have nested fixpoints, we gotta hoist the function out here.
 ltWellFounded :: (a: Natp) -> Reachable(lt,a)
 {
-  useme := fn (b: Natp, p: b lt a) -> Reachable(lt, b)
+  pose fn (b: Natp, p: b lt a) -> Reachable(lt, b)
   {
     fork a
     {
@@ -132,16 +123,16 @@ ltWellFounded :: (a: Natp) -> Reachable(lt,a)
       ++ norm p;
       recurse := prove Reachable(lt, a.p) {use ltWellFounded};
 
-      useme := fn (y: Natp, pyb: y lt b) -> Reachable(lt,y)
+      pose fn (y: Natp, pyb: y lt b) -> Reachable(lt,y)
       {
         chain := prove y lt a.p {use leChain with b=b};
         use (recurse.p)
         };
 
-      use reachable with p=useme;
+      use reachable;
       }
     };
-  use reachable with p=useme;
+  use reachable;
   }
 
 ltWellFounded : WellFounded(lt) := prove {norm; return ltWellFounded};

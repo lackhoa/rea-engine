@@ -88,6 +88,18 @@ requireIdentifier(char *message=0)
   return out;
 }
 
+inline Identifier *
+parseIdentifier()
+{
+  Identifier *out = 0;
+  if (requireIdentifier())
+  {
+    out = newAst(temp_arena, Identifier, lastToken());
+  }
+  return out;
+}
+
+
 inline b32
 optionalIdentifier()
 {
@@ -639,8 +651,9 @@ parseOverload(Arena *arena)
 }
 
 internal ArrowAst *
-parseArrowType(Arena *arena, b32 is_struct)
+parseArrowType(b32 skip_output_type)
 {
+  Arena *arena = temp_arena;
   ArrowAst *out = 0;
   i32      param_count = 0;
   String  *param_names;
@@ -773,7 +786,7 @@ parseArrowType(Arena *arena, b32 is_struct)
       if (Ast *return_type = parseExpression())
         out->output_type = return_type;
     }
-    else if (!is_struct)  // structs don't need return type
+    else if (!skip_output_type)  // structs don't need return type
     {
       reportError("non-struct arrow types require an output type");
     }
@@ -796,7 +809,7 @@ parseFunctionExpression(Arena *arena)
   }
   else
   {
-    signature = parseArrowType(arena, false);
+    signature = parseArrowType(false);
   }
 
   if (noError())
@@ -847,6 +860,71 @@ parseList(Arena *arena)
     out->items = items;
     out->tail  = tail;
   }
+  return out;
+}
+
+inline Ast *
+newSyntheticAst(Term *term, Token *token)
+{
+  SyntheticAst *out = newAst(temp_arena, SyntheticAst, token);
+  out->term = term;
+  return out;
+}
+
+internal Ast *
+parseExists()
+{
+  Arena *arena = temp_arena;
+  Token token_ = *lastToken(); auto token = &token_;
+  pushContext("exists IDENTIFIER: TYPE, BODY");
+  CompositeAst *out = 0;
+
+  // TODO: we're only covering the "shorthand" case with a single bound variable.
+  ArrowAst *signature = 0;
+  if (peekChar() == '(')
+  {
+    signature = parseArrowType(true);
+    optionalChar(',');  // for refactor purpose
+  }
+  else
+  {
+    if (requireIdentifier())
+    {
+      String param_name = lastToken()->string;
+      if (requireChar(':'))
+      {
+        if (Ast *param_type = parseExpression())
+        {
+          if (requireChar(','))
+          {
+            signature = newAst(arena, ArrowAst, &param_type->token);
+            signature->param_count = 1;
+            pushItems(arena, signature->param_names, param_name);
+            pushItems(arena, signature->param_types, param_type);
+            pushItems(arena, signature->param_flags, ((u32)0));
+          }
+        }
+      }
+    }
+  }
+
+  if (signature)
+  {
+    signature->output_type = newSyntheticAst(rea.Type, &signature->token);
+    if (Ast *body = parseExpression())
+    {
+      FunctionAst *fun = newAst(arena, FunctionAst, &body->token);
+      fun->signature = signature;
+      fun->body      = body;
+
+      out = newAst(arena, CompositeAst, token);
+      out->op        = newSyntheticAst(rea.Exists, token);
+      out->arg_count = 1;
+      pushItems(arena, out->args, (Ast*)fun);
+    }
+  }
+
+  popContext();
   return out;
 }
 
@@ -933,6 +1011,11 @@ parseOperand()
     case Token_Keyword_use:
     {
       operand = parseUse();
+    } break;
+
+    case Token_Keyword_exists:
+    {
+      operand = parseExists();
     } break;
 
     default:
@@ -1059,7 +1142,7 @@ parseExpression_(ParseExpressionOptions opt)
   if (seesArrowExpression())
   {
     // todo Arrow could just be an operand maybe?
-    out = parseArrowType(arena, false);
+    out = parseArrowType(false);
   }
   else if (Ast *operand = parseOperand())
   {
@@ -1375,14 +1458,6 @@ getPolyParamCount(ArrowAst *params)
   return param_count;
 }
 
-inline Ast *
-newSyntheticAst(Term *term, Token *token)
-{
-  SyntheticAst *out = newAst(temp_arena, SyntheticAst, token);
-  out->term = term;
-  return out;
-}
-
 internal UnionAst *
 parseUnion(Arena *arena, Token *uni_name)
 {
@@ -1393,7 +1468,7 @@ parseUnion(Arena *arena, Token *uni_name)
   i32 non_poly_count  = 0;
   if (peekChar() == ('('))
   {
-    if ((uni->signature = parseArrowType(arena, true)))
+    if ((uni->signature = parseArrowType(true)))
     {
       if (uni->signature->output_type)
       {
@@ -1456,7 +1531,7 @@ parseUnion(Arena *arena, Token *uni_name)
           ArrowAst *sig = 0;
           if (peekChar() == '(')
           {// composite constructor
-            sig = uni->ctor_signatures[ctor_i] = parseArrowType(arena, true);
+            sig = uni->ctor_signatures[ctor_i] = parseArrowType(true);
           }
           else
           {// atomic constructor
