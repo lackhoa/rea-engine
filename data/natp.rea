@@ -248,6 +248,7 @@ addPreservesGt :: (a,b,c: Natp, p: a>b=true) -> a+c > b+c = true
   }
  }
 
+;; TODO: implement three-way disjunction so I don't have to bind these names
 TotalOrder :: union (^a,^b: Natp)
 {eq(p: a = b),
  gt(p: a>b = true),
@@ -300,5 +301,88 @@ mulDistributive :: (a,b,c: Natp) -> c*(a+b) = c*a+c*b
   ,
   ++ fork b {1  return false,
              ++ return a.p == b.p}}}
+
+le :: fn(a,b: Natp) -> Type
+#expand
+{
+  return a <= b = true
+  }
+
+lt :: fn(a,b: Natp) -> Type
+#expand
+{
+  return a < b = true
+  }
+
+gt :: fn(a,b: Natp) -> Type
+#expand
+{
+  return a > b = true
+  }
+
+le1 :: ($a: Natp, p: a le 1) -> a=1
+{fork a {1, ++ norm p;}}
+
+ltLemma :: (a,b: Natp, p: a lt ++(b)) -> a=b \/ a lt b
+{
+  fork a
+  {
+    1 fork b {1 use leftDisjunct, ++ use rightDisjunct}
+    ,
+    ++ fork b
+    { 1 norm p,
+      ++
+      norm p;
+      recurse := use ltLemma with a=a.p, b=b.p, p=p;
+      norm recurse;
+      }
+    }
+  }
+
+leChain :: (a,b,c: Natp, p: a le b, q: b le c) -> a le c
+#norm(p,q)
+{
+  fork c
+  { 1 pose le1(q); rewrite b=1 in p,
+    ++ fork b
+    { 1  pose le1(p); rewrite a=1, 
+      ++ fork a
+      { 1  ,
+        ++ use leChain with b=b.p
+        }
+      }}
+  }
+
+ltChain :: (a,b,c: Natp, p: a lt b, q: b lt c) -> a lt c
+{
+  fork c
+  {
+    1  norm q,
+    ++ fork b
+    {1 norm p,
+      ++ fork a {1, ++ norm p; norm q;
+                  prove a.p lt b.p {norm};
+                  prove b.p lt c.p {norm};
+                  use ltChain with b=b.p}}
+    }
+  }
+
+ltGt :: (a,b: Natp, p: a lt b) -> b gt a
+{
+  fork b
+  {
+    1  norm p,
+    ++ fork a {1, ++ norm p; use ltGt}
+    }
+  }
+
+gtLt :: (a,b: Natp, p: a gt b) -> b lt a
+{
+  fork a
+  {
+    1  norm p,
+    ++ fork b {1, ++ norm p; use gtLt}
+    }
+  }
 
 algebra_declare Natp;

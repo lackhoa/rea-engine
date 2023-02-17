@@ -1761,6 +1761,7 @@ reaIsCons(Term *in0)
   return in->ctor == rea.cons;
 }
 
+// TODO: We should only compare terms of the same type!
 internal CompareTerms
 compareTerms(Arena *arena, Term *l0, Term *r0)
 {
@@ -5132,75 +5133,84 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
           rewrite_path = 0;
         }
       }
-      else if ((new_goal = buildTerm(typer, in->new_goal, holev).value))
+      else if ((new_goal = buildTerm(typer, in->new_goal, holev)))
       {
-        CompareTerms compare = compareTerms(arena, goal0, new_goal);
-        if (compare.result == Trinary_True)
+        if (equal(new_goal->type, goal0->type))
         {
-          reportError(in0, "new goal is exactly the same as current goal");
-        }
-        else if (compare.result == Trinary_False)
-        {
-          reportError(in0, "new goal is totally different from current goal");
-        }
-        else
-        {
-          rewrite_path = compare.diff_path;
-          Term *from = subExpressionAtPath(goal0, compare.diff_path);
-          Term *to   = subExpressionAtPath(new_goal, compare.diff_path);
-
-          HintDatabase *hints = 0;
-          if (in->hint)
+          CompareTerms compare = compareTerms(arena, goal0, new_goal);
+          if (compare.result == Trinary_True)
           {
-            b32 is_global_identifier = false;
-            if (Identifier *ident = castAst(in->hint, Identifier))
+            reportError(in0, "new goal is exactly the same as current goal");
+          }
+          else if (compare.result == Trinary_False)
+          {
+            reportError(in0, "new goal is totally different from current goal");
+          }
+          else
+          {
+            rewrite_path = compare.diff_path;
+            Term *from = subExpressionAtPath(goal0, compare.diff_path);
+            Term *to   = subExpressionAtPath(new_goal, compare.diff_path);
+
+            HintDatabase *hints = 0;
+            if (in->hint)
             {
-              if (!lookupLocalName(typer, &ident->token))
+              b32 is_global_identifier = false;
+              if (Identifier *ident = castAst(in->hint, Identifier))
               {
-                if (GlobalBinding *slot = lookupGlobalNameSlot(ident, false))
+                if (!lookupLocalName(typer, &ident->token))
                 {
-                  is_global_identifier = true;
-                  for (i32 i=0; i < slot->count; i++)
+                  if (GlobalBinding *slot = lookupGlobalNameSlot(ident, false))
                   {
-                    hints = addHint(temp_arena, hints, slot->terms[i]);
+                    is_global_identifier = true;
+                    for (i32 i=0; i < slot->count; i++)
+                    {
+                      hints = addHint(temp_arena, hints, slot->terms[i]);
+                    }
                   }
+                  else
+                  {
+                    reportError(ident, "identifier not found");
+                    attach("identifier", ident->token.string);
+                  }
+                }
+              }
+
+              if (!is_global_identifier)
+              {
+                if ((eq_proof = buildTerm(typer, in->hint, holev)))
+                {
+                  hints = addHint(temp_arena, hints, eq_proof);
+                }
+              }
+            }
+
+            if (noError())
+            {
+              Term *lr_eq = newEquality(from, to);
+              Term *rl_eq = newEquality(to, from);
+
+              Solver solver = Solver{.typer=typer, .local_hints=hints, .use_global_hints=true};
+              if (!(eq_proof = solveGoal(&solver, lr_eq)))
+              {
+                if ((eq_proof = solveGoal(&solver, rl_eq)))
+                {
+                  right_to_left = true;
                 }
                 else
                 {
-                  reportError(ident, "identifier not found");
-                  attach("identifier", ident->token.string);
+                  reportError(in0, "cannot solve for equality proof");
+                  attach("equality", lr_eq);
                 }
               }
             }
-
-            if (!is_global_identifier)
-            {
-              if ((eq_proof = buildTerm(typer, in->hint, holev)))
-              {
-                hints = addHint(temp_arena, hints, eq_proof);
-              }
-            }
           }
-
-          if (noError())
-          {
-            Term *lr_eq = newEquality(from, to);
-            Term *rl_eq = newEquality(to, from);
-
-            Solver solver = Solver{.typer=typer, .local_hints=hints, .use_global_hints=true};
-            if (!(eq_proof = solveGoal(&solver, lr_eq)))
-            {
-              if ((eq_proof = solveGoal(&solver, rl_eq)))
-              {
-                right_to_left = true;
-              }
-              else
-              {
-                reportError(in0, "cannot solve for equality proof");
-                attach("equality", lr_eq);
-              }
-            }
-          }
+        }
+        else
+        {
+          reportError(in, "new goal does not have the same type as old goal!");
+          attach("new_goal->type", new_goal->type);
+          attach("goal0->type", goal0->type);
         }
       }
 
@@ -5460,12 +5470,12 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
       if (!error->goal_attached)
       {
         error->goal_attached = true;
-        attach("goal", goal0);
+        attach("GOAL", goal0);
 
         StartString start = startString(error_buffer);
         print(error_buffer, "\n");
         prettyPrintScope(error_buffer, typer->scope);
-        attach("scope", endString(start));
+        attach("SCOPE", endString(start));
 
         start = startString(error_buffer);
       }
