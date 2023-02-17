@@ -290,6 +290,7 @@ mulDistributive :: (a,b,c: Natp) -> c*(a+b) = c*a+c*b
   ++: fork b {1: return false, ++: return a.p <= b.p}}}
 
 < :: fn(a,b: Natp) -> Bool
+#expand
 {return ++(a) <= b}
 
 == :: fn(a,b: Natp) -> Bool

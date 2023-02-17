@@ -122,11 +122,11 @@ ltChain :: (a,b,c: Natp, p: a lt b, q: b lt c) -> a lt c
       ++ fork a {1, ++ norm p; norm q;
                   prove a.p lt b.p {norm};
                   prove b.p lt c.p {norm};
-                  => a.p lt c.p;
                   use ltChain with b=b.p}}
     }
   }
 
+;; TODO: since we don't have nested fixpoints, we gotta hoist the function out here.
 ltWellFounded :: (a: Natp) -> Reachable(lt,a)
 {
   useme := fn (b: Natp, p: b lt a) -> Reachable(lt, b)
@@ -139,8 +139,8 @@ ltWellFounded :: (a: Natp) -> Reachable(lt,a)
 
       useme := fn (y: Natp, pyb: y lt b) -> Reachable(lt,y)
       {
-        chain := prove y lt a.p {norm; norm pyb; use leChain with b=b};
-        use (recurse.p) ;; with lt=chain  ;; todo: it's ridiculous to have to do this!
+        chain := prove y lt a.p {use leChain with b=b};
+        use (recurse.p)
         };
 
       use reachable with p=useme;
@@ -149,10 +149,7 @@ ltWellFounded :: (a: Natp) -> Reachable(lt,a)
   use reachable with p=useme;
   }
 
-ltWellFounded :: () -> WellFounded(lt)
-{
-  norm;
-  }
+ltWellFounded : WellFounded(lt) := prove {norm; return ltWellFounded};
 
 quotientRemainder :: fn(a,b: Natp) -> QuotientRemainder(a,b)
 {order := totalOrder(a,b);

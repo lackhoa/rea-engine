@@ -1258,7 +1258,7 @@ shouldPrintType(Term *type)
       return !uni->ctor_count;
     }
 
-    if (auto [uni, _] = castUnion(type))
+    if (castUnion(type))
     {
       return true;
     }
@@ -1346,12 +1346,23 @@ newScope(Scope *outer, i32 param_count)
   return newScope(outer, param_count, values);
 }
 
+inline Function *
+isAlwaysExpandFunction(Term *op)
+{
+  if (Function *fun = castTerm(op, Function))
+  {
+    if (checkFlag(fun->function_flags, FunctionFlag_expand))
+      return fun;
+  }
+  return 0;
+}
+
 internal Term *
 evaluate_(EvalContext *ctx, Term *in0)
 {
   Term *out0 = 0;
   Arena *arena = temp_arena;
-  b32 substitute_only = ctx->offset || ctx->substitute_only;
+  b32 substitute_only = ctx->substitute_only;
 
   i32 unused_var serial = DEBUG_SERIAL++;
   if (DEBUG_LOG_evaluate)
@@ -1397,7 +1408,7 @@ evaluate_(EvalContext *ctx, Term *in0)
           assert(args[i]);
         }
 
-        if (!substitute_only)
+        if (!substitute_only || isAlwaysExpandFunction(op))
         {
           out0 = apply(op, in->arg_count, args, {});
         }
@@ -1466,6 +1477,7 @@ evaluate_(EvalContext *ctx, Term *in0)
 
         EvalContext new_ctx = *ctx;
         new_ctx.offset++;
+        new_ctx.substitute_only = true;
         out->body = evaluate_(&new_ctx, in->body);
         assert(out->body);
 
@@ -2395,7 +2407,7 @@ newComposite(Term *op, i32 arg_count, Term **args)
   for (i32 arg_i=0; arg_i < arg_count; arg_i++)
   {
     Term *actual_type   = args[arg_i]->type;
-    Term *expected_type = substitute(signature->param_types[arg_i], arg_count, args);
+    Term *expected_type = evaluate(signature->param_types[arg_i], arg_count, args);
     assertEqualNorm(actual_type, expected_type);
   }
 
@@ -2460,7 +2472,7 @@ instantiate(Term *in0, i32 ctor_i)
       for (i32 mem_i=poly_count; mem_i < member_count; mem_i++)
       {
         Term *member_type = signature->param_types[mem_i];
-        member_type = substitute(member_type, member_count, members);
+        member_type = evaluate(member_type, member_count, members);
         Pointer *member          = newTerm(arena, Pointer, member_type);
         member->heap.record           = pointer;
         member->heap.index            = mem_i;
@@ -2896,7 +2908,7 @@ solveArgs(Solver *solver, Term *op, Term *goal0, Token *blame_token=0)
   i32    arg_count = 0;
   Term **args      = 0;
 
-  i32 serial = DEBUG_SERIAL++;
+  i32 unused_var serial = DEBUG_SERIAL++;
 
   if (Arrow *signature = castTerm((op)->type, Arrow))
   {
@@ -4266,22 +4278,11 @@ buildWithNewAsset(Typer *typer, String name, Term *asset, Ast *body, Term *goal)
   return out;
 }
 
-inline Function *
-isAlwaysExpandFunction(Term *op)
-{
-  if (Function *fun = castTerm(op, Function))
-  {
-    if (checkFlag(fun->function_flags, FunctionFlag_expand))
-      return fun;
-  }
-  return 0;
-}
-
 internal Term *
 buildComposite(Typer *typer, CompositeAst *in, Term *goal)
 {
   Arena *arena = temp_arena;
-  i32 serial = DEBUG_SERIAL++;
+  i32 unused_var serial = DEBUG_SERIAL++;
   Term *value = 0;
 
   if (equal(in->op->token, "test_sort"))
