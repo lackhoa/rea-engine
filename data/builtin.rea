@@ -33,7 +33,7 @@ Maybe :: union(^A: Type)
 
 binaryOp :: fn(T: Type) -> Type
 #expand
-{return (a,b: T) -> T}
+{return (:T, :T) -> T}
 
 associative :: fn($T: Type, op: binaryOp(T)) -> Type
 #expand
@@ -47,7 +47,7 @@ Exists :: union(^$T: Type, ^prop: (x: T) -> Type)
 #builtin
 {
   evidence(e: T, p: prop(e))
- }
+  }
 
 #load "plist.rea"
 ;; #load "list.rea"

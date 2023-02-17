@@ -514,69 +514,58 @@ reaTail(Term *in)
   return getArg(in, 2);
 }
 
+internal void
+printArrow(StringBuffer *buffer, Arrow *in, b32 skip_output, PrintOptions opt)
+{
+  print(buffer, "(");
+  for (int param_i = 0;
+       param_i < in->param_count;
+       param_i++)
+  {
+    String param_name = in->param_names[param_i];
+    if (param_name.chars)
+    {
+      print(buffer, param_name);
+      print(buffer, ": ");
+    }
+    print(buffer, in->param_types[param_i], opt);
+    if (param_i < in->param_count-1)
+    {
+      print(buffer, ", ");
+    }
+  }
+  print(buffer, ")");
+
+  if (in->output_type && !skip_output)
+  {
+    print(buffer, " -> ");
+    print(buffer, in->output_type, opt);
+  }
+}
+
 inline char *
 printComposite(Arena *buffer, Composite *in, PrintOptions opt)
 {
   char *out = buffer ? (char *)getNext(buffer) : 0;
-  int    precedence = 0;        // todo: no idea what the default should be
-  Term  *op         = in->op;
-  i32    arg_count  = 0;
 
-  Arrow *op_signature = 0;
-  b32 print_as_list     = false;
-  b32 no_print_as_binop = false;
-  op_signature = 0;
-  arg_count    = in->arg_count;
-  Term *type0 = (in)->type;
-
-  Constructor *ctor = castTerm(in->op, Constructor);
-
-  if (Composite *type = castTerm(type0, Composite))
+  b32 print_list = false;
+  if (Composite *type = castTerm(in->type, Composite))
   {
     if (!print_full_list &&
-        ((type->op == rea.List) || (type->op == rea.PList)) && ctor)
+        ((type->op == rea.List) || (type->op == rea.PList)) &&
+        in->op->kind == Term_Constructor)
     {
-      print_as_list = true;
+      print_list = true;
     }
   }
 
-  if (Function *fun = castTerm(in->op, Function))
+  b32 print_exists = false;
+  if (!print_list)
   {
-    no_print_as_binop = checkFlag(fun->function_flags, FunctionFlag_no_print_as_binop);
+    print_exists = (in->op == rea.Exists);
   }
 
-  op_signature = castTerm((in->op)->type, Arrow);
-
-  String op_name = {};
-  if (Token *global_name = in->op->global_name)
-  {
-    op_name = global_name->string;
-  }
-  else if (Variable *var = castTerm(in->op, Variable))
-  {
-    op_name = var->name;
-  }
-  precedence = precedenceOf(op_name);
-
-  Term **printed_args = in->args;
-  i32 printed_arg_count = arg_count;
-  if (op_signature)
-  {// print out explicit args only
-    if (!print_all_args)
-    {
-      printed_args = pushArray(temp_arena, op_signature->param_count, Term*);
-      printed_arg_count = 0;
-      for (i32 param_i = 0; param_i < op_signature->param_count; param_i++)
-      {
-        if (!isInferredParameter(op_signature, param_i))
-        {
-          printed_args[printed_arg_count++] = in->args[param_i];
-        }
-      }
-    }
-  }
-
-  if (print_as_list)
+  if (print_list)
   {// list path
     print(buffer, "[");
     for (Record *iter = in; iter; )
@@ -613,40 +602,94 @@ printComposite(Arena *buffer, Composite *in, PrintOptions opt)
     }
     print(buffer, "]");
   }
-  else if (printed_arg_count == 2 && !no_print_as_binop)
-  {// special path for infix binary operator
-    if (precedence < opt.no_paren_precedence)
-      print(buffer, "(");
-
-    PrintOptions arg_opt = opt;
-    // #hack to force printing parentheses when the precedence is the same (a+b)+c.
-    arg_opt.no_paren_precedence = precedence+1;
-    print(buffer, printed_args[0], arg_opt);
-
+  else if (print_exists)
+  {
+    // Raw:   Exists(fn(c: Natp) -> Type {a = b + c})
+    // Print: exists(c: Natp) a = b + c
+    
+    print(buffer, "exists");
+    Function *prop = castTerm(getArg(in, 1), Function);
+    assert(prop);
+    Arrow *signature = castTerm(prop->type, Arrow);
+    assert(signature);
+    printArrow(buffer, signature, true, opt);
     print(buffer, " ");
-    print(buffer, op, opt);
-    print(buffer, " ");
-
-    arg_opt.no_paren_precedence = precedence;
-    print(buffer, printed_args[1], arg_opt);
-    if (precedence < opt.no_paren_precedence)
-      print(buffer, ")");
+    print(buffer, prop->body);
   }
   else
-  {// normal prefix path
-    print(buffer, op, opt);
-    if (!(ctor && printed_arg_count == 0))
+  {
+    b32 no_print_as_binop = false;
+    if (Function *fun = castTerm(in->op, Function))
     {
-      print(buffer, "(");
-      PrintOptions arg_opt        = opt;
-      arg_opt.no_paren_precedence = 0;
-      for (i32 arg_i = 0; arg_i < printed_arg_count; arg_i++)
+      no_print_as_binop = checkFlag(fun->function_flags, FunctionFlag_no_print_as_binop);
+    }
+
+    Arrow *op_signature = castTerm(in->op->type, Arrow);
+
+    String op_name = {};
+    if (Token *global_name = in->op->global_name)
+    {
+      op_name = global_name->string;
+    }
+    else if (Variable *var = castTerm(in->op, Variable))
+    {
+      op_name = var->name;
+    }
+    int precedence = precedenceOf(op_name);
+
+    Term **printed_args = in->args;
+    i32 printed_arg_count = in->arg_count;
+    if (op_signature)
+    {// print out explicit args only
+      if (!print_all_args)
       {
-        print(buffer, printed_args[arg_i], arg_opt);
-        if (arg_i < printed_arg_count-1)
-          print(buffer, ", ");
+        printed_args = pushArray(temp_arena, op_signature->param_count, Term*);
+        printed_arg_count = 0;
+        for (i32 param_i = 0; param_i < op_signature->param_count; param_i++)
+        {
+          if (!isInferredParameter(op_signature, param_i))
+          {
+            printed_args[printed_arg_count++] = in->args[param_i];
+          }
+        }
       }
-      print(buffer, ")");
+    }
+
+    if (printed_arg_count == 2 && !no_print_as_binop)
+    {// special path for infix binary operator
+      if (precedence < opt.no_paren_precedence)
+        print(buffer, "(");
+
+      PrintOptions arg_opt = opt;
+      // #hack to force printing parentheses when the precedence is the same (a+b)+c.
+      arg_opt.no_paren_precedence = precedence+1;
+      print(buffer, printed_args[0], arg_opt);
+
+      print(buffer, " ");
+      print(buffer, in->op, opt);
+      print(buffer, " ");
+
+      arg_opt.no_paren_precedence = precedence;
+      print(buffer, printed_args[1], arg_opt);
+      if (precedence < opt.no_paren_precedence)
+        print(buffer, ")");
+    }
+    else
+    {// normal prefix path
+      print(buffer, in->op, opt);
+      if (!(in->op->kind == Term_Constructor && printed_arg_count == 0))
+      {
+        print(buffer, "(");
+        PrintOptions arg_opt        = opt;
+        arg_opt.no_paren_precedence = 0;
+        for (i32 arg_i = 0; arg_i < printed_arg_count; arg_i++)
+        {
+          print(buffer, printed_args[arg_i], arg_opt);
+          if (arg_i < printed_arg_count-1)
+            print(buffer, ", ");
+        }
+        print(buffer, ")");
+      }
     }
   }
   return out;
@@ -1088,27 +1131,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
         case Term_Arrow:
         {
           Arrow *in = castTerm(in0, Arrow);
-          print(buffer, "(");
-          for (int param_i = 0;
-               param_i < in->param_count;
-               param_i++)
-          {
-            String param_name = in->param_names[param_i];
-            if (param_name.chars)
-            {
-              print(buffer, param_name);
-              print(buffer, ": ");
-            }
-            print(buffer, in->param_types[param_i], new_opt);
-            if (param_i < in->param_count-1)
-              print(buffer, ", ");
-          }
-          print(buffer, ")");
-          if (in->output_type)
-          {
-            print(buffer, " -> ");
-            print(buffer, in->output_type, new_opt);
-          }
+          printArrow(buffer, in, false, new_opt);
         } break;
 
         case Term_Primitive:

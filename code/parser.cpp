@@ -739,7 +739,10 @@ parseArrowType(b32 skip_output_type)
         }
         else
         {
-          *TK = tk_save;
+          if (maybe_param_name_token.kind != ':')
+          {
+            *TK = tk_save;
+          }
           pushContext("anonymous parameter");
           Token anonymous_parameter_token = TK->last_token;
           if (Ast *param_type = parseExpression())
@@ -1150,33 +1153,49 @@ parseExpression_(ParseExpressionOptions opt)
     //     ^
     for (b32 stop = false; !stop && hasMore();)
     {
-      Token op_token = peekToken();
-      if (isIdentifier(&op_token))
+      Token op_token_ = peekToken(); auto op_token = &op_token_;
+      if (isIdentifier(op_token) || op_token->kind == Token_Arrow)
       {// infix operator syntax
         // (a+b) * c
         //        ^
-        Identifier *op = newAst(arena, Identifier, &op_token);
-        i32 precedence = precedenceOf(op_token.string);
+        Identifier *op = newAst(arena, Identifier, op_token);
+        i32 precedence = precedenceOf(op_token->string);
         if (precedence >= opt.min_precedence)
         {
           // recurse
-          nextToken();
+          eatToken();
           // a + b * c
           //      ^
           ParseExpressionOptions opt1 = opt;
           opt1.min_precedence = precedence;
+
           if (Ast *recurse = parseExpression_(opt1))
           {
-            i32 arg_count = 2;
-            Ast **args    = pushArray(arena, arg_count, Ast*);
-            args[0] = operand;
-            args[1] = recurse;
+            if (op_token->kind == Token_Arrow)
+            {
+              Ast *param_type = operand;
+              ArrowAst *arrow = newAst(arena, ArrowAst, op_token);
+              arrow->param_count = 1;
+              pushItems(arena, arrow->param_types, param_type);
+              pushItems(arena, arrow->param_names, String{});
+              pushItems(arena, arrow->param_flags, (u32)0);
+              arrow->output_type = recurse;
+              operand = arrow;
+            }
+            else
+            {
+              // bookmark cleanup: use pushItems
+              i32 arg_count = 2;
+              Ast **args    = pushArray(arena, arg_count, Ast*);
+              args[0] = operand;
+              args[1] = recurse;
 
-            CompositeAst *new_operand = newAst(arena, CompositeAst, &op_token);
-            new_operand->op        = op;
-            new_operand->arg_count = arg_count;
-            new_operand->args      = args;
-            operand = new_operand;
+              CompositeAst *new_operand = newAst(arena, CompositeAst, op_token);
+              new_operand->op        = op;
+              new_operand->arg_count = arg_count;
+              new_operand->args      = args;
+              operand = new_operand;
+            }
           }
         }
         else
@@ -1187,13 +1206,13 @@ parseExpression_(ParseExpressionOptions opt)
           stop = true;
         }
       }
-      else if (isExpressionEndMarker(&op_token))
+      else if (isExpressionEndMarker(op_token))
       {
         stop = true;
       }
       else
       {
-        tokenError(&op_token, "expected operator token");
+        tokenError(op_token, "expected operator token");
       }
     }
     if (noError())
