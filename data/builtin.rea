@@ -43,5 +43,10 @@ commutative :: fn($T: Type, op: binaryOp(T)) -> Type
 #expand
 {return (a,b: T) -> a op b = b op a}
 
+Exists :: union(^$T: Type, ^prop: (x: T) -> Type)
+{
+  exists(e: T, p: prop(e))
+ }
+
 #load "plist.rea"
 ;; #load "list.rea"

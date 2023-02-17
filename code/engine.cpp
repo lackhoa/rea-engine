@@ -4495,7 +4495,7 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
                 }
                 else
                 {
-                  Term *expected_arg_type = substitute(param_type0, param_count, args);
+                  Term *expected_arg_type = evaluate(param_type0, param_count, args);
                   if (Term *arg = buildTerm(typer, in_arg, expected_arg_type))
                   {
                     args[arg_i] = arg;
@@ -4517,7 +4517,7 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
                 {
                   Ast *in_arg = expanded_args[arg_i];
                   Term *param_type0 = signature->param_types[arg_i];
-                  Term *expected_arg_type = substitute(param_type0, param_count, args);
+                  Term *expected_arg_type = evaluate(param_type0, param_count, args);
                   if (in_arg->kind == Ast_Hole)
                   {
                     if (Term *fill = solveGoal(Solver{.typer=typer, .use_global_hints=true}, expected_arg_type))

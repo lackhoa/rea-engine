@@ -12,11 +12,6 @@ cancelCommonFactor :: (a,b,r: Natp) -> (a*r)/(b*r) == a/b
  algebra_norm;
  }
 
-Exists :: union(^$T: Type, ^prop: (x: T) -> Type)
-{
- exists(e: T, proof: prop(e))
- }
-
 isFactor :: (r,a: Natp) -> Type
 #expand
 {
@@ -29,25 +24,25 @@ relativelyPrime :: (a,b: Natp) -> Type
  return (r: Natp, isFactor(r, a), isFactor(r, b)) -> r = 1
  }
 
-;; TODO: could use "exists" here, but the function application is annoying.
-Diff :: union(^a,^b: Natp)
-{
- diff(c: Natp, e: a = b+c)
- }
+;; ;; TODO: could use "exists" here, but the function application is annoying.
+;; Diff :: union(^a,^b: Natp)
+;; {
+;;  diff(c: Natp, e: a = b+c)
+;;  }
 
-difference :: fn(a,b: Natp, p: a > b = true) -> Diff(a,b)
+difference :: fn(a,b: Natp, p: a > b = true) -> Exists(fn(c: Natp) -> Type {return a = b+c})
 { fork a
   { 1  norm p,
     ++ fork b
     { 1
-      prove ++(a.p) = 1 + a.p {}
-      return diff(a.p, _)
+      prove ++(a.p) = 1 + a.p {};
+      use exists with e=a.p;
       ,
       ++
       norm p;
       recurse := difference(a.p,b.p,p);
-      prove ++(a.p) = ++(b.p) + recurse.c {norm};
-      use diff with c=recurse.c}}}
+      prove ++(a.p) = ++(b.p) + recurse.e {norm};
+      use exists with e=recurse.e}}}
 
 QuotientRemainder :: union(^a, ^b: Natp)
 { divideFail(p: b>a = true),
@@ -163,7 +158,7 @@ quotientRemainder :: fn(a,b: Natp) -> QuotientRemainder(a,b)
     ,
     gt
     diff    := difference(a,b, order.p);
-    recurse := quotientRemainder(diff.c, b);
+    recurse := quotientRemainder(diff.e, b);
     }}
 
 gcd :: (a,b: Natp) -> Maybe(Natp)
