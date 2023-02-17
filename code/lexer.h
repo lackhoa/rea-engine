@@ -26,6 +26,7 @@ enum TokenKind
   Token_Keyword_prove,
   Token_Keyword_seek,
   Token_Keyword_in,
+  Token_Keyword_use,
 
   // todo #cleanup These commands can just be dispatched by the top-level parser!
   Token_Keyword_test_eval,
@@ -41,7 +42,7 @@ enum TokenKind
 };
 
 const char *language_keywords[] = {
-  "", "fn", "union", "ctor", "overload", "prove", "seek", "in",
+  "", "fn", "union", "ctor", "overload", "prove", "seek", "in", "use",
   "test_eval", "print", "print_raw", "print_ast", "check", "check_truth", "algebra_declare",
 };
 

@@ -35,51 +35,150 @@ Diff :: union(^a,^b: Natp)
  diff(c: Natp, e: a = b+c)
  }
 
-#debug
 difference :: fn(a,b: Natp, p: a > b = true) -> Diff(a,b)
-#tag(function)
-{fork a
- {1  norm p;,
-  ++ fork b
-  {1
-   prove ++(a.p) = 1 + a.p {}
-   return diff(a.p, _)
-   ,
-   ++
-   norm p;
-   }}}
-#debug off
-
-print overload(difference, function);
+{ fork a
+  { 1  norm p,
+    ++ fork b
+    { 1
+      prove ++(a.p) = 1 + a.p {}
+      return diff(a.p, _)
+      ,
+      ++
+      norm p;
+      recurse := difference(a.p,b.p,p);
+      prove ++(a.p) = ++(b.p) + recurse.c {norm};
+      use diff with c=recurse.c}}}
 
 QuotientRemainder :: union(^a, ^b: Natp)
-{divideFail(p: b>a = true),
- divideEvenly(quotient: Natp, p: a = quotient*b),
- divideWithRemainder(quotient: Natp, remainder: Natp, p: a = quotient*b + remainder)}
+{ divideFail(p: b>a = true),
+  divideEvenly(quotient: Natp, p: a = quotient*b),
+  divideWithRemainder(quotient: Natp, remainder: Natp, p: a = quotient*b + remainder)}
+
+;; Inductive Acc (x: A) : Prop :=
+;;     Acc_intro : (forall y:A, R y x -> Acc y) -> Acc x.
+
+Reachable :: union(^R: (a :Natp, b :Natp) -> Type, ^x: Natp)
+{
+  reachable(p: (y: Natp, lt: y R x) -> Reachable(R, y))
+  }
+
+WellFounded :: fn(R: (a: Natp, b: Natp) -> Type) -> Type
+{
+  return (a: Natp) -> Reachable(R, a)
+  }
+
+le :: fn(a,b: Natp) -> Type
+#expand
+{
+  return a <= b = true
+  }
+
+lt :: fn(a,b: Natp) -> Type
+#expand
+{
+  return a < b = true
+  }
+
+le1 :: ($a: Natp, p: a le 1) -> a=1
+{fork a {1, ++ norm p;}}
+
+ltLemma :: (a,b: Natp, p: a lt ++(b)) -> a=b \/ a lt b
+{
+  fork a
+  {
+    1 fork b {1 use leftDisjunct, ++ use rightDisjunct}
+    ,
+    ++ fork b
+    { 1 norm p,
+      ++
+      norm p;
+      recurse := use ltLemma with a=a.p, b=b.p, p=p;
+      norm recurse;
+      }
+    }
+  }
+
+leChain :: (a,b,c: Natp, p: a le b, q: b le c) -> a le c
+#norm(p,q)
+{
+  fork c
+  { 1 pose le1(q); rewrite b=1 in p,
+    ++ fork b
+    { 1  pose le1(p); rewrite a=1, 
+      ++ fork a
+      { 1  ,
+        ++ use leChain with b=b.p
+        }
+      }}
+  }
+
+ltChain :: (a,b,c: Natp, p: a lt b, q: b lt c) -> a lt c
+{
+  fork c
+  {
+    1  norm q,
+    ++ fork b
+    {1 norm p,
+      ++ fork a {1, ++ norm p; norm q;
+                  prove a.p lt b.p {norm};
+                  prove b.p lt c.p {norm};
+                  => a.p lt c.p;
+                  use ltChain with b=b.p}}
+    }
+  }
+
+ltWellFounded :: (a: Natp) -> Reachable(lt,a)
+{
+  useme := fn (b: Natp, p: b lt a) -> Reachable(lt, b)
+  {
+    fork a
+    {
+      1  norm p,
+      ++ norm p;
+      recurse := prove Reachable(lt, a.p) {use ltWellFounded};
+
+      useme := fn (y: Natp, pyb: y lt b) -> Reachable(lt,y)
+      {
+        chain := prove y lt a.p {norm; norm pyb; use leChain with b=b};
+        use (recurse.p) ;; with lt=chain  ;; todo: it's ridiculous to have to do this!
+        };
+
+      use reachable with p=useme;
+      }
+    };
+  use reachable with p=useme;
+  }
+
+ltWellFounded :: () -> WellFounded(lt)
+{
+  norm;
+  }
 
 quotientRemainder :: fn(a,b: Natp) -> QuotientRemainder(a,b)
 {order := totalOrder(a,b);
- fork order
- {eq
-  prove a = 1 * b {norm;}
-  return divideEvenly(1, _)
-  ,
-  lt
-  return divideFail(order.p)
-  ,
-  gt
-  }}
+  fork order
+  {eq
+    prove a = 1 * b {norm;}
+    return divideEvenly(1, _)
+    ,
+    lt
+    return divideFail(order.p)
+    ,
+    gt
+    diff    := difference(a,b, order.p);
+    recurse := quotientRemainder(diff.c, b);
+    }}
 
 gcd :: (a,b: Natp) -> Maybe(Natp)
 {qr := quotientRemainder(a,b);
- fork qr
- {invalid return none()
-  ,
-  divideEvenly return some(qr.quotient)
-  ,
-  divideWithRemainder
-  return gcd(b, qr.remainder)
-  }}
+  fork qr
+  {divideFail return none()
+    ,
+    divideEvenly return some(qr.quotient)
+    ,
+    divideWithRemainder
+    return gcd(b, qr.remainder)
+    }}
 
 quotientRemainderCorrect ::
 ((a,b: Natp, q,r: Natp, e: quotientRemainder(a,b) = divideWithRemainder(q,r)) ->

@@ -219,6 +219,65 @@ getAstBody(Ast *item0)
   return 0;
 }
 
+internal Ast *
+parseUse()
+{
+  Token *token = lastToken();
+  Ast *ast0 = 0;
+  Arena *arena = temp_arena;
+  pushContext("use IDENTIFIER|(EXPRESSION) [with PARAMETER=VALUE, ...]");
+  Ast *op = 0;
+  if (optionalChar('('))
+  {
+    op = parseExpression();
+    requireChar(')');
+  }
+  else if (requireIdentifier())
+  {
+    Token op_name = *lastToken();
+    op = newAst(arena, Identifier, &op_name);
+  }
+
+  if (noError())
+  {
+    CompositeAst *ast = newAst(arena, CompositeAst, token);
+    ast->op           = op;
+    ast->partial_args = true;
+
+    if (optionalString("with"))
+    {
+      i32 cap = 16;  // todo #grow
+      ast->keywords = pushArray(arena, cap, String);
+      ast->args     = pushArray(arena, cap, Ast *);
+      for (; noError();)
+      {
+        if (optionalIdentifier())
+        {
+          i32 arg_i = ast->arg_count++;
+          assert(arg_i < cap);
+          ast->keywords[arg_i] = lastToken()->string;
+          if (requireChar('='))
+          {
+            if (Ast *arg = parseExpression())
+            {
+              ast->args[arg_i] = arg;
+            }
+
+            if (!optionalChar(','))
+              break;
+          }
+        }
+        else
+          break;
+      }
+    }
+
+    ast0 = ast;
+  }
+  popContext();
+  return ast0;
+}
+
 inline Ast *
 parseSequence(b32 require_braces=true)
 {
@@ -347,13 +406,12 @@ parseSequence(b32 require_braces=true)
     }
     else if (equal(tactic, "prove"))
     {
-      pushContext("prove PROPOSITION {SEQUENCE} as IDENTIFIER");  // todo don't need the "as" anymore
+      pushContext("prove PROPOSITION {SEQUENCE} as IDENTIFIER");
       if (Ast *proposition = parseExpression())
       {
         if (Ast *proof = parseSequence(true))
         {
           String name = {};
-          // String name = toString("anon");  // bookmark do we need this?
           if (optionalString("as") && requireIdentifier("expected name for the proof"))
           {
             name = lastToken()->string;
@@ -414,45 +472,8 @@ parseSequence(b32 require_braces=true)
     }
     else if (equal(tactic, "use"))
     {
-      if (requireIdentifier())
-      {
-        Token op_name = *lastToken();
-
-        CompositeAst *ast = newAst(arena, CompositeAst, token);
-        ast->op           = newAst(arena, Identifier, &op_name);
-        ast->partial_args = true;
-
-        if (optionalString("with"))
-        {
-          i32 cap = 16;  // todo #grow
-          ast->keywords = pushArray(arena, cap, String);
-          ast->args     = pushArray(arena, cap, Ast *);
-          for (; noError();)
-          {
-            if (optionalIdentifier())
-            {
-              i32 arg_i = ast->arg_count++;
-              assert(arg_i < cap);
-              ast->keywords[arg_i] = lastToken()->string;
-              if (requireChar('='))
-              {
-                if (Ast *arg = parseExpression())
-                {
-                  ast->args[arg_i] = arg;
-                }
-
-                if (!optionalChar(','))
-                  break;
-              }
-            }
-            else
-              break;
-          }
-        }
-
-        ast0 = ast;
-        expect_sequence_to_end = true;
-      }
+      ast0 = parseUse();
+      expect_sequence_to_end = true;
     }
     else if (equal(tactic, "subst"))
     {
@@ -909,6 +930,11 @@ parseOperand()
       operand = parseOverload(arena);
     } break;
 
+    case Token_Keyword_use:
+    {
+      operand = parseUse();
+    } break;
+
     default:
     {
       tokenError("expected start of expression");
@@ -990,6 +1016,10 @@ precedenceOf(String op)
     out = eq_precedence - 20;
   }
   else if (equal(op, "/\\"))
+  {
+    out = eq_precedence - 10;
+  }
+  else if (equal(op, "\\/"))
   {
     out = eq_precedence - 10;
   }

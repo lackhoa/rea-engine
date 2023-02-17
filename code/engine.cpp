@@ -1242,23 +1242,6 @@ getExplicitParamCount(Arrow *in)
   return out;
 }
 
-#if 0
-inline b32
-shouldHideTerm(Term *in0)
-{
-  if (in0 == rea.Type) return true;
-  if (in0->kind == Term_Union) return true;
-  if (Composite *in = castTerm(in0, Composite))
-  {
-    Arrow *signature = getSignature(in->op);
-    if (getExplicitParamCount(signature) == 0)
-    {
-    }
-  }
-  return false;
-}
-#endif
-
 internal b32
 shouldPrintType(Term *type)
 {
@@ -1271,18 +1254,13 @@ shouldPrintType(Term *type)
 
     if (Union *uni = castTerm(type, Union))
     {
-      if (uni->ctor_count)
-      {
-        return false;  // if you have no constructor, you're suddenly the VIP.
-      }
+      // if you have no constructor, you're suddenly the MVP.
+      return !uni->ctor_count;
     }
 
     if (auto [uni, _] = castUnion(type))
     {
-      if (getNonPolyParamCount(uni) == 0)
-      {
-        return false;
-      }
+      return true;
     }
 
     if (type->kind == Term_Pointer)
@@ -2946,7 +2924,6 @@ solveArgs(Solver *solver, Term *op, Term *goal0, Token *blame_token=0)
               reportError(blame_token, "failed to solve arg %d", arg_i);
               // :solveArgs-only-error-if-unification-succeeds
               attach("arg_type", type);
-              attach("serial", serial);
             }
             args = 0;
             break;
@@ -3245,7 +3222,6 @@ getOverloads(Typer *typer, Identifier *ident, Term *goal0)
         else
         {
           reportError(ident, "found no matching overload");
-          attach("serial", serial);
           attach("operator", ident->token.string);
           attach("output_type_goal", goal0);
           attach("available_overloads", slot->count, slot->terms, printOptionPrintType());
@@ -4451,7 +4427,6 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
                 {
                   reportError(in, "cannot unify output");
                   attach("signature->output_type", signature->output_type);
-                  attach("serial", serial);
                 }
               }
             }
@@ -4507,7 +4482,6 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
                       else
                       {
                         reportError(in_arg, "cannot unify parameter type with argument %d's type", arg_i);
-                        attach("serial", serial);
                         attach("parameter_type", param_type0);
                         attach("argument_type", arg->type);
                       }
@@ -4558,7 +4532,6 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
                       reportError(in_arg, "cannot solve for argument %d", arg_i);
                       attach("parameter_name", signature->param_names[arg_i]);
                       attach("expected_arg_type", expected_arg_type);
-                      attach("serial", serial);
                     }
                   }
                   else if (Term *arg = buildTerm(typer, in_arg, expected_arg_type))
@@ -4611,7 +4584,6 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
             {
               reportError(in->op, "found no suitable overload");
               attach("available_overloads", op_list.count, op_list.items, printOptionPrintType());
-              attach("serial", serial);
             }
           }
         }
@@ -4868,7 +4840,6 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
                   else
                   {
                     tokenError(name, "not enough type information to disambiguate global name");
-                    attach("serial", serial);
                   }
                   break;
                 }
@@ -4886,7 +4857,6 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
                 tokenError(name, "global name does not match expected type");
                 attach("name", name);
                 attach("expected_type", goal0);
-                attach("serial", serial);
                 if (globals->count == 1)
                 {
                   attach("actual_type", (globals->terms[0])->type);
@@ -4913,7 +4883,6 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
       else
       {
         reportError(in0, "please provide an expression here");
-        attach("serial", serial);
       }
     } break;
 
@@ -5205,7 +5174,6 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
               {
                 reportError(in0, "cannot solve for equality proof");
                 attach("equality", lr_eq);
-                attach("serial", serial);
               }
             }
           }
@@ -5450,7 +5418,6 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
         {
           reportError(in0, "actual type differs from expected type");
           attach("got", actual);
-          attach("serial", serial);
 
 #if 0
           DEBUG_LOG_compare = 1;
@@ -5670,8 +5637,10 @@ parseAndBuildGlobal(Typer *typer, Term *expected_type=holev)
   Term *out = 0;
   if (Ast *ast = parseExpression())
   {
-    out = buildTerm(typer, ast, expected_type);
-    out = copyToGlobalArena(out);
+    if ((out = buildTerm(typer, ast, expected_type)))
+    {
+      out = copyToGlobalArena(out);
+    }
   }
   return out;
 }
