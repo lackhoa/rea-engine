@@ -256,12 +256,11 @@ parseSequence(b32 require_braces=true)
     String tactic = token->string;
     if (equal(tactic, "norm"))
     {
-      pushContext("norm [EXPRESSION]");
+      pushContext("norm [unfold(FUNCTION_NAME)] [EXPRESSION]");
       String name_to_unfold = {};
 
       if (optionalString("unfold"))
       {
-        pushContext("unfold(FUNCTION_NAME)");
         if (requireChar('('))
         {
           if (requireIdentifier("expect function name"))
@@ -270,7 +269,6 @@ parseSequence(b32 require_braces=true)
             requireChar(')');
           }
         }
-        popContext();
       }
 
       if (noError())
@@ -1397,7 +1395,7 @@ parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
         {
           setFlag(&out->function_flags, FunctionFlag_is_global_hint);
         }
-        else if (optionalDirective("no_apply"))
+        else if (optionalDirective("no_expand"))  // todo: should this be "no_expand" instead?
         {
           // todo: we can automatically infer this!
           setFlag(&out->function_flags, FunctionFlag_no_apply);

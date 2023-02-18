@@ -12,14 +12,13 @@ cancelCommonFactor :: (a,b,r: Natp) -> (a*r)/(b*r) == a/b
  algebra_norm;
  }
 
-isFactor :: (r,a: Natp) -> Type
-#expand
+isFactor :: (q,a: Natp) -> Type
+#no_expand
 {
-  return exists(t: Natp), a = r*t
+  return exists(t: Natp), a = q*t
   }
 
 relativelyPrime :: (a,b: Natp) -> Type
-#expand
 {
  return (r: Natp, isFactor(r, a), isFactor(r, b)) -> r = 1
  }
@@ -72,7 +71,8 @@ QuotientRemainder :: union(^a, ^b: Natp)
 
 quotientRemainder :: fn(a,b: Natp) -> QuotientRemainder(a,b)
 #measure(a, ltWellFounded)
-{order := totalOrder(a,b);
+{
+  order := totalOrder(a,b);
   fork order
   {eq
     prove a = 1 * b {norm;}
@@ -111,13 +111,29 @@ quotientRemainder :: fn(a,b: Natp) -> QuotientRemainder(a,b)
     }
   }
 
-gcd :: (a,b: Natp) -> Maybe(Natp)
-{qr := quotientRemainder(a,b);
+isCommonDivisor :: (q, a,b: Natp) -> Type
+#no_expand
+{
+  return isFactor(q, a) /\ isFactor(q,b)
+  }
+
+isGcd :: (q, a,b: Natp) -> Type
+#no_expand
+{
+  return (isCommonDivisor(q,a,b) /\
+           ((q': Natp, isCommonDivisor(q',a,b)) -> isFactor(q', q)))
+  }
+
+gcd :: (a,b: Natp) -> exists(out: Natp) isGcd(out, a,b)
+{
+  qr := quotientRemainder(a,b);
   fork qr
-  {divideFail return none()
+  {
+    divideFail
+    use quotientRemainder(b,a)
+    #reduce {};
     ,
     divideEvenly return some(qr.quotient)
     ,
     divideWithRemainder
-    return gcd(b, qr.remainder)
-    }}
+    return gcd(b, qr.remainder)}}

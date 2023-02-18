@@ -1378,12 +1378,22 @@ isAlwaysExpandFunction(Term *op)
   return 0;
 }
 
+inline b32
+isAnonymousFunction(Term *op0)
+{
+  if (Function *op = castTerm(op0, Function))
+  {
+    return !op->global_name;
+  }
+  return false;
+}
+
 internal Term *
 evaluate_(EvalContext *ctx, Term *in0)
 {
   Term *out0 = 0;
   Arena *arena = temp_arena;
-  b32 substitute_only = ctx->substitute_only;
+  b32 substitute_only = ctx->substitute_only;  // TODO: this is more like "prefer_to_not_apply"
 
   i32 unused_var serial = DEBUG_SERIAL++;
   if (DEBUG_LOG_evaluate)
@@ -1429,7 +1439,11 @@ evaluate_(EvalContext *ctx, Term *in0)
           assert(args[i]);
         }
 
-        if (!substitute_only || isAlwaysExpandFunction(op))
+        if (ctx->offset == 0 &&
+            (!substitute_only           ||
+             isAlwaysExpandFunction(op) ||
+             isAnonymousFunction(op) // NOTE: expand annoying bs
+             ))
         {
           out0 = apply(op, in->arg_count, args, {});
         }
@@ -2299,6 +2313,7 @@ normalize(Term *in0, String name_to_unfold={})
   return normalize_(&ctx, in0);
 }
 
+// todo #speed make this comparison faster
 forward_declare inline b32
 equalNorm(Term *l, Term *r)
 {
@@ -2369,7 +2384,7 @@ newComposite(Term *op, i32 arg_count, Term **args, Term *reduce_proof=0)
   for (i32 arg_i=0; arg_i < arg_count; arg_i++)
   {
     Term *actual_type   = args[arg_i]->type;
-    Term *expected_type = evaluate(signature->param_types[arg_i], arg_count, args);
+    Term *expected_type = substitute(signature->param_types[arg_i], arg_count, args);
     assertEqualNorm(actual_type, expected_type);
   }
 
@@ -2436,6 +2451,7 @@ checkRecursiveCall(Term *op0, i32 arg_count, Term **args, Term *reduce_proof)
         // manual reduction proof
         Term *expected_type = getReduceProofType(fixpoint, arg_count, args);
         assertEqualNorm(reduce_proof->type, expected_type);
+        recursive_call_valid = true;
       }
       else
       {
@@ -2503,7 +2519,7 @@ instantiate(Term *in0, i32 ctor_i)
       for (i32 mem_i=poly_count; mem_i < member_count; mem_i++)
       {
         Term *member_type = signature->param_types[mem_i];
-        member_type = evaluate(member_type, member_count, members);
+        member_type = substitute(member_type, member_count, members);
         Pointer *member          = newTerm(arena, Pointer, member_type);
         member->heap.record           = pointer;
         member->heap.index            = mem_i;
@@ -3039,7 +3055,7 @@ seekGoal(Solver *solver, Term *goal, b32 try_reductio=false)
             out = reaComposite(rea.falseImpliesAll, value, goal);
           }
         }
-        else if (equal(value->type, goal))
+        else if (equalNorm(value->type, goal))
         {
           out = value;
         }
@@ -3048,7 +3064,7 @@ seekGoal(Solver *solver, Term *goal, b32 try_reductio=false)
           for (i32 member_i = 0; member_i < record->arg_count && !out; member_i++)
           {
             Term *member = record->args[member_i];
-            if (equal(member->type, goal))
+            if (equalNorm(member->type, goal))
             {
               out = member;
             }
@@ -3152,11 +3168,6 @@ solveGoal(Solver *solver, Term *goal)
         else
           break;
       }
-    }
-
-    if (out)
-    {
-      assert(equal(out->type, goal));
     }
 
     if (DEBUG_LOG_solve)
@@ -4523,7 +4534,7 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
                 }
                 else
                 {
-                  Term *expected_arg_type = evaluate(param_type0, param_count, args);
+                  Term *expected_arg_type = substitute(param_type0, param_count, args);
                   if (Term *arg = buildTerm(typer, in_arg, expected_arg_type))
                   {
                     args[arg_i] = arg;
@@ -4545,7 +4556,7 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
                 {
                   Ast *in_arg = expanded_args[arg_i];
                   Term *param_type0 = signature->param_types[arg_i];
-                  Term *expected_arg_type = evaluate(param_type0, param_count, args);
+                  Term *expected_arg_type = substitute(param_type0, param_count, args);
                   if (in_arg->kind == Ast_Hole)
                   {
                     if (Term *fill = solveGoal(Solver{.typer=typer, .use_global_hints=true}, expected_arg_type))
