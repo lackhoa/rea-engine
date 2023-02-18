@@ -105,12 +105,14 @@ struct Let : Ast {
 };
 
 struct CompositeAst : Ast {
-  Ast     *op;
-  i32      arg_count;
-  Ast    **args;
+  Ast  *op;
+  i32   arg_count;
+  Ast **args;
 
-  String  *keywords;
-  b32      partial_args;
+  String *keywords;
+  b32     partial_args;
+
+  Ast *reduce_proof;
 };
 
 struct ArrowAst : Ast {
@@ -153,6 +155,9 @@ struct FunctionAst : Ast {
   u32       function_flags;
   i32     tag_count;
   String *tags;
+
+  FunctionAst *measure_function;
+  Ast         *well_founded_proof;
 };
 
 struct UnionAst : Ast {

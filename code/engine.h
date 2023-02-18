@@ -453,6 +453,15 @@ addAsset(ProofState *state, Term *asset)
   assert(state->asset_count <= state->asset_cap);
 }
 
+struct Fixpoint {
+  Function  *fun;
+  Pointer  **args;
+  Pointer   *fork_subject;
+
+  Function *measure_function;
+  Term     *well_founded_relation;
+};
+
 #include "generated/engine_forward.h"
 
 struct BuiltinEntry {
@@ -464,8 +473,10 @@ struct ReaBuiltins {
   Term *Type;
   Term *equal;
   Term *False;
-  Term *eqChain;
   Term *Exists;
+
+  Term *eqChain;
+  Term *WellFounded;
 
   Term *U32;
   Term *Array;

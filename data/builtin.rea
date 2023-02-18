@@ -49,5 +49,15 @@ Exists :: union(^$T: Type, ^prop: (x: T) -> Type)
   evidence(e: T, p: prop(e))
   }
 
+Reachable :: union(^$T: Type, ^R: (a:T, b:T) -> Type, ^x: T)
+{
+  reachable(p: (y: T, lt: y R x) -> Reachable(R, y))
+  }
+
+WellFounded :: fn($T: Type, R: (a:T, b:T) -> Type) -> Type
+#builtin
+{
+  return (a: T) -> Reachable(R, a)
+  }
+
 #load "plist.rea"
-;; #load "list.rea"

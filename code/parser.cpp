@@ -231,65 +231,6 @@ getAstBody(Ast *item0)
   return 0;
 }
 
-internal Ast *
-parseUse()
-{
-  Token *token = lastToken();
-  Ast *ast0 = 0;
-  Arena *arena = temp_arena;
-  pushContext("use IDENTIFIER|(EXPRESSION) [with PARAMETER=VALUE, ...]");
-  Ast *op = 0;
-  if (optionalChar('('))
-  {
-    op = parseExpression();
-    requireChar(')');
-  }
-  else if (requireIdentifier())
-  {
-    Token op_name = *lastToken();
-    op = newAst(arena, Identifier, &op_name);
-  }
-
-  if (noError())
-  {
-    CompositeAst *ast = newAst(arena, CompositeAst, token);
-    ast->op           = op;
-    ast->partial_args = true;
-
-    if (optionalString("with"))
-    {
-      i32 cap = 16;  // todo #grow
-      ast->keywords = pushArray(arena, cap, String);
-      ast->args     = pushArray(arena, cap, Ast *);
-      for (; noError();)
-      {
-        if (optionalIdentifier())
-        {
-          i32 arg_i = ast->arg_count++;
-          assert(arg_i < cap);
-          ast->keywords[arg_i] = lastToken()->string;
-          if (requireChar('='))
-          {
-            if (Ast *arg = parseExpression())
-            {
-              ast->args[arg_i] = arg;
-            }
-
-            if (!optionalChar(','))
-              break;
-          }
-        }
-        else
-          break;
-      }
-    }
-
-    ast0 = ast;
-  }
-  popContext();
-  return ast0;
-}
-
 inline Ast *
 parseSequence(b32 require_braces=true)
 {
@@ -431,9 +372,9 @@ parseSequence(b32 require_braces=true)
           if (noError())
           {
             Let *let = newAst(arena, Let, token);
-            let->lhs  = name;
-            let->rhs  = proof;
-            let->type = proposition;
+            let->lhs                          = name;
+            let->rhs                          = proof;
+            let->type                         = proposition;
             ast0 = let;
           }
         }
@@ -602,6 +543,73 @@ parseSequence(b32 require_braces=true)
   }
 
   return out;
+}
+
+forward_declare internal Ast *
+parseUse()
+{
+  Token *token = lastToken();
+  Ast *ast0 = 0;
+  Arena *arena = temp_arena;
+  pushContext("use IDENTIFIER|(EXPRESSION) [with PARAMETER=VALUE, ...]");
+  Ast *op = 0;
+  if (optionalChar('('))
+  {
+    op = parseExpression();
+    requireChar(')');
+  }
+  else if (requireIdentifier())
+  {
+    Token op_name = *lastToken();
+    op = newAst(arena, Identifier, &op_name);
+  }
+
+  if (noError())
+  {
+    CompositeAst *ast = newAst(arena, CompositeAst, token);
+    ast->op           = op;
+    ast->partial_args = true;
+
+    if (optionalString("with"))
+    {
+      i32 cap = 16;  // todo #grow
+      ast->keywords = pushArray(arena, cap, String);
+      ast->args     = pushArray(arena, cap, Ast *);
+      for (; hasMore();)
+      {
+        if (optionalIdentifier())
+        {
+          i32 arg_i = ast->arg_count++;
+          assert(arg_i < cap);
+          ast->keywords[arg_i] = lastToken()->string;
+          if (requireChar('='))
+          {
+            if (Ast *arg = parseExpression())
+            {
+              ast->args[arg_i] = arg;
+            }
+
+            if (!optionalChar(','))
+              break;
+          }
+        }
+        else
+          break;
+      }
+
+      if (hasMore())
+      {
+        if (optionalDirective("reduce"))
+        {
+          ast->reduce_proof = parseSequence(true);
+        }
+      }
+    }
+
+    ast0 = ast;
+  }
+  popContext();
+  return ast0;
 }
 
 inline CtorAst *
@@ -1137,6 +1145,48 @@ precedenceOf(String op)
   return out;
 }
 
+internal b32
+seesCast()
+{
+  b32 out = false;
+  Tokenizer tk_save = *TK;
+  if (peekChar() == '(')
+  {
+    eatToken();
+    if (peekChar() == ':')
+    {
+      out = true;
+    }
+  }
+  *TK = tk_save;
+  return out;
+}
+
+internal TypedExpression *
+parseCast()
+{
+  TypedExpression *out = 0;
+
+  Token token = *lastToken();
+  requireChar('(');
+  requireChar(':');
+  assert(noError());
+
+  if (Ast *type = parseExpression())
+  {
+    if (requireChar(')'))
+    {
+      if (Ast *expression = parseExpression())
+      {
+        out = newAst(temp_arena, TypedExpression, &token);
+        out->type       = type;
+        out->expression = expression;
+      }
+    }
+  }
+  return out;
+}
+
 internal Ast *
 parseExpression_(ParseExpressionOptions opt)
 {
@@ -1144,8 +1194,12 @@ parseExpression_(ParseExpressionOptions opt)
   Ast *out = 0;
   if (seesArrowExpression())
   {
-    // todo Arrow could just be an operand maybe?
+    // NOTE: Doing it like this means that all operators bind stronger than "->".
     out = parseArrowType(false);
+  }
+  else if (seesCast())
+  {
+    out = parseCast();
   }
   else if (Ast *operand = parseOperand())
   {
@@ -1309,7 +1363,7 @@ parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
     {
       while (true)
       {
-        // todo #speed calling "optionalKind" repeatedly is slow
+        // todo #speed elseif
         if (optionalDirective("norm"))
         {
           pushContext("auto normalization: #norm(IDENTIFIER...)");
@@ -1375,6 +1429,28 @@ parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
               }
               if (eitherOrChar(',', ')')) break;
             }
+          }
+        }
+        else if (optionalDirective("measure"))
+        {
+          if (requireChar('('))
+          {
+            if (Ast *measure_function_body = parseExpression())
+            {
+              if (requireChar(','))
+              {
+                if (Ast *well_founded_proof = parseExpression())
+                {
+                  FunctionAst *measure_function = newAst(arena, FunctionAst, &measure_function_body->token);
+                  measure_function->signature = pushCopy(arena, signature);
+                  measure_function->signature->output_type = 0;  // :no-output-type
+                  measure_function->body      = measure_function_body;
+                  out->measure_function   = measure_function;
+                  out->well_founded_proof = well_founded_proof;
+                }
+              }
+            }
+            requireChar(')');
           }
         }
         else

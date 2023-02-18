@@ -15,12 +15,10 @@
 #include "parser.cpp"
 #include "debug_config.h"
 
-global_variable Function  *current_global_function              = 0;
-global_variable Pointer  **current_global_function_args         = 0;
-global_variable Pointer   *current_global_function_fork_subject = 0;
+global_variable Fixpoint *current_global_fixpoint;
 
-Term  holev_ = {.kind = Term_Hole};
-Term *holev = &holev_;
+Term  hole_ = {.kind = Term_Hole};
+Term *hole = &hole_;
 
 global_variable EngineState global_state;
 
@@ -1551,6 +1549,11 @@ evaluate_(EvalContext *ctx, Term *in0)
         invalidCodePath;
       } break;
 
+      case Term_Hole:
+      {
+        out0 = in0;
+      } break;
+
       default:
         todoIncomplete;
     }
@@ -1665,86 +1668,6 @@ isRootedFrom(Term *pointer0, Pointer *test_root)
     }
   }
   return false;
-}
-
-inline b32
-recursiveCallValid(i32 arg_count, Term **args)
-{
-#if 0
-  b32 rejected        = false;
-  b32 component_found = false;
-  for (i32 i=0; !rejected && i < arg_count; i++)
-  {
-    Term *arg = args[i];
-    rejected = true;
-    // for (i32 j=0; rejected && j < arg_count; j++)
-    i32 j = i;
-    {
-      Pointer *global_arg = current_global_function_args[j];
-      if (arg == global_arg)
-      {
-        rejected = false;
-      }
-      else if (isRootedFrom(arg, global_arg))
-      {
-        rejected        = false;
-        component_found = true;
-      }
-    }
-  }
-#endif
-
-  b32 valid = false;
-  auto &subject = current_global_function_fork_subject;
-  if (subject)
-  {
-    assert(subject->is_stack_pointer);
-    i32 index = subject->stack.index;
-    valid = isRootedFrom(args[index], subject);
-  }
-  return valid;
-}
-
-inline void
-checkRecursiveCall(Term *op, i32 arg_count, Term **args)
-{
-  if (Function *fun = castTerm(op, Function))
-  {
-    if (fun == current_global_function)
-    {
-      if (!recursiveCallValid(arg_count, args))
-      {
-        String name = fun->global_name->string;
-        print(0, "RECURSION REJECTED in \"%.*s\"! ", name.length, name.chars);
-
-        print(0, "(args : ");
-        for (i32 i=0; i < arg_count; i++)
-        {
-          print(0, args[i]);
-          if (i != arg_count-1) print(0, ", ");
-        }
-        print(0, ")\n");
-
-        // assert(false);  // Let's leave that as a warning for now
-      }
-    }
-  }
-}
-
-inline Term *
-newRewrite(Term *eq_proof, Term *body, TreePath *path, b32 right_to_left)
-{
-  auto [lhs, rhs] = getEqualitySides(eq_proof->type);
-  Term *from = right_to_left ? lhs : rhs;
-  Term *to   = right_to_left ? rhs : lhs;
-  Term *type = rewriteTerm(from, to, path, body->type);
-
-  Rewrite *out = newTerm(temp_arena, Rewrite, type);
-  out->eq_proof      = eq_proof;
-  out->body          = body;
-  out->path          = path;
-  out->right_to_left = right_to_left;
-  return out;
 }
 
 inline b32
@@ -2405,23 +2328,38 @@ assertEqualNorm(Term *l, Term *r)
   }
 }
 #else
-inline void assertNormEqual(Term *l, Term *r) {}
+inline void assertEqualNorm(Term *l, Term *r) {}
 #endif
 
+inline Term *
+newRewrite(Term *eq_proof, Term *body, TreePath *path, b32 right_to_left, Term *type_to_rewrite=0)
+{
+  if (type_to_rewrite)
+  {
+    assertEqualNorm(body->type, type_to_rewrite);
+  }
+  else
+    type_to_rewrite = body->type;
+
+  auto [lhs, rhs] = getEqualitySides(eq_proof->type);
+  Term *from = right_to_left ? lhs : rhs;
+  Term *to   = right_to_left ? rhs : lhs;
+  Term *type = rewriteTerm(from, to, path, type_to_rewrite);
+
+  Rewrite *out = newTerm(temp_arena, Rewrite, type);
+  out->eq_proof      = eq_proof;
+  out->body          = body;
+  out->path          = path;
+  out->right_to_left = right_to_left;
+  return out;
+}
+
 inline Composite *
-newComposite(Term *op, i32 arg_count, Term **args)
+newComposite(Term *op, i32 arg_count, Term **args, Term *reduce_proof=0)
 {
   i32 unused_var serial = DEBUG_SERIAL++;
   
-  if (isDebugOn())
-  {
-    if (op->kind == Term_Function)
-    {
-      breakhere;
-    }
-  }
-
-  checkRecursiveCall(op, arg_count, args);
+  checkRecursiveCall(op, arg_count, args, reduce_proof);
   Composite *out = 0;
 
   Arrow *signature = castTerm((op)->type, Arrow);
@@ -2462,6 +2400,75 @@ reaComposite_(Term *op, i32 param_count, ...)
 }
 
 #define reaComposite(op, ...) reaComposite_(op, PP_NARG(__VA_ARGS__), __VA_ARGS__)
+
+inline Term *
+getReduceProofType(Fixpoint *fixpoint, i32 arg_count, Term **args)
+{
+  Term *recurse_measure = apply(fixpoint->measure_function, arg_count, args, {});
+  Term *input_measure   = apply(fixpoint->measure_function, arg_count, (Term**)fixpoint->args, {});
+  Composite *out = reaComposite(fixpoint->well_founded_relation, recurse_measure, input_measure);
+  return out;
+}
+
+inline b32
+isFunctionBeingBuilt(Term *op0)
+{
+  if (Function *op = castTerm(op0, Function))
+  {
+    return (op->body == 0);
+  }
+  return false;
+}
+
+forward_declare inline void
+checkRecursiveCall(Term *op0, i32 arg_count, Term **args, Term *reduce_proof)
+{
+  Fixpoint *fixpoint = current_global_fixpoint;
+  if (Function *op = castTerm(op0, Function))
+  {
+    if (op->body == 0)
+    {
+      assert(op == fixpoint->fun);
+      b32 recursive_call_valid = false;
+
+      if (reduce_proof)
+      {
+        // manual reduction proof
+        Term *expected_type = getReduceProofType(fixpoint, arg_count, args);
+        assertEqualNorm(reduce_proof->type, expected_type);
+      }
+      else
+      {
+        // fallback hacky automated check
+        auto &subject = fixpoint->fork_subject;
+        if (subject)
+        {
+          assert(subject->is_stack_pointer);
+          i32 index = subject->stack.index;
+          recursive_call_valid = isRootedFrom(args[index], subject);
+        }
+      }
+
+      if (!recursive_call_valid)
+      {
+        String name = op->global_name->string;
+        print(0, "RECURSION REJECTED in \"%.*s\"! ", name.length, name.chars);
+
+        print(0, "(args : ");
+        for (i32 i=0; i < arg_count; i++)
+        {
+          print(0, args[i]);
+          if (i != arg_count-1) print(0, ", ");
+        }
+        print(0, ")\n");
+
+        // assert(false);  // Let's leave that as a warning for now
+      }
+    }
+  }
+}
+
+
 
 inline Composite *
 newEquality(Term *lhs, Term *rhs)
@@ -2587,7 +2594,7 @@ apply(Term *op, i32 arg_count, Term **args, String name_to_unfold)
   if (Function *fun = castTerm(op, Function))
   {// Function application
     b32 should_apply_function = true;
-    if (fun == current_global_function)
+    if (fun->body == 0)
     {
       should_apply_function = false;  // NOTE: not strictly needed
     }
@@ -3008,58 +3015,6 @@ reaIdentity(Term *term)
   return newComputation_(term, term);
 }
 
-// todo: cutnpaste from "seekGoal"
-inline Term *
-reductioAdAbsurdum(Solver *solver, Term *goal)
-{
-  Term *out = 0;
-  todoIncomplete;
-#if 0
-  if ((goal)->type != rea_Type) {todoIncomplete}
-  auto temp = beginTemporaryMemory(solver->arena);
-  if (solver->typer)
-  {
-    i32 delta = 0;
-    for (Scope *scope = solver->typer->scope;
-         scope && !out;
-         scope=scope->outer)
-    {
-      // Arrow *arrow = scope->head;
-      Arrow *arrow = 0;
-      for (i32 param_i=0;
-           (param_i < arrow->param_count) && !out;
-           param_i++)
-      {
-        Term *var = newVariable(solver->arena, solver->typer, delta, param_i);
-        Term *var_type = (var)->type;
-        if (equal(var_type, rea_False))
-        {
-          out = reaComposite(solver->arena, rea_falseImpliesAll, var, goal);
-        }
-        else if (Arrow *hypothetical = castTerm(var_type, Arrow))
-        {
-          if (hypothetical->output_type == rea_False)
-          {
-            SolveArgs solve_args = solveArgs(solver, var, rea_False);
-            if (solve_args.args)
-            {
-              Term *f = newComposite(solver->arena, var, solve_args.arg_count, solve_args.args);
-              out = reaComposite(solver->arena, rea_falseImpliesAll, f, goal);
-            }
-          }
-        }
-      }
-      delta++;
-    }
-  }
-  if (out)
-    commitTemporaryMemory(temp);
-  else
-    endTemporaryMemory(temp);
-#endif
-  return out;
-}
-
 inline Term *
 seekGoal(Solver *solver, Term *goal, b32 try_reductio=false)
 {
@@ -3078,7 +3033,11 @@ seekGoal(Solver *solver, Term *goal, b32 try_reductio=false)
         Term *value = scope->pointers[scope_i];
         if (equal(value->type, rea.False))
         {
-          out = reaComposite(rea.falseImpliesAll, value, goal);
+          if (goal->type == rea.Type)
+          {
+            // todo #cleanup find a way to resolve this false.
+            out = reaComposite(rea.falseImpliesAll, value, goal);
+          }
         }
         else if (equal(value->type, goal))
         {
@@ -3954,7 +3913,7 @@ buildTestSort(Typer *typer, CompositeAst *ast)
 {
   Term *out = 0;
   assert(ast->arg_count == 1);
-  if (Term *list0 = buildTerm(typer, ast->args[0], holev))
+  if (Term *list0 = buildTerm(typer, ast->args[0], hole))
   {
     out = algebraSort(list0);
   }
@@ -4201,7 +4160,7 @@ copyToGlobalArena(Term *in0)
 
 
 inline Function *
-buildFunctionGivenSignature(Typer *typer, Arrow *signature, Ast *in_body,
+buildFunctionGivenSignature(Typer *typer0, Arrow *signature, Ast *in_body,
                             Token *global_name=0, FunctionAst *in_fun=0)
 {
   i32 unused_var serial = DEBUG_SERIAL;
@@ -4211,48 +4170,93 @@ buildFunctionGivenSignature(Typer *typer, Arrow *signature, Ast *in_body,
   // invalidated (TODO: maybe the copier should know about self-reference).
   Arena *arena = global_name ? global_state.top_level_arena : temp_arena;
 
-  Function *out       = newTerm(arena, Function, signature);
+  Function *out = newTerm(arena, Function, signature);
   if (in_fun) out->function_flags = in_fun->function_flags;
 
   Term *body = 0;
-  Typer new_typer = *typer;
+  Typer typer_ = *typer0;
   {
-    Typer *typer = &new_typer;
+    Typer *typer = &typer_;
     typer->scope = introduceSignature(typer->scope, signature);
     extendBindings(typer);
 
+    Fixpoint *previous_global_fixpoint = current_global_fixpoint;
+    Fixpoint fixpoint = {};
     if (global_name)
     {
       // NOTE: add binding first to support recursion
       addGlobalBinding(global_name, out, in_fun->tag_count, in_fun->tags);
-      current_global_function      = out;
-      current_global_function_args = typer->scope->pointers;
+
+      fixpoint.fun  = out;
+      fixpoint.args = typer->scope->pointers;
+      if (in_fun->measure_function)
+      {
+        if (in_fun->well_founded_proof)
+        {
+          if (Term *measure_function0 = buildTerm(typer0, in_fun->measure_function, hole))
+          {
+            fixpoint.measure_function = castTerm(measure_function0, Function);
+            assert(fixpoint.measure_function);
+            if (Term *well_founded_proof = buildTerm(typer0, in_fun->well_founded_proof, hole))
+            {
+              b32 valid_wf_proof = false;
+              if (Composite *wf = castTerm(well_founded_proof->type, Composite))
+              {
+                if (wf->op == rea.WellFounded)
+                {
+                  valid_wf_proof = true;
+                  fixpoint.well_founded_relation = getArg(wf, 1);
+                }
+              }
+
+              if (!valid_wf_proof)
+              {
+                reportError(in_fun->well_founded_proof, "well-founded proof is invalid");
+                attach("wf_proof_type", well_founded_proof->type);
+              }
+            }
+          }
+        }
+        else
+          reportError(in_fun, "must supply both a measure function and a well-founded proof");
+      }
+
+      assert(!current_global_fixpoint);
+      current_global_fixpoint = &fixpoint;
     }
 
-    for (i32 index=0; index < signature->param_count; index++)
+    if (noError())
     {
-      String name = signature->param_names[index];
-      addLocalBinding(typer, name, index);
+      for (i32 index=0; index < signature->param_count; index++)
+      {
+        String name = signature->param_names[index];
+        addLocalBinding(typer, name, index);
+      }
+      Term *body_type = toValue(typer->scope, signature->output_type);
+      if ((body = buildTerm(typer, in_body, body_type)))
+      {
+        if (signature->output_type == hole)
+        {
+          // write back the output type
+          signature->output_type = toAbstractTerm(temp_arena, body->type, getScopeDepth(typer0));
+          Term *check = toValue(typer->scope, signature->output_type);
+          assertEqualNorm(body->type, check);
+        }
+      }
     }
-    Term *body_type = toValue(typer->scope, signature->output_type);
-    body = buildTerm(typer, in_body, body_type);
 
-    if (global_name)
-    {
-      assert(current_global_function == out);
-      current_global_function       = 0;
-      current_global_function_args = 0;
-    }
+    current_global_fixpoint = previous_global_fixpoint;
   }
 
   if (body)
   {
-    out->body = toAbstractTerm(temp_arena, body, getScopeDepth(typer));
+    out->body = toAbstractTerm(temp_arena, body, getScopeDepth(typer0));
     if (global_name)
     {
       out->body = copyToGlobalArena(out->body);
     }
   }
+  NULL_WHEN_ERROR(out);
   return out;
 }
 
@@ -4339,7 +4343,7 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
 
     if (noError() && should_build_op)
     {
-      if (Term *op0 = buildTerm(typer, in->op, holev).value)
+      if (Term *op0 = buildTerm(typer, in->op, hole).value)
       {
         op_list.count = 1;
         allocateArray(temp_arena, 1, op_list.items);
@@ -4487,7 +4491,7 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
                 {
                   Typer new_typer = *typer;
                   setFlag(&new_typer.expected_errors, Error_Ambiguous);
-                  if (Term *arg = buildTerm(&new_typer, in_arg, holev))
+                  if (Term *arg = buildTerm(&new_typer, in_arg, hole))
                   {
                     args[arg_i] = arg;
                     arg_was_filled = true;
@@ -4584,8 +4588,28 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
               }
               else
               {
-                args = copyArray(arena, param_count, args);
-                value = newComposite(op, param_count, args);
+                Term *reduce_proof = 0;
+                if (in->reduce_proof)
+                {
+                  if (isFunctionBeingBuilt(op))
+                  {
+                    Fixpoint *fixpoint = current_global_fixpoint;
+                    Typer reduce_proof_typer = *typer;
+                    reduce_proof_typer.expected_errors = 0;
+                    Term *expected_type = getReduceProofType(fixpoint, param_count, args);
+                    reduce_proof = buildTerm(&reduce_proof_typer, in->reduce_proof, expected_type);
+                  }
+                  else
+                  {
+                    reportError("reduce proof is only applicable when the function is the fixpoint being built");
+                  }
+                }
+
+                if (noError())
+                {
+                  args = copyArray(arena, param_count, args);
+                  value = newComposite(op, param_count, args, reduce_proof);
+                }
               }
             }
           }
@@ -4673,7 +4697,7 @@ buildSubst(Typer *typer, SubstAst *in, Term *goal0)
   {
     // building expressions and storing substitutions
     Ast *to_rewrite_ast = in->to_rewrite[expr_i];
-    if (Term *to_rewrite = buildTerm(typer, to_rewrite_ast, holev))
+    if (Term *to_rewrite = buildTerm(typer, to_rewrite_ast, hole))
     {
       Pointer *eq_proof      = 0;
       b32      right_to_left = 0;
@@ -4932,7 +4956,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
         extendBindings(typer);
         for (i32 i=0; i < param_count && noError(); i++)
         {
-          if (Term *param_type = buildTerm(typer, in->param_types[i], holev).value)
+          if (Term *param_type = buildTerm(typer, in->param_types[i], hole).value)
           {
             out->param_types[i] = toAbstractTerm(arena, param_type, getScopeDepth(scope->outer));
             scope->pointers[i] = newStackPointer(out->param_names[i], scope->depth, i, param_type);
@@ -4944,9 +4968,17 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
         if (noError())
         {
           value = out;
-          if (Term *output_type = buildTerm(typer, in->output_type, holev).value)
+          // :no-output-type
+          if (in->output_type)
           {
-            out->output_type = toAbstractTerm(arena, output_type, getScopeDepth(scope->outer));
+            if (Term *output_type = buildTerm(typer, in->output_type, hole))
+            {
+              out->output_type = toAbstractTerm(arena, output_type, getScopeDepth(scope->outer));
+            }
+          }
+          else
+          {
+            out->output_type = hole;
           }
         }
         unwindBindingsAndScope(typer);
@@ -4956,7 +4988,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
     case Ast_AccessorAst:
     {
       AccessorAst *in = (AccessorAst *)(in0);
-      if (Term *record0 = buildTerm(typer, in->record, holev))
+      if (Term *record0 = buildTerm(typer, in->record, hole))
       {
         i32 ctor_i = 0;
         Term **members = 0;
@@ -5006,7 +5038,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
       Term *type = goal0;
       if (in->signature)
       {
-        type = buildTerm(typer, in->signature, holev).value;
+        type = buildTerm(typer, in->signature, hole).value;
       }
 
       if (noError())
@@ -5030,7 +5062,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
       {
         reportError(in0, "we do not know what the goal is, so nothing to rewrite");
       }
-      else if (Term *eq_or_proof = buildTerm(typer, in->eq_or_proof, holev))
+      else if (Term *eq_or_proof = buildTerm(typer, in->eq_or_proof, hole))
       {
         Term *eq_proof = 0;
         Term *eq       = 0;
@@ -5062,7 +5094,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
           Term *to   = in->right_to_left ? lhs : rhs;
           if (in->in_expression)
           {
-            if (Term *in_expression = buildTerm(typer, in->in_expression, holev).value)
+            if (Term *in_expression = buildTerm(typer, in->in_expression, hole).value)
             {
               if (SearchOutput search = searchExpression(from, in_expression->type))
               {
@@ -5096,7 +5128,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
               Term *new_goal = rewriteTerm(from, to, search.path, goal0);
               if (Term *body = buildTerm(typer, in->body, new_goal))
               {
-                value = newRewrite(eq_proof, body, search.path, in->right_to_left);
+                value = newRewrite(eq_proof, body, search.path, in->right_to_left, new_goal);
               }
             }
             else
@@ -5133,7 +5165,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
           rewrite_path = 0;
         }
       }
-      else if ((new_goal = buildTerm(typer, in->new_goal, holev)))
+      else if ((new_goal = buildTerm(typer, in->new_goal, hole)))
       {
         if (equal(new_goal->type, goal0->type))
         {
@@ -5178,7 +5210,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
 
               if (!is_global_identifier)
               {
-                if ((eq_proof = buildTerm(typer, in->hint, holev)))
+                if ((eq_proof = buildTerm(typer, in->hint, hole)))
                 {
                   hints = addHint(temp_arena, hints, eq_proof);
                 }
@@ -5232,10 +5264,11 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
     case Ast_Let:
     {
       Let  *in = castAst(in0, Let);
-      Term *type_hint = holev;
+      Term *type_hint = hole;
+      // todo: remove this "NormalizeMeAst" business!
       if (in->type && in->type->kind != Ast_NormalizeMeAst)
       {
-        if (Term *type = buildTerm(typer, in->type, holev).value)
+        if (Term *type = buildTerm(typer, in->type, hole))
         {
           type_hint = type;
         }
@@ -5292,7 +5325,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
       Term *proposition = goal0;
       if (in->proposition)
       {
-        proposition = buildTerm(typer, in->proposition, holev).value;
+        proposition = buildTerm(typer, in->proposition, hole).value;
       }
 
       if (noError())
@@ -5326,7 +5359,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
     case Ast_TypedExpression:
     {
       TypedExpression *in = (TypedExpression *)(in0);
-      if (Term *type = buildTerm(typer, in->type, holev).value)
+      if (Term *type = buildTerm(typer, in->type, hole).value)
       {
         value = buildTerm(typer, in->expression, type).value;
       }
@@ -5334,7 +5367,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
 
     case Ast_ReductioAst:
     {
-      value = reductioAdAbsurdum(Solver{.typer=typer}, goal0);
+      todoIncomplete;
       if (!value)
         reportError(in0, "no contradiction found");
     } break;
@@ -5348,7 +5381,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
       {
         assert(!in->tail);
         CompositeAst *nil = newAst(arena, CompositeAst, &in->token);
-        nil->op           = newIdentifier("nil");
+        nil->op = newIdentifier("nil");
         list = nil;
       }
       else
@@ -5384,7 +5417,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
     case Ast_Invert:
     {
       Invert *in = (Invert *)in0;
-      if (Term *pointer0 = buildTerm(typer, in->pointer, holev))
+      if (Term *pointer0 = buildTerm(typer, in->pointer, hole))
       {
         if (Pointer *pointer = castTerm(pointer0, Pointer))
         {
@@ -5511,26 +5544,27 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
   Fork *out = newTerm(arena, Fork, goal);
   out->case_count = in->case_count;
   i32 UNUSED_VAR serial = DEBUG_SERIAL++;
-  if (Term *subject = buildTerm(typer, in->subject, holev).value)
+  if (Term *subject = buildTerm(typer, in->subject, hole).value)
   {
-    Pointer *save_global_fork_subject = current_global_function_fork_subject;
-    if (current_global_function)
+    auto &fixpoint = current_global_fixpoint;
+    Pointer *save_global_fork_subject = fixpoint->fork_subject;
+    if (fixpoint->fun)
     {
-      // NOTE: massive #hack to mark this subject as "should be decreasing when
+      // NOTE: massive #hack to mark this subject as "should be reducing when
       // calling recursively".
-      if (current_global_function_fork_subject)
+      if (fixpoint->fork_subject)
       {
         breakhere;  // STUDY: multiple fork subjects, what to do...?
       }
       else
       {
-        i32 param_count = getParameterCount(current_global_function);
+        i32 param_count = getParameterCount(fixpoint->fun);
         for (i32 param_i=0; param_i < param_count; param_i++)
         {
-          Pointer *arg = current_global_function_args[param_i];
+          Pointer *arg = fixpoint->args[param_i];
           if (subject == arg)
           {
-            current_global_function_fork_subject = arg;
+            fixpoint->fork_subject = arg;
             break;
           }
         }
@@ -5643,7 +5677,7 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
       attach("type", subject_type);
     }
 
-    current_global_function_fork_subject = save_global_fork_subject;
+    fixpoint->fork_subject = save_global_fork_subject;
   }
   if (noError())
   {
@@ -5655,7 +5689,7 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
 }
 
 inline Term *
-parseAndBuildTemp(Typer *typer, Term *expected_type=holev)
+parseAndBuildTemp(Typer *typer, Term *expected_type=hole)
 {
   Term *out = 0;
   if (Ast *ast = parseExpression())
@@ -5666,7 +5700,7 @@ parseAndBuildTemp(Typer *typer, Term *expected_type=holev)
 }
 
 inline Term *
-parseAndBuildGlobal(Typer *typer, Term *expected_type=holev)
+parseAndBuildGlobal(Typer *typer, Term *expected_type=hole)
 {
   Term *out = 0;
   if (Ast *ast = parseExpression())
@@ -5715,7 +5749,7 @@ buildUnion(Typer *typer, UnionAst *in, Token *global_name)
   i32    non_poly_count = 0;
   if (in->signature)
   {
-    if (Term *uni_params0 = buildGlobalTerm(typer, in->signature, holev))
+    if (Term *uni_params0 = buildGlobalTerm(typer, in->signature, hole))
     {
       uni_signature              = castTerm(uni_params0, Arrow);
       uni_signature->output_type = rea.Type;
@@ -5733,7 +5767,7 @@ buildUnion(Typer *typer, UnionAst *in, Token *global_name)
     for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
     {
       Ast *ast_sig = in->ctor_signatures[ctor_i];
-      if (Term *sig0 = buildGlobalTerm(typer, ast_sig, holev))
+      if (Term *sig0 = buildGlobalTerm(typer, ast_sig, hole))
       {
         Arrow *sig = ctor_signatures[ctor_i] = castTerm(sig0, Arrow);
         assert(sig);
@@ -5841,7 +5875,7 @@ buildGlobalFunction(Typer *typer, FunctionAst *in)
   i32 unused_var serial = DEBUG_SERIAL;
   pushContext(in->token.string, true);
   Function *out = 0;
-  if (Term *type = buildTerm(typer, in->signature, holev))
+  if (Term *type = buildTerm(typer, in->signature, hole))
   {
     type = copyToGlobalArena(type);
     if (Arrow *signature = castTerm(type, Arrow))
@@ -6054,7 +6088,7 @@ interpretTopLevel(EngineState *state)
       case Token_Keyword_check:
       {
         pushContext("check TERM: TYPE");
-        Term *expected_type = holev;
+        Term *expected_type = hole;
         if (Ast *ast = parseExpression())
         {
           if (optionalChar(':'))

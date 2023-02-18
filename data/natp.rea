@@ -137,6 +137,7 @@ gtTransitive :: (a,b,c: Natp, P: a>b = true, Q: b>c = true) -> a>c = true
  }
 
 addIncreases :: (a,b: Natp) -> a+b > a = true
+#hint
 {
  fork a {1, ++ return addIncreases(a.p, b)}
  }
@@ -302,28 +303,28 @@ mulDistributive :: (a,b,c: Natp) -> c*(a+b) = c*a+c*b
   ++ fork b {1  return false,
              ++ return a.p == b.p}}}
 
-le :: fn(a,b: Natp) -> Type
+<= :: fn(a,b: Natp) -> Type
 #expand
 {
   return a <= b = true
   }
 
-lt :: fn(a,b: Natp) -> Type
+< :: fn(a,b: Natp) -> Type
 #expand
 {
   return a < b = true
   }
 
-gt :: fn(a,b: Natp) -> Type
+> :: fn(a,b: Natp) -> Type
 #expand
 {
   return a > b = true
   }
 
-le1 :: ($a: Natp, p: a le 1) -> a=1
+le1 :: ($a: Natp, p: (:Type)a <= 1) -> a=1
 {fork a {1, ++ norm p;}}
 
-ltLemma :: (a,b: Natp, p: a lt ++(b)) -> a=b \/ a lt b
+ltLemma :: (a,b: Natp, p: (:Type)a < ++(b)) -> a=b \/ (:Type)a < b
 {
   fork a
   {
@@ -339,7 +340,7 @@ ltLemma :: (a,b: Natp, p: a lt ++(b)) -> a=b \/ a lt b
     }
   }
 
-leChain :: (a,b,c: Natp, p: a le b, q: b le c) -> a le c
+leChain :: (a,b,c: Natp, p: (:Type)a <= b, q: (:Type)b <= c) -> (:Type)a <= c
 #norm(p,q)
 {
   fork c
@@ -353,7 +354,7 @@ leChain :: (a,b,c: Natp, p: a le b, q: b le c) -> a le c
       }}
   }
 
-ltChain :: (a,b,c: Natp, p: a lt b, q: b lt c) -> a lt c
+ltChain :: (a,b,c: Natp, p: (:Type)a < b, q: (:Type)b < c) -> (:Type)a < c
 {
   fork c
   {
@@ -361,13 +362,14 @@ ltChain :: (a,b,c: Natp, p: a lt b, q: b lt c) -> a lt c
     ++ fork b
     {1 norm p,
       ++ fork a {1, ++ norm p; norm q;
-                  prove a.p lt b.p {norm};
-                  prove b.p lt c.p {norm};
+                  prove (:Type)a.p < b.p {norm};
+                  prove (:Type)b.p < c.p {norm};
                   use ltChain with b=b.p}}
     }
   }
 
-ltGt :: (a,b: Natp, p: a lt b) -> b gt a
+ltGt :: (a,b: Natp, p: (:Type)a < b) -> (:Type)b > a
+#hint
 {
   fork b
   {
@@ -376,7 +378,8 @@ ltGt :: (a,b: Natp, p: a lt b) -> b gt a
     }
   }
 
-gtLt :: (a,b: Natp, p: a gt b) -> b lt a
+gtLt :: (a,b: Natp, p: (:Type)a > b) -> (:Type)b < a
+#hint
 {
   fork a
   {

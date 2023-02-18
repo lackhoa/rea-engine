@@ -38,30 +38,20 @@ difference :: fn(a,b: Natp, p: a > b = true) -> exists(c: Natp) a = b+c
       prove ++(a.p) = ++(b.p) + recurse.e {norm};
       use evidence with e=recurse.e}}}
 
-Reachable :: union(^R: (a :Natp, b :Natp) -> Type, ^x: Natp)
-{
-  reachable(p: (y: Natp, lt: y R x) -> Reachable(R, y))
-  }
-
-WellFounded :: fn(R: (a: Natp, b: Natp) -> Type) -> Type
-{
-  return (a: Natp) -> Reachable(R, a)
-  }
-
 ;; TODO: since we don't have nested fixpoints, we gotta hoist the function out here.
-ltWellFounded :: (a: Natp) -> Reachable(lt,a)
+ltWellFounded_ :: (a: Natp) -> Reachable(<, a)
 {
-  pose fn (b: Natp, p: b lt a) -> Reachable(lt, b)
+  pose fn (b: Natp, p: (:Type)b < a) -> Reachable(<, b)
   {
     fork a
     {
       1  norm p,
       ++ norm p;
-      recurse := prove Reachable(lt, a.p) {use ltWellFounded};
+      recurse := prove Reachable(<, a.p) {use ltWellFounded_};
 
-      pose fn (y: Natp, pyb: y lt b) -> Reachable(lt,y)
+      pose fn (y: Natp, pyb: (:Type)y < b) -> Reachable(<, y)
       {
-        chain := prove y lt a.p {use leChain with b=b};
+        chain := prove (:Type)y < a.p {use leChain with b=b};
         use (recurse.p)
         };
 
@@ -71,16 +61,17 @@ ltWellFounded :: (a: Natp) -> Reachable(lt,a)
   use reachable;
   }
 
-ltWellFounded : WellFounded(lt) := prove {norm; return ltWellFounded};
+ltWellFounded : WellFounded(Natp, <) := prove {norm; return ltWellFounded_};
 
 QuotientRemainder :: union(^a, ^b: Natp)
 { divideFail(p: b>a = true),  ;; todo use lt
   divideEvenly(quotient: Natp, p: a = quotient*b),
   divideWithRemainder(quotient: Natp, remainder: Natp,
                        p: a = quotient*b + remainder,
-                       q: remainder lt b)}
+                       q: (:Type) remainder < b) }
 
 quotientRemainder :: fn(a,b: Natp) -> QuotientRemainder(a,b)
+#measure(a, ltWellFounded)
 {order := totalOrder(a,b);
   fork order
   {eq
@@ -92,11 +83,17 @@ quotientRemainder :: fn(a,b: Natp) -> QuotientRemainder(a,b)
     ,
     gt
     diff    := difference(a,b, order.p);
-    recurse := quotientRemainder(diff.e, b);
+
+    ;; TODO: forcing people to use this "use" syntax isn't cool
+    recurse := use quotientRemainder with a=diff.e, b=b
+    #reduce {rewrite diff.p;
+              prove (:Type)b + diff.e > diff.e {=> (:Type)diff.e + b > diff.e;
+                                                 use addIncreases}};
+
     fork recurse
     {
       divideFail
-      prove diff.e lt b {use gtLt};
+      prove (:Type)diff.e < b {use gtLt};
       use divideWithRemainder with quotient=1, remainder=diff.e;
       ,
       divideEvenly
