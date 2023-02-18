@@ -653,7 +653,7 @@ printComposite(Arena *buffer, Composite *in, PrintOptions opt)
       }
     }
 
-    if (printed_arg_count == 2 && !no_print_as_binop)
+    if (printed_arg_count == 2 && !no_print_as_binop && precedence)
     {// special path for infix binary operator
       if (precedence < opt.no_paren_precedence)
         print(buffer, "(");
@@ -2421,7 +2421,7 @@ getReduceProofType(Fixpoint *fixpoint, i32 arg_count, Term **args)
 {
   Term *recurse_measure = apply(fixpoint->measure_function, arg_count, args, {});
   Term *input_measure   = apply(fixpoint->measure_function, arg_count, (Term**)fixpoint->args, {});
-  Composite *out = reaComposite(fixpoint->well_founded_relation, recurse_measure, input_measure);
+  Composite *out = reaComposite(fixpoint->well_founded_order, recurse_measure, input_measure);
   return out;
 }
 
@@ -4216,7 +4216,7 @@ buildFunctionGivenSignature(Typer *typer0, Arrow *signature, Ast *in_body,
                 if (wf->op == rea.WellFounded)
                 {
                   valid_wf_proof = true;
-                  fixpoint.well_founded_relation = getArg(wf, 1);
+                  fixpoint.well_founded_order = getArg(wf, 1);
                 }
               }
 
@@ -4605,10 +4605,15 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
                   if (isFunctionBeingBuilt(op))
                   {
                     Fixpoint *fixpoint = current_global_fixpoint;
-                    Typer reduce_proof_typer = *typer;
-                    reduce_proof_typer.expected_errors = 0;
-                    Term *expected_type = getReduceProofType(fixpoint, param_count, args);
-                    reduce_proof = buildTerm(&reduce_proof_typer, in->reduce_proof, expected_type);
+                    if (fixpoint->measure_function && fixpoint->well_founded_order)
+                    {
+                      Typer reduce_proof_typer = *typer;
+                      reduce_proof_typer.expected_errors = 0;
+                      Term *expected_type = getReduceProofType(fixpoint, param_count, args);
+                      reduce_proof = buildTerm(&reduce_proof_typer, in->reduce_proof, expected_type);
+                    }
+                    else
+                      reportError(in->reduce_proof, "please supply the measure function and the well founded order to use this feature");
                   }
                   else
                   {

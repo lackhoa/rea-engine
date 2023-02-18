@@ -328,7 +328,7 @@ ltLemma :: (a,b: Natp, p: (:Type)a < ++(b)) -> a=b \/ (:Type)a < b
 {
   fork a
   {
-    1 fork b {1 use leftDisjunct, ++ use rightDisjunct}
+    1 fork b {1 use left, ++ use right}
     ,
     ++ fork b
     { 1 norm p,
@@ -386,6 +386,12 @@ gtLt :: (a,b: Natp, p: (:Type)a > b) -> (:Type)b < a
     1  norm p,
     ++ fork b {1, ++ norm p; use gtLt}
     }
+  }
+
+leReflexive :: (a: Natp) -> (:Type)a <= a
+#hint
+{
+  fork a {1, ++ use leReflexive}
   }
 
 algebra_declare Natp;

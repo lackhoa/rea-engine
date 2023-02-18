@@ -124,16 +124,170 @@ isGcd :: (q, a,b: Natp) -> Type
            ((q': Natp, isCommonDivisor(q',a,b)) -> isFactor(q', q)))
   }
 
-gcd :: (a,b: Natp) -> exists(out: Natp) isGcd(out, a,b)
+< :: (p1,p2: Natp /\ Natp) -> Type
+#no_expand #tag(lexicographic)
 {
-  qr := quotientRemainder(a,b);
+  return (p1.a < p2.a \/
+          p1.a = p2.a /\ p1.b < p2.b)
+  }
+
+lexicoLtLemma ::
+(a,b: Natp, x: Natp /\ Natp, lt: x < pair(a,++(b)))
+-> x = pair(a,b) \/ x < pair(a,b)
+{
+  norm unfold(<) lt;
+  fork lt
+  {
+    auto
+    prove x < pair(a,b) {norm unfold(<); use left}
+    use right
+    ,
+    auto
+    ;; ltLemma :: (a,b: Natp, p: (:Type)a < ++(b)) -> a=b \/ (:Type)a < b
+    lemma := prove x.b = b \/ x.b < b
+    {prove (:Type)++(x.b) <= ++(b) {norm; return lt.b.b}; use ltLemma};
+
+    fork lemma
+    {
+      auto
+      prove (x = pair(a,b)) {rewrite lemma.a; rewrite lt.b.a}
+      use left;
+      ,
+      auto
+      prove pair(x.a, x.b) < pair(a, b)
+      {
+        norm unfold(<);
+        prove x.a = a /\ ++(x.b) <= b = true {use pair with a=lt.b.a};
+        use right;}
+      use right;
+      }
+    }
+  }
+
+lexicoReachableLocked ::
+(a,b: Natp, h: Reachable(<, pair(a, (:Natp)1)))
+->
+Reachable(<, pair(a,b))
+{
+  fork b
+  {
+    1,
+    ++
+    pose fn (y: Natp /\ Natp, lt: y < pair(a,b)) -> Reachable(<, y)
+    {
+      lt' := lt;  ;; save it before we norm it away
+      norm unfold(<) lt;  ;; todo as lt';
+      fork lt
+      {
+        auto
+        ;; y.a < a -> y is less than (a,1)
+        prove y < pair(a,1) {norm unfold(<); use left};
+        use (h.p);
+        ,
+        auto
+        ;; y.a = a; y.b <= b.p
+        ih : Reachable(<, pair(a, b.p)) := use lexicoReachableLocked with a=a, b=b.p;
+
+        ;; either "y = a,b.p" in which case the induction hypothesis applies
+        ;; or "y < a,b.p", in which case the induction hypothesis also applies
+
+        lemma := use lexicoLtLemma with lt=lt';
+        fork lemma
+        {
+          auto
+          rewrite lemma.a
+          ,
+          auto
+          use (ih.p)
+          }
+        }
+      };
+    use reachable;
+    }
+  }
+
+lexicoWellFounded1 :: (b: Natp) -> Reachable(<, pair((:Natp)1,b))
+{
+  super_base_case := prove Reachable(<, pair((:Natp)1, (:Natp)1))
+  {
+    pose fn (y: Natp /\ Natp, lt: y < pair(1,1)) -> Reachable(<, y)
+    {
+      norm unfold(<) lt; fork lt {auto fork lt.a {}, auto fork lt.b. b {}}
+      };
+    use reachable;
+    };
+
+  fork b
+  {
+    1 return super_base_case,
+    ++ use lexicoReachableLocked;
+    }
+  }
+
+lexicoWellFounded_ :: (a: Natp, b: Natp) -> Reachable(<, pair(a,b))
+{
+  fork a
+  {
+    1 use lexicoWellFounded1
+    ,
+    ++
+    if_b_is_1 := prove Reachable(<, pair(a, (:Natp)1))
+    {
+      ;; Anything that "rolls under" to a.p is gonna be resolved by induction.
+      pose fn (y: Natp /\ Natp, lt: y < pair(a, 1)) -> Reachable(<, y)
+      {
+        norm unfold(<) lt;
+        fork lt
+        {
+          auto
+          prove y < pair(a.p, ++(y.b))
+          {
+            norm unfold(<);
+            lemma := use ltLemma with a=y.a, b=a.p;
+            fork lemma
+            {
+              auto
+              prove y.a = a.p /\ y.b <= y.b = true {use pair;}
+              use right;
+              ,
+              auto
+              use left;
+              }
+            }
+          ih := use lexicoWellFounded_ with a=a.p, b = ++(y.b);
+          use (ih.p);
+          ,
+          auto
+          fork lt.b.b {}
+          }
+        };
+      use reachable;
+      };
+
+    fork b
+    {
+      1 return if_b_is_1,
+      ++ use lexicoReachableLocked
+      }
+    }
+  }
+
+lexicoWellFounded : WellFounded(Natp/\Natp, <) := prove {norm; lexicoWellFounded_};
+
+gcd :: (a,b: Natp) -> exists(out: Natp) isGcd(out, a,b)
+#measure(pair(a,b), lexicoLtWellFounded)
+{
+  ;; NOTE: we try to keep a < b.
+  qr := quotientRemainder(b,a);
   fork qr
   {
     divideFail
-    use quotientRemainder(b,a)
-    #reduce {};
+    prove {
+            use gcd with a=b,b=a
+            #reduce {};
+            }
     ,
     divideEvenly return some(qr.quotient)
     ,
     divideWithRemainder
-    return gcd(b, qr.remainder)}}
+    return gcd(qr.remainder, b)}}

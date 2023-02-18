@@ -357,8 +357,15 @@ parseSequence(b32 require_braces=true)
     }
     else if (equal(tactic, "prove"))
     {
-      pushContext("prove PROPOSITION {SEQUENCE} as IDENTIFIER");
-      if (Ast *proposition = parseExpression())
+      pushContext("prove [PROPOSITION] {SEQUENCE} as IDENTIFIER");
+
+      Ast *proposition = 0;
+      if (peekChar() != '{')
+      {
+        proposition = parseExpression();
+      }
+
+      if (noError())
       {
         if (Ast *proof = parseSequence(true))
         {
@@ -370,13 +377,14 @@ parseSequence(b32 require_braces=true)
           if (noError())
           {
             Let *let = newAst(arena, Let, token);
-            let->lhs                          = name;
-            let->rhs                          = proof;
-            let->type                         = proposition;
+            let->lhs  = name;
+            let->rhs  = proof;
+            let->type = proposition;
             ast0 = let;
           }
         }
       }
+
       popContext();
     }
     else if (equal(tactic, "pose"))
@@ -968,20 +976,20 @@ parseOperand()
 
     case Token_Keyword_prove:
     {
-      Ast *type = 0;
-      
+      Ast *proposition = 0;
       if (peekChar() != '{')
       {
-        type = parseExpression();
+        proposition = parseExpression();
       }
+
       if (noError())
       {
         if (Ast *expression = parseSequence(true))
         {
-          if (type)
+          if (proposition)
           {
-            TypedExpression *typed = newAst(arena, TypedExpression, &type->token);
-            typed->type       = type;
+            TypedExpression *typed = newAst(arena, TypedExpression, &proposition->token);
+            typed->type       = proposition;
             typed->expression = expression;
             operand = typed;
           }
@@ -1099,7 +1107,7 @@ seesArrowExpression()
 inline i32
 precedenceOf(String op)
 {
-  int out = 0;
+  int out = 0;  // NOTE: 0 means it's literally not a binop
   const i32 eq_precedence = 50;
 
   // TODO: implement for real
@@ -1119,7 +1127,9 @@ precedenceOf(String op)
   {
     out = eq_precedence;
   }
-  else if (equal(op, "<") || equal(op, ">") || equal(op, "=?") || equal(op, "=="))
+  else if (equal(op, "<") || equal(op, ">") ||
+           equal(op, "<=") || equal(op, ">=") ||
+           equal(op, "=?") || equal(op, "=="))
   {
     out = eq_precedence + 5;
   }
@@ -1135,8 +1145,9 @@ precedenceOf(String op)
   {
     out = eq_precedence + 20;
   }
-  else
+  else if (equal(op, "cons"))
   {
+    // NOTE: temporary precedence, until the day we figure a better convention.
     out = eq_precedence + 2;
   }
 

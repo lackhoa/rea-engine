@@ -205,22 +205,22 @@ fold :: fn($A: Type, op: binaryOp(A), l: PList(A)) -> A
   cons
   return l.head op fold(op, l.tail)}}
 
-foldConcat :: (($T: Type, op: binaryOp(T), assoc: associative(op),
+foldConcat :: (($T: Type, *: binaryOp(T), assoc: associative(*),
                 l,m: PList(T))
-               -> (fold(op, l+m) =
-                   fold(op, l) op fold(op, m)))
+               -> (fold(*, l+m) =
+                   fold(*, l) * fold(*, m)))
 #hint
 {fork l
  {single,
   cons
-  ;; l.head op fold(op, l.tail + m) = (l.head op fold(op, l.tail)) op fold(op, m)
-  => l.head op fold(op, l.tail + m) = l.head op fold(op, l.tail) op fold(op, m) {assoc}
-  => l.head op fold(op, l.tail + m) = l.head op fold(op, l.tail + m) {foldConcat}
+  ;; l.head * fold(*, l.tail + m) = (l.head * fold(*, l.tail)) * fold(*, m)
+  => l.head * fold(*, l.tail + m) = l.head * fold(*, l.tail) * fold(*, m) {assoc}
+  => l.head * fold(*, l.tail + m) = l.head * fold(*, l.tail + m) {foldConcat}
   }}
 
-foldPermute :: ($T: Type, op: binaryOp(T),
-                assoc: associative(op), commu: commutative(op),
-                l,m: PList(T), p: Permute(l, m)) -> fold(op, l) = fold(op, m)
+foldPermute :: ($T: Type, *: binaryOp(T),
+                assoc: associative(*), commu: commutative(*),
+                l,m: PList(T), p: Permute(l, m)) -> fold(*, l) = fold(*, m)
 #builtin
 {
  fork p
@@ -231,15 +231,15 @@ foldPermute :: ($T: Type, op: binaryOp(T),
   use commu;
   ,
   permuteSkip invert p; subst l,m; norm;
-  rewrite (prove fold(op, p.l) = fold(op, p.m) {use foldPermute})
+  rewrite (prove fold(*, p.l) = fold(*, p.m) {use foldPermute})
   ,
   permuteSwap invert p; subst l,m; norm;
-  => (p.a op p.b) op fold(op, p.l) = p.b op p.a op fold(op, p.l) {assoc}
-  => (p.b op p.a) op fold(op, p.l) = p.b op p.a op fold(op, p.l) {commu}
-  => p.b op p.a op fold(op, p.l) = p.b op p.a op fold(op, p.l)   {assoc}
+  => (p.a * p.b) * fold(*, p.l) = p.b * p.a * fold(*, p.l) {assoc}
+  => (p.b * p.a) * fold(*, p.l) = p.b * p.a * fold(*, p.l) {commu}
+  => p.b * p.a * fold(*, p.l) = p.b * p.a * fold(*, p.l)   {assoc}
   ,
   permuteChain invert p; subst l, m;
-  rewrite prove fold(op, p.l) = fold(op, p.chain) {use foldPermute};
-  prove fold(op, p.chain) = fold(op, p.m) {use foldPermute}
+  rewrite prove fold(*, p.l) = fold(*, p.chain) {use foldPermute};
+  prove fold(*, p.chain) = fold(*, p.m) {use foldPermute}
   }
 }

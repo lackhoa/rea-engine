@@ -2,13 +2,13 @@
 
 /\ :: union(^A,^B: Type)
 {
- conjunction(a: A, b: B)
+ pair(a: A, b: B)
  }
 
 \/ :: union(^A,^B: Type)
 {
- leftDisjunct(a: A),
- rightDisjunct(b: B)
+ left(a: A),
+ right(b: B)
  }
 
 eqChain :: fn($A: Type, $a,$b,$c: A, a=b, b=c) -> a=c
@@ -35,13 +35,13 @@ binaryOp :: fn(T: Type) -> Type
 #expand
 {return (:T, :T) -> T}
 
-associative :: fn($T: Type, op: binaryOp(T)) -> Type
+associative :: fn($T: Type, +: binaryOp(T)) -> Type
 #expand
-{return (a,b,c: T) -> (a op b) op c = a op b op c}
+{return (a,b,c: T) -> (a + b) + c = a + b + c}
 
-commutative :: fn($T: Type, op: binaryOp(T)) -> Type
+commutative :: fn($T: Type, +: binaryOp(T)) -> Type
 #expand
-{return (a,b: T) -> a op b = b op a}
+{return (a,b: T) -> a + b = b + a}
 
 Exists :: union(^$T: Type, ^prop: (x: T) -> Type)
 #builtin

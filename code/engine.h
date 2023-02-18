@@ -459,7 +459,7 @@ struct Fixpoint {
   Pointer   *fork_subject;
 
   Function *measure_function;
-  Term     *well_founded_relation;
+  Term     *well_founded_order;
 };
 
 #include "generated/engine_forward.h"
