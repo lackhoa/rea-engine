@@ -71,10 +71,10 @@ requireKind(TokenKind tc, char *message=0)
   return out;
 }
 
-inline b32
+inline String
 requireIdentifier(char *message=0)
 {
-  b32 out = false;
+  String out = {};
   if (!message)
   {
     message = "expected identifier";
@@ -82,8 +82,8 @@ requireIdentifier(char *message=0)
   if (hasMore())
   {
     Token token = nextToken();
-    if (isIdentifier(&token)) out = true;
-    else tokenError(message);
+    if (isIdentifier(&token)) out = token.string;
+    else                      tokenError(message);
   }
   return out;
 }
@@ -158,10 +158,19 @@ optionalChar(char c)
     if (equal(&token, c))
     {
       out = true;
-      nextToken();
+      eatToken();
     }
   }
   return out;
+}
+
+inline void
+eatCharRepeatedly(char c)
+{
+  while (hasMore())
+  {
+    if (!optionalChar(c)) break;
+  }
 }
 
 inline b32
@@ -231,6 +240,24 @@ getAstBody(Ast *item0)
   return 0;
 }
 
+inline ArrowAst *
+parseNameOnlyArrowType()
+{
+  Arena *arena = temp_arena;
+  ArrowAst *out = newAst(arena, ArrowAst, lastToken());
+  i32 cap = 16;  // todo #grow
+  allocateArray(arena, cap, out->param_names);
+  for (;;)
+  {
+    i32 param_i = out->param_count++;
+    assert(param_i < cap);
+    out->param_names[param_i] = requireIdentifier();
+    if (!optionalChar(',')) break;
+  }
+  NULL_WHEN_ERROR(out);
+  return out;
+}
+
 inline Ast *
 parseSequence(b32 require_braces=true)
 {
@@ -250,27 +277,40 @@ parseSequence(b32 require_braces=true)
   {
     // Can't get out of this rewind business, because sometimes the sequence is empty :<
     Tokenizer tk_save = *TK;
+    eatCharRepeatedly(';');
     Token  token_ = nextToken();
     Token *token  = &token_;
     Ast *ast0 = 0;
     String tactic = token->string;
     if (equal(tactic, "norm"))
     {
-      pushContext("norm [unfold[(FUNCTION_NAME)]] [EXPRESSION]");
+      pushContext("norm [as IDENTIFIER] [unfold[(FUNCTION_NAME)]] [EXPRESSION]");
       NormOptions norm_options = {};
+      String norm_name = {};
 
-      if (optionalString("unfold"))
+      while (true)
       {
-        if (optionalChar('('))
+        if (optionalString("unfold"))
         {
-          if (requireIdentifier("expect function name"))
+          if (optionalChar('('))
           {
-            norm_options.name_to_unfold = lastToken()->string;
-            requireChar(')');
+            if (String name = requireIdentifier("expected function name"))
+            {
+              norm_options.name_to_unfold = name;
+              requireChar(')');
+            }
+          }
+          else
+            norm_options.unfold_topmost_operator = true;
+        }
+        else if (optionalString("as"))
+        {
+          if (requireIdentifier())
+          {
+            norm_name = lastToken()->string;
           }
         }
-        else
-          norm_options.unfold_topmost_operator = true;
+        else break;
       }
 
       if (noError())
@@ -279,9 +319,16 @@ parseSequence(b32 require_braces=true)
         ast_goal->norm_options = norm_options;
         if (seesExpressionEndMarker())
         {// normalize goal
-          GoalTransform *ast = newAst(arena, GoalTransform, token);
-          ast->new_goal = ast_goal;
-          ast0 = ast;
+          if (norm_name)
+          {
+            reportError("you can't name the normalization of a goal");
+          }
+          else
+          {
+            GoalTransform *ast = newAst(arena, GoalTransform, token);
+            ast->new_goal = ast_goal;
+            ast0 = ast;
+          }
         }
         else if (Ast *expression = parseExpression())
         {// normalize with let.
@@ -289,14 +336,14 @@ parseSequence(b32 require_braces=true)
           let->rhs  = expression;
           let->type = ast_goal;
           ast0 = let;
-          if (expression->kind == Ast_Identifier)
+          if (norm_name)
+          {
+            let->lhs = norm_name;
+          }
+          else if (expression->kind == Ast_Identifier)
           {
             // borrow the name if the expression is an identifier 
             let->lhs  = expression->token.string;
-          }
-          else
-          {
-            // NOTE This case can happen if it's a "seek"
           }
         }
       }
@@ -406,6 +453,18 @@ parseSequence(b32 require_braces=true)
     else if (equal(tactic, "return"))
     {
       ast0 = parseExpression();
+      expect_sequence_to_end = true;
+    }
+    else if (equal(tactic, "fn"))
+    {
+      if (ArrowAst *signature = parseNameOnlyArrowType())
+      {
+        // TODO: tbh this is kinda crazy
+        FunctionAst *ast = newAst(arena, FunctionAst, token);
+        ast->signature = signature;
+        ast->body      = parseSequence(false);
+        ast0 = ast;
+      }
       expect_sequence_to_end = true;
     }
     else if (equal(tactic, "fork"))
@@ -525,8 +584,7 @@ parseSequence(b32 require_braces=true)
       new_list->head = ast0;
       new_list->tail  = list;
       list = new_list;
-      // f.ex function definitions doesn't need to end with ';'
-      optionalChar(';');
+      eatCharRepeatedly(';');
     }
   }
 
@@ -578,7 +636,11 @@ parseUse()
     ast->op           = op;
     ast->partial_args = true;
 
-    if (optionalString("with"))
+    b32 quick_syntax = optionalString("with");
+    b32 brace_syntax = false;
+    if (!quick_syntax) brace_syntax = optionalChar('{');
+
+    if (quick_syntax || brace_syntax)
     {
       i32 cap = 16;  // todo #grow
       ast->keywords = pushArray(arena, cap, String);
@@ -590,15 +652,18 @@ parseUse()
           i32 arg_i = ast->arg_count++;
           assert(arg_i < cap);
           ast->keywords[arg_i] = lastToken()->string;
-          if (requireChar('='))
+          if (quick_syntax)
           {
-            if (Ast *arg = parseExpression())
+            if (requireChar('='))
             {
-              ast->args[arg_i] = arg;
+              ast->args[arg_i] = parseExpression();
+              if (!optionalChar(',')) break;
             }
-
-            if (!optionalChar(','))
-              break;
+          }
+          else
+          {
+            ast->args[arg_i] = parseSequence(false);
+            if (!optionalChar(',')) break;
           }
         }
         else
@@ -609,10 +674,13 @@ parseUse()
       {
         if (optionalDirective("reduce"))
         {
-          ast->reduce_proof = parseSequence(true);
+          b32 require_brace = quick_syntax;
+          ast->reduce_proof = parseSequence(require_brace);
         }
       }
     }
+
+    if (brace_syntax) requireChar('}');
 
     ast0 = ast;
   }
@@ -815,6 +883,7 @@ parseArrowType(b32 skip_output_type)
   return out;
 }
 
+
 internal Ast *
 parseFunctionExpression(Arena *arena)
 {
@@ -826,9 +895,13 @@ parseFunctionExpression(Arena *arena)
   {
     // inferred signature.
   }
-  else
+  else if (peekChar() == '(')
   {
     signature = parseArrowType(false);
+  }
+  else
+  {
+    signature = parseNameOnlyArrowType();
   }
 
   if (noError())

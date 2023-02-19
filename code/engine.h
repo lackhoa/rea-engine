@@ -406,6 +406,7 @@ struct NormOptions {
 };
 
 struct NormalizeMeAst : Ast {
+  String      norm_name;
   NormOptions norm_options;
 };
 

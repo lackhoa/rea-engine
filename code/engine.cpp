@@ -44,6 +44,12 @@ maybeDeref(Term **in0)
   }
 }
 
+inline b32
+isNameOnlyArrowType(ArrowAst *in)
+{
+  return !(b32)in->param_types;
+}
+
 inline void
 initTerm(Term *in, TermKind cat, Term *type)
 {
@@ -4932,6 +4938,28 @@ buildAlgebraNorm(Typer *typer, AlgebraNormAst *ast, Term *goal0)
   return value;
 }
 
+internal Term *
+buildNameOnlyArrowType(ArrowAst *in, Term *goal0)
+{
+  Arrow *out = 0;
+  Arena *arena = temp_arena;
+  Arrow *goal = castTerm(goal0, Arrow);
+  if (goal)
+  {
+    if (in->param_count == goal->param_count)
+    {
+      out = pushCopy(arena, goal);
+      out->param_names = in->param_names;
+    }
+    else
+      reportError(in, "incorrect number of names given");
+  }
+  else
+    reportError(in, "illegal usage of name-only arrow syntax since the goal is not an arrow type");
+
+  NULL_WHEN_ERROR(out);
+  return out;
+}
 
 forward_declare internal BuildTerm
 buildTerm(Typer *typer, Ast *in0, Term *goal0)
@@ -5052,21 +5080,24 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
       ArrowAst *in = (ArrowAst *)(in0);
       Arrow *out = newTerm(arena, Arrow, rea.Type);
       i32 param_count = in->param_count;
+
       // :arrow-copy-done-later
       out->param_count = param_count;
       out->param_names = in->param_names;
       out->param_flags = in->param_flags;
-      out->param_types = pushArray(arena, param_count, Term*);
+
+      if (noError())
       {
-        Scope *scope = typer->scope = newScope(typer->scope, out->param_count);
+        Scope *scope = typer->scope = newScope(typer->scope, param_count);
         extendBindings(typer);
+        out->param_types = pushArray(arena, param_count, Term*);
         for (i32 i=0; i < param_count && noError(); i++)
         {
-          if (Term *param_type = buildTerm(typer, in->param_types[i], hole).value)
+          if (Term *param_type = buildTerm(typer, in->param_types[i], hole))
           {
             out->param_types[i] = toAbstractTerm(arena, param_type, getScopeDepth(scope->outer));
-            scope->pointers[i] = newStackPointer(out->param_names[i], scope->depth, i, param_type);
             String name = in->param_names[i];
+            scope->pointers[i] = newStackPointer(name, scope->depth, i, param_type);
             addLocalBinding(typer, name, i);
           }
         }
@@ -5144,7 +5175,14 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
       Term *type = goal0;
       if (in->signature)
       {
-        type = buildTerm(typer, in->signature, hole).value;
+        if (isNameOnlyArrowType(in->signature))
+        {
+          type = buildNameOnlyArrowType(in->signature, goal0);
+        }
+        else
+        {
+          type = buildTerm(typer, in->signature, hole);
+        }
       }
 
       if (noError())
@@ -5999,7 +6037,7 @@ interpretTopLevel(EngineState *state)
   Arena *arena = state->top_level_arena;
   b32 should_fail_active = false;
 
-  Token token_ = nextToken(); 
+  Token token_ = nextToken();
   Token *token = &token_;
 
   while (hasMore())
@@ -6368,14 +6406,8 @@ interpretTopLevel(EngineState *state)
       }
     }
 
-    if (hasMore())
-    {
-      token_ = nextToken();
-      while (equal(token_.string, ';'))
-      {
-        token_ = nextToken();
-      }
-    }
+    eatCharRepeatedly(';');
+    token_ = nextToken();
   }
 }
 

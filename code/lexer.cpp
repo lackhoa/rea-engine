@@ -134,7 +134,7 @@ inline b32
 hasMore()
 {
   auto tk = TK;
-  b32 out = ((*tk->at != 0) && (!tk->error));
+  b32 out = (*tk->at != 0 && !tk->error);
 #if 0
   if (out && (peekToken(tk).cat == 0))
     invalidCodePath;

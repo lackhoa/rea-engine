@@ -40,24 +40,26 @@ difference :: fn(a,b: Natp, p: a > b = true) -> exists(c: Natp) a = b+c
 ;; TODO: since we don't have nested fixpoints, we gotta hoist the function out here.
 ltWellFounded_ :: (a: Natp) -> Reachable(<, a)
 {
-  pose fn (b: Natp, p: (:Type)b < a) -> Reachable(<, b)
+  use reachable
   {
+    p
+    fn b,p;
     fork a
     {
       1  norm p,
       ++ norm p;
       recurse := prove Reachable(<, a.p) {use ltWellFounded_};
 
-      pose fn (y: Natp, pyb: (:Type)y < b) -> Reachable(<, y)
+      use reachable
       {
-        chain := prove (:Type)y < a.p {use leChain with b=b};
-        use (recurse.p)
-        };
-
-      use reachable;
+        p fn y, pyb
+        {
+          chain := prove (:Type)y < a.p {use leChain with b=b};
+          use (recurse.p)
+          }
+        }
       }
-    };
-  use reachable;
+    }
   }
 
 ltWellFounded : WellFounded(Natp, <) := prove {norm; return ltWellFounded_};
@@ -86,7 +88,7 @@ quotientRemainder :: fn(a,b: Natp) -> QuotientRemainder(a,b)
 
     ;; TODO: forcing people to use this "use" syntax isn't cool
     recurse := use quotientRemainder with a=diff.e, b=b
-    #reduce {rewrite diff.p;
+    #reduce { rewrite diff.p;
               prove (:Type)b + diff.e > diff.e {=> (:Type)diff.e + b > diff.e;
                                                  use addIncreases}};
 
@@ -141,7 +143,6 @@ lexicoLtLemma ::
     auto prove x < pair(a,b) {norm unfold}
     ,
     auto
-    ;; ltLemma :: (a,b: Natp, p: (:Type)a < ++(b)) -> a=b \/ (:Type)a < b
     lemma := prove x.b = b \/ x.b < b {use ltLemma};
     fork lemma
     {
@@ -161,34 +162,36 @@ Reachable(<, pair(a,b))
   {
     1,
     ++
-    pose fn (y: Natp /\ Natp, lt: y < pair(a,b)) -> Reachable(<, y)
+    use reachable
     {
-      lt' := lt;  ;; save it before we norm it away
-      norm unfold lt;  ;; todo as lt';
-      fork lt
+      p
+      return fn y,lt
       {
-        auto
-        ;; y.a < a -> y is less than (a,1)
-        prove y < pair(a,1) {norm unfold};
-        use (h.p);
-        ,
-        auto
-        ;; y.a = a; y.b <= b.p
-        ih : Reachable(<, pair(a, b.p)) := use lexicoReachableLocked with a=a, b=b.p;
-
-        ;; either "y = a,b.p" in which case the induction hypothesis applies
-        ;; or "y < a,b.p", in which case the induction hypothesis also applies
-
-        lemma := use lexicoLtLemma with lt=lt';
-        fork lemma
+        norm unfold as lt' lt;
+        fork lt'
         {
-          auto rewrite lemma.a
+          auto
+          ;; y.a < a -> y is less than (a,1)
+          prove y < pair(a,1) {norm unfold};
+          use (h.p);
           ,
-          auto use (ih.p)
+          auto
+          ;; y.a = a; y.b <= b.p
+          ih : Reachable(<, pair(a, b.p)) := use lexicoReachableLocked with a=a, b=b.p;
+
+          ;; either "y = a,b.p" in which case the induction hypothesis applies
+          ;; or "y < a,b.p", in which case the induction hypothesis also applies
+
+          lemma := use lexicoLtLemma with lt=lt;
+          fork lemma
+          {
+            auto rewrite lemma.a
+            ,
+            auto use (ih.p)
+            }
           }
-        }
-      };
-    use reachable;
+        };
+      }
     }
   }
 
@@ -196,11 +199,13 @@ lexicoWellFounded1 :: (b: Natp) -> Reachable(<, pair((:Natp)1,b))
 {
   super_base_case := prove Reachable(<, pair((:Natp)1, (:Natp)1))
   {
-    pose fn (y: Natp /\ Natp, lt: y < pair(1,1)) -> Reachable(<, y)
+    use reachable
     {
-      norm unfold lt; fork lt {auto fork lt.a {}, auto fork lt.b. b {}}
-      };
-    use reachable;
+      p fn y,lt
+      {
+        norm unfold lt; fork lt {auto , auto }
+        }
+      }
     };
 
   fork b
@@ -220,25 +225,27 @@ lexicoWellFounded_ :: (a: Natp, b: Natp) -> Reachable(<, pair(a,b))
     if_b_is_1 := prove Reachable(<, pair(a, (:Natp)1))
     {
       ;; Anything that "rolls under" to a.p is gonna be resolved by induction.
-      pose fn (y: Natp /\ Natp, lt: y < pair(a, 1)) -> Reachable(<, y)
-      {
-        norm unfold lt;
-        fork lt
+      use reachable
+      {        
+        p fn y, lt
         {
-          auto
-          prove y < pair(a.p, ++(y.b))
+          norm unfold lt;
+          fork lt
           {
-            norm unfold;
-            lemma := use ltLemma with a=y.a, b=a.p;
-            fork lemma {auto , auto}
+            auto
+            prove y < pair(a.p, ++(y.b))
+            {
+              norm unfold;
+              lemma := use ltLemma with a=y.a, b=a.p;
+              fork lemma {auto , auto}
+              }
+            ih := use lexicoWellFounded_ with a=a.p, b = ++(y.b);
+            use (ih.p);
+            ,
+            auto
             }
-          ih := use lexicoWellFounded_ with a=a.p, b = ++(y.b);
-          use (ih.p);
-          ,
-          auto
           }
-        };
-      use reachable;
+        }
       };
 
     fork b
