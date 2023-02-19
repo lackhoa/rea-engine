@@ -65,6 +65,7 @@ requireKind(TokenKind tc, char *message=0)
   b32 out = false;
   if (hasMore())
   {
+    if (!message) message = "token was of a different kind than expected";
     if (nextToken().kind == tc) out = true;
     else tokenError(message);
   }
@@ -342,6 +343,11 @@ parseSequence(b32 require_braces=true)
 
       popContext();
     }
+    else if (equal(tactic, "?"))
+    {
+      ast0 = newAst(arena, QuestionMark, token);
+      expect_sequence_to_end = true;
+    }
     else if (equal(tactic, "rewrite"))
     {
       // todo maybe "with" should be "using", since we take "rewrite a with b"
@@ -560,8 +566,8 @@ parseSequence(b32 require_braces=true)
     }
     else if (isExpressionEndMarker(token))
     {// synthetic hole
-      ast0  = newAst(arena, Hole, token);
-      *TK = tk_save;
+      ast0 = newAst(arena, Hole, token);
+      *TK  = tk_save;
       expect_sequence_to_end = true;
     }
     else
@@ -1476,11 +1482,7 @@ parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
         else if (optionalDirective("no_expand"))  // todo: should this be "no_expand" instead?
         {
           // todo: we can automatically infer this!
-          setFlag(&out->function_flags, FunctionFlag_no_apply);
-        }
-        else if (optionalDirective("no_print_as_binop"))
-        {
-          setFlag(&out->function_flags, FunctionFlag_no_print_as_binop);
+          setFlag(&out->function_flags, FunctionFlag_no_expand);
         }
         else if (optionalDirective("expand"))
         {

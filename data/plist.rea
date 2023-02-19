@@ -187,11 +187,11 @@ permuteMiddle :: (A: Type, a: A, l,b,c: PList(A), p: Permute(l,b+c)) -> Permute(
 ;;
 
 fold :: fn($A: Type, op: binaryOp(A), l: PList(A)) -> A
-#builtin #no_print_as_binop
-{fork l
- {single return l.head,
-  cons
-  return l.head op fold(op, l.tail)}}
+#builtin
+{ fork l
+  { single return l.head,
+    cons
+    return l.head op fold(op, l.tail)}}
 
 foldConcat :: (($T: Type, *: binaryOp(T), assoc: associative(*),
                 l,m: PList(T))

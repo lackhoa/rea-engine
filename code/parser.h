@@ -6,7 +6,8 @@ global_variable i32 DEBUG_SERIAL;
 
 struct ArrowAst;
 enum AstKind {
-  Ast_Hole = 1,                 // hole left in for type-checking
+  Ast_Hole = 1,
+  Ast_QuestionMark,
   Ast_NormalizeMeAst,
   Ast_SyntheticAst,
   Ast_Identifier,
@@ -78,6 +79,7 @@ struct Identifier : Ast {
 };
 
 typedef Ast Hole;
+typedef Ast QuestionMark;
 typedef Ast AlgebraicManipulation;
 
 struct ForkAst : Ast {

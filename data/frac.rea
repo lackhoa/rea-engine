@@ -12,11 +12,11 @@ cancelCommonFactor :: (a,b,r: Natp) -> (a*r)/(b*r) == a/b
  algebra_norm;
  }
 
-isFactor :: (q,a: Natp) -> Type
-#no_expand
-{
-  return exists(t: Natp), a = q*t
-  }
+;; isFactor :: (q,a: Natp) -> Type
+;; #no_expand
+;; {return exists(t: Natp), a = q*t}
+
+define isFactor(q,a: Natp) := exists(t: Natp), a = q*t;
 
 relativelyPrime :: (a,b: Natp) -> Type
 {
@@ -113,25 +113,13 @@ quotientRemainder :: fn(a,b: Natp) -> QuotientRemainder(a,b)
     }
   }
 
-isCommonDivisor :: (q, a,b: Natp) -> Type
-#no_expand
-{
-  return isFactor(q, a) /\ isFactor(q,b)
-  }
+define isCommonDivisor(q, a,b: Natp) := isFactor(q,a) /\ isFactor(q,b);
 
-isGcd :: (q, a,b: Natp) -> Type
-#no_expand
-{
-  return (isCommonDivisor(q,a,b) /\
-           ((q': Natp, isCommonDivisor(q',a,b)) -> isFactor(q', q)))
-  }
+define isGcd(q, a,b: Natp) :=
+isCommonDivisor(q,a,b) /\ ((q': Natp, isCommonDivisor(q',a,b)) -> isFactor(q', q));
 
-< :: (p1,p2: Natp /\ Natp) -> Type
-#no_expand #tag(lexicographic)
-{
-  return (p1.a < p2.a \/
-          p1.a = p2.a /\ p1.b < p2.b)
-  }
+define <(p1,p2: Natp /\ Natp) :=
+p1.a < p2.a \/ p1.a = p2.a /\ p1.b < p2.b;
 
 lexicoLtLemma ::
 (a,b: Natp, x: Natp /\ Natp, lt: x < pair(a, ++(b)))
@@ -153,7 +141,6 @@ lexicoLtLemma ::
     }
   }
 
-#debug
 lexicoReachableLocked ::
 (a,b: Natp, h: Reachable(<, pair(a, (:Natp)1)))
 ->
@@ -188,7 +175,6 @@ Reachable(<, pair(a,b))
       }
     }
   }
-#debug off
 
 lexicoWellFounded1 :: (b: Natp) -> Reachable(<, pair((:Natp)1,b))
 {

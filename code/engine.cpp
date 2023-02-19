@@ -622,12 +622,6 @@ printComposite(Arena *buffer, Composite *in, PrintOptions opt)
   }
   else
   {
-    b32 no_print_as_binop = false;
-    if (Function *fun = castTerm(in->op, Function))
-    {
-      no_print_as_binop = checkFlag(fun->function_flags, FunctionFlag_no_print_as_binop);
-    }
-
     Arrow *op_signature = castTerm(in->op->type, Arrow);
 
     String op_name = {};
@@ -659,7 +653,7 @@ printComposite(Arena *buffer, Composite *in, PrintOptions opt)
       }
     }
 
-    if (printed_arg_count == 2 && !no_print_as_binop && precedence)
+    if (printed_arg_count == 2 && precedence)
     {// special path for infix binary operator
       if (precedence < opt.no_paren_precedence)
         print(buffer, "(");
@@ -2705,7 +2699,7 @@ apply(Term *op, i32 arg_count, Term **args, String name_to_unfold)
     {
       should_apply_function = false;  // NOTE: not strictly needed
     }
-    if (checkFlag(fun->function_flags, FunctionFlag_no_apply))
+    if (checkFlag(fun->function_flags, FunctionFlag_no_expand))
     {
       should_apply_function = (name_to_unfold.chars && equal(fun->global_name->string, name_to_unfold));
     }
@@ -5048,11 +5042,17 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
     } break;
 
     case Ast_Hole:
+    case Ast_QuestionMark:
     {
       Solver solver = {.typer=typer, .use_global_hints=true, .try_reductio=try_reductio};
-      if (Term *solution = solveGoal(&solver, goal0))
+      value = solveGoal(&solver, goal0);
+      if (value)
       {
-        value = solution;
+        if (in0->kind == Ast_QuestionMark)
+        {
+          print(0, value, printOptionPrintType());
+          print(0, "\n");
+        }
       }
       else
       {
@@ -6315,6 +6315,31 @@ interpretTopLevel(EngineState *state)
               {
                 reportError(token, "cannot find necessary function for the algebra");
                 attach("function_name", function_name);
+              }
+            }
+          }
+        }
+      } break;
+
+      case Token_Keyword_define:
+      {
+        pushContext("define IDENTIFIER PARAMETERS := EXPRESSION");
+        FunctionAst *fun = newAst(arena, FunctionAst, token);
+        setFlag(&fun->function_flags, FunctionFlag_no_expand);
+        if (requireIdentifier())
+        {
+          Token name = *lastToken();
+          if ((fun->signature = parseArrowType(true)))
+          {
+            if (requireKind(Token_ColonEqual))
+            {
+              if ((fun->body = parseExpression()))
+              {
+                if (Term *term = buildTerm(typer, fun, hole))
+                {
+                  term = copyToGlobalArena(term);
+                  addGlobalBinding(&name, term);
+                }
               }
             }
           }

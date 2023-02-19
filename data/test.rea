@@ -227,15 +227,14 @@ testKeywordArgs :: (x,y,z: Bool, p: x=y, q: y=z) -> x=z
 
 testSubstGoal :: (x,y,z,w: Bool, p: x=w, q: w=y) -> x=y
 {
- subst x, y;
+  subst x, y;
  }
 
 Foo :: union(a,b: Bool) {foo(x: Bool) -> Foo(x,x)}
 
 testSubstInLocal :: (x,y,z: Bool, p: Foo(x,z), p: x=y, q: y=z) -> Foo(y,y)
 {
- subst x,z;
- seek;
+  subst x,z;
  }
 
 testSubstFinal :: (x,y,z,w: Bool, p: Foo(x,z), p: x=y, q: y=z, r: x=w) -> Foo(y,w)

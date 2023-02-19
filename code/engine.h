@@ -303,8 +303,8 @@ struct SearchOutput {b32 found; TreePath *path; operator bool() {return found;}}
 struct CompareTerms {Trinary result; TreePath *diff_path;};
 
 const u32 FunctionFlag_is_global_hint    = 1 << 0;
-const u32 FunctionFlag_no_apply          = 1 << 1;
-const u32 FunctionFlag_no_print_as_binop = 1 << 2;
+const u32 FunctionFlag_no_expand          = 1 << 1;
+// const u32 FunctionFlag_no_print_as_binop = 1 << 2;
 const u32 FunctionFlag_expand            = 1 << 3;
 // const u32 FunctionFlag_is_builtin        = 1 << 4;  // moved to ast
 
