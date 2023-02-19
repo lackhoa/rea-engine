@@ -3052,7 +3052,56 @@ reaIdentity(Term *term)
 }
 
 inline Term *
-seekGoal(Solver *solver, Term *goal, b32 try_reductio=false)
+seekGoalRecursive(Solver *solver, Term *value, Term *goal)
+{
+  Term *out = 0;
+
+  if (equal(value->type, rea.False))
+  {
+    if (goal->type == rea.Type)
+    {
+      // todo #cleanup find a way to resolve this false.
+      out = reaComposite(rea.falseImpliesAll, value, goal);
+    }
+  }
+
+  if (!out && equalNorm(value->type, goal))
+  {
+    out = value;
+  }
+
+  if (!out)
+  {
+    if (Record *record = castRecord(value))
+    {
+      for (i32 member_i = 0; member_i < record->arg_count && !out; member_i++)
+      {
+        out = seekGoalRecursive(solver, record->args[member_i], goal);
+      }
+    }
+  }
+
+  if (!out && solver->try_reductio && goal == rea.Type)
+  {
+    if (Arrow *hypothetical = castTerm(value->type, Arrow))
+    {
+      if (hypothetical->output_type == rea.False)
+      {
+        SolveArgs solve_args = solveArgs(solver, value, rea.False);
+        if (solve_args.args)
+        {
+          Term *f = newComposite(value, solve_args.arg_count, solve_args.args);
+          out = reaComposite(rea.falseImpliesAll, f, goal);
+        }
+      }
+    }
+  }
+
+  return out;
+}
+
+inline Term *
+seekGoal(Solver *solver, Term *goal)
 {
   Term *out = 0;
   if (solver->typer)  // no typer -> no local context
@@ -3067,44 +3116,7 @@ seekGoal(Solver *solver, Term *goal, b32 try_reductio=false)
            scope_i++)
       {
         Term *value = scope->pointers[scope_i];
-        if (equal(value->type, rea.False))
-        {
-          if (goal->type == rea.Type)
-          {
-            // todo #cleanup find a way to resolve this false.
-            out = reaComposite(rea.falseImpliesAll, value, goal);
-          }
-        }
-        else if (equalNorm(value->type, goal))
-        {
-          out = value;
-        }
-        else if (Record *record = castRecord(value))
-        {
-          for (i32 member_i = 0; member_i < record->arg_count && !out; member_i++)
-          {
-            Term *member = record->args[member_i];
-            if (equalNorm(member->type, goal))
-            {
-              out = member;
-            }
-          }
-        }
-        if (!out && try_reductio && goal == rea.Type)
-        {
-          if (Arrow *hypothetical = castTerm(value->type, Arrow))
-          {
-            if (hypothetical->output_type == rea.False)
-            {
-              SolveArgs solve_args = solveArgs(solver, value, rea.False);
-              if (solve_args.args)
-              {
-                Term *f = newComposite(value, solve_args.arg_count, solve_args.args);
-                out = reaComposite(rea.falseImpliesAll, f, goal);
-              }
-            }
-          }
-        }
+        out = seekGoalRecursive(solver, value, goal);
       }
       delta++;
     }
@@ -3117,8 +3129,10 @@ solveGoal(Solver *solver, Term *goal)
 {
   Term *out = 0;
   solver->depth++;
-  b32 try_reductio = solver->try_reductio;
-  solver->try_reductio = false;
+  if (solver->depth > 1)
+  {
+    solver->try_reductio = false;  // clearly the upper level has failed to resolve the falsehood
+  }
 
   b32 should_attempt = true;
   if (solver->depth > MAX_SOLVE_DEPTH ||
@@ -3150,7 +3164,7 @@ solveGoal(Solver *solver, Term *goal)
 
     if (!out)
     {
-      out = seekGoal(solver, goal, try_reductio);
+      out = seekGoal(solver, goal);
     }
 
     if (!out)
@@ -6318,7 +6332,7 @@ interpretFile(EngineState *state, FilePath input_path, b32 is_root_file)
 {
   Arena *arena = state->top_level_arena;
   b32 success = true;
-#define REA_PROFILE 0
+#define REA_PROFILE 1
 #if REA_PROFILE
   auto begin_time = platformGetWallClock(arena);
 #endif
@@ -6425,7 +6439,7 @@ beginInterpreterSession(Arena *top_level_arena, FilePath input_path)
     addBuiltinGlobalBinding("False", rea.False);
 
     auto path = platformGetFileFullPath(arena, "../data/builtin.rea");
-    interpretFile(&global_state, path, true);
+    interpretFile(&global_state, path, false);
 
 #define LOOKUP_BUILTIN(name) rea_##name = lookupBuiltin(#name);
 

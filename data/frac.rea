@@ -132,36 +132,22 @@ isGcd :: (q, a,b: Natp) -> Type
   }
 
 lexicoLtLemma ::
-(a,b: Natp, x: Natp /\ Natp, lt: x < pair(a,++(b)))
+(a,b: Natp, x: Natp /\ Natp, lt: x < pair(a, ++(b)))
 -> x = pair(a,b) \/ x < pair(a,b)
 {
   norm unfold(<) lt;
   fork lt
   {
-    auto
-    prove x < pair(a,b) {norm unfold(<); use left}
-    use right
+    auto prove x < pair(a,b) {norm unfold(<)}
     ,
     auto
     ;; ltLemma :: (a,b: Natp, p: (:Type)a < ++(b)) -> a=b \/ (:Type)a < b
-    lemma := prove x.b = b \/ x.b < b
-    {prove (:Type)++(x.b) <= ++(b) {norm; return lt.b.b}; use ltLemma};
-
+    lemma := prove x.b = b \/ x.b < b {use ltLemma};
     fork lemma
     {
-      auto
-      prove (x = pair(a,b)) {rewrite lemma.a; rewrite lt.b.a}
-      use left;
+      auto prove (x = pair(a,b)) {rewrite lemma.a; rewrite lt.b.a}
       ,
-      auto
-
-      prove x < pair(a, b)
-      {
-        norm unfold(<);
-        prove x.a = a /\ ++(x.b) <= b = true {use pair with a=lt.b.a};  ;; bookmark: this should be solvable by default
-        use right;}
-
-      use right;
+      auto prove x < pair(a, b) {norm unfold(<);}
       }
     }
   }
@@ -183,7 +169,7 @@ Reachable(<, pair(a,b))
       {
         auto
         ;; y.a < a -> y is less than (a,1)
-        prove y < pair(a,1) {norm unfold(<); use left};
+        prove y < pair(a,1) {norm unfold(<)};
         use (h.p);
         ,
         auto
@@ -196,11 +182,9 @@ Reachable(<, pair(a,b))
         lemma := use lexicoLtLemma with lt=lt';
         fork lemma
         {
-          auto
-          rewrite lemma.a
+          auto rewrite lemma.a
           ,
-          auto
-          use (ih.p)
+          auto use (ih.p)
           }
         }
       };
@@ -252,7 +236,7 @@ lexicoWellFounded_ :: (a: Natp, b: Natp) -> Reachable(<, pair(a,b))
           use (ih.p);
           ,
           auto
-          fork lt.b.b {}
+          ;; fork lt.b.b {}
           }
         };
       use reachable;
@@ -266,22 +250,22 @@ lexicoWellFounded_ :: (a: Natp, b: Natp) -> Reachable(<, pair(a,b))
     }
   }
 
-lexicoWellFounded : WellFounded(Natp/\Natp, <) := prove {norm; return lexicoWellFounded_};
+;; lexicoWellFounded : WellFounded(Natp/\Natp, <) := prove {norm; return lexicoWellFounded_};
 
-gcd :: (a,b: Natp) -> exists(out: Natp) isGcd(out, a,b)
-#measure(pair(a,b), lexicoLtWellFounded)
-{
-  ;; NOTE: we try to keep a < b.
-  qr := quotientRemainder(b,a);
-  fork qr
-  {
-    divideFail
-    prove {
-            use gcd with a=b,b=a
-            #reduce {};
-            }
-    ,
-    divideEvenly return some(qr.quotient)
-    ,
-    divideWithRemainder
-    return gcd(qr.remainder, b)}}
+;; gcd :: (a,b: Natp) -> exists(out: Natp) isGcd(out, a,b)
+;; #measure(pair(a,b), lexicoLtWellFounded)
+;; {
+;;   ;; NOTE: we try to keep a < b.
+;;   qr := quotientRemainder(b,a);
+;;   fork qr
+;;   {
+;;     divideFail
+;;     prove {
+;;             use gcd with a=b,b=a
+;;             #reduce {};
+;;             }
+;;     ,
+;;     divideEvenly return some(qr.quotient)
+;;     ,
+;;     divideWithRemainder
+;;     return gcd(qr.remainder, b)}}
