@@ -318,7 +318,7 @@ struct TermPair
 struct Fork : Term {
   Term   *subject;
   i32     case_count;
-  Term  **bodies;
+  Term  **cases;
 };
 
 struct SolveArgs {i32 arg_count; Term **args;};

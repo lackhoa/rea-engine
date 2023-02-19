@@ -852,7 +852,7 @@ print(Arena *buffer, Ast *in0, PrintOptions opt)
           Token *ctor = in->ctors + ctor_id;
           print(buffer, ctor->string);
           print(buffer, ": ");
-          print(buffer, in->bodies[ctor_id], new_opt);
+          print(buffer, in->cases[ctor_id], new_opt);
           if (ctor_id != case_count)
           {
             print(buffer, ", ");
@@ -1231,7 +1231,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
           {
             print(buffer, getConstructorName(uni, ctor_id));
             print(buffer, ": ");
-            print(buffer, in->bodies[ctor_id], new_opt);
+            print(buffer, in->cases[ctor_id], new_opt);
             if (ctor_id != uni->ctor_count-1)
             {
               print(buffer, ", ");
@@ -1548,10 +1548,10 @@ evaluate_(EvalContext *ctx, Term *in0)
           Fork *out = copyTerm(arena, in);
           out->type = evaluate_(ctx, in0->type);
           out->subject = subject0;
-          allocateArray(arena, in->case_count, out->bodies);
+          allocateArray(arena, in->case_count, out->cases);
           for (i32 i=0; i < in->case_count; i++)
           {
-            out->bodies[i] = evaluate_(ctx, in->bodies[i]);
+            out->cases[i] = evaluate_(ctx, in->cases[i]);
           }
           out0 = out;
         }
@@ -1560,7 +1560,7 @@ evaluate_(EvalContext *ctx, Term *in0)
           if (Record *subject = castRecord(subject0))
           {
             i32 ctor_index = subject->ctor->index;
-            out0 = evaluate_(ctx, in->bodies[ctor_index]);
+            out0 = evaluate_(ctx, in->cases[ctor_index]);
           }
         }
       } break;
@@ -2099,10 +2099,10 @@ toAbstractTerm_(AbstractContext *ctx, Term *in0)
         Fork *in  = castTerm(in0, Fork);
         Fork *out = copyTerm(arena, in);
         out->subject = toAbstractTerm_(ctx, in->subject);
-        out->bodies  = pushArray(arena, in->case_count, Term*);
+        out->cases  = pushArray(arena, in->case_count, Term*);
         for (i32 i=0; i < in->case_count; i++)
         {
-          out->bodies[i] = toAbstractTerm_(ctx, in->bodies[i]);
+          out->cases[i] = toAbstractTerm_(ctx, in->cases[i]);
         }
         out0 = out;
       } break;
@@ -2559,6 +2559,28 @@ uninstantiate(Term *in0)
   Pointer *pointer = castTerm(in0, Pointer);
   assert(pointer->ref);
   pointer->ref = 0;
+}
+
+// TODO: This is not safe rn.
+inline Fork *
+newFork(Term *subject, i32 case_count, Term **cases, Term *goal)
+{
+  Arena *arena = temp_arena;
+  Union *uni = getUnionOrPolyUnion(subject->type);
+  assert(case_count == uni->ctor_count);
+  for (i32 i=0; i < case_count; i++)
+  {
+    todoIncomplete;
+    // assert(instantiate(subject, i));  // NOTE: instantiating again doesn't work because pointer comparison isn't sophisticated rn.
+    assertEqualNorm(cases[i]->type, goal);
+    // uninstantiate(subject);
+  }
+
+  Fork *out = newTerm(arena, Fork, goal);
+  out->subject    = subject;
+  out->case_count = case_count;
+  out->cases      = cases;
+  return out;
 }
 
 forward_declare inline Record *
@@ -3058,11 +3080,7 @@ seekGoalRecursive(Solver *solver, Term *value, Term *goal)
 
   if (equal(value->type, rea.False))
   {
-    if (goal->type == rea.Type)
-    {
-      // todo #cleanup find a way to resolve this false.
-      out = reaComposite(rea.falseImpliesAll, value, goal);
-    }
+    out = newFork(value, 0, 0, goal);
   }
 
   if (!out && equalNorm(value->type, goal))
@@ -3091,7 +3109,7 @@ seekGoalRecursive(Solver *solver, Term *value, Term *goal)
         if (solve_args.args)
         {
           Term *f = newComposite(value, solve_args.arg_count, solve_args.args);
-          out = reaComposite(rea.falseImpliesAll, f, goal);
+          out = newFork(f, 0, 0, goal);
         }
       }
     }
@@ -4144,10 +4162,10 @@ copyToGlobalArena(Term *in0)
         Fork *in  = castTerm(in0, Fork);
         Fork *out = copyTerm(arena, in);
         out->subject = copyToGlobalArena(in->subject);
-        allocateArray(arena, in->case_count, out->bodies);
+        allocateArray(arena, in->case_count, out->cases);
         for (i32 i=0; i < in->case_count; i++)
         {
-          out->bodies[i] = copyToGlobalArena(in->bodies[i]);
+          out->cases[i] = copyToGlobalArena(in->cases[i]);
         }
         out0 = out;
       } break;
@@ -5586,15 +5604,11 @@ buildGlobalTerm(Typer *typer, Ast *in0, Term *goal)
 forward_declare internal Term *
 buildFork(Typer *typer, ForkAst *in, Term *goal)
 {
+  assert(goal->kind != Term_Hole);
   Arena *arena = temp_arena;
-  if (goal->kind == Term_Hole)
-  {
-    reportError(in, "fork expressions require a goal");
-  }
-  Fork *out = newTerm(arena, Fork, goal);
-  out->case_count = in->case_count;
+  Fork *out = 0;
   i32 UNUSED_VAR serial = DEBUG_SERIAL++;
-  if (Term *subject = buildTerm(typer, in->subject, hole).value)
+  if (Term *subject = buildTerm(typer, in->subject, hole))
   {
     auto &fixpoint = current_global_fixpoint;
     Pointer *save_global_fork_subject = fixpoint->fork_subject;
@@ -5621,11 +5635,9 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
       }
     }
 
-    out->subject = subject;
-    Term *subject_type = subject->type;
-    if (Union *uni = getUnionOrPolyUnion(subject_type))
+    if (Union *uni = getUnionOrPolyUnion(subject->type))
     {
-      Term **ordered_bodies = pushArray(arena, uni->ctor_count, Term *, true);
+      Term **ordered_cases = pushArray(arena, uni->ctor_count, Term *, true);
 
       // NOTE: For ux reason, we don't care if you have less cases, just
       // typecheck what we have.
@@ -5645,7 +5657,7 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
         {
           for (i32 i=0; i < in->case_count; i++)
           {
-            if (!ordered_bodies[i])
+            if (!ordered_cases[i])
             {
               ctor_i = i;
               break;
@@ -5668,18 +5680,15 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
         {
           if (instantiate(subject, ctor_i))
           {
-            if (ordered_bodies[ctor_i])
+            if (ordered_cases[ctor_i])
             {
-              reportError(in->bodies[input_case_i], "fork case handled twice");
+              reportError(in->cases[input_case_i], "fork case handled twice");
               attach("constructor", getConstructorName(uni, ctor_i));
             }
             else
             {
               typer->try_reductio = true;
-              if (Term *body = buildTerm(typer, in->bodies[input_case_i], goal).value)
-              {
-                ordered_bodies[ctor_i] = body;
-              }
+              ordered_cases[ctor_i] = buildTerm(typer, in->cases[input_case_i], goal);
             }
             uninstantiate(subject);
           }
@@ -5704,7 +5713,11 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
         }
       }
 
-      out->bodies = ordered_bodies;
+      // TODO: Can't call "newFork" right now
+      out = newTerm(arena, Fork, goal);
+      out->subject    = subject;
+      out->case_count = in->case_count; 
+      out->cases      = ordered_cases;
 
       if (noError() && in->case_count != uni->ctor_count)
       {
@@ -5712,7 +5725,7 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
         StartString start = startString(error_buffer);
         for (i32 ctor_i=0; ctor_i < uni->ctor_count; ctor_i++)
         {
-          if (!ordered_bodies[ctor_i])
+          if (!ordered_cases[ctor_i])
           {
             print(error_buffer, getConstructorName(uni, ctor_i));
             print(error_buffer, ", ");
@@ -5724,7 +5737,7 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
     else
     {
       reportError(in->subject, "cannot fork expression of this type");
-      attach("type", subject_type);
+      attach("type", subject->type);
     }
 
     fixpoint->fork_subject = save_global_fork_subject;
@@ -5732,7 +5745,7 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
   if (noError())
   {
     for (i32 id=0; id < in->case_count; id++)
-      assert(in->bodies[id]);
+      assert(in->cases[id]);
   }
   NULL_WHEN_ERROR(out);
   return out;

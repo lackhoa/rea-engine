@@ -1308,7 +1308,7 @@ insertAutoNormalizations(Arena *arena, NormList norm_list, Ast *in0)
       ForkAst *in = castAst(in0, ForkAst);
       for (i32 case_id=0; case_id < in->case_count; case_id++)
       {
-        Ast *body = in->bodies[case_id];
+        Ast *body = in->cases[case_id];
         insertAutoNormalizations(arena, norm_list, body);
         for (i32 norm_id=0; norm_id < norm_list.count; norm_id++)
         {
@@ -1326,7 +1326,7 @@ insertAutoNormalizations(Arena *arena, NormList norm_list, Ast *in0)
         new_body->new_goal = newAst(arena, NormalizeMeAst, &body->token);
         setFlag(&new_body->flags, AstFlag_Generated);
         new_body->body = body;
-        in->bodies[case_id] = new_body;
+        in->cases[case_id] = new_body;
       }
     } break;
 
@@ -1538,7 +1538,7 @@ parseFork()
       out->token    = token;
       out->subject    = subject;
       out->case_count = actual_case_count;
-      out->bodies     = bodies;
+      out->cases     = bodies;
       out->ctors      = ctors;
     }
   }

@@ -58,29 +58,17 @@ permuteSwap :: ($A: Type, l,m: PList(A), p: l Permute m) -> Permute(m, l)
 {
  fork p
  {
-  permuteSingle
-  invert p;
-  subst l, m;
+  permuteSingle invert p; subst l, m;
   ,
-  permutePair
-  invert p;
-  subst l,m;
-  use permutePair;
+  permutePair invert p; subst l,m; use permutePair;
   ,
-  permuteSkip
-  invert p;
-  subst l, m;
+  permuteSkip invert p; subst l, m;
   prove (p.m Permute p.l) {use permuteSwap}
   use permuteSkip;
   ,
-  permuteSwap
-  invert p;
-  subst l, m;
-  use permuteSwap;
+  permuteSwap invert p; subst l, m; use permuteSwap;
   ,
-  permuteChain
-  invert p;
-  subst l, m;
+  permuteChain invert p; subst l, m;
 
   ;; NOTE this should be illegal!
   ;; prove p.l Permute p.m {rewrite <- l=p.l; rewrite <- m=p.m}

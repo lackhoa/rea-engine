@@ -87,7 +87,7 @@ struct NormalizeMeAst : Ast {
 struct ForkAst : Ast {
   Ast    *subject;
   i32     case_count;
-  Ast   **bodies;
+  Ast   **cases;
   Token  *ctors;
 };
 
