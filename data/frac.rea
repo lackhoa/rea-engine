@@ -135,10 +135,10 @@ lexicoLtLemma ::
 (a,b: Natp, x: Natp /\ Natp, lt: x < pair(a, ++(b)))
 -> x = pair(a,b) \/ x < pair(a,b)
 {
-  norm unfold(<) lt;
+  norm unfold lt;
   fork lt
   {
-    auto prove x < pair(a,b) {norm unfold(<)}
+    auto prove x < pair(a,b) {norm unfold}
     ,
     auto
     ;; ltLemma :: (a,b: Natp, p: (:Type)a < ++(b)) -> a=b \/ (:Type)a < b
@@ -147,7 +147,7 @@ lexicoLtLemma ::
     {
       auto prove (x = pair(a,b)) {rewrite lemma.a; rewrite lt.b.a}
       ,
-      auto prove x < pair(a, b) {norm unfold(<);}
+      auto prove x < pair(a, b) {norm unfold}
       }
     }
   }
@@ -164,12 +164,12 @@ Reachable(<, pair(a,b))
     pose fn (y: Natp /\ Natp, lt: y < pair(a,b)) -> Reachable(<, y)
     {
       lt' := lt;  ;; save it before we norm it away
-      norm unfold(<) lt;  ;; todo as lt';
+      norm unfold lt;  ;; todo as lt';
       fork lt
       {
         auto
         ;; y.a < a -> y is less than (a,1)
-        prove y < pair(a,1) {norm unfold(<)};
+        prove y < pair(a,1) {norm unfold};
         use (h.p);
         ,
         auto
@@ -198,7 +198,7 @@ lexicoWellFounded1 :: (b: Natp) -> Reachable(<, pair((:Natp)1,b))
   {
     pose fn (y: Natp /\ Natp, lt: y < pair(1,1)) -> Reachable(<, y)
     {
-      norm unfold(<) lt; fork lt {auto fork lt.a {}, auto fork lt.b. b {}}
+      norm unfold lt; fork lt {auto fork lt.a {}, auto fork lt.b. b {}}
       };
     use reachable;
     };
@@ -222,13 +222,13 @@ lexicoWellFounded_ :: (a: Natp, b: Natp) -> Reachable(<, pair(a,b))
       ;; Anything that "rolls under" to a.p is gonna be resolved by induction.
       pose fn (y: Natp /\ Natp, lt: y < pair(a, 1)) -> Reachable(<, y)
       {
-        norm unfold(<) lt;
+        norm unfold lt;
         fork lt
         {
           auto
           prove y < pair(a.p, ++(y.b))
           {
-            norm unfold(<);
+            norm unfold;
             lemma := use ltLemma with a=y.a, b=a.p;
             fork lemma {auto , auto}
             }
@@ -236,7 +236,6 @@ lexicoWellFounded_ :: (a: Natp, b: Natp) -> Reachable(<, pair(a,b))
           use (ih.p);
           ,
           auto
-          ;; fork lt.b.b {}
           }
         };
       use reachable;

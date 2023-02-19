@@ -1718,6 +1718,8 @@ reaIsCons(Term *in0)
   return in->ctor == rea.cons;
 }
 
+// TODO: I think we can eliminate this comparison by simply storing a temporary
+// pointer in the fork case.
 inline b32
 equalPointer(Term *l0, Term *r0)
 {
@@ -2352,11 +2354,21 @@ normalize_(NormContext *ctx, Term *in0)
 }
 
 internal Term *
-normalize(Term *in0, String name_to_unfold={})
+normalize(Term *in0, NormOptions options={})
 {
   i32 arbitrary_init_depth = 1000;
-  NormContext ctx = {.depth=arbitrary_init_depth,
-                     .name_to_unfold=name_to_unfold};
+  String name_to_unfold = options.name_to_unfold;
+  if (options.unfold_topmost_operator)
+  {
+    assert((!name_to_unfold));
+    if (Composite *in = castTerm(in0, Composite))
+    {
+      Token *global_name = in->op->global_name;
+      if (global_name) name_to_unfold = global_name->string;
+    }
+  }
+  NormContext ctx = {.depth          = arbitrary_init_depth,
+                     .name_to_unfold = name_to_unfold};
   return normalize_(&ctx, in0);
 }
 
@@ -2597,7 +2609,7 @@ newFork(Term *subject, i32 case_count, Term **cases, Term *goal)
   assert(case_count == uni->ctor_count);
   for (i32 i=0; i < case_count; i++)
   {
-    assert(instantiate(subject, i));  // NOTE: instantiating again doesn't work because pointer comparison isn't sophisticated rn.
+    assert(instantiate(subject, i));
     assertEqualNorm(cases[i]->type, goal);
     uninstantiate(subject);
   }
@@ -5245,7 +5257,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
 
       if (NormalizeMeAst *in_new_goal = castAst(in->new_goal, NormalizeMeAst))
       {// just normalize the goal, no need for tactics (for now).
-        Term *norm_goal = normalize(goal0, in_new_goal->name_to_unfold);
+        Term *norm_goal = normalize(goal0, in_new_goal->norm_options);
         if (checkFlag(in->flags, AstFlag_Generated) &&
             equal(goal0, norm_goal))
         {// superfluous auto-generated transforms.
@@ -5377,7 +5389,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
           {// type coercion
             if (NormalizeMeAst *in_type = castAst(in->type, NormalizeMeAst))
             {
-              Term *norm_rhs_type = normalize(rhs_type, in_type->name_to_unfold);
+              Term *norm_rhs_type = normalize(rhs_type, in_type->norm_options);
               if (checkFlag(in->flags, AstFlag_Generated) &&
                   equal(rhs_type, norm_rhs_type))
               {// superfluous auto-generated transforms.

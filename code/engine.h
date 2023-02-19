@@ -400,6 +400,15 @@ struct NormContext {
   String name_to_unfold;
 };
 
+struct NormOptions {
+  String name_to_unfold;
+  b32    unfold_topmost_operator;
+};
+
+struct NormalizeMeAst : Ast {
+  NormOptions norm_options;
+};
+
 struct Transformation {
   Term           *term;
   Term           *eq_proof;

@@ -80,10 +80,6 @@ struct Identifier : Ast {
 typedef Ast Hole;
 typedef Ast AlgebraicManipulation;
 
-struct NormalizeMeAst : Ast {
-  String name_to_unfold;
-};
-
 struct ForkAst : Ast {
   Ast    *subject;
   i32     case_count;

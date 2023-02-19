@@ -256,25 +256,27 @@ parseSequence(b32 require_braces=true)
     String tactic = token->string;
     if (equal(tactic, "norm"))
     {
-      pushContext("norm [unfold(FUNCTION_NAME)] [EXPRESSION]");
-      String name_to_unfold = {};
+      pushContext("norm [unfold[(FUNCTION_NAME)]] [EXPRESSION]");
+      NormOptions norm_options = {};
 
       if (optionalString("unfold"))
       {
-        if (requireChar('('))
+        if (optionalChar('('))
         {
           if (requireIdentifier("expect function name"))
           {
-            name_to_unfold = lastToken()->string;
+            norm_options.name_to_unfold = lastToken()->string;
             requireChar(')');
           }
         }
+        else
+          norm_options.unfold_topmost_operator = true;
       }
 
       if (noError())
       {
         NormalizeMeAst *ast_goal = newAst(arena, NormalizeMeAst, token);
-        ast_goal->name_to_unfold = name_to_unfold;
+        ast_goal->norm_options = norm_options;
         if (seesExpressionEndMarker())
         {// normalize goal
           GoalTransform *ast = newAst(arena, GoalTransform, token);
