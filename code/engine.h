@@ -84,7 +84,6 @@ struct Scope {
   i32       depth;
   i32       param_count;
   Pointer **pointers;
-  b32      *ignored;
 };
 
 const u32 Error_Ambiguous = 1 << 0;  // NOTE: Maybe a better name would be "missing type info".
@@ -203,6 +202,7 @@ struct HeapPointer {
 struct Pointer : Term {
   Record *ref;
   b32     is_stack_pointer;
+  b32     ignored;  // todo #flag
   union {
     StackPointer stack;
     HeapPointer  heap;
@@ -484,6 +484,8 @@ struct ReaBuiltins {
   Term *equal;
   Term *False;
   Term *Exists;
+  Term *And;
+  Term *Or;
 
   Term *eqChain;
   Term *WellFounded;

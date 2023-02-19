@@ -532,3 +532,9 @@ unsetFlag(u32 *flags, u32 flag)
     a = b; \
     b = temp; \
 }
+
+#define llPush(arena, member, list)            \
+  mytypeof(list) new_list = pushStruct(arena, mytypeof(*list)); \
+  new_list->head          = member;             \
+  new_list->tail          = list;               \
+  list                    = new_list;

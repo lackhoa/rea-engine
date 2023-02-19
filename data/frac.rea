@@ -153,6 +153,7 @@ lexicoLtLemma ::
     }
   }
 
+#debug
 lexicoReachableLocked ::
 (a,b: Natp, h: Reachable(<, pair(a, (:Natp)1)))
 ->
@@ -165,35 +166,29 @@ Reachable(<, pair(a,b))
     use reachable
     {
       p
-      return fn y,lt
+      fn y,lt;
+      norm unfold as lt1 lt;
+      fork lt1
       {
-        norm unfold as lt' lt;
-        fork lt'
-        {
-          auto
-          ;; y.a < a -> y is less than (a,1)
-          prove y < pair(a,1) {norm unfold};
-          use (h.p);
-          ,
-          auto
-          ;; y.a = a; y.b <= b.p
-          ih : Reachable(<, pair(a, b.p)) := use lexicoReachableLocked with a=a, b=b.p;
+        auto
+        ;; y.a < a -> y is less than (a,1)
+        prove y < pair(a,1) {norm unfold};
+        use (h.p);
+        ,
+        auto
+        ;; y.a = a; y.b <= b.p
+        ih : Reachable(<, pair(a, b.p)) := use lexicoReachableLocked with a=a, b=b.p;
 
-          ;; either "y = a,b.p" in which case the induction hypothesis applies
-          ;; or "y < a,b.p", in which case the induction hypothesis also applies
+        ;; either "y = a,b.p" in which case the induction hypothesis applies
+        ;; or "y < a,b.p", in which case the induction hypothesis also applies
 
-          lemma := use lexicoLtLemma with lt=lt;
-          fork lemma
-          {
-            auto rewrite lemma.a
-            ,
-            auto use (ih.p)
-            }
-          }
-        };
+        lemma := use lexicoLtLemma with lt=lt;
+        fork lemma {auto rewrite lemma.a, auto use (ih.p)}
+        }
       }
     }
   }
+#debug off
 
 lexicoWellFounded1 :: (b: Natp) -> Reachable(<, pair((:Natp)1,b))
 {

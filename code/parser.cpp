@@ -75,12 +75,9 @@ inline String
 requireIdentifier(char *message=0)
 {
   String out = {};
-  if (!message)
-  {
-    message = "expected identifier";
-  }
   if (hasMore())
   {
+    if (!message) message = "expected identifier";
     Token token = nextToken();
     if (isIdentifier(&token)) out = token.string;
     else                      tokenError(message);
@@ -339,11 +336,6 @@ parseSequence(b32 require_braces=true)
           if (norm_name)
           {
             let->lhs = norm_name;
-          }
-          else if (expression->kind == Ast_Identifier)
-          {
-            // borrow the name if the expression is an identifier 
-            let->lhs  = expression->token.string;
           }
         }
       }
@@ -1497,6 +1489,11 @@ parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
         else if (optionalDirective("builtin"))
         {
           setFlag(&out->flags, AstFlag_IsBuiltin);
+          if (optionalChar('('))
+          {
+            out->builtin_name = requireIdentifier();
+            requireChar(')');
+          }
         }
         else if (optionalDirective("tag"))
         {
@@ -1666,6 +1663,11 @@ parseUnion(Arena *arena, Token *uni_name)
   if (optionalDirective("builtin"))
   {
     setFlag(&uni->flags, AstFlag_IsBuiltin);
+    if (optionalChar('('))
+    {
+      uni->builtin_name = requireIdentifier();
+      requireChar(')');
+    }
   }
 
   if (requireChar('{'))

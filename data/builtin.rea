@@ -1,11 +1,13 @@
 #load "builtin-equal.rea"
 
 /\ :: union(^A,^B: Type)
+#builtin(And)
 {
  pair(a: A, b: B)
  }
 
 \/ :: union(^A,^B: Type)
+#builtin(Or)
 {
  left(a: A),
  right(b: B)

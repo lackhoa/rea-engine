@@ -3,6 +3,8 @@ global_variable BuiltinEntry rea_builtin_names[] = {
 {"equal", &rea_builtins.equal},
 {"False", &rea_builtins.False},
 {"Exists", &rea_builtins.Exists},
+{"And", &rea_builtins.And},
+{"Or", &rea_builtins.Or},
 {"eqChain", &rea_builtins.eqChain},
 {"WellFounded", &rea_builtins.WellFounded},
 {"U32", &rea_builtins.U32},

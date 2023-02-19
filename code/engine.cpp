@@ -953,8 +953,8 @@ printTermsInParentheses(Arena *buffer, i32 count, Term **terms, PrintOptions opt
   print(buffer, ")");
 }
 
-inline void
-printStackPointerName(Arena *buffer, StackPointer *in, PrintOptions opt)
+internal void
+printStackPointerName(Arena *buffer, StackPointer *in)
 {
   bool has_name = in->name.chars;
   if (has_name)
@@ -974,6 +974,36 @@ printStackPointerName(Arena *buffer, StackPointer *in, PrintOptions opt)
       print(buffer, ",%d", in->index);
     }
     print(buffer, ">");
+  }
+}
+
+internal void
+printPointerName(StringBuffer *buffer, Pointer *in)
+{
+  const i32 max_path_length = 32;  // todo #grow
+  String rev_field_names[max_path_length];
+  i32 path_length = 0;
+  Pointer *iter = in;
+  for (b32 stop = false; !stop;)
+  {
+    if (iter->is_stack_pointer)
+    {
+      printStackPointerName(buffer, &iter->stack);
+      stop = true;
+    }
+    else
+    {
+      HeapPointer *heap = &iter->heap;
+      rev_field_names[path_length++] = heap->debug_field_name;
+      assert(path_length < max_path_length);
+      iter = heap->record;
+    }
+  }
+
+  for (i32 path_i = path_length-1; path_i >= 0; path_i--)
+  {
+    print(buffer, ".");
+    print(buffer, rev_field_names[path_i]);
   }
 }
 
@@ -1072,37 +1102,9 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
           {
             print(buffer, in->ref, opt);
           }
-          else if (in->is_stack_pointer)
-          {
-            printStackPointerName(buffer, &in->stack, opt);
-          }
           else
           {
-            const i32 max_path_length = 32;
-            String rev_field_names[max_path_length];
-            i32 path_length = 0;
-            Pointer *iter = in;
-            for (b32 stop = false; !stop;)
-            {
-              if (iter->is_stack_pointer)
-              {
-                printStackPointerName(buffer, &iter->stack, opt);
-                stop = true;
-              }
-              else
-              {
-                HeapPointer *heap = &iter->heap;
-                rev_field_names[path_length++] = heap->debug_field_name;
-                assert(path_length < max_path_length);
-                iter = heap->record;
-              }
-            }
-
-            for (i32 path_i = path_length-1; path_i >= 0; path_i--)
-            {
-              print(buffer, ".");
-              print(buffer, rev_field_names[path_i]);
-            }
+            printPointerName(buffer, in);
           }
         } break;
 
@@ -1290,30 +1292,33 @@ getExplicitParamCount(Arrow *in)
 }
 
 internal b32
-shouldPrintType(Term *type)
+shouldPrintTypeInScope(Term *value)
 {
+  Term *type = value->type;
   if (!print_full_scope)
   {
-    if (type == rea.Type)
-    {
-      return false;
-    }
+    if (type == rea.Type) return false;
 
     if (Union *uni = castTerm(type, Union))
     {
       // if you have no constructor, you're suddenly the MVP.
-      return !uni->ctor_count;
+      if (uni->ctor_count) return false;
+      else                 return true;
     }
 
-    if (castUnion(type))
-    {
-      return true;
-    }
+    // if (castUnion(type)) return true;  // TODO: idk why this was here?
 
-    if (type->kind == Term_Pointer)
+    if (type->kind == Term_Pointer) return false;
+
+    Union *uni = getUnionOrPolyUnion(type);
+    if (uni == rea.Or)
     {
-      return false;
+      if (Pointer *pointer = castTerm(value, Pointer))
+      {
+        if (pointer->ref) return false;
+      }
     }
+    else if (uni == rea.And) return false;
   }
   return true;
 }
@@ -1321,46 +1326,49 @@ shouldPrintType(Term *type)
 inline void
 prettyPrintScope(StringBuffer *buffer, Scope *scope)
 {
+  Arena *arena = temp_arena;
+  struct PointerList {Pointer *head; PointerList *tail;};
+
   // NOTE: Skip the last scope since we already know
   while (scope)
   {
-    Pointer **values = scope->pointers;
+    Pointer **pointers = scope->pointers;
     for (int param_i = 0;
          param_i < scope->param_count;
          param_i++)
     {
-      Pointer *pointer = values[param_i];
-      if (pointer)  // sometimes we error out, and the scope is hosed
-      {
-        assert(pointer->is_stack_pointer);
-        if (shouldPrintType(pointer->type))
-        {
-          if (pointer->stack.name.chars)
-          {
-            print(buffer, pointer->stack.name);
-            print(buffer, ": ");
-          }
-          print(buffer, pointer->type);
-          print(buffer, "\n");
-        }
+      PointerList *list = pushStruct(arena, PointerList);
+      list->head = pointers[param_i];
+      list->tail = 0;
 
-        if (Record *record = castRecord(pointer))
+      while (list)
+      {
+        Pointer *pointer = list->head;
+        list = list->tail;
+        if (pointer && !pointer->ignored)  // sometimes we error out, so pointer is null
         {
-          Arrow *signature = getSignature(record->ctor);
-          for (i32 i=0; i < record->member_count; i++)
+          if (shouldPrintTypeInScope(pointer))
           {
-            // NOTE: print the member types.
-            if (!isInferredParameter(signature, i))
+            printPointerName(buffer, pointer);
+            print(buffer, ": ");
+            print(buffer, pointer->type);
+            print(buffer, "\n");
+          }
+
+          if (Record *record = castRecord(pointer))
+          {
+            Arrow *signature = getSignature(record->ctor);
+            for (i32 i=0; i < record->member_count; i++)
             {
-              Term *member = record->members[i];
-              if (shouldPrintType(member->type))
+              // NOTE: print the member types.
+              if (!isInferredParameter(signature, i))
               {
-                print(buffer, member, printOptionPrintType());
-                if (i != record->member_count-1) print(buffer, "\n");
+                Pointer *member = castTerm(record->members[i], Pointer);
+                assert(member);
+                llPush(arena, member, list);
               }
             }
           }
-          print(buffer, "\n");
         }
       }
     }
@@ -1382,7 +1390,6 @@ newScope(Scope *outer, i32 param_count, Pointer **values)
   scope->depth       = outer ? outer->depth+1 : 1;
   scope->pointers    = values;
   scope->param_count = param_count;
-  scope->ignored     = pushArray(temp_arena, param_count, b32, true);
   return scope;
 }
 
@@ -2548,8 +2555,6 @@ checkRecursiveCall(Term *op0, i32 arg_count, Term **args, Term *reduce_proof)
     }
   }
 }
-
-
 
 inline Composite *
 newEquality(Term *lhs, Term *rhs)
@@ -4755,20 +4760,6 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
   return value;
 }
 
-inline void
-ignorePointer(Scope *scope, i32 pointer_i)
-{
-  assert(pointer_i < scope->param_count);
-  scope->ignored[pointer_i] = true;
-}
-
-inline b32
-isPointerIgnored(Scope *scope, i32 pointer_i)
-{
-  assert(pointer_i < scope->param_count);
-  return scope->ignored[pointer_i];
-}
-
 inline Term *
 buildWithState(ProofState *state, Ast *body)
 {
@@ -4826,7 +4817,7 @@ buildSubst(Typer *typer, SubstAst *in, Term *goal0)
             {
               eq_proof      = pointer;
               right_to_left = equal_rhs;
-              ignorePointer(scope, pointer_i);
+              pointer->ignored = true;
 
               substitutions[sub_count++] = {to_rewrite, eq_proof, right_to_left};
               assert(sub_count <= sub_cap);
@@ -4848,13 +4839,13 @@ buildSubst(Typer *typer, SubstAst *in, Term *goal0)
         for (i32 pointer_i=0; pointer_i < scope->param_count; pointer_i++)
         {
           Pointer *pointer = scope->pointers[pointer_i];
-          if (!isPointerIgnored(scope, pointer_i))
+          if (!pointer->ignored)
           {
             assert(pointer != eq_proof);
             if (SearchOutput search = searchExpression(to_rewrite, pointer->type))
             {
               Term *asset = newRewrite(eq_proof, pointer, search.path, !right_to_left);
-              ignorePointer(scope, pointer_i);
+              pointer->ignored = true;
               addAsset(state, asset);
             }
           }
@@ -5409,19 +5400,16 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
     {
       Let  *in = castAst(in0, Let);
       Term *type_hint = hole;
-      // todo: remove this "NormalizeMeAst" business!
       if (in->type && in->type->kind != Ast_NormalizeMeAst)
       {
-        if (Term *type = buildTerm(typer, in->type, hole))
-        {
-          type_hint = type;
-        }
+        type_hint = buildTerm(typer, in->type, hole);
       }
       if (noError())
       {
-        if (Term *rhs = buildTerm(typer, in->rhs, type_hint).value)
+        if (Term *rhs0 = buildTerm(typer, in->rhs, type_hint))
         {
-          Term *rhs_type = (type_hint->kind == Term_Hole) ? (rhs)->type : type_hint;
+          Term *rhs = rhs0;
+          Term *rhs_type = (type_hint->kind == Term_Hole) ? rhs->type : type_hint;
 
           if (in->type)
           {// type coercion
@@ -5445,7 +5433,19 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
 
           if (!recursed)
           {
-            value = buildWithNewAsset(typer, in->lhs, rhs, in->body, goal0);
+            String lhs = in->lhs;
+            if (!lhs)
+            {
+              if (Pointer *pointer = castTerm(rhs0, Pointer))
+              {
+                if (pointer->is_stack_pointer)
+                {
+                  pointer->ignored = true;
+                  lhs = pointer->stack.name;
+                }
+              }
+            }
+            value = buildWithNewAsset(typer, lhs, rhs, in->body, goal0);
           }
         }
       }
@@ -5854,9 +5854,9 @@ parseAndBuildGlobal(Typer *typer, Term *expected_type=hole)
 }
 
 internal void
-addBuiltinTerm(Term *term)
+addBuiltinTerm(Term *term, String name={})
 {
-  String builtin_name = term->global_name->string;
+  String builtin_name = name ? name : term->global_name->string;
   b32 installed = false;
   for (i32 i=0;
        !installed && i < arrayCount(rea_builtin_names);
@@ -5984,7 +5984,7 @@ buildUnion(Typer *typer, UnionAst *in, Token *global_name)
   b32 is_builtin = checkFlag(in->flags, AstFlag_IsBuiltin);
   if (is_builtin && noError())
   {
-    addBuiltinTerm(uni);
+    addBuiltinTerm(uni, in->builtin_name);
     for (i32 i=0; i < uni->ctor_count; i++)
     {
       addBuiltinTerm(uni->constructors[i]);
@@ -6016,7 +6016,7 @@ buildGlobalFunction(Typer *typer, FunctionAst *in)
         }
         if (checkFlag(in->flags, AstFlag_IsBuiltin))
         {
-          addBuiltinTerm(out);
+          addBuiltinTerm(out, in->builtin_name);
         }
       }
     }
