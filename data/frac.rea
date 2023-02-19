@@ -158,7 +158,7 @@ lexicoLtLemma ::
       prove x < pair(a, b)
       {
         norm unfold(<);
-        prove x.a = a /\ ++(x.b) <= b = true {use pair with a=lt.b.a};
+        prove x.a = a /\ ++(x.b) <= b = true {use pair with a=lt.b.a};  ;; bookmark: this should be solvable by default
         use right;}
 
       use right;
@@ -246,15 +246,7 @@ lexicoWellFounded_ :: (a: Natp, b: Natp) -> Reachable(<, pair(a,b))
           {
             norm unfold(<);
             lemma := use ltLemma with a=y.a, b=a.p;
-            fork lemma
-            {
-              auto
-              prove y.a = a.p /\ y.b <= y.b = true {use pair;}
-              use right;
-              ,
-              auto
-              use left;
-              }
+            fork lemma {auto , auto}
             }
           ih := use lexicoWellFounded_ with a=a.p, b = ++(y.b);
           use (ih.p);

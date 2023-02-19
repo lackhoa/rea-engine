@@ -5767,6 +5767,15 @@ addBuiltinTerm(Term *term)
   }
 }
 
+inline void
+addGlobalHint(Term *hint)
+{
+  HintDatabase *new_hint = pushStruct(global_state.top_level_arena, HintDatabase);
+  new_hint->head = hint;
+  new_hint->tail = global_state.hints;
+  global_state.hints = new_hint;
+}
+
 forward_declare internal Term *
 buildUnion(Typer *typer, UnionAst *in, Token *global_name)
 {
@@ -5842,49 +5851,35 @@ buildUnion(Typer *typer, UnionAst *in, Token *global_name)
     }
   }
 
-  if (noError())
+  for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
   {
+    Arrow *ctor_sig = ctor_signatures[ctor_i];
+    Constructor *ctor = newTerm(arena, Constructor, ctor_sig);
+    ctor->index = ctor_i;
+    ctor->name  = in->ctor_names[ctor_i];
     if (uni_signature)
     {
-      for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
-      {
-        Arrow *ctor_sig = ctor_signatures[ctor_i];
-        Constructor *ctor = newTerm(arena, Constructor, ctor_sig);
-        ctor->index = ctor_i;
-        ctor->name  = in->ctor_names[ctor_i];
-        addGlobalBinding(&in->ctor_names[ctor_i], ctor);
-        uni->constructors[ctor_i] = ctor;
-      }
+      addGlobalBinding(&in->ctor_names[ctor_i], ctor);
     }
     else
     {
-      // no union parameters
-      for (i32 ctor_i=0; noError() && ctor_i < ctor_count; ctor_i++)
+      ctor_sig->output_type = uni;
+      Term *term_to_bind = ctor;
+      if (ctor_sig->param_count == 0)
       {
-        Arrow *struc = ctor_signatures[ctor_i];
-        struc->output_type = uni;
-        Constructor *ctor = newTerm(arena, Constructor, struc);
-        ctor->index = ctor_i;
-        ctor->name  = in->ctor_names[ctor_i];
-
-        Term *term_to_bind = ctor;
-        if (struc->param_count == 0)
-        {
-          // todo: need to rethink "no-arg composite" thing
-          term_to_bind = newComposite(ctor, 0, 0);
-          term_to_bind = copyToGlobalArena(term_to_bind);
-        }
-        addGlobalBinding(&in->ctor_names[ctor_i], term_to_bind);
-        uni->constructors[ctor_i] = ctor;
+        // todo: need to rethink "no-arg composite" thing
+        term_to_bind = newComposite(ctor, 0, 0);
+        term_to_bind = copyToGlobalArena(term_to_bind);
       }
+      addGlobalBinding(&in->ctor_names[ctor_i], term_to_bind);
     }
+    uni->constructors[ctor_i] = ctor;
+    addGlobalHint(ctor);
   }
 
   b32 is_builtin = checkFlag(in->flags, AstFlag_IsBuiltin);
   if (is_builtin && noError())
   {
-    if (equal(global_name, "Permute"))
-      breakhere;
     addBuiltinTerm(uni);
     for (i32 i=0; i < uni->ctor_count; i++)
     {
@@ -5894,15 +5889,6 @@ buildUnion(Typer *typer, UnionAst *in, Token *global_name)
 
   NULL_WHEN_ERROR(uni);
   return uni;
-}
-
-inline void
-addGlobalHint(Function *fun)
-{
-  HintDatabase *new_hint = pushStruct(global_state.top_level_arena, HintDatabase);
-  new_hint->head = fun;
-  new_hint->tail = global_state.hints;
-  global_state.hints = new_hint;
 }
 
 internal Function *
