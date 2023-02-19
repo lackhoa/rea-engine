@@ -971,6 +971,36 @@ printStackPointerName(Arena *buffer, StackPointer *in, PrintOptions opt)
   }
 }
 
+inline b32
+shouldPrintExpanded(Pointer *in)
+{
+  b32 out = false;
+  if (in->ref)
+  {
+    out = true;
+    auto [uni, _] = castUnion(in->type);
+    if (uni->ctor_count == 1)
+    {
+      out = false;
+      if (in->ref)
+      {
+        Composite *ref = in->ref;
+        for (i32 i=0; i < ref->arg_count && !out; i++)
+        {
+          if (Pointer *arg = castTerm(ref->args[i], Pointer))
+          {
+            if (shouldPrintExpanded(arg))
+            {
+              out = true;
+            }
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
 forward_declare internal void
 print(Arena *buffer, Term *in0, PrintOptions opt)
 {// mark: printTerm
@@ -1032,50 +1062,40 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
         case Term_Pointer:
         {
           Pointer *in = (Pointer *)(in0);
-          if (in->is_stack_pointer)
+          if (shouldPrintExpanded(in))
           {
-            if (in->ref)
-            {
-              print(buffer, in->ref);
-            }
-            else
-            {
-              printStackPointerName(buffer, &in->stack, opt);
-            }
+            print(buffer, in->ref, opt);
+          }
+          else if (in->is_stack_pointer)
+          {
+            printStackPointerName(buffer, &in->stack, opt);
           }
           else
           {
-            if (in->ref)
+            const i32 max_path_length = 32;
+            String rev_field_names[max_path_length];
+            i32 path_length = 0;
+            Pointer *iter = in;
+            for (b32 stop = false; !stop;)
             {
-              print(buffer, in->ref, opt);
+              if (iter->is_stack_pointer)
+              {
+                printStackPointerName(buffer, &iter->stack, opt);
+                stop = true;
+              }
+              else
+              {
+                HeapPointer *heap = &iter->heap;
+                rev_field_names[path_length++] = heap->debug_field_name;
+                assert(path_length < max_path_length);
+                iter = heap->record;
+              }
             }
-            else
-            {
-              const i32 max_path_length = 32;
-              String rev_field_names[max_path_length];
-              i32 path_length = 0;
-              Pointer *iter = in;
-              for (b32 stop = false; !stop;)
-              {
-                if (iter->is_stack_pointer)
-                {
-                  printStackPointerName(buffer, &iter->stack, opt);
-                  stop = true;
-                }
-                else
-                {
-                  HeapPointer *heap = &iter->heap;
-                  rev_field_names[path_length++] = heap->debug_field_name;
-                  assert(path_length < max_path_length);
-                  iter = heap->record;
-                }
-              }
 
-              for (i32 path_i = path_length-1; path_i >= 0; path_i--)
-              {
-                print(buffer, ".");
-                print(buffer, rev_field_names[path_i]);
-              }
+            for (i32 path_i = path_length-1; path_i >= 0; path_i--)
+            {
+              print(buffer, ".");
+              print(buffer, rev_field_names[path_i]);
             }
           }
         } break;

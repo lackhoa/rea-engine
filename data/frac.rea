@@ -154,11 +154,13 @@ lexicoLtLemma ::
       use left;
       ,
       auto
-      prove pair(x.a, x.b) < pair(a, b)
+
+      prove x < pair(a, b)
       {
         norm unfold(<);
         prove x.a = a /\ ++(x.b) <= b = true {use pair with a=lt.b.a};
         use right;}
+
       use right;
       }
     }
@@ -272,7 +274,7 @@ lexicoWellFounded_ :: (a: Natp, b: Natp) -> Reachable(<, pair(a,b))
     }
   }
 
-lexicoWellFounded : WellFounded(Natp/\Natp, <) := prove {norm; lexicoWellFounded_};
+lexicoWellFounded : WellFounded(Natp/\Natp, <) := prove {norm; return lexicoWellFounded_};
 
 gcd :: (a,b: Natp) -> exists(out: Natp) isGcd(out, a,b)
 #measure(pair(a,b), lexicoLtWellFounded)
