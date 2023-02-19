@@ -1718,6 +1718,29 @@ reaIsCons(Term *in0)
   return in->ctor == rea.cons;
 }
 
+inline b32
+equalPointer(Term *l0, Term *r0)
+{
+  b32 out = false;
+  Pointer *l = castTerm(l0, Pointer);
+  Pointer *r = castTerm(r0, Pointer);
+  if (l && r)
+  {
+    if (l->is_stack_pointer && r->is_stack_pointer)
+    {
+      out = (l->stack.depth == r->stack.depth &&
+             l->stack.index == r->stack.index);
+    }
+    else if (l->heap.index == r->heap.index)
+    {
+      // TODO: not happy with this "looping up" thing. Since "compareTerms"
+      // might have already compared the parents, then descend down.
+      out = equalPointer(l->heap.record, r->heap.record);
+    }
+  }
+  return out;
+}
+
 // TODO: We should only compare terms of the same type!
 internal CompareTerms
 compareTerms(Arena *arena, Term *l0, Term *r0)
@@ -1731,6 +1754,10 @@ compareTerms(Arena *arena, Term *l0, Term *r0)
   }
 
   if (l0 == r0)
+  {
+    out.result = {Trinary_True};
+  }
+  else if (equalPointer(l0, r0))
   {
     out.result = {Trinary_True};
   }
@@ -2561,19 +2588,18 @@ uninstantiate(Term *in0)
   pointer->ref = 0;
 }
 
-// TODO: This is not safe rn.
 inline Fork *
 newFork(Term *subject, i32 case_count, Term **cases, Term *goal)
 {
+  i32 unused_var serial = DEBUG_SERIAL;
   Arena *arena = temp_arena;
   Union *uni = getUnionOrPolyUnion(subject->type);
   assert(case_count == uni->ctor_count);
   for (i32 i=0; i < case_count; i++)
   {
-    todoIncomplete;
-    // assert(instantiate(subject, i));  // NOTE: instantiating again doesn't work because pointer comparison isn't sophisticated rn.
+    assert(instantiate(subject, i));  // NOTE: instantiating again doesn't work because pointer comparison isn't sophisticated rn.
     assertEqualNorm(cases[i]->type, goal);
-    // uninstantiate(subject);
+    uninstantiate(subject);
   }
 
   Fork *out = newTerm(arena, Fork, goal);
@@ -5713,25 +5739,26 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
         }
       }
 
-      // TODO: Can't call "newFork" right now
-      out = newTerm(arena, Fork, goal);
-      out->subject    = subject;
-      out->case_count = in->case_count; 
-      out->cases      = ordered_cases;
-
-      if (noError() && in->case_count != uni->ctor_count)
+      if (noError())
       {
-        reportError(in, "wrong number of cases");
-        StartString start = startString(error_buffer);
-        for (i32 ctor_i=0; ctor_i < uni->ctor_count; ctor_i++)
+        if (in->case_count == uni->ctor_count)
         {
-          if (!ordered_cases[ctor_i])
-          {
-            print(error_buffer, getConstructorName(uni, ctor_i));
-            print(error_buffer, ", ");
-          }
+          out = newFork(subject, in->case_count, ordered_cases, goal);
         }
-        attach("constructors_remaining", endString(start));
+        else
+        {
+          reportError(in, "wrong number of cases");
+          StartString start = startString(error_buffer);
+          for (i32 ctor_i=0; ctor_i < uni->ctor_count; ctor_i++)
+          {
+            if (!ordered_cases[ctor_i])
+            {
+              print(error_buffer, getConstructorName(uni, ctor_i));
+              print(error_buffer, ", ");
+            }
+          }
+          attach("constructors_remaining", endString(start));
+        }
       }
     }
     else
