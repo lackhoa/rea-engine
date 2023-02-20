@@ -5302,11 +5302,6 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
 
     case Ast_GoalTransform:
     {
-      if (goal0 == hole)
-      {
-        reportAmbiguousError(typer, in0, "cannot transform because we don't know what the goal is");
-      }
-      else
       {
       GoalTransform *in = castAst(in0, GoalTransform);
       Term     *new_goal      = 0;
@@ -5316,23 +5311,35 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
 
       if (NormalizeMeAst *in_new_goal = castAst(in->new_goal, NormalizeMeAst))
       {// just normalize the goal, no need for tactics (for now).
-        Term *norm_goal = normalize(goal0, in_new_goal->norm_options);
-        if (checkFlag(in->flags, AstFlag_Generated) &&
-            equal(goal0, norm_goal))
-        {// superfluous auto-generated transforms.
-          value = buildTerm(typer, in->body, goal0).value;
-          recursed = true;
+        if (goal0 == hole)
+        {
+          reportAmbiguousError(typer, in0, "cannot normalize because we don't know what the goal is");
         }
         else
         {
-          eq_proof = newComputation_(goal0, norm_goal);
-          new_goal = norm_goal;
-          rewrite_path = 0;
+          Term *norm_goal = normalize(goal0, in_new_goal->norm_options);
+          if (checkFlag(in->flags, AstFlag_Generated) &&
+              equal(goal0, norm_goal))
+          {// superfluous auto-generated transforms.
+            value = buildTerm(typer, in->body, goal0);
+            recursed = true;
+          }
+          else
+          {
+            eq_proof = newComputation_(goal0, norm_goal);
+            new_goal = norm_goal;
+            rewrite_path = 0;
+          }
         }
       }
       else if ((new_goal = buildTerm(typer, in->new_goal, hole)))
       {
-        if (equal(new_goal->type, goal0->type))
+        if (goal0 == hole)
+        {
+          value = buildTerm(typer, in->body, new_goal);
+          recursed = true;
+        }
+        else if (equal(new_goal->type, goal0->type))
         {
           CompareTerms compare = compareTerms(arena, goal0, new_goal);
           if (compare.result == Trinary_True)
@@ -5413,7 +5420,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
 
       if (noError() && !recursed)
       {
-        if (Term *body = buildTerm(typer, in->body, new_goal).value)
+        if (Term *body = buildTerm(typer, in->body, new_goal))
         {
           value = newRewrite(eq_proof, body, rewrite_path, right_to_left);
         }
@@ -5690,13 +5697,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
     }
     value = 0;
   }
-  else
-  {
-    assert(value);
-  }
-
-  if (serial == 1389966)
-    breakhere;
+  else assert(value);
 
   return BuildTerm{.value=value};
 }
