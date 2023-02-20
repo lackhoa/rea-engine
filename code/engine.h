@@ -86,8 +86,8 @@ struct Scope {
   Pointer **pointers;
 };
 
-const u32 Error_Ambiguous = 1 << 0;  // NOTE: Maybe a better name would be "missing type info".
-const u32 Error_WrongType = 1 << 1;
+const u32 ExpectError_Ambiguous = 1 << 0;  // NOTE: Maybe a better name would be "missing type info".
+const u32 ExpectError_WrongType = 1 << 1;
 
 struct Typer
 {

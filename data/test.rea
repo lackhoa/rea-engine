@@ -89,9 +89,7 @@ testLocalFunction :: fn (a: Nat) -> Nat
  f : (n: Nat) -> Nat := fn { return n*b };
  fork a {0: return 4, ++: return f(a)}}
 
-#debug
 check_truth testLocalFunction(2) = 6;
-#debug off
 
 testArrowEvaluation :: fn (A: Type) -> (a: A) -> A {return fn {return a}}
 

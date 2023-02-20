@@ -3278,13 +3278,13 @@ solveGoal(Solver *solver, Term *goal)
 inline b32
 expectedWrongType(Typer *typer)
 {
-  return checkFlag(typer->expected_errors, Error_WrongType);
+  return checkFlag(typer->expected_errors, ExpectError_WrongType);
 }
 
 inline b32
 expectedAmbiguous(Typer *typer)
 {
-  return checkFlag(typer->expected_errors, Error_Ambiguous);
+  return checkFlag(typer->expected_errors, ExpectError_Ambiguous);
 }
 
 inline TermArray
@@ -4462,8 +4462,8 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
       Typer *typer = &new_typer;
       if (op_list.count > 1)
       {
-        setFlag(&typer->expected_errors, Error_WrongType);
-        setFlag(&typer->expected_errors, Error_Ambiguous);
+        setFlag(&typer->expected_errors, ExpectError_WrongType);
+        setFlag(&typer->expected_errors, ExpectError_Ambiguous);
       }
 
       for (i32 attempt=0;
@@ -4596,7 +4596,7 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
                 if (stack_has_hole)
                 {
                   Typer new_typer = *typer;
-                  setFlag(&new_typer.expected_errors, Error_Ambiguous);
+                  setFlag(&new_typer.expected_errors, ExpectError_Ambiguous);
                   if (Term *arg = buildTerm(&new_typer, in_arg, hole))
                   {
                     args[arg_i] = arg;
@@ -4923,8 +4923,26 @@ buildAlgebraNorm(Typer *typer, AlgebraNormAst *ast, Term *goal0)
   return value;
 }
 
+inline void
+reportAmbiguousError(Typer *typer, Ast *ast, char *message)
+{
+  if (expectedAmbiguous(typer))
+    silentError();
+  else
+    reportError(ast, message);
+}
+
+inline void
+reportWrongTypeError(Typer *typer, Ast *ast, char *message)
+{
+  if (expectedWrongType(typer))
+    silentError();
+  else
+    reportError(ast, message);
+}
+
 internal Term *
-buildNameOnlyArrowType(ArrowAst *in, Term *goal0)
+buildNameOnlyArrowType(Typer *typer, ArrowAst *in, Term *goal0)
 {
   Arrow *out = 0;
   Arena *arena = temp_arena;
@@ -4937,10 +4955,18 @@ buildNameOnlyArrowType(ArrowAst *in, Term *goal0)
       out->param_names = in->param_names;
     }
     else
-      reportError(in, "incorrect number of names given");
+    {
+      if (expectedWrongType(typer)) silentError();
+      else reportError(in, "incorrect number of names given");
+    }
   }
   else
-    reportError(in, "illegal usage of name-only arrow syntax since the goal is not an arrow type");
+  {
+    if (goal0 == hole)
+      reportAmbiguousError(typer, in, "illegal usage of name-only arrow syntax without expected type");
+    else
+      reportWrongTypeError(typer, in, "illegal usage of name-only arrow syntax since the goal is not an arrow type");
+  }
 
   NULL_WHEN_ERROR(out);
   return out;
@@ -5168,7 +5194,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
       {
         if (isNameOnlyArrowType(in->signature))
         {
-          type = buildNameOnlyArrowType(in->signature, goal0);
+          type = buildNameOnlyArrowType(typer, in->signature, goal0);
         }
         else
         {
@@ -5687,25 +5713,28 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
   if (Term *subject = buildTerm(typer, in->subject, hole))
   {
     auto &fixpoint = current_global_fixpoint;
-    Pointer *save_global_fork_subject = fixpoint->fork_subject;
-    if (fixpoint->fun)
+    Pointer *save_global_fork_subject = fixpoint ? fixpoint->fork_subject : 0;
+    if (fixpoint)
     {
-      // NOTE: massive #hack to mark this subject as "should be reducing when
-      // calling recursively".
-      if (fixpoint->fork_subject)
+      if (fixpoint->fun)
       {
-        breakhere;  // STUDY: multiple fork subjects, what to do...?
-      }
-      else
-      {
-        i32 param_count = getParameterCount(fixpoint->fun);
-        for (i32 param_i=0; param_i < param_count; param_i++)
+        // NOTE: massive #hack to mark this subject as "should be reducing when
+        // calling recursively".
+        if (fixpoint->fork_subject)
         {
-          Pointer *arg = fixpoint->args[param_i];
-          if (subject == arg)
+          breakhere;  // STUDY: multiple fork subjects, what to do...?
+        }
+        else
+        {
+          i32 param_count = getParameterCount(fixpoint->fun);
+          for (i32 param_i=0; param_i < param_count; param_i++)
           {
-            fixpoint->fork_subject = arg;
-            break;
+            Pointer *arg = fixpoint->args[param_i];
+            if (subject == arg)
+            {
+              fixpoint->fork_subject = arg;
+              break;
+            }
           }
         }
       }
@@ -5817,7 +5846,7 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
       attach("type", subject->type);
     }
 
-    fixpoint->fork_subject = save_global_fork_subject;
+    if (fixpoint) fixpoint->fork_subject = save_global_fork_subject;
   }
   if (noError())
   {
@@ -6055,7 +6084,7 @@ interpretTopLevel(EngineState *state)
     Typer *typer  = &typer_;
     if (should_fail_active)
     {
-      setFlag(&typer->expected_errors, Error_WrongType);
+      setFlag(&typer->expected_errors, ExpectError_WrongType);
     }
 
     switch (token_.kind)
@@ -6170,6 +6199,7 @@ interpretTopLevel(EngineState *state)
         {
           b32 value = !optionalString("off");
           global_state.top_level_debug_mode = value;
+          DEBUG_LOG_compare = value;
         }
       } break;
 
@@ -6344,6 +6374,7 @@ interpretTopLevel(EngineState *state)
             }
           }
         }
+        popContext();
       } break;
 
       default:

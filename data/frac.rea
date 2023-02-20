@@ -237,22 +237,39 @@ lexicoWellFounded_ :: (a: Natp, b: Natp) -> Reachable(<, pair(a,b))
     }
   }
 
-;; lexicoWellFounded : WellFounded(Natp/\Natp, <) := prove {norm; return lexicoWellFounded_};
+lexicoWellFounded : WellFounded(Natp/\Natp, <) :=
+prove
+{norm; return fn (x: Natp/\Natp) -> Reachable(<, x) { fork x {pair use lexicoWellFounded_;} }};
 
-;; gcd :: (a,b: Natp) -> exists(out: Natp) isGcd(out, a,b)
-;; #measure(pair(a,b), lexicoLtWellFounded)
-;; {
-;;   ;; NOTE: we try to keep a < b.
-;;   qr := quotientRemainder(b,a);
-;;   fork qr
-;;   {
-;;     divideFail
-;;     prove {
-;;             use gcd with a=b,b=a
-;;             #reduce {};
-;;             }
-;;     ,
-;;     divideEvenly return some(qr.quotient)
-;;     ,
-;;     divideWithRemainder
-;;     return gcd(qr.remainder, b)}}
+isCommonDivisorSwap :: (q,a,b: Natp, p: isCommonDivisor(q,a,b)) -> isCommonDivisor(q,b,a)
+#hint
+{norm unfold; norm unfold p;}
+
+isGcdSwap :: (q,a,b: Natp, p: isGcd(q,a,b)) -> isGcd(q,b,a)
+#hint
+{
+  norm unfold;
+  norm unfold p;
+  use pair
+  {
+    b 
+    return fn q', p'
+    {}
+    ,
+    }
+  }
+
+gcd :: (a,b: Natp) -> exists(out: Natp) isGcd(out, a,b)
+#measure(pair(a,b), lexicoWellFounded)
+{
+  ;; NOTE: we try to keep a < b.
+  qr := quotientRemainder(b,a);
+  fork qr
+  {
+    divideFail
+    prove {use gcd with a=b,b=a #reduce {norm unfold}}
+    ,
+    divideEvenly return some(qr.quotient)
+    ,
+    divideWithRemainder
+    return gcd(qr.remainder, b)}}
