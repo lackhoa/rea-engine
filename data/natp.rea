@@ -140,7 +140,7 @@ ltChain :: (a,b,c: Natp, P: a < b, Q: b < c) -> a < c
                        ++ fork a { 1  unfold; unfold,
                                    ++ unfold; unfold;
                                    => a.p < c.p;
-                                   use ltChain with b=b.p}}}}
+                                   use ltChain {b=b.p}}}}}
 
 addIncreases :: (a,b: Natp) -> a < a+b
 #hint
@@ -305,7 +305,7 @@ ltLemma :: (a,b: Natp, p: a < ++(b)) -> a=b \/ a < b
     { 1 norm p,
       ++
       norm p;
-      recurse := use ltLemma with a=a.p, b=b.p, p=p;
+      recurse := use ltLemma {a=a.p, b=b.p, p=p};
       norm recurse;}}}
 
 leChain :: (a,b,c: Natp, p: a <= b, q: b <= c) -> a <= c
@@ -319,18 +319,18 @@ leChain :: (a,b,c: Natp, p: a <= b, q: b <= c) -> a <= c
         unfold p; unfold p; prove a.p <= b.p {return p}
         unfold q; unfold q; prove b.p <= c.p {return q}
         unfold; unfold; => a.p <= c.p;
-        use leChain with b=b.p}}}}
+        use leChain {b=b.p}}}}}
 
 ltAntiSymmetric :: (a,b,c: Natp, p: a < b, q: b < a) -> False
-{ prove a < a {use ltChain with b=b};
-  use ltAntiReflexive with a=a}
+{ prove a < a {use ltChain {b=b}};
+  use ltAntiReflexive {a=a}}
 
 leSuccessor :: (a: Natp) -> a <= ++(a)
 { fork a {1 unfold, ++ unfold; => a.p <= ++(a.p); use leSuccessor}}
 
 ltLe :: (a,b: Natp, p: a < b) -> a <= b
 #hint
-{ unfold p; fork b {1 unfold p, ++ use leChain with b=b.p, q=prove{use leSuccessor};}}
+{ unfold p; fork b {1 unfold p, ++ use leChain {b=b.p, q=prove{use leSuccessor};}}}
 
 mulPreservesLt :: (a,b,q: Natp, p: a < b) -> q*a < q*b
 #hint
@@ -342,6 +342,6 @@ mulPreservesLt :: (a,b,q: Natp, p: a < b) -> q*a < q*b
     prove a + q.p * b < b + q.p * b { => q.p * b + a < b + q.p * b;
                                       => q.p * b + a < q.p * b + b;
                                       use addPreservesLt}
-    use ltChain with b = a + q.p * b}}
+    use ltChain {b = a + q.p * b}}}
 
 algebra_declare Natp;

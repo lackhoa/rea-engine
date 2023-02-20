@@ -1,3 +1,5 @@
+;; NOTE Stuff regarding "<" is broken in this one
+
 lexicoLtLemma ::
 (a,b: Natp, x: Natp /\ Natp, lt: x < pair(a, ++(b)))
 -> x = pair(a,b) \/ x < pair(a,b)

@@ -221,7 +221,7 @@ testPolymorphSolver :: fn(n: Nat) -> Nat
 check_truth testPolymorphSolver(3) = 6;
 
 testKeywordArgs :: (x,y,z: Bool, p: x=y, q: y=z) -> x=z
-{use eqChain with b=y}
+{use eqChain {b=y}}
 
 testSubstGoal :: (x,y,z,w: Bool, p: x=w, q: w=y) -> x=y
 {
@@ -254,7 +254,7 @@ permuteTest :: (a,b,c: Nat) -> Permute(Nat, [c,a,b], [a,b,c])
  prove Permute(Nat, [c,a,b], [a,c,b]) {use permuteSwap}
  prove Permute(Nat, [c,b], [b,c])     {use permutePair}
  prove Permute(Nat, [a,c,b], [a,b,c]) {use permuteSkip}
- use permuteChain with chain=[a,c,b]
+ use permuteChain {chain=[a,c,b]}
  }
 
 check test_sort([0])             : [0] Permute [0];

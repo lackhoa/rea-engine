@@ -31,16 +31,10 @@ isDebugOn()
 inline void
 maybeDeref(Term **in0)
 {
-  // NOTE: so how is this different from "castRecord"? A fact is that we don't try
-  // to infer constructor... maybe we should, I don't know atm.
-  //
   // #dicey-pointer-handling
-  if (Pointer *pointer = castTerm(*in0, Pointer))
+  if (Record *record = castRecord(*in0))
   {
-    if (pointer->ref)
-    {
-      *in0 = pointer->ref;
-    }
+    *in0 = record;
   }
 }
 
@@ -3917,8 +3911,7 @@ quickSort(Term **in, i32 *indexes, i32 count)
 inline void
 changeType(Term *in, Term *type)
 {
-  assert(equal(normalize(in->type),
-               normalize(type)));
+  assertEqualNorm(in->type, type);
   in->type = type;
 }
 

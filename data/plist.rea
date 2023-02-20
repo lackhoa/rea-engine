@@ -77,7 +77,7 @@ permuteSwap :: ($A: Type, l,m: PList(A), p: l Permute m) -> Permute(m, l)
 
   prove p.m Permute p.chain {use permuteSwap}
   prove p.chain Permute p.l {use permuteSwap}
-  use permuteChain with chain=p.chain;
+  use permuteChain {chain=p.chain};
   }
  }
 
@@ -91,7 +91,7 @@ permuteConsSwap :: (A: Type, a: A, l: PList(A)) -> [a .. l] Permute l+[a]
   prove (Permute(A, [a .. l.tail], l.tail+[a])) {use permuteConsSwap}
   prove (Permute(A, [l.head, a .. l.tail], [l.head .. l.tail+[a]])) {use permuteSkip}
   ;; [l.head .. l.tail+[a]]
-  use permuteChain with chain=[l.head, a .. l.tail]}}
+  use permuteChain {chain=[l.head, a .. l.tail]}}}
 
 permuteConcatLeft :: (A: Type, l,m,m': PList(A), p: m Permute m') -> l+m Permute l+m'
 {
@@ -115,7 +115,7 @@ permuteMiddle :: ((A: Type, a: A, l,m: PList(A))
   prove [l.head, a .. l.tail + m] Permute [l.head .. l.tail + [a .. m]]
   {prove [a .. l.tail + m] Permute l.tail + [a .. m] {use permuteMiddle}
    use permuteSkip}
-  use permuteChain with chain=[l.head, a .. l.tail + m]}}
+  use permuteChain {chain=[l.head, a .. l.tail + m]}}}
 
 permuteConcatSwap :: (A: Type, l,m: PList(A)) -> Permute(l+m, m+l)
 #hint
@@ -138,7 +138,7 @@ permuteConcatSwap :: (A: Type, l,m: PList(A)) -> Permute(l+m, m+l)
 
     use permuteSkip}
 
-   use permuteChain with chain=[l.head .. m + l.tail]
+   use permuteChain {chain=[l.head .. m + l.tail]}
    }
   use permuteSwap
   }
@@ -151,12 +151,12 @@ permuteConcatRight :: (A: Type, l,l',m: PList(A), p: l Permute l') -> l+m Permut
   {}
   prove m + l Permute m + l'
   {use permuteConcatLeft}
-  use permuteChain with chain=m + l}
+  use permuteChain {chain=m + l}}
 
  prove m + l' Permute l' + m
  {}
 
- use permuteChain with chain=m + l';
+ use permuteChain {chain=m + l'};
  }
 
 permuteFirst :: (A: Type, a: A, l,c: PList(A), p: Permute(l,c)) -> Permute([a..l], [a..c])
@@ -169,7 +169,7 @@ permuteLast :: (A: Type, a: A, l,b: PList(A), p: Permute(l,b)) -> Permute([a..l]
 {
  prove [a..l] Permute l+[a] {}
  prove l+[a] Permute b+[a] {use permuteConcatRight}
- use permuteChain with chain=l+[a]
+ use permuteChain {chain=l+[a]}
  }
 
 permuteMiddle :: (A: Type, a: A, l,b,c: PList(A), p: Permute(l,b+c)) -> Permute([a..l], b+[a..c])
@@ -179,7 +179,7 @@ permuteMiddle :: (A: Type, a: A, l,b,c: PList(A), p: Permute(l,b+c)) -> Permute(
  {prove b+[a..c] Permute [a..b+c]
   {prove [a..b+c] Permute b+[a..c] {use permuteMiddle}}
   prove [a..b+c] Permute [a..l] {}
-  use permuteChain with chain = [a..b+c]}
+  use permuteChain {chain = [a..b+c]}}
  }
 
 ;;

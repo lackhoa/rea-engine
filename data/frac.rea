@@ -25,13 +25,13 @@ difference :: fn(a,b: Natp, p: b < a) -> exists(c: Natp) a = b+c
     ++ fork b
     { 1
       prove ++(a.p) = 1 + a.p {};
-      use evidence with e=a.p;
+      use ex {e=a.p};
       ,
       ++
       norm p;
       recurse := difference(a.p,b.p,p);
       prove ++(a.p) = ++(b.p) + recurse.e {norm};
-      use evidence with e=recurse.e}}}
+      use ex {e=recurse.e}}}}
 
 ;; TODO: since we don't have nested fixpoints, we gotta hoist the function out here.
 ltWellFounded_ :: (a: Natp) -> Reachable(<, a)
@@ -49,7 +49,7 @@ ltWellFounded_ :: (a: Natp) -> Reachable(<, a)
         prove y < a.p { unfold;
                         unfold p; unfold p; prove b <= a.p { => b <=? a.p = true; };  ;; todo: #hack to overwrite the pointer type
                         unfold pyb;
-                        use leChain with b=b;
+                        use leChain {b=b};
                         };
         use (recurse.p)}}}}
 
@@ -78,23 +78,24 @@ quotientRemainder :: fn(a,b: Natp) -> QuotientRemainder(a,b)
     diff    := difference(a,b, order.p);
 
     ;; TODO: forcing people to use this "use" syntax isn't cool
-    recurse := use quotientRemainder with a=diff.e, b=b
-    #reduce { rewrite diff.p;
-              prove diff.e < b + diff.e {=> diff.e < diff.e + b; use addIncreases}};
+    recurse := use quotientRemainder
+    { a=diff.e, b=b,
+      #reduce { rewrite diff.p;
+                prove diff.e < b + diff.e {=> diff.e < diff.e + b; use addIncreases}}};
 
     fork recurse
     { divideFail
-      use divideWithRemainder with quotient=1, remainder=diff.e;
+      use divideWithRemainder {quotient=1, remainder=diff.e};
       ,
       divideEvenly
       prove a = b + recurse.quotient * b {rewrite <- recurse.p}
-      use divideEvenly with quotient = ++(recurse.quotient);
+      use divideEvenly {quotient = ++(recurse.quotient)};
       ,
       divideWithRemainder
       prove a = (b + recurse.quotient * b) + recurse.remainder
       { => a = b + recurse.quotient * b + recurse.remainder;
         rewrite <- recurse.p;}
-      use divideWithRemainder with quotient = ++(recurse.quotient), remainder = recurse.remainder
+      use divideWithRemainder {quotient = ++(recurse.quotient), remainder = recurse.remainder}
       }
     }
   }
@@ -113,19 +114,16 @@ isCommonDivisorSwap :: (q,a,b: Natp, p: isCommonDivisor(q,a,b)) -> isCommonDivis
 
 isGcdSwap :: (q,a,b: Natp, p: isGcd(q,a,b)) -> isGcd(q,b,a)
 #hint
-{
-  unfold;
-  unfold p;
+{ unfold; unfold p;
   use pair
-  {
-    b 
+  { b 
     return fn q', p'
     {;; TODO :should-use-function-in-context
       use (p.b)} ,}}
 
 isFactorReflexive :: (q: Natp) -> isFactor(q,q)
 #hint
-{unfold; use evidence with e=1}
+{unfold; use ex {e=1}}
 
 factorLe :: (a,b: Natp, p: isFactor(a, b)) -> (:Type)a <= b
 { unfold p;
@@ -137,8 +135,8 @@ factorLe :: (a,b: Natp, p: isFactor(a, b)) -> (:Type)a <= b
 gcdHelper :: (a,q,r: Natp, p: isFactor(a, q*a + r)) -> isFactor(a, r)
 { unfold p;
   unfold;
-  d := use difference { a return p.e,
-                        b return q,
+  d := use difference { a = p.e,
+                        b = q,
                         p ;; q > p.e
                         order := totalOrder(p.e, q);
                         fork order
@@ -148,11 +146,11 @@ gcdHelper :: (a,q,r: Natp, p: isFactor(a, q*a + r)) -> isFactor(a, r)
                           ,
                           lt
                           prove a * p.e < a * q {};
-                          prove a * p.e < a * q + r {use ltChain with b=a*q};
+                          prove a * p.e < a * q + r {use ltChain {b=a*q}};
                           lt := prove p.e * a < q * a + r { => a*p.e < q*a+r;
                                                             => a*p.e < a*q+r;};
                           rewrite p.p in lt;
-                          prove False {use ltAntiReflexive with a=p.e * a}
+                          prove False {use ltAntiReflexive {a=p.e * a}}
                           ,
                           }};
 
@@ -160,8 +158,8 @@ gcdHelper :: (a,q,r: Natp, p: isFactor(a, q*a + r)) -> isFactor(a, r)
   { => q*a + r = (q + d.e)*a;
     rewrite <- d.p};
 
-  use evidence { e return d.e,
-                 p use sumCancellation with a=q*a}}
+  use ex { e = d.e,
+           p use sumCancellation {a=q*a}}}
 
 gcdMultiple :: (q,a: Natp, p: isFactor(q,a)) -> isGcd(q,q,a)
 { unfold;
@@ -175,16 +173,16 @@ gcd :: (a,b: Natp) -> exists(out: Natp) isGcd(out, a,b)
   qr := quotientRemainder(b,a);
   fork qr
   { divideFail
-    recurse := use gcd with a=b,b=a #reduce {unfold};
-    use evidence with e=recurse.e;
+    recurse := use gcd {a=b,b=a, #reduce {unfold}};
+    use ex {e=recurse.e};
     ,
     divideEvenly
-    use evidence
+    use ex
     { e return a,
       p use gcdMultiple
       { p
         unfold;
-        use evidence { e return qr.quotient }}};
+        use ex { e return qr.quotient }}};
     ,
     divideWithRemainder
     recurse := use gcd
@@ -206,7 +204,7 @@ gcd :: (a,b: Natp) -> exists(out: Natp) isGcd(out, a,b)
       => qr.quotient * g.e * recurse.e + f.e * recurse.e = (qr.quotient * g.e + f.e) * recurse.e;
       algebra_norm};
 
-    use evidence
+    use ex
     { e return recurse.e,
       p unfold;
       use pair
@@ -214,7 +212,7 @@ gcd :: (a,b: Natp) -> exists(out: Natp) isGcd(out, a,b)
         use pair
         { a,
           b unfold;
-          use evidence
+          use ex
           { e
             return (qr.quotient * g.e + f.e)} },
 
@@ -228,9 +226,10 @@ gcd :: (a,b: Natp) -> exists(out: Natp) isGcd(out, a,b)
           { a ;; q' divides both "a" and "qr.quotient*a + qr.remainder", so it divides "qr.remainder"
             unfold as w common.a;
             rewrite w.p in qr.p;
-            prove isFactor(q', (qr.quotient * w.e) * q' + qr.remainder)
-            { => isFactor(q', qr.quotient * w.e * q' + qr.remainder);
+            prove
+            { => isFactor(q', (qr.quotient * w.e) * q' + qr.remainder);
+              => isFactor(q', qr.quotient * w.e * q' + qr.remainder);
               => isFactor(q', b); }
-            use gcdHelper with q=(qr.quotient * w.e);
+            use gcdHelper {q=(qr.quotient * w.e)};
             ,
             b}}}}}}

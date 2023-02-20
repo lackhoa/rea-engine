@@ -442,7 +442,7 @@ parseSequence(b32 require_braces=true)
       }
       popContext();
     }
-    else if (equal(tactic, "return"))
+    else if (equal(tactic, "return") || equal(tactic, "="))
     {
       ast0 = parseExpression();
       expect_sequence_to_end = true;
@@ -609,18 +609,8 @@ parseUse()
   Token *token = lastToken();
   Ast *ast0 = 0;
   Arena *arena = temp_arena;
-  pushContext("use IDENTIFIER|(EXPRESSION) [with PARAMETER=VALUE, ...]");
-  Ast *op = 0;
-  if (optionalChar('('))
-  {
-    op = parseExpression();
-    requireChar(')');
-  }
-  else if (requireIdentifier())
-  {
-    Token op_name = *lastToken();
-    op = newAst(arena, Identifier, &op_name);
-  }
+  pushContext("use EXPRESSION {PARAMETER SEQUENCE, ...}");
+  Ast *op = parseExpression();
 
   if (noError())
   {
@@ -628,11 +618,7 @@ parseUse()
     ast->op           = op;
     ast->partial_args = true;
 
-    b32 quick_syntax = optionalString("with");
-    b32 brace_syntax = false;
-    if (!quick_syntax) brace_syntax = optionalChar('{');
-
-    if (quick_syntax || brace_syntax)
+    if (optionalChar('{'))
     {
       i32 cap = 16;  // todo #grow
       ast->keywords = pushArray(arena, cap, String);
@@ -644,35 +630,19 @@ parseUse()
           i32 arg_i = ast->arg_count++;
           assert(arg_i < cap);
           ast->keywords[arg_i] = lastToken()->string;
-          if (quick_syntax)
-          {
-            if (requireChar('='))
-            {
-              ast->args[arg_i] = parseExpression();
-              if (!optionalChar(',')) break;
-            }
-          }
-          else
-          {
-            ast->args[arg_i] = parseSequence(false);
-            if (!optionalChar(',')) break;
-          }
-        }
-        else
-          break;
-      }
+          ast->args[arg_i]     = parseSequence(false);
 
-      if (hasMore())
-      {
-        if (optionalDirective("reduce"))
+          if (!optionalChar(',')) break;
+        }
+        else if (optionalDirective("reduce"))
         {
-          b32 require_brace = quick_syntax;
-          ast->reduce_proof = parseSequence(require_brace);
+          ast->reduce_proof = parseSequence(false);
         }
+        else break;
       }
-    }
 
-    if (brace_syntax) requireChar('}');
+      requireChar('}');
+    }
 
     ast0 = ast;
   }
