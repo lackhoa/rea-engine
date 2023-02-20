@@ -392,16 +392,18 @@ struct EvalContext {
   i32    arg_count;
   i32    offset;
   b32    substitute_only;
+  String unfold_name;
   operator EvalContext*() {return this;};
 };
 
 struct NormContext {
   i32    depth;
-  String name_to_unfold;
+  String unfold_name;
 };
 
+global_constant String Unfold_Everything = toString("unfold_everything");
 struct NormOptions {
-  String name_to_unfold;
+  String unfold_name;
   b32    unfold_topmost_operator;
 };
 

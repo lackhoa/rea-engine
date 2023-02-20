@@ -280,35 +280,32 @@ parseSequence(b32 require_braces=true)
     Token *token  = &token_;
     Ast *ast0 = 0;
     String tactic = token->string;
-    if (equal(tactic, "norm"))
+    if (equal(tactic, "norm") || equal(tactic, "unfold"))
     {
-      pushContext("norm [as IDENTIFIER] [unfold[(FUNCTION_NAME)]] [EXPRESSION]");
+      pushContext("{norm|unfold[(FUNCTION_NAME)]} [as IDENTIFIER] [EXPRESSION]");
       NormOptions norm_options = {};
       String norm_name = {};
 
-      while (true)
+      if (equal(tactic, "unfold"))
       {
-        if (optionalString("unfold"))
+        if (optionalChar('('))
         {
-          if (optionalChar('('))
+          if (String name = requireIdentifier("expected function name"))
           {
-            if (String name = requireIdentifier("expected function name"))
-            {
-              norm_options.name_to_unfold = name;
-              requireChar(')');
-            }
-          }
-          else
-            norm_options.unfold_topmost_operator = true;
-        }
-        else if (optionalString("as"))
-        {
-          if (requireIdentifier())
-          {
-            norm_name = lastToken()->string;
+            norm_options.unfold_name = name;
+            requireChar(')');
           }
         }
-        else break;
+        else
+          norm_options.unfold_topmost_operator = true;
+      }
+
+      if (optionalString("as"))
+      {
+        if (requireIdentifier())
+        {
+          norm_name = lastToken()->string;
+        }
       }
 
       if (noError())
@@ -319,7 +316,7 @@ parseSequence(b32 require_braces=true)
         {// normalize goal
           if (norm_name)
           {
-            reportError("you can't name the normalization of a goal");
+            reportError("you can't name the normalization of the goal");
           }
           else
           {
@@ -333,11 +330,8 @@ parseSequence(b32 require_braces=true)
           Let *let = newAst(arena, Let, token);
           let->rhs  = expression;
           let->type = ast_goal;
+          let->lhs  = norm_name;
           ast0 = let;
-          if (norm_name)
-          {
-            let->lhs = norm_name;
-          }
         }
       }
 
@@ -1201,7 +1195,9 @@ precedenceOf(String op)
     out = eq_precedence;
   }
   else if (equal(op, "<") || equal(op, ">") ||
+           equal(op, "<?") || equal(op, ">?") ||
            equal(op, "<=") || equal(op, ">=") ||
+           equal(op, "<=?") || equal(op, ">=?") ||
            equal(op, "=?") || equal(op, "=="))
   {
     out = eq_precedence + 5;

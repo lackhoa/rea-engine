@@ -1188,6 +1188,7 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
 
         case Term_Rewrite:
         {
+          print(buffer, "<REWRITE>");
           Rewrite *rewrite = castTerm(in0, Rewrite);
           print(buffer, (rewrite)->type, new_opt);
           skip_print_type = true;
@@ -1286,11 +1287,13 @@ getExplicitParamCount(Arrow *in)
 }
 
 internal b32
-shouldPrintTypeInScope(Term *value)
+shouldPrintTypeInScope(Pointer *pointer)
 {
-  Term *type = value->type;
+  Term *type = pointer->type;
   if (!print_full_scope)
   {
+    if (pointer->ignored) return false;
+
     if (type == rea.Type) return false;
 
     if (Union *uni = castTerm(type, Union))
@@ -1307,12 +1310,10 @@ shouldPrintTypeInScope(Term *value)
     Union *uni = getUnionOrPolyUnion(type);
     if (uni == rea.Or)
     {
-      if (Pointer *pointer = castTerm(value, Pointer))
-      {
-        if (pointer->ref) return false;
-      }
+      if (pointer->ref) return false;
     }
-    else if (uni == rea.And) return false;
+    else if (uni == rea.And)    return false;
+    else if (uni == rea.Exists) return false;
   }
   return true;
 }
@@ -1339,7 +1340,7 @@ prettyPrintScope(StringBuffer *buffer, Scope *scope)
       {
         Pointer *pointer = list->head;
         list = list->tail;
-        if (pointer && !pointer->ignored)  // sometimes we error out, so pointer is null
+        if (pointer)  // sometimes we error out, so pointer is null
         {
           if (shouldPrintTypeInScope(pointer))
           {
@@ -1472,7 +1473,7 @@ evaluate_(EvalContext *ctx, Term *in0)
              isAnonymousFunction(op) // NOTE: expand annoying bs
              ))
         {
-          out0 = apply(op, in->arg_count, args, {});
+          out0 = apply(op, in->arg_count, args, ctx->unfold_name);
         }
 
         if (!out0)
@@ -1627,9 +1628,9 @@ substitute(Term *in0, i32 arg_count, Term **args)
 }
 
 inline Term *
-evaluate(Term *in0, i32 arg_count, Term **args)
+evaluate(Term *in0, i32 arg_count, Term **args, String unfold_name={})
 {
-  EvalContext ctx = {.arg_count=arg_count, .args=args};
+  EvalContext ctx = {.arg_count=arg_count, .args=args, .unfold_name=unfold_name};
   return evaluate_(&ctx, in0);
 }
 
@@ -2261,7 +2262,7 @@ normalize_(NormContext *ctx, Term *in0)
         Term *norm_op = normalize_(ctx, in->op);
         progressed = progressed || (norm_op != in->op);
 
-        out0 = apply(norm_op, in->arg_count, norm_args, ctx->name_to_unfold);
+        out0 = apply(norm_op, in->arg_count, norm_args, ctx->unfold_name);
 
         if (!out0)
         {
@@ -2364,7 +2365,7 @@ internal Term *
 normalize(Term *in0, NormOptions options={})
 {
   i32 arbitrary_init_depth = 1000;
-  String name_to_unfold = options.name_to_unfold;
+  String name_to_unfold = options.unfold_name;
   if (options.unfold_topmost_operator)
   {
     assert((!name_to_unfold));
@@ -2375,11 +2376,11 @@ normalize(Term *in0, NormOptions options={})
     }
   }
   NormContext ctx = {.depth          = arbitrary_init_depth,
-                     .name_to_unfold = name_to_unfold};
+                     .unfold_name = name_to_unfold};
   return normalize_(&ctx, in0);
 }
 
-// todo #speed make this comparison faster
+// todo #speed make this comparison faster by expanding along the way.
 forward_declare inline b32
 equalNorm(Term *l, Term *r)
 {
@@ -2389,8 +2390,8 @@ equalNorm(Term *l, Term *r)
   }
   else
   {
-    Term *lnorm = normalize(l);
-    Term *rnorm = normalize(r);
+    Term *lnorm = normalize(l, {.unfold_name=Unfold_Everything});
+    Term *rnorm = normalize(r, {.unfold_name=Unfold_Everything});
     return equal(lnorm, rnorm);
   }
   return false;
@@ -2603,6 +2604,7 @@ uninstantiate(Term *in0)
   Pointer *pointer = castTerm(in0, Pointer);
   assert(pointer->ref);
   pointer->ref = 0;
+  pointer->ignored = false;  // TODO: hack to unwind the pointers ignored by unfolding
 }
 
 inline Fork *
@@ -2682,7 +2684,7 @@ newIdentity(Term *term)
 }
 
 forward_declare internal Term *
-apply(Term *op, i32 arg_count, Term **args, String name_to_unfold)
+apply(Term *op, i32 arg_count, Term **args, String unfold_name)
 {
   Term *out0 = 0;
 
@@ -2701,12 +2703,14 @@ apply(Term *op, i32 arg_count, Term **args, String name_to_unfold)
     }
     if (checkFlag(fun->function_flags, FunctionFlag_no_expand))
     {
-      should_apply_function = (name_to_unfold.chars && equal(fun->global_name->string, name_to_unfold));
+      should_apply_function = (unfold_name.chars &&
+                               (unfold_name.chars == Unfold_Everything.chars ||
+                                equal(fun->global_name->string, unfold_name)));
     }
 
     if (should_apply_function)
     {
-      out0 = evaluate(fun->body, arg_count, args);
+      out0 = evaluate(fun->body, arg_count, args, unfold_name);
     }
   }
   else if (op == rea.equal)
@@ -2728,7 +2732,7 @@ apply(Term *op, i32 arg_count, Term **args, String name_to_unfold)
           if (l->arg_count == 1)
           {
             Composite *eq = newEquality(l->args[0], r->args[0]);
-            out0 = apply(eq->op, eq->arg_count, eq->args, name_to_unfold);
+            out0 = apply(eq->op, eq->arg_count, eq->args, unfold_name);
             if (!out0) out0 = eq;
           }
         }
@@ -3091,7 +3095,7 @@ inline Term *
 maybeEqualByComputation(Term *lhs, Term *rhs)
 {
   Term *out = 0;
-  if (equal(normalize(lhs), normalize(rhs)))
+  if (equalNorm(lhs, rhs))
   {
     out = newComputation_(lhs, rhs);
   }
@@ -4412,6 +4416,25 @@ buildWithNewAsset(Typer *typer, String name, Term *asset, Ast *body, Term *goal)
   return out;
 }
 
+inline void
+reportAmbiguousError(Typer *typer, Ast *ast, char *message)
+{
+  if (expectedAmbiguous(typer))
+    silentError();
+  else
+    reportError(ast, message);
+}
+
+inline void
+reportWrongTypeError(Typer *typer, Ast *ast, char *message)
+{
+  if (expectedWrongType(typer))
+    silentError();
+  else
+    reportError(ast, message);
+}
+
+
 internal Term *
 buildComposite(Typer *typer, CompositeAst *in, Term *goal)
 {
@@ -4682,15 +4705,12 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
             {
               if (value)
               {
-                if (expectedAmbiguous(typer)) silentError();
-                else
-                {
-                  reportError(in->op, "composite is ambiguous");
-                }
+                reportAmbiguousError(typer, in->op, "composite is ambiguous");
               }
               else if (Function *fun = isAlwaysExpandFunction(op))
               {
-                value = substitute(fun->body, param_count, args);
+                if (fun->body) value = substitute(fun->body, param_count, args);
+                else reportError(fun->global_name, "function tries to expand into itself");
               }
               else
               {
@@ -4921,24 +4941,6 @@ buildAlgebraNorm(Typer *typer, AlgebraNormAst *ast, Term *goal0)
 
   value = buildWithState(state, ast->body);
   return value;
-}
-
-inline void
-reportAmbiguousError(Typer *typer, Ast *ast, char *message)
-{
-  if (expectedAmbiguous(typer))
-    silentError();
-  else
-    reportError(ast, message);
-}
-
-inline void
-reportWrongTypeError(Typer *typer, Ast *ast, char *message)
-{
-  if (expectedWrongType(typer))
-    silentError();
-  else
-    reportError(ast, message);
 }
 
 internal Term *
@@ -5267,10 +5269,6 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
                 {
                   name = var->stack.name;
                 }
-                else
-                {
-                  todoIncomplete;
-                }
                 value = buildWithNewAsset(typer, name, asset, in->body, goal0);
               }
               else
@@ -5304,6 +5302,12 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
 
     case Ast_GoalTransform:
     {
+      if (goal0 == hole)
+      {
+        reportAmbiguousError(typer, in0, "cannot transform because we don't know what the goal is");
+      }
+      else
+      {
       GoalTransform *in = castAst(in0, GoalTransform);
       Term     *new_goal      = 0;
       Term     *eq_proof      = 0;
@@ -5419,6 +5423,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
       {
         print(0, eq_proof);
         print(0, "\n");
+      }
       }
     } break;
 
@@ -6634,7 +6639,7 @@ int engineMain()
   Arena *top_level_arena = &top_level_arena_;
 
   void   *temp_arena_base = (void*)teraBytes(3);
-  size_t  temp_arena_size = megaBytes(4);
+  size_t  temp_arena_size = megaBytes(16);
   temp_arena_base = platformVirtualAlloc(temp_arena_base, top_level_arena_size);
   temp_arena_ = newArena(temp_arena_size, temp_arena_base);
 

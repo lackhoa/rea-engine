@@ -12,11 +12,7 @@ cancelCommonFactor :: (a,b,r: Natp) -> (a*r)/(b*r) == a/b
  algebra_norm;
  }
 
-;; isFactor :: (q,a: Natp) -> Type
-;; #no_expand
-;; {return exists(t: Natp), a = q*t}
-
-define isFactor(q,a: Natp) := exists(t: Natp), a = q*t;
+define isFactor(q,a: Natp) := exists(t: Natp), a = t*q;
 
 relativelyPrime :: (a,b: Natp) -> Type
 {
@@ -116,7 +112,7 @@ quotientRemainder :: fn(a,b: Natp) -> QuotientRemainder(a,b)
 define isCommonDivisor(q, a,b: Natp) := isFactor(q,a) /\ isFactor(q,b);
 
 define isGcd(q, a,b: Natp) :=
-isCommonDivisor(q,a,b) /\ ((q': Natp, isCommonDivisor(q',a,b)) -> isFactor(q', q));
+isCommonDivisor(q,a,b) /\ ((q': Natp, common: isCommonDivisor(q',a,b)) -> isFactor(q', q));
 
 define <(p1,p2: Natp /\ Natp) :=
 p1.a < p2.a \/ p1.a = p2.a /\ p1.b < p2.b;
@@ -145,19 +141,15 @@ lexicoReachableLocked ::
 (a,b: Natp, h: Reachable(<, pair(a, (:Natp)1)))
 ->
 Reachable(<, pair(a,b))
-{
-  fork b
-  {
-    1,
+{ fork b
+  { 1,
     ++
     use reachable
-    {
-      p
+    { p
       fn y,lt;
       norm unfold as lt1 lt;
       fork lt1
-      {
-        auto
+      { auto
         ;; y.a < a -> y is less than (a,1)
         prove y < pair(a,1) {norm unfold};
         use (h.p);
@@ -170,72 +162,41 @@ Reachable(<, pair(a,b))
         ;; or "y < a,b.p", in which case the induction hypothesis also applies
 
         lemma := use lexicoLtLemma with lt=lt;
-        fork lemma {auto rewrite lemma.a, auto use (ih.p)}
-        }
-      }
-    }
-  }
+        fork lemma {auto rewrite lemma.a, auto use (ih.p)}}}}}
 
 lexicoWellFounded1 :: (b: Natp) -> Reachable(<, pair((:Natp)1,b))
-{
-  super_base_case := prove Reachable(<, pair((:Natp)1, (:Natp)1))
-  {
-    use reachable
-    {
-      p fn y,lt
-      {
-        norm unfold lt; fork lt {auto , auto }
-        }
-      }
-    };
-
+{ super_base_case := prove Reachable(<, pair((:Natp)1, (:Natp)1))
+  { use reachable
+    { p fn y,lt
+      { norm unfold lt; fork lt {auto , auto } }}};
   fork b
-  {
-    1 return super_base_case,
-    ++ use lexicoReachableLocked;
-    }
-  }
+  { 1 return super_base_case,
+    ++ use lexicoReachableLocked;}}
 
 lexicoWellFounded_ :: (a: Natp, b: Natp) -> Reachable(<, pair(a,b))
 {
   fork a
   {
-    1 use lexicoWellFounded1
-    ,
+    1 use lexicoWellFounded1,
     ++
     if_b_is_1 := prove Reachable(<, pair(a, (:Natp)1))
-    {
-      ;; Anything that "rolls under" to a.p is gonna be resolved by induction.
+    {;; Anything that "rolls under" to a.p is gonna be resolved by induction.
       use reachable
-      {        
-        p fn y, lt
-        {
-          norm unfold lt;
+      { p fn y, lt
+        { norm unfold lt;
           fork lt
           {
             auto
             prove y < pair(a.p, ++(y.b))
-            {
-              norm unfold;
+            { norm unfold;
               lemma := use ltLemma with a=y.a, b=a.p;
-              fork lemma {auto , auto}
-              }
+              fork lemma {auto , auto}}
             ih := use lexicoWellFounded_ with a=a.p, b = ++(y.b);
-            use (ih.p);
-            ,
-            auto
-            }
-          }
-        }
-      };
-
+            use (ih.p),
+            auto}}}};
     fork b
-    {
-      1 return if_b_is_1,
-      ++ use lexicoReachableLocked
-      }
-    }
-  }
+    { 1 return if_b_is_1,
+      ++ use lexicoReachableLocked}}}
 
 lexicoWellFounded : WellFounded(Natp/\Natp, <) :=
 prove
@@ -254,22 +215,104 @@ isGcdSwap :: (q,a,b: Natp, p: isGcd(q,a,b)) -> isGcd(q,b,a)
   {
     b 
     return fn q', p'
-    {}
-    ,
-    }
+    {;; TODO :should-use-function-in-context
+      use (p.b)} ,}}
+
+isFactorReflexive :: (q: Natp) -> isFactor(q,q)
+#hint
+{norm unfold; use evidence with e=1}
+
+factorLe :: (a,b: Natp, p: isFactor(a, b)) -> (:Type)a <= b
+{ norm unfold p;
+  fork p.e
+  { 1  norm p.p; subst b;,
+    ++ rewrite p.p; norm;
+    prove (:Type)a < a + p.e.p * a
+    { prove (:Type)a + p.e.p * a > a { use addIncreases; }; }}}
+
+divLemma :: (a,q,r: Natp, p: isFactor(a, q*a + r)) -> isFactor(a, r)
+{ norm unfold p;
+  ;; r is something that
+  norm unfold;
+  d := use difference { a return p.e,
+                        b return q,
+                        p ;; p.e > q
+                        order := totalOrder(p.e, q);
+                        fork order
+                        { eq rewrite order.p in p.p;
+                          prove False {use addDifferent { a return q*a, b return r,}},
+
+                          lt ,
+
+                          gt,
+                          }};
+  use evidence {e return d.e }
   }
 
+gcdMultiple :: (q,a: Natp, p: isFactor(q,a)) -> isGcd(q,q,a)
+{ norm unfold;
+  use pair
+  { a norm unfold,
+    b fn q', common {norm unfold common;}}}
+
 gcd :: (a,b: Natp) -> exists(out: Natp) isGcd(out, a,b)
-#measure(pair(a,b), lexicoWellFounded)
+#measure(a, ltWellFounded)
 {
   ;; NOTE: we try to keep a < b.
   qr := quotientRemainder(b,a);
   fork qr
   {
     divideFail
-    prove {use gcd with a=b,b=a #reduce {norm unfold}}
+    recurse := use gcd with a=b,b=a #reduce {norm unfold};
+    use evidence with e=recurse.e;
     ,
-    divideEvenly return some(qr.quotient)
+    divideEvenly
+    use evidence
+    { e return a,
+      p use gcdMultiple
+      { p
+        norm unfold;
+        use evidence { e return qr.quotient }}};
     ,
     divideWithRemainder
-    return gcd(qr.remainder, b)}}
+    recurse := use gcd
+    { a return qr.remainder,
+      b return a,
+      #reduce norm unfold; };
+
+    norm as recurse_p unfold recurse.p;
+    norm unfold recurse_p.a;
+    norm unfold as f seek(isFactor(recurse.e, qr.remainder));
+    ;; qr.remainder = recurse.e * f.e
+
+    norm as g unfold seek(isFactor(recurse.e, a));
+
+    prove b = (qr.quotient * g.e + f.e) * recurse.e
+    { => qr.quotient * a + qr.remainder = (qr.quotient * g.e + f.e) * recurse.e;
+      => qr.quotient * a + f.e * recurse.e = (qr.quotient * g.e + f.e) * recurse.e;
+      => qr.quotient * g.e * recurse.e + f.e * recurse.e = (qr.quotient * g.e + f.e) * recurse.e;
+      algebra_norm};
+
+    use evidence
+    { e return recurse.e,
+      p norm unfold;
+      use pair
+      { a norm unfold;
+        use pair
+        { a,
+          b norm unfold;
+          use evidence
+          { e
+            return (qr.quotient * g.e + f.e)} },
+
+        b ;; recurse_p.b is gonna be of value here
+        fn q', common;
+        use (recurse_p.b)
+        { common
+          norm unfold;
+          use pair
+          { a ;; q' divides both "a" and "qr.quotient*a + qr.remainder", so it divides "qr.remainder"
+            ,
+            b
+            }}}};
+    }}

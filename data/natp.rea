@@ -110,33 +110,38 @@ differentFromTwoSuccessor :: (a: Natp, P: ++(++(a)) = a) -> False
  {1:  return P,
   ++: return differentFromTwoSuccessor(a.p, P)}}
 
-> :: fn(a,b: Natp) -> Bool
+<=? :: fn(a,b: Natp) -> Bool
 {fork a
- {1 : return false,
-  ++: fork b {1: return true, ++: return a.p > b.p}}}
+ {1 : return true,
+  ++: fork b {1: return false, ++: return a.p <=? b.p}}}
 
-successorIsLarger :: (a: Natp) -> ++(a) > a = true
+define <=(a,b: Natp) := a <=? b = true;
+define <(a,b: Natp)  := ++(a) <= b;
+
+leReflexive :: (a: Natp) -> a <= a
+#hint
+{ fork a {1 unfold, ++ unfold; => a.p <= a.p; use leReflexive} }
+
+successorIsLarger :: (a: Natp) -> a < ++(a)
 {fork a
- {1  ,
-  ++ return successorIsLarger(a.p)}}
+ {1  unfold; unfold,
+  ++ unfold; }}
 
-gtAntiReflexive :: (a: Natp, p: a>a = true) -> False
-#norm(p)
+ltAntiReflexive :: (a: Natp, p: a < a) -> False
 {fork a
- {1:  return p,
-  ++: return gtAntiReflexive(a.p, p)}}
+ { 1  unfold p,
+   ++ unfold p; unfold p; prove a.p < a.p {unfold;}; use ltAntiReflexive {a return a.p}}}
 
-gtTransitive :: (a,b,c: Natp, P: a>b = true, Q: b>c = true) -> a>c = true
-#norm(P,Q)
-{
- fork a {
-         1  return P,
-         ++ fork b {1 fork Q {},
-                    ++ fork c {1, ++ return gtTransitive(a.p,b.p,c.p, P, Q)}},
-         }
- }
+ltTransitive :: (a,b,c: Natp, P: a < b, Q: b < c) -> a < c
+{ fork c {
+           1  unfold Q; unfold Q,
+           ++ fork b { 1 unfold P; unfold P ; fork P {},
+                       ++ fork a { 1  unfold; unfold,
+                                   ++ unfold; unfold;
+                                   => a.p < c.p;
+                                   use ltTransitive with b=b.p}}}}
 
-addIncreases :: (a,b: Natp) -> a+b > a = true
+addIncreases :: (a,b: Natp) -> a+b >? a = true
 #hint
 {
  fork a {1, ++ return addIncreases(a.p, b)}
@@ -145,7 +150,7 @@ addIncreases :: (a,b: Natp) -> a+b > a = true
 addDifferent :: (a,b: Natp, p: a+b = a) -> False
 #norm(p)
 {
- lem1: a + b > a = true := addIncreases(a,b);
+ lem1: a + b >? a = true := addIncreases(a,b);
  rewrite  p in lem1;
  return gtAntiReflexive(a, lem1);
  }
@@ -238,7 +243,7 @@ eqReflexive :: (a: Natp) -> a =? a = true
  {1,
   ++ return eqReflexive(a.p)}}
 
-addPreservesGt :: (a,b,c: Natp, p: a>b=true) -> a+c > b+c = true
+addPreservesGt :: (a,b,c: Natp, p: a>?b=true) -> a+c >? b+c = true
 #norm(p)
 {
  fork a
@@ -251,9 +256,9 @@ addPreservesGt :: (a,b,c: Natp, p: a>b=true) -> a+c > b+c = true
 
 ;; TODO: implement three-way disjunction so I don't have to bind these names
 TotalOrder :: union (^a,^b: Natp)
-{eq(p: a = b),
- gt(p: a>b = true),
- lt(p: b>a = true)}
+{ eq(p: a = b),
+  gt(p: a >? b = true),
+  lt(p: b >? a = true)}
 
 totalOrder :: (a,b: Natp) -> TotalOrder(a,b)
 {fork a
@@ -285,13 +290,7 @@ mulDistributive :: (a,b,c: Natp) -> c*(a+b) = c*a+c*b
  => (a+b)*c = a*c+b*c
  }
 
-;; NOTE: ">" is already defined, but there's no reason not to define "<=" too.
-<= :: fn(a,b: Natp) -> Bool
-{fork a
- {1 : return true,
-  ++: fork b {1: return false, ++: return a.p <= b.p}}}
-
-< :: fn(a,b: Natp) -> Bool
+<? :: fn(a,b: Natp) -> Bool
 #expand
 {return ++(a) <= b}
 
@@ -312,21 +311,20 @@ mulDistributive :: (a,b,c: Natp) -> c*(a+b) = c*a+c*b
 < :: fn(a,b: Natp) -> Type
 #expand
 {
-  return a < b = true
+  return a <? b = true
   }
 
 > :: fn(a,b: Natp) -> Type
 #expand
 {
-  return a > b = true
+  return a >? b = true
   }
 
 le1 :: ($a: Natp, p: (:Type)a <= 1) -> a=1
 {fork a {1, ++ norm p;}}
 
 ltLemma :: (a,b: Natp, p: (:Type)a < ++(b)) -> a=b \/ (:Type)a < b
-{
-  fork a
+{ fork a
   {
     1 fork b {1 use left, ++ use right}
     ,
@@ -335,10 +333,7 @@ ltLemma :: (a,b: Natp, p: (:Type)a < ++(b)) -> a=b \/ (:Type)a < b
       ++
       norm p;
       recurse := use ltLemma with a=a.p, b=b.p, p=p;
-      norm recurse;
-      }
-    }
-  }
+      norm recurse;}}}
 
 leChain :: (a,b,c: Natp, p: (:Type)a <= b, q: (:Type)b <= c) -> (:Type)a <= c
 #norm(p,q)
@@ -388,10 +383,17 @@ gtLt :: (a,b: Natp, p: (:Type)a > b) -> (:Type)b < a
     }
   }
 
-leReflexive :: (a: Natp) -> (:Type)a <= a
+lePp :: (a: Natp) -> (:Type) a <= ++(a)
 #hint
-{
-  fork a {1, ++ use leReflexive}
+{ fork a {1, ++ use lePp } }
+
+ltLe :: (a,b: Natp, p: (:Type)a < b) -> (:Type)a <= b
+#hint
+{ use leChain with b = ++(a); }
+
+ltMul :: (a,b,q: Natp, p: a > b) -> a*q > b*q
+#hint
+{ 
   }
 
 algebra_declare Natp;
