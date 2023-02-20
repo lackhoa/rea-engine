@@ -122,7 +122,8 @@ leReflexive :: (a: Natp) -> a <= a
 #hint
 { fork a {1 unfold, ++ unfold; => a.p <= a.p; use leReflexive} }
 
-successorIsLarger :: (a: Natp) -> a < ++(a)
+ltSuccessor :: (a: Natp) -> a < ++(a)
+#hint
 {fork a
  {1  unfold; unfold,
   ++ unfold; }}
@@ -132,27 +133,30 @@ ltAntiReflexive :: (a: Natp, p: a < a) -> False
  { 1  unfold p,
    ++ unfold p; unfold p; prove a.p < a.p {unfold;}; use ltAntiReflexive {a return a.p}}}
 
-ltTransitive :: (a,b,c: Natp, P: a < b, Q: b < c) -> a < c
+ltChain :: (a,b,c: Natp, P: a < b, Q: b < c) -> a < c
 { fork c {
            1  unfold Q; unfold Q,
            ++ fork b { 1 unfold P; unfold P ; fork P {},
                        ++ fork a { 1  unfold; unfold,
                                    ++ unfold; unfold;
                                    => a.p < c.p;
-                                   use ltTransitive with b=b.p}}}}
+                                   use ltChain with b=b.p}}}}
 
-addIncreases :: (a,b: Natp) -> a+b >? a = true
+addIncreases :: (a,b: Natp) -> a < a+b
 #hint
 {
- fork a {1, ++ return addIncreases(a.p, b)}
+  fork a { 1  unfold; unfold;,
+           ++ unfold; unfold;
+           => a.p < a.p + b;
+           return addIncreases(a.p, b)}
  }
 
 addDifferent :: (a,b: Natp, p: a+b = a) -> False
 #norm(p)
 {
- lem1: a + b >? a = true := addIncreases(a,b);
- rewrite  p in lem1;
- return gtAntiReflexive(a, lem1);
+ lem1: a < a + b := addIncreases(a,b);
+ rewrite p in lem1;
+ return ltAntiReflexive(a, lem1);
  }
 
 sumCancellation :: (a,b,c: Natp, p: a + b = a + c) -> (b = c)
@@ -243,29 +247,24 @@ eqReflexive :: (a: Natp) -> a =? a = true
  {1,
   ++ return eqReflexive(a.p)}}
 
-addPreservesGt :: (a,b,c: Natp, p: a>?b=true) -> a+c >? b+c = true
-#norm(p)
-{
- fork a
- {
-  1  fork p {},
-  ++ fork b {1 rewrite  addCommutative(a.p, c); return addIncreases(c, a.p),
-             ++ return addPreservesGt(a.p,b.p,c, p)},
-  }
- }
+addPreservesLt :: (a,b,c: Natp, p: a < b) -> c+a < c+b
+#hint
+{ fork c
+  { 1,
+    ++ unfold; unfold; => c.p + a < c.p + b; use addPreservesLt}}
 
 ;; TODO: implement three-way disjunction so I don't have to bind these names
 TotalOrder :: union (^a,^b: Natp)
 { eq(p: a = b),
-  gt(p: a >? b = true),
-  lt(p: b >? a = true)}
+  lt(p: a < b),
+  gt(p: b < a),}
 
 totalOrder :: (a,b: Natp) -> TotalOrder(a,b)
 {fork a
  {1 fork b {1  return eq(_),
-            ++ return lt(_)},
+            ++ use lt {p unfold; unfold}},
   ++ fork b
-  {1 return gt(_),
+  {1 use gt {p unfold; unfold;},
    ++
    ind := totalOrder(a.p, b.p);
    fork ind {eq return eq(prove{rewrite ind.p}),
@@ -274,13 +273,9 @@ totalOrder :: (a,b: Natp) -> TotalOrder(a,b)
 
 differentFromPlus :: (a: Natp, b: Natp, p: a = a+b) -> False
 #norm(p)
-{
- fork a
- {
-  1  return p,
-  ++ return differentFromPlus(a.p, b, p)
-  }
- }
+{fork a
+ {1  return p,
+  ++ return differentFromPlus(a.p, b, p)}}
 
 mulDistributive :: (a,b,c: Natp) -> c*(a+b) = c*a+c*b
 #hint #tag(Natp, left)
@@ -290,10 +285,7 @@ mulDistributive :: (a,b,c: Natp) -> c*(a+b) = c*a+c*b
  => (a+b)*c = a*c+b*c
  }
 
-<? :: fn(a,b: Natp) -> Bool
-#expand
-{return ++(a) <= b}
-
+;; todo: rename to "=?"
 == :: fn(a,b: Natp) -> Bool
 {fork a
  {1  fork b {1  return true,
@@ -302,31 +294,12 @@ mulDistributive :: (a,b,c: Natp) -> c*(a+b) = c*a+c*b
   ++ fork b {1  return false,
              ++ return a.p == b.p}}}
 
-<= :: fn(a,b: Natp) -> Type
-#expand
-{
-  return a <= b = true
-  }
-
-< :: fn(a,b: Natp) -> Type
-#expand
-{
-  return a <? b = true
-  }
-
-> :: fn(a,b: Natp) -> Type
-#expand
-{
-  return a >? b = true
-  }
-
-le1 :: ($a: Natp, p: (:Type)a <= 1) -> a=1
+le1 :: ($a: Natp, p: a <= 1) -> a=1
 {fork a {1, ++ norm p;}}
 
-ltLemma :: (a,b: Natp, p: (:Type)a < ++(b)) -> a=b \/ (:Type)a < b
+ltLemma :: (a,b: Natp, p: a < ++(b)) -> a=b \/ a < b
 { fork a
-  {
-    1 fork b {1 use left, ++ use right}
+  { 1 fork b {1 use left, ++ use right}
     ,
     ++ fork b
     { 1 norm p,
@@ -335,65 +308,40 @@ ltLemma :: (a,b: Natp, p: (:Type)a < ++(b)) -> a=b \/ (:Type)a < b
       recurse := use ltLemma with a=a.p, b=b.p, p=p;
       norm recurse;}}}
 
-leChain :: (a,b,c: Natp, p: (:Type)a <= b, q: (:Type)b <= c) -> (:Type)a <= c
-#norm(p,q)
-{
-  fork c
+leChain :: (a,b,c: Natp, p: a <= b, q: b <= c) -> a <= c
+{ fork c
   { 1 pose le1(q); rewrite b=1 in p,
     ++ fork b
     { 1  pose le1(p); rewrite a=1, 
       ++ fork a
       { 1  ,
-        ++ use leChain with b=b.p
-        }
-      }}
-  }
+        ++
+        unfold p; unfold p; prove a.p <= b.p {return p}
+        unfold q; unfold q; prove b.p <= c.p {return q}
+        unfold; unfold; => a.p <= c.p;
+        use leChain with b=b.p}}}}
 
-ltChain :: (a,b,c: Natp, p: (:Type)a < b, q: (:Type)b < c) -> (:Type)a < c
-{
-  fork c
-  {
-    1  norm q,
-    ++ fork b
-    {1 norm p,
-      ++ fork a {1, ++ norm p; norm q;
-                  prove (:Type)a.p < b.p {norm};
-                  prove (:Type)b.p < c.p {norm};
-                  use ltChain with b=b.p}}
-    }
-  }
+ltAntiSymmetric :: (a,b,c: Natp, p: a < b, q: b < a) -> False
+{ prove a < a {use ltChain with b=b};
+  use ltAntiReflexive with a=a}
 
-ltGt :: (a,b: Natp, p: (:Type)a < b) -> (:Type)b > a
+leSuccessor :: (a: Natp) -> a <= ++(a)
+{ fork a {1 unfold, ++ unfold; => a.p <= ++(a.p); use leSuccessor}}
+
+ltLe :: (a,b: Natp, p: a < b) -> a <= b
 #hint
-{
-  fork b
-  {
-    1  norm p,
-    ++ fork a {1, ++ norm p; use ltGt}
-    }
-  }
+{ unfold p; fork b {1 unfold p, ++ use leChain with b=b.p, q=prove{use leSuccessor};}}
 
-gtLt :: (a,b: Natp, p: (:Type)a > b) -> (:Type)b < a
+mulPreservesLt :: (a,b,q: Natp, p: a < b) -> q*a < q*b
 #hint
-{
-  fork a
-  {
-    1  norm p,
-    ++ fork b {1, ++ norm p; use gtLt}
-    }
-  }
-
-lePp :: (a: Natp) -> (:Type) a <= ++(a)
-#hint
-{ fork a {1, ++ use lePp } }
-
-ltLe :: (a,b: Natp, p: (:Type)a < b) -> (:Type)a <= b
-#hint
-{ use leChain with b = ++(a); }
-
-ltMul :: (a,b,q: Natp, p: a > b) -> a*q > b*q
-#hint
-{ 
-  }
+{ fork q
+  { 1,
+    ++
+    prove q.p * a < q.p * b {use mulPreservesLt}
+    prove a + q.p * a < a + q.p * b {use addPreservesLt}
+    prove a + q.p * b < b + q.p * b { => q.p * b + a < b + q.p * b;
+                                      => q.p * b + a < q.p * b + b;
+                                      use addPreservesLt}
+    use ltChain with b = a + q.p * b}}
 
 algebra_declare Natp;

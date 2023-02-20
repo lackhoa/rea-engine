@@ -5471,7 +5471,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
               {
                 if (pointer->is_stack_pointer)
                 {
-                  pointer->ignored = true;
+                  // pointer->ignored = true;  // NOTE: rhs could be rhs0
                   lhs = pointer->stack.name;
                 }
               }
@@ -5694,6 +5694,10 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
   {
     assert(value);
   }
+
+  if (serial == 1389966)
+    breakhere;
+
   return BuildTerm{.value=value};
 }
 
