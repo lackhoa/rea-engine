@@ -1286,7 +1286,7 @@ shouldPrintTypeInScope(Pointer *pointer)
   Term *type = pointer->type;
   if (!print_full_scope)
   {
-    if (pointer->ignored) return false;
+    if (pointer->hidden) return false;
 
     if (type == rea.Type) return false;
 
@@ -1296,8 +1296,6 @@ shouldPrintTypeInScope(Pointer *pointer)
       if (uni->ctor_count) return false;
       else                 return true;
     }
-
-    // if (castUnion(type)) return true;  // TODO: idk why this was here?
 
     if (type->kind == Term_Pointer) return false;
 
@@ -1316,8 +1314,6 @@ inline void
 prettyPrintScope(StringBuffer *buffer, Scope *scope)
 {
   Arena *arena = temp_arena;
-  struct PointerList {Pointer *head; PointerList *tail;};
-
   // NOTE: Skip the last scope since we already know
   while (scope)
   {
@@ -2598,7 +2594,6 @@ uninstantiate(Term *in0)
   Pointer *pointer = castTerm(in0, Pointer);
   assert(pointer->ref);
   pointer->ref = 0;
-  pointer->ignored = false;  // TODO: hack to unwind the pointers ignored by unfolding
 }
 
 inline Fork *
@@ -4781,6 +4776,32 @@ buildWithState(ProofState *state, Ast *body)
   return value;
 }
 
+inline void
+hidePointer(Typer *typer, Pointer *pointer)
+{
+  llPush(temp_arena, pointer, typer->hider.pointers);
+  pointer->hidden = true;
+}
+
+inline void
+popPointerHider(Typer *typer)
+{
+  PointerHider hider = typer->hider;
+  for (PointerList *list = hider.pointers; list; list=list->tail)
+  {
+    list->head->hidden = false;  // NOTE: maybe we need to store the old hidden value too? idk.
+  }
+  assert(hider.outer);
+  typer->hider = *hider.outer;
+}
+
+inline void
+pushPointerHider(Typer *typer)
+{
+  PointerHider *hider = pushCopy(temp_arena, &typer->hider);
+  typer->hider = {.outer=hider};
+}
+
 internal Term *
 buildSubst(Typer *typer, SubstAst *in, Term *goal0)
 {
@@ -4824,7 +4845,7 @@ buildSubst(Typer *typer, SubstAst *in, Term *goal0)
             {
               eq_proof      = pointer;
               right_to_left = equal_rhs;
-              pointer->ignored = true;
+              hidePointer(typer, pointer);
 
               substitutions[sub_count++] = {to_rewrite, eq_proof, right_to_left};
               assert(sub_count <= sub_cap);
@@ -4846,13 +4867,13 @@ buildSubst(Typer *typer, SubstAst *in, Term *goal0)
         for (i32 pointer_i=0; pointer_i < scope->param_count; pointer_i++)
         {
           Pointer *pointer = scope->pointers[pointer_i];
-          if (!pointer->ignored)
+          if (!pointer->hidden)
           {
             assert(pointer != eq_proof);
             if (SearchOutput search = searchExpression(to_rewrite, pointer->type))
             {
               Term *asset = newRewrite(eq_proof, pointer, search.path, !right_to_left);
-              pointer->ignored = true;
+              hidePointer(typer, pointer);
               addAsset(state, asset);
             }
           }
@@ -5250,7 +5271,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
           Term *to   = in->right_to_left ? lhs : rhs;
           if (in->in_expression)
           {
-            if (Term *in_expression = buildTerm(typer, in->in_expression, hole).value)
+            if (Term *in_expression = buildTerm(typer, in->in_expression, hole))
             {
               if (SearchOutput search = searchExpression(from, in_expression->type))
               {
@@ -5261,6 +5282,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
                 if (var && var->is_stack_pointer)
                 {
                   name = var->stack.name;
+                  hidePointer(typer, var);
                 }
                 value = buildWithNewAsset(typer, name, asset, in->body, goal0);
               }
@@ -5295,7 +5317,6 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
 
     case Ast_GoalTransform:
     {
-      {
       GoalTransform *in = castAst(in0, GoalTransform);
       Term     *new_goal      = 0;
       Term     *eq_proof      = 0;
@@ -5424,7 +5445,6 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
         print(0, eq_proof);
         print(0, "\n");
       }
-      }
     } break;
 
     case Ast_Let:
@@ -5471,7 +5491,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
               {
                 if (pointer->is_stack_pointer)
                 {
-                  // pointer->ignored = true;  // NOTE: rhs could be rhs0
+                  hidePointer(typer, pointer);  // TODO bookmark: :wrong-hide-pointer
                   lhs = pointer->stack.name;
                 }
               }
@@ -5699,10 +5719,7 @@ internal Term *
 buildGlobalTerm(Typer *typer, Ast *in0, Term *goal)
 {
   Term *out = buildTerm(typer, in0, goal);
-  if (out)
-  {
-    out = copyToGlobalArena(out);
-  }
+  if (out) out = copyToGlobalArena(out);
   return out;
 }
 
@@ -5796,7 +5813,9 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
             else
             {
               typer->try_reductio = true;
+              pushPointerHider(typer);
               ordered_cases[ctor_i] = buildTerm(typer, in->cases[input_case_i], goal);
+              popPointerHider(typer);
             }
             uninstantiate(subject);
           }
@@ -6071,6 +6090,8 @@ interpretTopLevel(EngineState *state)
 
   Token token_ = nextToken();
   Token *token = &token_;
+  Typer  typer_ = {};
+  Typer *typer  = &typer_;
 
   while (hasMore())
   {
@@ -6083,8 +6104,8 @@ interpretTopLevel(EngineState *state)
 
     // NOTE: We don't wanna persist the typer across top-level forms, even if it
     // happens to work.
-    Typer  typer_ = {};
-    Typer *typer  = &typer_;
+    typer_ = {};
+
     if (should_fail_active)
     {
       setFlag(&typer->expected_errors, ExpectError_WrongType);
@@ -6202,7 +6223,6 @@ interpretTopLevel(EngineState *state)
         {
           b32 value = !optionalString("off");
           global_state.top_level_debug_mode = value;
-          DEBUG_LOG_compare = value;
         }
       } break;
 

@@ -344,8 +344,6 @@ parseSequence(b32 require_braces=true)
     }
     else if (equal(tactic, "rewrite"))
     {
-      // todo maybe "with" should be "using", since we take "rewrite a with b"
-      // to mean "replace a by b"
       pushContext("rewrite EXPRESSION [in EXPRESSION]");
       RewriteAst *rewrite = newAst(arena, RewriteAst, token);
       if (optionalString("<-"))

@@ -88,18 +88,22 @@ struct Scope {
 const u32 ExpectError_Ambiguous = 1 << 0;  // NOTE: Maybe a better name would be "missing type info".
 const u32 ExpectError_WrongType = 1 << 1;
 
+struct PointerList {Pointer *head; PointerList *tail;};
+
+struct PointerHider {
+  PointerList  *pointers;
+  PointerHider *outer;
+};
+
 struct Typer {
   LocalBindings *bindings;
   Scope         *scope;
   b32            try_reductio;
   u32            expected_errors;  // ExpectError
-  // PointerHider  *hider;
+  PointerHider   hider;
 };
 
-struct TermList {
-  Term     *head;
-  TermList *tail;
-};
+struct TermList {Term *head; TermList *tail;};
 
 struct Term {
   TermKind  kind;
@@ -200,7 +204,7 @@ struct HeapPointer {
 struct Pointer : Term {
   Record *ref;
   b32     is_stack_pointer;
-  b32     ignored;  // todo #flag
+  b32     hidden;  // todo #flag
   union {
     StackPointer stack;
     HeapPointer  heap;

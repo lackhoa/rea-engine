@@ -74,6 +74,7 @@ testCurryingWeird :: fn (a: Nat) -> (b: Nat) -> a+b = b+a
   return addCommutative(0, b)}}
 #should_fail off
 
+#print full_scope off
 testCurrying2 :: fn (a, b, c: Nat) -> (a+b)+c = a+(b+c)
 {fun : (b',c': Nat) -> (a+b')+c' = a+(b'+c') := fn { return addAssociative(a, b', c') };
  return fun(b,c)}
