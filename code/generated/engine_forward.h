@@ -1,4 +1,4 @@
-void eatToken();
+Token * eatToken();
 Token nextToken();
 Token peekToken();
 Ast * parseUse();
@@ -20,7 +20,7 @@ Trinary equalTrinary(Term * lhs0, Term * rhs0);
 b32 equalNorm(Term * l, Term * r);
 void checkRecursiveCall(Term * op0, i32 arg_count, Term ** args, Term * reduce_proof);
 Record * castRecord(Term * record0);
-Term * apply(Term * op, i32 arg_count, Term ** args, String name_to_unfold);
+Term * apply(Term * op, i32 arg_count, Term ** args, String unfold_name);
 Term * solveGoal(Solver * solver, Term * goal);
 BuildTerm buildTerm(Typer * typer, Ast * in0, Term * goal0);
 Term * buildFork(Typer * typer, ForkAst * in, Term * goal);

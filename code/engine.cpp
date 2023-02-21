@@ -5491,9 +5491,9 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
               {
                 if (pointer->is_stack_pointer)
                 {
-                  hidePointer(typer, pointer);  // TODO bookmark: :wrong-hide-pointer
                   lhs = pointer->stack.name;
                 }
+                hidePointer(typer, pointer);  // TODO: :wrong-hide-pointer (update: why would it ever be wrong to hide this pointer, we'll get a new one with the same name in the new stack frame)
               }
             }
             value = buildWithNewAsset(typer, lhs, rhs, in->body, goal0);

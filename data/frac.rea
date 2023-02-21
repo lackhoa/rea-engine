@@ -35,15 +35,14 @@ ltWellFounded_ :: (a: Natp) -> Reachable(<, a)
     { 1  unfold p; unfold p,
       ++
       recurse := prove Reachable(<, a.p) {use ltWellFounded_};
-
       use reachable
-      { p fn y, pyb;
-        prove y < a.p { unfold;
-                        unfold p; unfold p; prove b <= a.p { => b <=? a.p = true; };  ;; todo: #hack to overwrite the pointer type
-                        unfold pyb;
-                        use leChain {b=b};
-                        };
-        use (recurse.p)}}}}
+      { p
+        fn y, pyb
+        { prove y < a.p { unfold;
+                          unfold p; unfold p; prove b <= a.p { => b <=? a.p = true; };  ;; todo: #hack to overwrite the pointer type
+                          unfold pyb;
+                          use leChain {b=b}};
+          use recurse.p}}}}}
 
 ltWellFounded : WellFounded(Natp, <) := prove {norm; return ltWellFounded_};
 
@@ -95,10 +94,8 @@ divides(q,a) /\ divides(q,b) /\ ((q': Natp, da: divides(q',a), db: divides(q',b)
 isGcdSwap :: (q,a,b: Natp, p: isGcd(q,a,b)) -> isGcd(q,b,a)
 #hint
 { unfold; unfold p;
-  use pair
-  { b use pair
-    ;; TODO :should-use-function-in-context
-    {b fn q', da, db; use (p.b.b)}}}
+  pose fn (q': Natp, da: divides(q', b), db: divides(q', a)) -> divides(q', q)
+  { use p.b.b;};}
 
 dividesReflexive :: (q: Natp) -> divides(q,q)
 #hint
@@ -142,9 +139,7 @@ gcdHelper :: (a,q,r: Natp, p: divides(a, q*a + r)) -> divides(a, r)
 
 gcdMultiple :: (q,a: Natp, p: divides(q,a)) -> isGcd(q,q,a)
 { unfold;
-  use pair
-  { a ,
-    b use pair {b fn q', da, db {}}}}
+  pose fn (q': Natp, da: divides(q', q), db: divides(q', a)) -> divides(q', q) {};}
 
 gcd :: (a,b: Natp) -> exists(g: Natp) isGcd(g, a,b)
 #measure(a, ltWellFounded)
@@ -186,22 +181,19 @@ gcd :: (a,b: Natp) -> exists(g: Natp) isGcd(g, a,b)
     use ex
     { e return recurse.e,
       p unfold;
-      use pair
-      { b ;; recurse_p.b.b is gonna be of value here
-        use pair
-        { a unfold; use ex { e = (qr.quotient * g.e + f.e)},
-          b
-          fn q', da, db;
-          use (recurse_p.b.b)
-          { da
-            ;; q' divides both "a" and "qr.quotient*a + qr.remainder", so it divides "qr.remainder"
-            unfold as w da;
-            rewrite w.p in qr.p;
-            prove
-            { => divides(q', (qr.quotient * w.e) * q' + qr.remainder);
-              => divides(q', qr.quotient * w.e * q' + qr.remainder);
-              => divides(q', b); }
-            use gcdHelper {q=(qr.quotient * w.e)},}}}}}}
+      prove divides(recurse.e, b) {unfold; use ex { e = (qr.quotient * g.e + f.e)}}
+      prove (q': Natp, da: divides(q', a), db: divides(q', b)) -> divides(q', recurse.e)
+      { fn;
+        use recurse_p.b.b
+        { da
+          ;; q' divides both "a" and "qr.quotient*a + qr.remainder", so it divides "qr.remainder"
+          unfold as w da;
+          rewrite w.p in qr.p;
+          prove
+          { => divides(q', (qr.quotient * w.e) * q' + qr.remainder);
+            => divides(q', qr.quotient * w.e * q' + qr.remainder);
+            => divides(q', b); }
+          use gcdHelper {q=(qr.quotient * w.e)}}}}}}
 
 dividesAntiSymmetric :: (a,b: Natp, fab: divides(a,b), fba: divides(b,a)) -> a=b
 { prove a <= b {use dividesLe};

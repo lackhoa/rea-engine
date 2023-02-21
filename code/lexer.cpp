@@ -57,8 +57,7 @@ isAlphaNumeric(char c)
   return ((('a' <= c) && (c <= 'z'))
           || (('A' <= c) && (c <= 'Z'))
           || (('0' <= c) && (c <= '9'))
-          || (c == '\'')
-          || (c == '_'));
+          || (c == '\'') || (c == '_'));
 }
 
 inline b32
@@ -311,7 +310,7 @@ reportError(char *message)
   reportError(&TK->last_token, message);
 }
 
-forward_declare inline void
+forward_declare inline Token *
 eatToken()
 {
   auto tk = TK;
@@ -425,6 +424,7 @@ eatToken()
       }
     } break;
 
+#if 0
     case '_':
     {
       out.kind = Token_Alphanumeric;
@@ -437,6 +437,7 @@ eatToken()
       if (!advanced)
         out.kind = (TokenKind)'_';  // todo: why is the underscore special?
     } break;
+#endif
 
     default:
     {
@@ -486,6 +487,7 @@ eatToken()
   // NOTE: :always-eat-spaces We eat spaces afterward, so that we can always
   // check *tk->at to see if there's anything left to parse.
   eatAllSpaces();
+  return &tk->last_token;
 }
 
 // todo just return the token pointer!

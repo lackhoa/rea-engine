@@ -38,7 +38,7 @@ isExpressionEndMarker(Token *token)
 inline b32
 seesExpressionEndMarker()
 {
-  Token token = peekToken();
+  Token token = peekToken();  // todo: #speed I don't think we should have to peek anything here.
   return isExpressionEndMarker(&token);
 }
 
@@ -79,9 +79,11 @@ requireIdentifier(char *message=0)
   if (hasMore())
   {
     if (!message) message = "expected identifier";
-    Token token = nextToken();
-    if (isIdentifier(&token)) out = token.string;
-    else                      tokenError(message);
+    Token *token = eatToken();
+    if (isIdentifier(token))
+      out = token->string;
+    else
+      tokenError(message);
   }
   return out;
 }
@@ -242,17 +244,32 @@ inline ArrowAst *
 parseNameOnlyArrowType()
 {
   Arena *arena = temp_arena;
-  ArrowAst *out = newAst(arena, ArrowAst, lastToken());
-  i32 cap = 16;  // todo #grow
-  allocateArray(arena, cap, out->param_names);
-  for (;;)
+  ArrowAst *out = 0;
+  if (seesExpressionEndMarker())
   {
-    i32 param_i = out->param_count++;
-    assert(param_i < cap);
-    out->param_names[param_i] = requireIdentifier();
-    if (!optionalChar(',')) break;
+    breakhere; // return null explicitly
   }
-  NULL_WHEN_ERROR(out);
+  else
+  {
+    out = newAst(arena, ArrowAst, lastToken());
+    i32 cap = 16;  // todo #grow
+    allocateArray(arena, cap, out->param_names, true);
+    for (;;)
+    {
+      i32 param_i = out->param_count++;
+      assert(param_i < cap);
+      if (optionalChar('_'))
+      {
+        breakhere; // anonymous parameter
+      }
+      else
+      {
+        out->param_names[param_i] = requireIdentifier();
+      }
+      if (!optionalChar(',')) break;
+    }
+    NULL_WHEN_ERROR(out);
+  }
   return out;
 }
 
@@ -447,9 +464,10 @@ parseSequence(b32 require_braces=true)
     }
     else if (equal(tactic, "fn"))
     {
-      if (ArrowAst *signature = parseNameOnlyArrowType())
+      ArrowAst *signature = parseNameOnlyArrowType();
+      if (noError())
       {
-        // TODO: tbh this is kinda crazy
+        // TODO: tbh abusing "fn" keyword as tactic like this is bit crazy.
         FunctionAst *ast = newAst(arena, FunctionAst, token);
         ast->signature = signature;
         ast->body      = parseSequence(false);
@@ -988,11 +1006,6 @@ parseOperand()
   Arena *arena = parse_arena;
   switch (token.kind)
   {
-    case '_':
-    {
-      operand = newAst(arena, Hole, &token);
-    } break;
-
     case '(':
     {
       operand = parseExpression();
@@ -1037,7 +1050,10 @@ parseOperand()
     case Token_Alphanumeric:
     case Token_Special:
     {
-      operand = newAst(arena, Identifier, &token);
+      if (equal(token, '_'))
+        operand = newAst(arena, Hole, &token);
+      else
+        operand = newAst(arena, Identifier, &token);
     } break;
 
     case Token_Keyword_union:
