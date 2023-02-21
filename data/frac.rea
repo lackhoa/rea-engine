@@ -1,23 +1,15 @@
 #load "frac-base.rea"
 
 addSameDenominator :: (a,b,c: Natp) -> a/c + b/c == (a+b)/c
-{
- norm;
- algebra_norm;
- }
+{ norm; algebra_norm;}
 
 cancelCommonFactor :: (a,b,r: Natp) -> (a*r)/(b*r) == a/b
-{
- norm;
- algebra_norm;
- }
+{ norm; algebra_norm; }
 
-define isFactor(q,a: Natp) := exists(t: Natp), a = t*q;
+define divides(q,a: Natp) := exists(t: Natp), a = t*q;
 
-relativelyPrime :: (a,b: Natp) -> Type
-{
- return (r: Natp, isFactor(r, a), isFactor(r, b)) -> r = 1
- }
+define coprime(a,b: Natp) :=
+(r: Natp, divides(r, a), divides(r, b)) -> r = 1;
 
 difference :: fn(a,b: Natp, p: b < a) -> exists(c: Natp) a = b+c
 { fork a
@@ -95,44 +87,31 @@ quotientRemainder :: fn(a,b: Natp) -> QuotientRemainder(a,b)
       prove a = (b + recurse.quotient * b) + recurse.remainder
       { => a = b + recurse.quotient * b + recurse.remainder;
         rewrite <- recurse.p;}
-      use divideWithRemainder {quotient = ++(recurse.quotient), remainder = recurse.remainder}
-      }
-    }
-  }
-
-define isCommonDivisor(q, a,b: Natp) := isFactor(q,a) /\ isFactor(q,b);
+      use divideWithRemainder {quotient = ++(recurse.quotient), remainder = recurse.remainder}}}}
 
 define isGcd(q, a,b: Natp) :=
-isCommonDivisor(q,a,b) /\ ((q': Natp, common: isCommonDivisor(q',a,b)) -> isFactor(q', q));
-
-define <(p1,p2: Natp /\ Natp) :=
-p1.a < p2.a \/ p1.a = p2.a /\ p1.b < p2.b;
-
-isCommonDivisorSwap :: (q,a,b: Natp, p: isCommonDivisor(q,a,b)) -> isCommonDivisor(q,b,a)
-#hint
-{unfold; unfold p;}
+divides(q,a) /\ divides(q,b) /\ ((q': Natp, da: divides(q',a), db: divides(q',b)) -> divides(q', q));
 
 isGcdSwap :: (q,a,b: Natp, p: isGcd(q,a,b)) -> isGcd(q,b,a)
 #hint
 { unfold; unfold p;
   use pair
-  { b 
-    return fn q', p'
-    {;; TODO :should-use-function-in-context
-      use (p.b)} ,}}
+  { b use pair
+    ;; TODO :should-use-function-in-context
+    {b fn q', da, db; use (p.b.b)}}}
 
-isFactorReflexive :: (q: Natp) -> isFactor(q,q)
+dividesReflexive :: (q: Natp) -> divides(q,q)
 #hint
 {unfold; use ex {e=1}}
 
-factorLe :: (a,b: Natp, p: isFactor(a, b)) -> (:Type)a <= b
+dividesLe :: (a,b: Natp, p: divides(a, b)) -> a <= b
 { unfold p;
   fork p.e
   { 1  norm p.p; subst b;,
     ++ rewrite p.p; norm;
     prove a < a + p.e.p * a {}}}
 
-gcdHelper :: (a,q,r: Natp, p: isFactor(a, q*a + r)) -> isFactor(a, r)
+gcdHelper :: (a,q,r: Natp, p: divides(a, q*a + r)) -> divides(a, r)
 { unfold p;
   unfold;
   d := use difference { a = p.e,
@@ -161,13 +140,13 @@ gcdHelper :: (a,q,r: Natp, p: isFactor(a, q*a + r)) -> isFactor(a, r)
   use ex { e = d.e,
            p use sumCancellation {a=q*a}}}
 
-gcdMultiple :: (q,a: Natp, p: isFactor(q,a)) -> isGcd(q,q,a)
+gcdMultiple :: (q,a: Natp, p: divides(q,a)) -> isGcd(q,q,a)
 { unfold;
   use pair
-  { a unfold,
-    b fn q', common {unfold common;}}}
+  { a ,
+    b use pair {b fn q', da, db {}}}}
 
-gcd :: (a,b: Natp) -> exists(out: Natp) isGcd(out, a,b)
+gcd :: (a,b: Natp) -> exists(g: Natp) isGcd(g, a,b)
 #measure(a, ltWellFounded)
 { ;; NOTE: we try to keep a < b.
   qr := quotientRemainder(b,a);
@@ -192,10 +171,10 @@ gcd :: (a,b: Natp) -> exists(out: Natp) isGcd(out, a,b)
 
     unfold as recurse_p recurse.p;
     unfold recurse_p.a;
-    unfold as f seek(isFactor(recurse.e, qr.remainder));
+    unfold as f seek(divides(recurse.e, qr.remainder));
     ;; qr.remainder = recurse.e * f.e
 
-    unfold as g seek(isFactor(recurse.e, a));
+    unfold as g seek(divides(recurse.e, a));
 
     prove
     { => b = (qr.quotient * g.e + f.e) * recurse.e;
@@ -208,28 +187,75 @@ gcd :: (a,b: Natp) -> exists(out: Natp) isGcd(out, a,b)
     { e return recurse.e,
       p unfold;
       use pair
-      { a unfold;
+      { b ;; recurse_p.b.b is gonna be of value here
         use pair
-        { a,
-          b unfold;
-          use ex
-          { e
-            return (qr.quotient * g.e + f.e)} },
-
-        b ;; recurse_p.b is gonna be of value here
-        fn q', common;
-        unfold common;
-        use (recurse_p.b)
-        { common
-          unfold;
-          use pair
-          { a ;; q' divides both "a" and "qr.quotient*a + qr.remainder", so it divides "qr.remainder"
-            unfold as w common.a;
+        { a unfold; use ex { e = (qr.quotient * g.e + f.e)},
+          b
+          fn q', da, db;
+          use (recurse_p.b.b)
+          { da
+            ;; q' divides both "a" and "qr.quotient*a + qr.remainder", so it divides "qr.remainder"
+            unfold as w da;
             rewrite w.p in qr.p;
             prove
-            { => isFactor(q', (qr.quotient * w.e) * q' + qr.remainder);
-              => isFactor(q', qr.quotient * w.e * q' + qr.remainder);
-              => isFactor(q', b); }
-            use gcdHelper {q=(qr.quotient * w.e)};
-            ,
-            b}}}}}}
+            { => divides(q', (qr.quotient * w.e) * q' + qr.remainder);
+              => divides(q', qr.quotient * w.e * q' + qr.remainder);
+              => divides(q', b); }
+            use gcdHelper {q=(qr.quotient * w.e)},}}}}}}
+
+dividesAntiSymmetric :: (a,b: Natp, fab: divides(a,b), fba: divides(b,a)) -> a=b
+{ prove a <= b {use dividesLe};
+  prove b <= a {use dividesLe};
+  use leAntiSymmetric }
+
+gcdUnique :: (a,b,q,q': Natp, hq: isGcd(q,a,b), hq': isGcd(q',a,b)) -> q=q'
+{ unfold hq; unfold hq';
+  prove divides(q, q') {use hq'.b.b}
+  prove divides(q', q) {use hq.b.b}
+  use dividesAntiSymmetric }
+
+reduce :: (x:Fracb) -> exists(y:Fracb) x == y /\ coprime(y.n, y.d)
+{ g := gcd(x.n, x.d);
+  unfold as h g.p;
+  unfold as p seek(divides(g.e, x.n));
+  unfold as q seek(divides(g.e, x.d));
+  use ex
+  { e = p.e / q.e,
+    p
+    prove (x.n * q.e = x.d * p.e)
+    { => (p.e * g.e) * q.e = x.d * p.e;
+      => (p.e * g.e) * q.e = (q.e * g.e) * p.e;
+      => (p.e * g.e) * q.e = p.e * q.e * g.e;
+      => (p.e * g.e) * q.e = p.e * g.e * q.e; }
+
+    prove coprime(p.e, q.e)
+    { unfold;
+      fn r, rp, rq
+      { ;; if r > 1, then we have a conflict with g.e
+        unfold rp; unfold rq;
+        prove { => x.n = rp.e * (r * g.e);
+                => x.n = (rp.e * r) * g.e;
+                => x.n = p.e * g.e; } as numerDecompose;
+        prove { => x.d = rq.e * (r * g.e);
+                => x.d = (rq.e * r) * g.e;
+                => x.d = q.e * g.e; } as denomDecompose;
+
+        prove divides(r * g.e, x.n)
+        { => exists(t: Natp) x.n = t * r * g.e;
+          use ex {e = rp.e}}
+        prove divides(r * g.e, x.d)
+        { => exists(t: Natp) x.d = t * r * g.e;
+          use ex {e = rq.e}}
+
+        prove divides(r*g.e, g.e) {use h.b.b}
+        prove divides(g.e, r*g.e) {unfold; use ex {e = r}}
+        prove g.e = r * g.e {use dividesAntiSymmetric}
+        use mulCancellation1 {b=g.e}}}}}
+
+elimCoprime :: (a,b,c: Natp, coprime(a,b), divides(a, b*c)) -> divides(a,c)
+{}
+
+reduceUnique :: (a,b: Frac) -> reduce(a) = reduce(b)
+{
+  
+  }

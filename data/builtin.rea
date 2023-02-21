@@ -47,9 +47,7 @@ commutative :: fn($T: Type, +: binaryOp(T)) -> Type
 
 Exists :: union(^$T: Type, ^prop: (x: T) -> Type)
 #builtin
-{
-  ex(e: T, p: prop(e))
-  }
+{ ex(e: T, p: prop(e)) }
 
 Reachable :: union(^$T: Type, ^R: (a:T, b:T) -> Type, ^x: T)
 {

@@ -1,5 +1,8 @@
 ;; NOTE Stuff regarding "<" is broken in this one
 
+define <(p1,p2: Natp /\ Natp) :=
+(p1.a < p2.a) \/ (p1.a = p2.a /\ p1.b < p2.b);
+
 lexicoLtLemma ::
 (a,b: Natp, x: Natp /\ Natp, lt: x < pair(a, ++(b)))
 -> x = pair(a,b) \/ x < pair(a,b)

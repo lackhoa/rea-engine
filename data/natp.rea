@@ -321,9 +321,14 @@ leChain :: (a,b,c: Natp, p: a <= b, q: b <= c) -> a <= c
         unfold; unfold; => a.p <= c.p;
         use leChain {b=b.p}}}}}
 
-ltAntiSymmetric :: (a,b,c: Natp, p: a < b, q: b < a) -> False
+ltAntiSymmetric :: (a,b: Natp, p: a < b, q: b < a) -> False
 { prove a < a {use ltChain {b=b}};
   use ltAntiReflexive {a=a}}
+
+leAntiSymmetric :: (a,b: Natp, p: a <= b, q: b <= a) -> a=b
+{ fork a
+  { 1  prove b=1 {use le1}; rewrite b=1,
+    ++ fork b {1, ++ unfold p; unfold q; use leAntiSymmetric}}}
 
 leSuccessor :: (a: Natp) -> a <= ++(a)
 { fork a {1 unfold, ++ unfold; => a.p <= ++(a.p); use leSuccessor}}
@@ -343,5 +348,13 @@ mulPreservesLt :: (a,b,q: Natp, p: a < b) -> q*a < q*b
                                       => q.p * b + a < q.p * b + b;
                                       use addPreservesLt}
     use ltChain {b = a + q.p * b}}}
+
+mulCancellation1 :: (a,b: Natp, p: b=a*b) -> a=1
+#hint
+{ fork a
+  { 1,
+    ++ norm p; prove b < b + a.p*b {}
+    prove b < b {=> b < b + a.p * b}
+    use ltAntiReflexive {a=b}}}
 
 algebra_declare Natp;

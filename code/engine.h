@@ -45,8 +45,7 @@ enum TermKind {
   Term_Rewrite,
 };
 
-struct ParseExpressionOptions
-{
+struct ParseExpressionOptions {
   i32 min_precedence = -9999;
 };
 
@@ -89,16 +88,15 @@ struct Scope {
 const u32 ExpectError_Ambiguous = 1 << 0;  // NOTE: Maybe a better name would be "missing type info".
 const u32 ExpectError_WrongType = 1 << 1;
 
-struct Typer
-{
+struct Typer {
   LocalBindings *bindings;
   Scope         *scope;
   b32            try_reductio;
   u32            expected_errors;  // ExpectError
+  // PointerHider  *hider;
 };
 
-struct TermList
-{
+struct TermList {
   Term     *head;
   TermList *tail;
 };
