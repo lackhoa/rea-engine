@@ -2825,27 +2825,36 @@ addBuiltinGlobalBinding(String key, Term *value)
   addGlobalBinding(&token, value);
 }
 
-inline LookupLocalName
-lookupLocalName(Typer *env, Token *token)
+inline Term *
+lookupLocalName(Typer *typer, Token *token)
 {
-  LocalBindings *bindings = env->bindings;
-  LookupLocalName out = {};
-  for (i32 stack_delta = 0;
-       bindings;
-       stack_delta++)
+  String name = token->string;
+  LocalBindings *bindings = typer->bindings;
+  Term *out = {};
+  Scope *scope = typer->scope;
+  for (i32 stack_delta = 0; bindings; stack_delta++)
   {
-    LookupCurrentFrame lookup = lookupCurrentFrame(bindings, token->string, false);
+    for (i32 alias_i=0; alias_i < scope->alias_count; alias_i++)
+    {
+      if (equal(name, scope->alias_names[alias_i]))
+      {
+        out = scope->alias_values[alias_i];
+      }
+    }
+
+    LookupCurrentFrame lookup = lookupCurrentFrame(bindings, name, false);
     if (lookup.found)
     {
-      out.found       = true;
-      out.var_index   = lookup.slot->var_id;
-      out.stack_delta = stack_delta;
+      assert(lookup.slot->var_id < scope->param_count);
+      out = scope->pointers[lookup.slot->var_id];
       break;
     }
     else
+    {
       bindings = bindings->tail;
+      scope    = scope->outer;
+    }
   }
-
   return out;
 }
 
@@ -4988,6 +4997,23 @@ buildNameOnlyArrowType(Typer *typer, ArrowAst *in, Term *goal0)
   return out;
 }
 
+internal void
+addAlias(Typer *typer, String name, Term *value)
+{
+  i32 cap = 8;  // todo #grow
+  Arena *arena = temp_arena;
+  Scope *scope = typer->scope;
+  if (!scope->alias_names)
+  {
+    allocateArray(arena, cap, scope->alias_names);
+    allocateArray(arena, cap, scope->alias_values);
+  }
+  i32 alias_i = scope->alias_count++;
+  assert(alias_i < cap);
+  scope->alias_names[alias_i]  = name;
+  scope->alias_values[alias_i] = value;
+}
+
 forward_declare internal BuildTerm
 buildTerm(Typer *typer, Ast *in0, Term *goal0)
 {
@@ -5031,9 +5057,9 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
       }
       else
       {
-        if (LookupLocalName local = lookupLocalName(typer, name))
+        if (Term *v = lookupLocalName(typer, name))
         {
-          value = lookupStack(typer, local.stack_delta, local.var_index);
+          value = v;
         }
         else
         {
@@ -5663,6 +5689,17 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
     {
       AlgebraNormAst *in = (AlgebraNormAst *)in0;
       value = buildAlgebraNorm(typer, in, goal0);
+    } break;
+
+    case Ast_AliasAst:
+    {
+      AliasAst *in = (AliasAst *)in0;
+      if (Term *val = buildTerm(typer, in->value, hole))  // NOTE: careful with shadowing
+      {
+        addAlias(typer, in->name, val);
+        recursed = true;
+        value = buildTerm(typer, in->body, goal0);
+      }
     } break;
 
     invalidDefaultCase;

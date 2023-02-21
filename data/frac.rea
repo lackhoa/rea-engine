@@ -205,40 +205,40 @@ gcdUnique :: (a,b,q,q': Natp, hq: isGcd(q,a,b), hq': isGcd(q',a,b)) -> q=q'
   use dividesAntiSymmetric }
 
 reduce :: (x:Fracb) -> exists(y:Fracb) x == y /\ coprime(y.n, y.d)
-{ g := gcd(x.n, x.d);
-  unfold as h g.p;
-  unfold as p seek(divides(g.e, x.n));
-  unfold as q seek(divides(g.e, x.d));
+{ G := gcd(x.n, x.d); alias g G.e;
+  unfold as h G.p;
+  unfold as p seek(divides(g, x.n));
+  unfold as q seek(divides(g, x.d));
   ex p.e / q.e
   { prove (x.n * q.e = x.d * p.e)
-    { => (p.e * g.e) * q.e = x.d * p.e;
-      => (p.e * g.e) * q.e = (q.e * g.e) * p.e;
-      => (p.e * g.e) * q.e = p.e * q.e * g.e;
-      => (p.e * g.e) * q.e = p.e * g.e * q.e; }
+    { => (p.e * g) * q.e = x.d * p.e;
+      => (p.e * g) * q.e = (q.e * g) * p.e;
+      => (p.e * g) * q.e = p.e * q.e * g;
+      => (p.e * g) * q.e = p.e * g * q.e; }
 
     prove coprime(p.e, q.e)
     { unfold;
       fn r, rp, rq
-      { ;; if r > 1, then we have a conflict with g.e
+      { ;; if r > 1, then we have a conflict with g
         unfold rp; unfold rq;
-        prove { => x.n = rp.e * (r * g.e);
-                => x.n = (rp.e * r) * g.e;
-                => x.n = p.e * g.e; } as numerDecompose;
-        prove { => x.d = rq.e * (r * g.e);
-                => x.d = (rq.e * r) * g.e;
-                => x.d = q.e * g.e; } as denomDecompose;
+        prove { => x.n = rp.e * (r * g);
+                => x.n = (rp.e * r) * g;
+                => x.n = p.e * g; } as numerDecompose;
+        prove { => x.d = rq.e * (r * g);
+                => x.d = (rq.e * r) * g;
+                => x.d = q.e * g; } as denomDecompose;
 
-        prove divides(r * g.e, x.n)
-        { => exists(t: Natp) x.n = t * r * g.e;
+        prove divides(r * g, x.n)
+        { => exists(t: Natp) x.n = t * r * g;
           ex rp.e}
-        prove divides(r * g.e, x.d)
-        { => exists(t: Natp) x.d = t * r * g.e;
+        prove divides(r * g, x.d)
+        { => exists(t: Natp) x.d = t * r * g;
           ex rq.e}
 
-        prove divides(r*g.e, g.e) {use h.b.b}
-        prove divides(g.e, r*g.e) {unfold; use ex {e = r}}
-        prove g.e = r * g.e {use dividesAntiSymmetric}
-        use mulCancellation1 {b=g.e}}}}}
+        prove divides(r*g, g) {use h.b.b}
+        prove divides(g, r*g) {unfold; use ex {e = r}}
+        prove g = r * g {use dividesAntiSymmetric}
+        use mulCancellation1 {b=g}}}}}
 
 elimCoprime :: (a,b,c: Natp, coprime(a,b), divides(a, b*c)) -> divides(a,c)
 {}

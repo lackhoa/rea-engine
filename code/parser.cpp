@@ -72,16 +72,16 @@ requireKind(TokenKind tc, char *message=0)
   return out;
 }
 
-inline String
+inline b32
 requireIdentifier(char *message=0)
 {
-  String out = {};
+  b32 out = false;
   if (hasMore())
   {
     if (!message) message = "expected identifier";
     Token *token = eatToken();
     if (isIdentifier(token))
-      out = token->string;
+      out = true;
     else
       tokenError(message);
   }
@@ -211,7 +211,7 @@ optionalString(char *str)
 inline Ast **
 getAstBody(Ast *item0)
 {
-  // todo Puzzler: How do we make this nicer?
+  // todo #speed at least use a switch here!
   if (Let *let = castAst(item0, Let))
   {
     return &let->body;
@@ -233,6 +233,10 @@ getAstBody(Ast *item0)
     return &item->body;
   }
   if (AlgebraNormAst *item = castAst(item0, AlgebraNormAst))
+  {
+    return &item->body;
+  }
+  if (AliasAst *item = castAst(item0, AliasAst))
   {
     return &item->body;
   }
@@ -262,9 +266,9 @@ parseNameOnlyArrowType()
       {
         breakhere; // anonymous parameter
       }
-      else
+      else if (requireIdentifier())
       {
-        out->param_names[param_i] = requireIdentifier();
+        out->param_names[param_i] = lastString();
       }
       if (!optionalChar(',')) break;
     }
@@ -307,9 +311,9 @@ parseSequence(b32 require_braces=true)
       {
         if (optionalChar('('))
         {
-          if (String name = requireIdentifier("expected function name"))
+          if (requireIdentifier("expected function name"))
           {
-            norm_options.unfold_name = name;
+            norm_options.unfold_name = lastString();
             requireChar(')');
           }
         }
@@ -500,6 +504,16 @@ parseSequence(b32 require_braces=true)
       SeekAst *ast = newAst(arena, SeekAst, token);
       ast0 = ast;
       expect_sequence_to_end = true;
+    }
+    else if (equal(tactic, "alias"))
+    {
+      AliasAst *ast = newAst(arena, AliasAst, token);
+      if (requireIdentifier())
+      {
+        ast->name  = lastString();
+        ast->value = parseExpression();
+      }
+      ast0 = ast;
     }
     else if (equal(tactic, "reductio"))
     {
@@ -1488,7 +1502,8 @@ parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
           setFlag(&out->flags, AstFlag_IsBuiltin);
           if (optionalChar('('))
           {
-            out->builtin_name = requireIdentifier();
+            if (requireIdentifier())
+              out->builtin_name = lastString();
             requireChar(')');
           }
         }
@@ -1662,7 +1677,8 @@ parseUnion(Arena *arena, Token *uni_name)
     setFlag(&uni->flags, AstFlag_IsBuiltin);
     if (optionalChar('('))
     {
-      uni->builtin_name = requireIdentifier();
+      if (requireIdentifier())
+        uni->builtin_name = lastString();
       requireChar(')');
     }
   }

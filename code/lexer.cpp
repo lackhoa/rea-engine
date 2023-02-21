@@ -592,6 +592,12 @@ lastToken()
   return &TK->last_token;
 }
 
+inline String
+lastString()
+{
+  return TK->last_token.string;
+}
+
 inline i32
 toInt32(Token *token)
 {

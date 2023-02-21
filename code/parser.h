@@ -34,6 +34,7 @@ enum AstKind {
   Ast_UnionAst,
   Ast_GoalTransform,
   Ast_Invert,
+  Ast_AliasAst,
 };
 
 const u32 AstFlag_Generated = 1 << 0;
@@ -140,6 +141,12 @@ struct GoalTransform : Ast {
 struct Invert : Ast {
   Ast *pointer;
   Ast *body;
+};
+
+struct AliasAst : Ast {
+  String  name;
+  Ast    *value;
+  Ast    *body;
 };
 
 struct AccessorAst : Ast {

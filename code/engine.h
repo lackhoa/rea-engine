@@ -83,6 +83,10 @@ struct Scope {
   i32       depth;
   i32       param_count;
   Pointer **pointers;
+
+  i32      alias_count;
+  String  *alias_names;
+  Term   **alias_values;
 };
 
 const u32 ExpectError_Ambiguous = 1 << 0;  // NOTE: Maybe a better name would be "missing type info".
