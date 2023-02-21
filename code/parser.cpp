@@ -473,12 +473,27 @@ parseSequence(b32 require_braces=true)
         ast->body      = parseSequence(false);
         ast0 = ast;
       }
-      expect_sequence_to_end = true;
+      expect_sequence_to_end = true;  // NOTE: Hm, it's kinda cool that can take control of parsing the sequence.
     }
     else if (equal(tactic, "fork"))
     {
       ast0 = parseFork();
       expect_sequence_to_end = true;
+    }
+    else if (equal(tactic, "ex"))
+    {
+      if (Ast *evidence = parseExpression())
+      {
+        if (Ast *proposition = parseSequence(false))
+        {
+          CompositeAst *ast = newAst(arena, CompositeAst, token);
+          ast->op        = newAst(arena, Identifier, token);
+          ast->arg_count = 2;
+          pushItems(arena, ast->args, evidence, proposition);
+          ast0 = ast;
+          expect_sequence_to_end = true;
+        }
+      }
     }
     else if (equal(tactic, "seek"))
     {

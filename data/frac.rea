@@ -17,13 +17,13 @@ difference :: fn(a,b: Natp, p: b < a) -> exists(c: Natp) a = b+c
     ++ fork b
     { 1
       prove ++(a.p) = 1 + a.p {};
-      use ex {e=a.p};
+      ex a.p;
       ,
       ++
       norm p;
       recurse := difference(a.p,b.p,p);
       prove ++(a.p) = ++(b.p) + recurse.e {norm};
-      use ex {e=recurse.e}}}}
+      ex recurse.e}}}
 
 ;; TODO: since we don't have nested fixpoints, we gotta hoist the function out here.
 ltWellFounded_ :: (a: Natp) -> Reachable(<, a)
@@ -99,7 +99,7 @@ isGcdSwap :: (q,a,b: Natp, p: isGcd(q,a,b)) -> isGcd(q,b,a)
 
 dividesReflexive :: (q: Natp) -> divides(q,q)
 #hint
-{unfold; use ex {e=1}}
+{unfold; ex 1}
 
 dividesLe :: (a,b: Natp, p: divides(a, b)) -> a <= b
 { unfold p;
@@ -134,8 +134,7 @@ gcdHelper :: (a,q,r: Natp, p: divides(a, q*a + r)) -> divides(a, r)
   { => q*a + r = (q + d.e)*a;
     rewrite <- d.p};
 
-  use ex { e = d.e,
-           p use sumCancellation {a=q*a}}}
+  ex d.e {use sumCancellation {a=q*a}}}
 
 gcdMultiple :: (q,a: Natp, p: divides(q,a)) -> isGcd(q,q,a)
 { unfold;
@@ -148,12 +147,11 @@ gcd :: (a,b: Natp) -> exists(g: Natp) isGcd(g, a,b)
   fork qr
   { divideFail
     recurse := use gcd {a=b,b=a, #reduce {unfold}};
-    use ex {e=recurse.e};
+    ex recurse.e;
     ,
     divideEvenly
-    use ex
-    { e return a,
-      p use gcdMultiple
+    ex a
+    { use gcdMultiple
       { p
         unfold;
         use ex { e return qr.quotient }}};
@@ -211,10 +209,8 @@ reduce :: (x:Fracb) -> exists(y:Fracb) x == y /\ coprime(y.n, y.d)
   unfold as h g.p;
   unfold as p seek(divides(g.e, x.n));
   unfold as q seek(divides(g.e, x.d));
-  use ex
-  { e = p.e / q.e,
-    p
-    prove (x.n * q.e = x.d * p.e)
+  ex p.e / q.e
+  { prove (x.n * q.e = x.d * p.e)
     { => (p.e * g.e) * q.e = x.d * p.e;
       => (p.e * g.e) * q.e = (q.e * g.e) * p.e;
       => (p.e * g.e) * q.e = p.e * q.e * g.e;
@@ -234,10 +230,10 @@ reduce :: (x:Fracb) -> exists(y:Fracb) x == y /\ coprime(y.n, y.d)
 
         prove divides(r * g.e, x.n)
         { => exists(t: Natp) x.n = t * r * g.e;
-          use ex {e = rp.e}}
+          ex rp.e}
         prove divides(r * g.e, x.d)
         { => exists(t: Natp) x.d = t * r * g.e;
-          use ex {e = rq.e}}
+          ex rq.e}
 
         prove divides(r*g.e, g.e) {use h.b.b}
         prove divides(g.e, r*g.e) {unfold; use ex {e = r}}
