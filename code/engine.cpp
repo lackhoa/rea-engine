@@ -5390,7 +5390,9 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
           CompareTerms compare = compareTerms(arena, goal0, new_goal);
           if (compare.result == Trinary_True)
           {
-            reportError(in0, "new goal is exactly the same as current goal");
+            // NOTE: There used to be an error here, but we'll allow this for documentation.
+            recursed = true;
+            value = buildTerm(typer, in->body, goal0);
           }
           else if (compare.result == Trinary_False)
           {

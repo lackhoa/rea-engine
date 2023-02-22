@@ -9,7 +9,7 @@ cancelCommonFactor :: (a,b,r: Natp) -> (a*r)/(b*r) == a/b
 define divides(q,a: Natp) := exists(t: Natp), a = t*q;
 
 define coprime(a,b: Natp) :=
-(r: Natp, divides(r, a), divides(r, b)) -> r = 1;
+(r: Natp, da: divides(r, a), db: divides(r, b)) -> r = 1;
 
 difference :: fn(a,b: Natp, p: b < a) -> exists(c: Natp) a = b+c
 { fork a
@@ -55,7 +55,7 @@ QuotientRemainder :: union(^a, ^b: Natp)
 
 quotientRemainder :: fn(a,b: Natp) -> QuotientRemainder(a,b)
 #measure(a, ltWellFounded)
-{
+{ ;; NOTE think "a / b"
   order := totalOrder(a,b);
   fork order
   { eq
@@ -134,7 +134,7 @@ gcdHelper :: (a,q,r: Natp, p: divides(a, q*a + r)) -> divides(a, r)
   { => q*a + r = (q + d.e)*a;
     rewrite <- d.p};
 
-  ex d.e {use sumCancellation {a=q*a}}}
+  ex d.e {use sumCancel {a=q*a}}}
 
 gcdMultiple :: (q,a: Natp, p: divides(q,a)) -> isGcd(q,q,a)
 { unfold;
@@ -204,45 +204,148 @@ gcdUnique :: (a,b,q,q': Natp, hq: isGcd(q,a,b), hq': isGcd(q',a,b)) -> q=q'
   prove divides(q', q) {use hq.b.b}
   use dividesAntiSymmetric }
 
-reduce :: (x:Fracb) -> exists(y:Fracb) x == y /\ coprime(y.n, y.d)
-{ G := gcd(x.n, x.d); alias g G.e;
+FracReduce :: union {fracReduce(g,n,d: Natp)}
+
+reduce :: (a,b: Natp) -> exists(y:FracReduce) a = y.g*y.n /\ b = y.g*y.d /\ coprime(y.n, y.d)
+{ G := gcd(a, b); alias g G.e;
   unfold as h G.p;
-  unfold as p seek(divides(g, x.n));
-  unfold as q seek(divides(g, x.d));
-  ex p.e / q.e
-  { prove (x.n * q.e = x.d * p.e)
-    { => (p.e * g) * q.e = x.d * p.e;
+  unfold as p seek(divides(g, a));
+  unfold as q seek(divides(g, b));
+  ex fracReduce(g, p.e, q.e)
+  { prove (a * q.e = b * p.e)
+    { => (p.e * g) * q.e = b * p.e;
       => (p.e * g) * q.e = (q.e * g) * p.e;
       => (p.e * g) * q.e = p.e * q.e * g;
       => (p.e * g) * q.e = p.e * g * q.e; }
+
+    prove a = g * p.e {=> a = p.e * g}
+    prove b = g * q.e {=> b = q.e * g}
 
     prove coprime(p.e, q.e)
     { unfold;
       fn r, rp, rq
       { ;; if r > 1, then we have a conflict with g
         unfold rp; unfold rq;
-        prove { => x.n = rp.e * (r * g);
-                ;; => x.n = (rp.e * r) * g;
-                => x.n = p.e * g; } as numerDecompose;
-        prove { => x.d = rq.e * (r * g);
-                => x.d = (rq.e * r) * g;
-                => x.d = q.e * g; } as denomDecompose;
+        prove { => a = rp.e * (r * g);
+                => a = (rp.e * r) * g;
+                => a = p.e * g; } as numerDecompose;
+        prove { => b = rq.e * (r * g);
+                => b = (rq.e * r) * g;
+                => b = q.e * g; } as denomDecompose;
 
-        prove divides(r * g, x.n)
-        { => exists(t: Natp) x.n = t * r * g;
+        prove divides(r * g, a)
+        { => exists(t: Natp) a = t * r * g;
           ex rp.e}
-        prove divides(r * g, x.d)
-        { => exists(t: Natp) x.d = t * r * g;
+        prove divides(r * g, b)
+        { => exists(t: Natp) b = t * r * g;
           ex rq.e}
 
         prove divides(r*g, g) {use h.b.b}
         prove divides(g, r*g) {unfold; use ex {e = r}}
         prove g = r * g {use dividesAntiSymmetric}
-        use mulCancellation1 {b=g}}}}}
+        use mulCancel1 {b=g}}}}}
+
+coprimeFracImpossible ::
+(a,b,d,q,r:Natp, P: a*d=b*(q*a + r), P1: coprime(a,b), P2: r < a) -> False
+#measure(a, ltWellFounded)
+{ P3 := prove divides(a,b*r)
+  { prove { => a*d = (b*q)*a + b*r;
+            => a*d = b*q*a + b*r;
+            => a*d = b * (q*a + r);}
+    prove divides(a, (b*q)*a + b*r)
+    {unfold; ex d { => (b*q)*a + b*r = a*d;  ;; todo :cannot-solve-goal-simple-equality
+                    => a*d = a*d;}}
+    use gcdHelper { q=(b*q)}};
+
+  unfold P3; alias e P3.e;
+  P4 := reduce(r,e); alias r' P4.e.n; alias e' P4.e.d; alias g P4.e.g;
+  a_div_r := quotientRemainder(a,r');
+  r'_le_a := prove r'<a {use leLtChain {b=r, P => r' <= r; => r' <= g*r'; use leMul {}}};
+  fork a_div_r
+  { divideFail
+    use ltAntiReflexive2
+    { a=a, b=r,
+      p => a < r; use ltLeChain { b=r', Q => r' <= r; => r' <= g*r'; use leMul}},
+
+    divideEvenly alias x a_div_r.quotient;
+    prove x=1
+    { unfold P1;
+      prove divides(x,a) {unfold; ex r'; => x*r' = r'*x;}
+      prove divides(x,b)
+      { unfold;
+        ex e'
+        { => b = e'*x;
+          prove { => b*r = (e'*x)*r;
+                  => b*r = (e'*x)*g*r';
+                  => b*r = ((e'*x)*g)*r';
+                  => b*r = (g*e'*x)*r';
+                  => b*r = ((g*e')*x)*r';
+                  => b*r = (e*x)*r';
+                  => b*r = e*(x*r');
+                  => b*r = e*a;}
+          use mulCancelRight{c=r}}}
+      use P1 {}}
+    prove a=r' {=> a=1*r'; => a=x*r'}
+    prove r'<r' {=> r'<a; }
+    use ltAntiReflexive {a=r'}
+    ,
+
+    divideWithRemainder alias q' a_div_r.quotient; alias r1 a_div_r.remainder;
+    use coprimeFracImpossible
+    { a=r', b=e', d=b, q=q', r=r1,
+      P
+      => r'*b = e'*(q' * r' + r1);
+      prove { => g*r'*b = g*e'*(q' * r' + r1);
+              => (g*r')*b = g*e'*(q' * r' + r1);
+              => r*b = g*e'*(q' * r' + r1);
+              => r*b = (g*e')*(q' * r' + r1);
+              => r*b = e*(q' * r' + r1);
+              => r*b = e*a;
+              => b*r = e*a;}
+      use mulCancelLeft{c=g};,
+
+      #reduce = r'_le_a}}}
+
+coprimeFracEq :: (a,b,c,d: Natp, E: a*d=b*c, Cab: coprime(a,b), Ccd: coprime(c,d)) -> a=c /\ b=d
+#measure(a, ltWellFounded)
+{ c_div_a := quotientRemainder(c,a);
+  fork c_div_a
+  { divideFail
+    recurse := use coprimeFracEq
+    { a=c, b=d, c=a, d=b,
+      E => c*b = d*a => b*c = d*a => b*c = a*d => a*d = a*d,
+      #reduce};
+    use pair { a => a=c => a=a,
+               b => b=d => b=b,},
+
+    divideEvenly alias q c_div_a.quotient;
+    prove d = q * b
+    { => d = b * q;
+      prove { => d * a = (b * q) * a
+              => d * a = b * q * a
+              => a * d = b * q * a
+              => a * d = b * c}
+      use mulCancelRight {c=a}}
+    prove q=1
+    { unfold Ccd;
+      use Ccd { da => divides(q,c); unfold; ex a { => c=q*a},
+                db => divides(q,d); unfold; ex b { => d=q*b}};}
+    use pair
+    { a => a=c => a=q*a => a=1*a,
+      b => b=d => b=q*b => b=1*b}
+    , 
+
+    divideWithRemainder alias q c_div_a.quotient; alias r c_div_a.remainder;
+    prove False 
+    {use coprimeFracImpossible { P
+                                 => a*d = b*(q*a + r)
+                                 => a*d = b*c}}}}
+
+reduce :: (x:Fracb) -> exists(y:Fracb) x == y /\ coprime(y.n, y.d)
+{}
 
 elimCoprime :: (a,b,c: Natp, coprime(a,b), divides(a, b*c)) -> divides(a,c)
 {}
 
 reduceUnique :: (a,b: Frac) -> reduce(a) = reduce(b)
-{
-  }
+{}

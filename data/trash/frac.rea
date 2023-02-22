@@ -26,3 +26,47 @@ quotientRemainder :: fn(a,b: Natp) -> QuotientRemainder
   ,
   ++ fork b {1  return a.p,
              ++ return a.p - b.p}}}
+
+coprimeFracImpossible ::
+(a,b,d,q,r:Natp, P: a*d=b*(q*a + r), P1: coprime(a,b), P2: r < a) -> False
+{ P3 := prove divides(a,b*r)
+  { prove { => a*d = (b*q)*a + b*r;
+            => a*d = b*q*a + b*r;
+            => a*d = b * (q*a + r);}
+    prove divides(a, (b*q)*a + b*r)
+    {unfold; ex d { => (b*q)*a + b*r = a*d;  ;; todo :cannot-solve-goal-simple-equality
+                    => a*d = a*d;}}
+    use gcdHelper { q=(b*q)}};
+
+  unfold P3; alias e P3.e;
+  P4 := reduce(r/b); alias r' P4.e.n; alias e' P4.e.d;
+  a_div_r := quotientRemainder(a,r');
+  fork a_div_r
+  { divideFail use ltAntiReflexive2{a=a, b=r},
+
+    divideEvenly alias x a_div_r.quotient;
+    prove x=1
+    { unfold P1;
+      prove divides(x,a) {unfold; ex r; => x*r = r*x;}
+      prove divides(x,b)
+      { unfold;
+        ex e
+        { => b = e*x;
+          prove { => b*r = (e*x)*r;
+                  => b*r = e*x*r;
+                  => b*r = e*a;}
+          use mulCancel{c=r}}}
+      use P1 {}}
+    prove a=r {=> a=1*r; => a=x*r}
+    prove r<r {=> r<a}
+    use ltAntiReflexive {a=r}
+    ,
+
+    divideWithRemainder alias q' a_div_r.quotient; alias r1 a_div_r.remainder;
+    use coprimeFracImpossible
+    { a=r', b=e', d=b, q=q', r=r1,
+      P
+      => r'*b = e'*(q' * r' + r1)
+      }
+    , 
+    }}

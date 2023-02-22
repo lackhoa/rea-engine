@@ -142,6 +142,10 @@ ltChain :: (a,b,c: Natp, P: a < b, Q: b < c) -> a < c
                                    => a.p < c.p;
                                    use ltChain {b=b.p}}}}}
 
+ltAntiReflexive2 :: (a,b: Natp, p: a<b, q: b<a) -> False
+#hint
+{prove a<a {use ltChain {b=b}}; use ltAntiReflexive{a=a}}
+
 addIncreases :: (a,b: Natp) -> a < a+b
 #hint
 {
@@ -159,12 +163,12 @@ addDifferent :: (a,b: Natp, p: a+b = a) -> False
  return ltAntiReflexive(a, lem1);
  }
 
-sumCancellation :: (a,b,c: Natp, p: a + b = a + c) -> (b = c)
+sumCancel :: (a,b,c: Natp, p: a + b = a + c) -> (b = c)
 #norm(p)
 {
  fork a {
          1  return p,
-         ++ return sumCancellation(a.p,b,c, p)}
+         ++ return sumCancel(a.p,b,c, p)}
  }
 
 =? :: fn(a,b: Natp) -> Bool
@@ -188,7 +192,7 @@ eqSymmetric :: (a,b: Natp, p: a=?b = true) -> (b=?a = true)
   ++ fork b {1 return p,
              ++ return eqSymmetric(a.p, b.p, p)}}}
 
-sumCancellation :: (a,b,c: Natp, p: a+b =? a+c = true) -> (b =? c = true)
+sumCancel :: (a,b,c: Natp, p: a+b =? a+c = true) -> (b =? c = true)
 #norm(p)
 {
  fork a {
@@ -222,7 +226,7 @@ sumCancellation :: (a,b,c: Natp, p: a+b =? a+c = true) -> (b =? c = true)
                   => b.p + a.p =? c.p + a.p = true {addCommutative}
                   return lem1;
                   };
-           return sumCancellation(a.p,b.p,c.p, lem2)
+           return sumCancel(a.p,b.p,c.p, lem2)
            }}}
  }
 
@@ -297,6 +301,18 @@ mulDistributive :: (a,b,c: Natp) -> c*(a+b) = c*a+c*b
 le1 :: ($a: Natp, p: a <= 1) -> a=1
 {fork a {1, ++ norm p;}}
 
+leLemma :: (a,b: Natp, p: a <= b) -> a=b \/ a < b
+#hint
+{ fork a
+  { 1 fork b {1 use left, ++ use right}
+    ,
+    ++ fork b
+    { 1 norm p,
+      ++
+      norm p;
+      recurse := use leLemma {a=a.p, b=b.p, p=p};
+      norm recurse;}}}
+
 ltLemma :: (a,b: Natp, p: a < ++(b)) -> a=b \/ a < b
 { fork a
   { 1 fork b {1 use left, ++ use right}
@@ -349,12 +365,42 @@ mulPreservesLt :: (a,b,q: Natp, p: a < b) -> q*a < q*b
                                       use addPreservesLt}
     use ltChain {b = a + q.p * b}}}
 
-mulCancellation1 :: (a,b: Natp, p: b=a*b) -> a=1
+mulCancel1 :: (a,b: Natp, p: b=a*b) -> a=1
 #hint
 { fork a
   { 1,
     ++ norm p; prove b < b + a.p*b {}
     prove b < b {=> b < b + a.p * b}
     use ltAntiReflexive {a=b}}}
+
+mulCancelRight :: (a,b,c: Natp, P: a*c=b*c) -> a=b
+{ fork a
+  { 1  norm P; prove b=1 {use mulCancel1 {b=c}}; subst b;,
+    ++ norm P;
+    fork b
+    { 1  norm P; prove c < c {=> c < c + a.p*c}; use ltAntiReflexive{a=c},
+      ++ norm P; prove a.p * c = b.p * c {use sumCancel {a=c}}; use mulCancelRight {c=c}}}}
+
+mulCancelLeft :: (a,b,c: Natp, P: c*a=c*b) -> a=b
+{ prove { => a*c = b*c;
+          => c*a = b*c;
+          => c*a = c*b;}
+  use mulCancelRight{c=c}}
+
+leMul :: (a,b: Natp) -> a <= b*a
+#hint
+{ fork b { 1, ++ }}
+
+ltLeChain :: (a,b,c: Natp, P: a<b, Q: b<=c) -> a < c
+{ P1 := use leLemma{a=b, b=c};
+  fork P1
+  { auto => a < b,
+    auto use ltChain {b=b}}}
+
+leLtChain :: (a,b,c: Natp, P: a<=b, Q: b<c) -> a < c
+{ P1 := use leLemma{a=a, b=b};
+  fork P1
+  { auto => b < c,
+    auto use ltChain {b=b}}}
 
 algebra_declare Natp;
