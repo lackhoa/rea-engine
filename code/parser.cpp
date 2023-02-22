@@ -1488,7 +1488,7 @@ parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
         {
           setFlag(&out->function_flags, FunctionFlag_is_global_hint);
         }
-        else if (optionalDirective("no_expand"))  // todo: should this be "no_expand" instead?
+        else if (optionalDirective("no_expand"))
         {
           // todo: we can automatically infer this!
           setFlag(&out->function_flags, FunctionFlag_no_expand);

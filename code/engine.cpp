@@ -1435,13 +1435,14 @@ evaluate_(EvalContext *ctx, Term *in0)
       {
         Variable *in = castTerm(in0, Variable);
         i32 delta = in->delta - ctx->offset;
-        if (delta >= 0)
+        if (delta == 0)
         {
           assert(in->index < ctx->arg_count);
           out0 = ctx->args[in->index];
         }
         else
         {
+          assert(delta < 0);
           // copy so we can evaluate the type.
           Variable *out = copyTerm(arena, in);
           out->type = evaluate_(ctx, in0->type);
@@ -1507,8 +1508,6 @@ evaluate_(EvalContext *ctx, Term *in0)
         }
         else
         {
-          assert(ctx->offset);
-          castRecord(record0);
           Accessor *out = copyTerm(arena, in);
           out->type = evaluate_(ctx, in0->type);
           out->record = record0;

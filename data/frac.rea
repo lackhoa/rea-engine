@@ -27,8 +27,7 @@ difference :: fn(a,b: Natp, p: b < a) -> exists(c: Natp) a = b+c
 
 ;; TODO: since we don't have nested fixpoints, we gotta hoist the function out here.
 ltWellFounded_ :: (a: Natp) -> Reachable(<, a)
-{
-  use reachable
+{ use reachable
   { p
     fn b,p;
     fork a
@@ -341,8 +340,26 @@ coprimeFracEq :: (a,b,c,d: Natp, E: a*d=b*c, Cab: coprime(a,b), Ccd: coprime(c,d
                                  => a*d = b*(q*a + r)
                                  => a*d = b*c}}}}
 
-reduce :: (x:Fracb) -> exists(y:Fracb) x == y /\ coprime(y.n, y.d)
-{}
+reduce_ :: (x:Fracb) -> exists(y:Fracb) x == y /\ coprime(y.n, y.d)
+{ R := reduce(x.n,x.d); alias g R.e.g; alias n R.e.n; alias d R.e.d;
+  ex n / d
+  { use pair
+    { a
+      => x.n * d = x.d * n
+      => x.n * d = (g*d) * n
+      => (g*n)*d = (g*d)*n
+      => g*n*d = (g*d)*n
+      => g*d*n = (g*d)*n
+      => (g*d)*n = (g*d)*n}}}
+
+reduce :: (x:Fracb) -> Fracb { return reduce_(x).e;}
+
+#debug
+reduceUnique :: (x,y: Fracb) -> reduce(x) = reduce(y)
+{ => reduce_(x).e = reduce_(y).e
+  ;; then we can reason about what "reduce_(x).e" is
+  }
+#debug off
 
 elimCoprime :: (a,b,c: Natp, coprime(a,b), divides(a, b*c)) -> divides(a,c)
 {}
