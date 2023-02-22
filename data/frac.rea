@@ -222,7 +222,7 @@ reduce :: (x:Fracb) -> exists(y:Fracb) x == y /\ coprime(y.n, y.d)
       { ;; if r > 1, then we have a conflict with g
         unfold rp; unfold rq;
         prove { => x.n = rp.e * (r * g);
-                => x.n = (rp.e * r) * g;
+                ;; => x.n = (rp.e * r) * g;
                 => x.n = p.e * g; } as numerDecompose;
         prove { => x.d = rq.e * (r * g);
                 => x.d = (rq.e * r) * g;
@@ -245,5 +245,4 @@ elimCoprime :: (a,b,c: Natp, coprime(a,b), divides(a, b*c)) -> divides(a,c)
 
 reduceUnique :: (a,b: Frac) -> reduce(a) = reduce(b)
 {
-  
   }

@@ -84,9 +84,9 @@ struct Scope {
   i32       param_count;
   Pointer **pointers;
 
-  i32      alias_count;
-  String  *alias_names;
-  Term   **alias_values;
+  i32       alias_count;
+  String   *alias_names;
+  Pointer **alias_values;
 };
 
 const u32 ExpectError_Ambiguous = 1 << 0;  // NOTE: Maybe a better name would be "missing type info".
@@ -209,6 +209,7 @@ struct Pointer : Term {
   Record *ref;
   b32     is_stack_pointer;
   b32     hidden;  // todo #flag
+  String  alias;
   union {
     StackPointer stack;
     HeapPointer  heap;

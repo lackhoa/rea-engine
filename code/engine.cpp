@@ -968,30 +968,34 @@ printStackPointerName(Arena *buffer, StackPointer *in)
 internal void
 printPointerName(StringBuffer *buffer, Pointer *in)
 {
-  const i32 max_path_length = 32;  // todo #grow
-  String rev_field_names[max_path_length];
-  i32 path_length = 0;
-  Pointer *iter = in;
-  for (b32 stop = false; !stop;)
+  if (in->alias) print(buffer, in->alias);
+  else
   {
-    if (iter->is_stack_pointer)
+    const i32 max_path_length = 32;  // todo #grow
+    String rev_field_names[max_path_length];
+    i32 path_length = 0;
+    Pointer *iter = in;
+    for (b32 stop = false; !stop;)
     {
-      printStackPointerName(buffer, &iter->stack);
-      stop = true;
+      if (iter->is_stack_pointer)
+      {
+        printStackPointerName(buffer, &iter->stack);
+        stop = true;
+      }
+      else
+      {
+        HeapPointer *heap = &iter->heap;
+        rev_field_names[path_length++] = heap->debug_field_name;
+        assert(path_length < max_path_length);
+        iter = heap->record;
+      }
     }
-    else
-    {
-      HeapPointer *heap = &iter->heap;
-      rev_field_names[path_length++] = heap->debug_field_name;
-      assert(path_length < max_path_length);
-      iter = heap->record;
-    }
-  }
 
-  for (i32 path_i = path_length-1; path_i >= 0; path_i--)
-  {
-    print(buffer, ".");
-    print(buffer, rev_field_names[path_i]);
+    for (i32 path_i = path_length-1; path_i >= 0; path_i--)
+    {
+      print(buffer, ".");
+      print(buffer, rev_field_names[path_i]);
+    }
   }
 }
 
@@ -4998,8 +5002,10 @@ buildNameOnlyArrowType(Typer *typer, ArrowAst *in, Term *goal0)
 }
 
 internal void
-addAlias(Typer *typer, String name, Term *value)
+addAlias(Typer *typer, String alias, Pointer *value)
 {
+  value->alias = alias;
+
   i32 cap = 8;  // todo #grow
   Arena *arena = temp_arena;
   Scope *scope = typer->scope;
@@ -5010,7 +5016,7 @@ addAlias(Typer *typer, String name, Term *value)
   }
   i32 alias_i = scope->alias_count++;
   assert(alias_i < cap);
-  scope->alias_names[alias_i]  = name;
+  scope->alias_names[alias_i]  = alias;
   scope->alias_values[alias_i] = value;
 }
 
@@ -5694,11 +5700,16 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
     case Ast_AliasAst:
     {
       AliasAst *in = (AliasAst *)in0;
-      if (Term *val = buildTerm(typer, in->value, hole))  // NOTE: careful with shadowing
+      if (Term *pointer0 = buildTerm(typer, in->value, hole))  // NOTE: careful with shadowing
       {
-        addAlias(typer, in->name, val);
-        recursed = true;
-        value = buildTerm(typer, in->body, goal0);
+        if (Pointer *pointer = castTerm(pointer0, Pointer))
+        {
+          addAlias(typer, in->name, pointer);
+          recursed = true;
+          value = buildTerm(typer, in->body, goal0);
+        }
+        else
+          reportError(in, "can only alias to pointers");
       }
     } break;
 
