@@ -45,11 +45,9 @@ testLocalVar1 :: fn (x: Nat) -> Nat
  return a + x}
 
 testLocalVar2 :: fn (x: Nat) -> Nat
-{
- a := 3;
- b := 2;
- return a + x + b
- }
+{ a := 3;
+  b := 2;
+  return a + x + b}
 
 testComplexFork :: fn (a, b: Nat) -> Nat
 {apb := a+b;
@@ -131,9 +129,10 @@ mulPosv2 :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
 
 testExecutionModel :: (a,b: Nat) -> (x: Nat) -> Nat
 {
- return(fn(x: Nat) -> Nat {fy := fn(y: Nat) -> Nat {return a+b+x+y;};
-                           return fy(a)})
+  return(fn(x: Nat) -> Nat { fy := fn(y: Nat) -> Nat {return a+b+x+y;};
+                             return fy(a)})
  }
+print testExecutionModel(1,2);
 check_truth testExecutionModel(1,2)(1) = 5;
 
 oneIsNotZero : 1 != 0 := prove {norm; return fn {seek}};
@@ -247,8 +246,8 @@ Vector :: union(n: Nat)
 { nil() -> Vector(0),
   cons(n: Nat, head: Nat, tail: Vector(n)) -> Vector(++(n)) }
 
-check let n=0 {return cons(n, 2, nil())}: Vector(1);
-print let n=0 {return cons(++(n), 1, cons(n, 2, nil()))};
+check prove Vector(1) {n := 0; return cons(n, 2, nil())};
+print prove {n := 0; return cons(++(n), 1, cons(n, 2, nil()))};
 
 ;; ---------------------------
 ;; The Manhattan algebra test!

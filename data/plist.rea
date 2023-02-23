@@ -14,71 +14,61 @@ PList :: union(^ListType: Type) #builtin
 
 concatAssoc :: ($A: Type, l,m,n: PList(A)) -> (l+m)+n = l+m+n
 #hint
-{
- fork l
- {
-  single ,
-  cons
-  => [l.head .. l.tail + m + n] = [l.head .. l.tail + m + n] {concatAssoc}
-  }
- }
+{ fork l
+  { single ,
+    cons
+    => [l.head .. l.tail + m + n] = [l.head .. l.tail + m + n] {concatAssoc}}}
 
 ;; permute
 ;; permute
 ;; permute
 
 Permute :: union(^$T: Type, PList(T), PList(T)) #builtin
-{
- permuteSingle(a: T) -> Permute(single(a), single(a))
- ,
- permutePair(a,b: T) -> Permute([a,b], [b,a])
- ,
- permuteSkip(a: T, l,m: PList(T), p: Permute(l, m)) -> Permute(a cons l, a cons m)
- ,
- permuteSwap(a,b: T, l: PList(T)) -> Permute([a,b .. l], [b,a .. l])
- ,
- permuteChain(l,chain,m: PList(T), p1: Permute(l, chain), p2: Permute(chain, m)) -> Permute(l, m)
- }
+{ permuteSingle(a: T) -> Permute(single(a), single(a))
+  ,
+  permutePair(a,b: T) -> Permute([a,b], [b,a])
+  ,
+  permuteSkip(a: T, l,m: PList(T), p: Permute(l, m)) -> Permute(a cons l, a cons m)
+  ,
+  permuteSwap(a,b: T, l: PList(T)) -> Permute([a,b .. l], [b,a .. l])
+  ,
+  permuteChain(l,chain,m: PList(T), p1: Permute(l, chain), p2: Permute(chain, m)) -> Permute(l, m)}
 
 permuteSame :: (A: Type, l: PList(A)) -> Permute(l, l)
 #hint #builtin
-{
- fork l
- {
-  single use permuteSingle,
-  cons
-  prove Permute(l.tail, l.tail) {use permuteSame};
-  use permuteSkip,
-  }
- }
+{ fork l
+  { single use permuteSingle,
+    cons
+    prove Permute(l.tail, l.tail) {use permuteSame};
+    use permuteSkip,}}
 
 ;; todo: rename to "permuteCommutative", since we already have "swap"
 permuteSwap :: ($A: Type, l,m: PList(A), p: l Permute m) -> Permute(m, l)
 #hint
 {
  fork p
- {
-  permuteSingle invert p; subst l, m;
-  ,
-  permutePair invert p; subst l,m; use permutePair;
-  ,
-  permuteSkip invert p; subst l, m;
-  prove (p.m Permute p.l) {use permuteSwap}
-  use permuteSkip;
-  ,
-  permuteSwap invert p; subst l, m; use permuteSwap;
-  ,
-  permuteChain invert p; subst l, m;
+  {
+    permuteSingle invert p; subst l, m;
+    ,
+    permutePair invert p; subst l,m; use permutePair;
+    ,
+    permuteSkip invert p; subst l, m;
+    prove (p.m Permute p.l) {use permuteSwap}
+    use permuteSkip;
+    ,
+    permuteSwap invert p; subst l, m; use permuteSwap;
+    ,
+    permuteChain invert p; subst l, m;
 
-  ;; NOTE this should be illegal!
-  ;; prove p.l Permute p.m {rewrite <- l=p.l; rewrite <- m=p.m}
-  ;; return permuteSwap(p.l, p.m, seek(p.l Permute p.m));
-  ;; permuteSwap(p.chain, p.m, p.p2)
+    ;; NOTE this should be illegal!
+    ;; prove p.l Permute p.m {rewrite <- l=p.l; rewrite <- m=p.m}
+    ;; return permuteSwap(p.l, p.m, seek(p.l Permute p.m));
+    ;; permuteSwap(p.chain, p.m, p.p2)
 
-  prove p.m Permute p.chain {use permuteSwap}
-  prove p.chain Permute p.l {use permuteSwap}
-  use permuteChain {chain=p.chain};
-  }
+    prove p.m Permute p.chain {use permuteSwap}
+    prove p.chain Permute p.l {use permuteSwap}
+    use permuteChain {chain=p.chain};
+    }
  }
 
 permuteConsSwap :: (A: Type, a: A, l: PList(A)) -> [a .. l] Permute l+[a]

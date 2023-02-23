@@ -332,12 +332,15 @@ struct Fork : Term {
 };
 
 struct Let : Term {
-  String  lhs;
-  Term   *rhs;
-  Term   *body;
+  i32      asset_count;
+  String  *names;
+  Term   **assets;
+  Term    *body;
 };
 
 struct SolveArgs {i32 arg_count; Term **args;};
+
+inline Term ** toTerms(Pointer **pointers) {return (Term**)pointers;}
 
 #define MAX_SOLVE_DEPTH 3
 struct Solver {
@@ -403,12 +406,17 @@ struct AbstractContext {
   i32    zero_depth;
 };
 
+struct EvalStack {
+  i32         arg_count;
+  Term      **args;
+  EvalStack  *outer;
+};
+
 struct EvalContext {
-  Term **args;
-  i32    arg_count;
-  i32    offset;
-  b32    substitute_only;
-  String unfold_name;
+  EvalStack *stack;
+  i32        offset;
+  b32        substitute_only;
+  String     unfold_name;
   operator EvalContext*() {return this;};
 };
 

@@ -61,26 +61,27 @@ quotientRemainder :: fn(a,b: Natp) -> Natp
     lt return 1  ;; fail
     ,
     gt
-    let diff=difference(a,b)
-    { recurse := use quotientRemainder
-      { a=diff, b=b,
-        #reduce { diff' := difference'(a,b, order.p);
-                  rewrite diff';
-                  prove diff < b + diff {=> diff < diff + b; use addIncreases}}};
+    diff := difference(a,b);
+    recurse := use quotientRemainder
+    { a=diff, b=b,
+      #reduce { diff' := difference'(a,b, order.p);
+                rewrite diff';
+                prove diff < b + diff {=> diff < diff + b; use addIncreases}}};
 
-      fork recurse
-      { divideFail
-        use divideWithRemainder {quotient=1, remainder=diff.e};
-        ,
-        divideEvenly
-        prove a = b + recurse.quotient * b {rewrite <- recurse.p}
-        use divideEvenly {quotient = ++(recurse.quotient)};
-        ,
-        divideWithRemainder
-        prove a = (b + recurse.quotient * b) + recurse.remainder
-        { => a = b + recurse.quotient * b + recurse.remainder;
-          rewrite <- recurse.p;}
-        use divideWithRemainder {quotient = ++(recurse.quotient), remainder = recurse.remainder}}}}}
+    ;; fork recurse
+    ;; { divideFail
+    ;;   use divideWithRemainder {quotient=1, remainder=diff.e};
+    ;;   ,
+    ;;   divideEvenly
+    ;;   prove a = b + recurse.quotient * b {rewrite <- recurse.p}
+    ;;   use divideEvenly {quotient = ++(recurse.quotient)};
+    ;;   ,
+    ;;   divideWithRemainder
+    ;;   prove a = (b + recurse.quotient * b) + recurse.remainder
+    ;;   { => a = b + recurse.quotient * b + recurse.remainder;
+    ;;     rewrite <- recurse.p;}
+    ;;   use divideWithRemainder {quotient = ++(recurse.quotient), remainder = recurse.remainder}}
+    }}
 
 quotientRemainder' :: fn(a,b: Natp) -> QuotientRemainder(a,b)
 #measure(a, ltWellFounded)

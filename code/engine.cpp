@@ -1164,9 +1164,9 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
             skip_print_type = true;
           }
           newlineAndIndent(buffer, opt.indentation);
-          print(buffer, "{");
+          print(buffer, "{ return ");
           print(buffer, in->body, new_opt);
-          print(buffer, "}");
+          print(buffer, " }");
         } break;
 
         case Term_Arrow:
@@ -1269,10 +1269,14 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
         {
           Let *in = (Let *)in0;
           print(buffer, "let ");
-          print(buffer, in->lhs);
-          print(buffer, "=");
-          print(buffer, in->rhs);
-          print(buffer, " {");
+          for (i32 i=0; i < in->asset_count; i++)
+          {
+            if (i) print(buffer, ", ");
+            print(buffer, in->names[i]);
+            print(buffer, "=");
+            print(buffer, in->assets[i]);
+          }
+          print(buffer, " { ");
           print(buffer, in->body);
           print(buffer, " }");
         } break;
@@ -1461,6 +1465,9 @@ evaluate_(EvalContext *ctx, Term *in0)
     DEBUG_INDENT(); DUMP("evaluate(", serial, "): ", in0);
   }
 
+  if (serial == 147909)
+    breakhere;
+
   if (isGlobalValue(in0))
   {
     out0 = in0;
@@ -1473,14 +1480,18 @@ evaluate_(EvalContext *ctx, Term *in0)
       {
         Variable *in = castTerm(in0, Variable);
         i32 delta = in->delta - ctx->offset;
-        if (delta == 0)
+        if (delta >= 0)
         {
-          assert(in->index < ctx->arg_count);
-          out0 = ctx->args[in->index];
+          EvalStack *stack = ctx->stack;
+          for (i32 i=0; i < delta; i++)
+          {
+            stack = stack->outer;
+          }
+          assert(in->index < stack->arg_count);
+          out0 = stack->args[in->index];
         }
         else
         {
-          assert(delta < 0);
           // copy so we can evaluate the type.
           Variable *out = copyTerm(arena, in);
           out->type = evaluate_(ctx, in0->type);
@@ -1571,7 +1582,7 @@ evaluate_(EvalContext *ctx, Term *in0)
 
         EvalContext new_ctx = *ctx;
         new_ctx.offset++;
-        new_ctx.substitute_only = true;
+        new_ctx.substitute_only = true;  // todo probably don't need this?
         out->body = evaluate_(&new_ctx, in->body);
         assert(out->body);
 
@@ -1612,6 +1623,42 @@ evaluate_(EvalContext *ctx, Term *in0)
         out0 = out;
       } break;
 
+      case Term_Let:
+      {
+        Let *in = (Let *)in0;
+        i32 asset_count = in->asset_count;
+        if (ctx->offset == 0)
+        {
+          EvalStack *stack = pushStruct(arena, EvalStack);
+          stack->arg_count = asset_count;
+          stack->outer     = ctx->stack;
+          allocateArray(arena, asset_count, stack->args);
+          for (i32 i=0; i < asset_count; i++)
+          {
+            stack->args[i] = evaluate_(ctx, in->assets[i]);
+          }
+
+          ctx->stack = stack;
+          out0 = evaluate_(ctx, in->body);
+          ctx->stack = ctx->stack->outer;
+        }
+        else
+        {
+          Let *out = copyTerm(arena, in);
+          allocateArray(arena, asset_count, out->assets);
+          for (i32 i=0; i < asset_count; i++)
+          {
+            out->assets[i] = evaluate_(ctx, in->assets[i]);
+          }
+
+          ctx->offset++;
+          out->body = evaluate_(ctx, in->body);
+          ctx->offset--;
+
+          out0 = out;
+        }
+      } break;
+
       case Term_Pointer:
       {
         out0 = in0;
@@ -1644,23 +1691,25 @@ evaluate_(EvalContext *ctx, Term *in0)
 inline Term *
 toValue(Scope *scope, Term *in0)
 {
-  EvalContext ctx = {.arg_count = scope->param_count,
-                     .args=(Term **)scope->pointers,
-                     .substitute_only=true};
+  EvalStack stack = {.arg_count = scope->param_count,
+                     .args=(Term **)scope->pointers,};
+  EvalContext ctx = {.stack=&stack, .substitute_only=true};
   return evaluate_(&ctx, in0);
 }
 
 inline Term *
 substitute(Term *in0, i32 arg_count, Term **args)
 {
-  EvalContext ctx = {.arg_count=arg_count, .args=args, .substitute_only=true};
+  EvalStack stack = {.arg_count=arg_count, .args=args,};
+  EvalContext ctx = {.stack=&stack, .substitute_only=true};
   return evaluate_(&ctx, in0);
 }
 
 inline Term *
 evaluate(Term *in0, i32 arg_count, Term **args, String unfold_name={})
 {
-  EvalContext ctx = {.arg_count=arg_count, .args=args, .unfold_name=unfold_name};
+  EvalStack stack = {.arg_count=arg_count, .args=args,};
+  EvalContext ctx = {.stack=&stack, .unfold_name=unfold_name};
   return evaluate_(&ctx, in0);
 }
 
@@ -2206,6 +2255,23 @@ toAbstractTerm_(AbstractContext *ctx, Term *in0)
         out0 = out;
       } break;
 
+      case Term_Let:
+      {
+        Let *in = (Let *)in0;
+        Let *out = copyTerm(arena, in);
+        allocateArray(arena, in->asset_count, out->assets);
+        for (i32 i=0; i < in->asset_count; i++)
+        {
+          out->assets[i] = toAbstractTerm_(ctx, in->assets[i]);
+        }
+
+        ctx->zero_depth++;
+        out->body = toAbstractTerm_(ctx, in->body);
+        ctx->zero_depth--;
+
+        out0 = out;
+      } break;
+
       case Term_Primitive:
       {
         Primitive *in = (Primitive *)in0;
@@ -2298,6 +2364,9 @@ normalize_(NormContext *ctx, Term *in0)
   {
     DEBUG_INDENT(); DUMP("normalize(", serial, "): ", in0);
   }
+
+  if (serial == 147869)
+    DEBUG_LOG_evaluate = 1;
 
   if (!isGlobalValue(in0))
   {
@@ -2396,16 +2465,32 @@ normalize_(NormContext *ctx, Term *in0)
         }
       } break;
 
+      case Term_Let:
+      {
+        Let *in = castTerm(in0, Let);
+        Term **args = pushArray(arena, in->asset_count, Term *);
+        i32 asset_count = in->asset_count;
+        for (i32 i=0; i < asset_count; i++)
+        {
+          args[i] = normalize_(ctx, in->assets[i]);
+        }
+        out0 = evaluate(in->body, asset_count, args);
+      } break;
+
       case Term_Variable:
       case Term_Fork:
       case Term_Hole:
       {invalidCodePath;} break;
 
+      case Term_Pointer:
       case Term_Constructor:
       case Term_Primitive:
       case Term_Function:
       case Term_Computation:
       {} break;
+
+      default:
+        invalidCodePath;
     }
   }
 
@@ -2755,7 +2840,7 @@ apply(Term *op, i32 arg_count, Term **args, String unfold_name)
     {
       should_apply_function = false;  // NOTE: not strictly needed
     }
-    if (checkFlag(fun->function_flags, FunctionFlag_no_expand))
+    else if (checkFlag(fun->function_flags, FunctionFlag_no_expand))
     {
       should_apply_function = (unfold_name.chars &&
                                (unfold_name.chars == Unfold_Everything.chars ||
@@ -4317,16 +4402,30 @@ copyToGlobalArena(Term *in0)
 
       case Term_Computation:
       {
-        Computation *in = castTerm(in0, Computation);
+        Computation *in = (Computation *)(in0);
         Computation *out = copyTerm(arena, in);
         out0 = out;
       } break;
 
       case Term_Accessor:
       {
-        Accessor *in = castTerm(in0, Accessor);
+        Accessor *in = (Accessor *)(in0);
         Accessor *out = copyTerm(arena, in);
         out->record = copyToGlobalArena(in->record);
+        out0 = out;
+      } break;
+
+      case Term_Let:
+      {
+        Let *in  = (Let *)in0;
+        Let *out = copyTerm(arena, in);
+        out->names  = copyArray(arena, in->asset_count, in->names);
+        allocateArray(arena, in->asset_count, out->assets);
+        for (i32 i=0; i < in->asset_count; i++)
+        {
+          out->assets[i] = copyToGlobalArena(in->assets[i]);
+        }
+        out->body = copyToGlobalArena(in->body);
         out0 = out;
       } break;
 
@@ -4441,40 +4540,51 @@ buildFunctionGivenSignature(Typer *typer0, Arrow *signature, Ast *in_body,
 }
 
 inline Term *
-buildWithNewAssets(Typer *typer, i32 asset_count, String *names, Term **assets, Ast *body, Term *goal)
+buildWithNewAssets(Typer *typer, i32 asset_count, String *names, Term **assets,
+                   Ast *in_body, Term *goal)
 {
-  Term *out = 0;
+  Term *out0 = 0;
   if (asset_count)
   {
     Arena *arena = temp_arena;
-    Arrow *signature = newTerm(arena, Arrow, rea.Type);
-    signature->param_count = asset_count;
-    allocateArray(arena, asset_count, signature->param_names);
-    allocateArray(arena, asset_count, signature->param_types);
-    allocateArray(arena, asset_count, signature->param_flags, true);
 
-    signature->param_names = names;
-    if (!names)
+    extendBindings(typer);
+    if (names)
     {
-      allocateArray(arena, asset_count, signature->param_names, true);
+      for (i32 i=0; i < asset_count; i++)
+      {
+        addLocalBinding(typer, names[i], i);
+      }
     }
 
+    if (!names) names = allocateArray(arena, asset_count, names, true);
+    Scope *scope = typer->scope = newScope(typer->scope, asset_count);
+    Pointer **pointers = pushArray(arena, asset_count, Pointer*);
+    i32 new_depth = getScopeDepth(scope);
     for (i32 i=0; i < asset_count; i++)
     {
-      signature->param_types[i] = assets[i]->type;
+      // NOTE: we pointer-ize everything, even if it's already a pointer (idk if it's a good idea)
+      pointers[i] = newLetPointer(names[i] , new_depth, i, assets[i]);
     }
-    signature->output_type = goal;
+    scope->pointers = pointers;
 
-    if (Function *fun = buildFunctionGivenSignature(typer, signature, body))
+    if (Term *body = buildTerm(typer, in_body, goal))
     {
-      out = newComposite(fun, asset_count, assets);
+      Let *out = newTerm(arena, Let, body->type);
+      out->names       = names;
+      out->asset_count = asset_count;
+      out->assets      = assets;
+      out->body        = body;
+      out0 = out;
     }
+
+    unwindBindingsAndScope(typer);
   }
   else
   {
-    out = buildTerm(typer, body, goal);
+    out0 = buildTerm(typer, in_body, goal);
   }
-  return out;
+  return out0;
 }
 
 inline Term *
@@ -5783,30 +5893,6 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
           reportError(in, "can only alias to pointers");
       }
     } break;
-
-    case Ast_NewLetAst:
-    {
-      NewLetAst *in = (NewLetAst *)in0;
-      if (Term *rhs = buildTerm(typer, in->rhs, hole))
-      {
-        Scope *scope = typer->scope = newScope(typer->scope, 1);
-        Pointer *pointer = newLetPointer(in->lhs, scope->depth, 0, rhs);
-        scope->pointers[0] = pointer;
-        extendBindings(typer);
-        addLocalBinding(typer, in->lhs, 0);
-        if (Term *body = buildTerm(typer, in->body, goal0))
-        {
-          Let *out = newTerm(arena, Let, body->type);
-          out->lhs  = in->lhs;
-          out->rhs  = rhs;
-          out->body = body;
-          value = out;
-        }
-        unwindBindingsAndScope(typer);
-      }
-    } break;
-
-    invalidDefaultCase;
   }
 
   if (noError())
@@ -5909,7 +5995,7 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
       // typecheck what we have.
       if (in->case_count > uni->ctor_count)
       {
-        reportError("fork provides more cases than expected!");
+        reportError(in, "fork provides more cases than expected! (expected %d)", uni->ctor_count);
       }
 
       for (i32 input_case_i = 0;
@@ -6441,7 +6527,9 @@ interpretTopLevel(EngineState *state)
               if (!equal(lhs, rhs))
               {
                 tokenError(token, "equality cannot be proven by computation");
+                DEBUG_LOG_normalize = 1;
                 Term *lhs = normalize(eq->args[1]);
+                DEBUG_LOG_normalize = 0;
                 attach("lhs", lhs);
                 attach("rhs", rhs);
               }
