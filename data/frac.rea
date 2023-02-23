@@ -11,19 +11,18 @@ define divides(q,a: Natp) := exists(t: Natp), a = t*q;
 define coprime(a,b: Natp) :=
 (r: Natp, da: divides(r, a), db: divides(r, b)) -> r = 1;
 
-difference :: fn(a,b: Natp, p: b < a) -> exists(c: Natp) a = b+c
+difference :: fn(a,b: Natp) -> Natp
+{ fork a
+  { 1  = 1, ;; invalid
+    ++ fork b
+    { 1 = a.p,
+      ++ = difference(a.p,b.p);}}}
+
+difference' :: fn(a,b: Natp, p: b < a) -> a = b+difference(a,b)
 { fork a
   { 1  unfold p; unfold p,
     ++ fork b
-    { 1
-      prove ++(a.p) = 1 + a.p {};
-      ex a.p;
-      ,
-      ++
-      norm p;
-      recurse := difference(a.p,b.p,p);
-      prove ++(a.p) = ++(b.p) + recurse.e {norm};
-      ex recurse.e}}}
+    { 1, ++ norm; recurse := difference'(a.p,b.p,p);}}}
 
 ;; TODO: since we don't have nested fixpoints, we gotta hoist the function out here.
 ltWellFounded_ :: (a: Natp) -> Reachable(<, a)
@@ -45,14 +44,45 @@ ltWellFounded_ :: (a: Natp) -> Reachable(<, a)
 
 ltWellFounded : WellFounded(Natp, <) := prove {norm; return ltWellFounded_};
 
-QuotientRemainder :: union(^a, ^b: Natp)
-{ divideFail(p: a<b),
-  divideEvenly(quotient: Natp, p: a = quotient*b),
-  divideWithRemainder(quotient: Natp, remainder: Natp,
-                       p: a = quotient*b + remainder,
-                       q: remainder < b) }
+;; QuotientRemainder :: union(^a,^b: Natp)
+;; { divideFail(p: a<b),
+;;   divideEvenly(quotient: Natp, p: a = quotient*b),
+;;   divideWithRemainder(quotient: Natp, remainder: Natp,
+;;                        p: a = quotient*b + remainder,
+;;                        q: remainder < b) }
 
-quotientRemainder :: fn(a,b: Natp) -> QuotientRemainder(a,b)
+quotientRemainder :: fn(a,b: Natp) -> Natp
+#measure(a, ltWellFounded)
+{ ;; NOTE think "a / b"
+  order := totalOrder(a,b);
+  fork order
+  { eq return 1
+    ,
+    lt return 1  ;; fail
+    ,
+    gt
+    let diff=difference(a,b)
+    { recurse := use quotientRemainder
+      { a=diff, b=b,
+        #reduce { diff' := difference'(a,b, order.p);
+                  rewrite diff';
+                  prove diff < b + diff {=> diff < diff + b; use addIncreases}}};
+
+      fork recurse
+      { divideFail
+        use divideWithRemainder {quotient=1, remainder=diff.e};
+        ,
+        divideEvenly
+        prove a = b + recurse.quotient * b {rewrite <- recurse.p}
+        use divideEvenly {quotient = ++(recurse.quotient)};
+        ,
+        divideWithRemainder
+        prove a = (b + recurse.quotient * b) + recurse.remainder
+        { => a = b + recurse.quotient * b + recurse.remainder;
+          rewrite <- recurse.p;}
+        use divideWithRemainder {quotient = ++(recurse.quotient), remainder = recurse.remainder}}}}}
+
+quotientRemainder' :: fn(a,b: Natp) -> QuotientRemainder(a,b)
 #measure(a, ltWellFounded)
 { ;; NOTE think "a / b"
   order := totalOrder(a,b);

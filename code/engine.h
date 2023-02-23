@@ -43,6 +43,7 @@ enum TermKind {
   Term_Composite,
   Term_Arrow,
   Term_Rewrite,
+  Term_Let,
 };
 
 struct ParseExpressionOptions {
@@ -158,7 +159,7 @@ struct LocalBinding
 {
   i32           hash;
   String        key;
-  i32           var_id;
+  i32           var_index;
   LocalBinding *tail;
 };
 
@@ -169,8 +170,7 @@ struct LookupLocalName {
   operator bool() {return found;}
 };
 
-struct LocalBindings
-{
+struct LocalBindings {
   Arena   *arena;
   LocalBinding   table[128];
   LocalBindings *tail;
@@ -197,6 +197,7 @@ struct StackPointer {
   String name;
   i32    depth;
   i32    index;
+  Term  *value;
 };
 
 struct HeapPointer {
@@ -205,11 +206,13 @@ struct HeapPointer {
   String   debug_field_name;
 };
 
+enum PointerKind {Pointer_Stack, Pointer_Heap};
+
 struct Pointer : Term {
-  Record *ref;
-  b32     is_stack_pointer;
-  b32     hidden;  // todo #flag
-  String  alias;
+  Record      *ref;
+  PointerKind  pointer_kind;
+  b32          hidden;          // todo #flag
+  String       alias;
   union {
     StackPointer stack;
     HeapPointer  heap;
@@ -326,6 +329,12 @@ struct Fork : Term {
   Term   *subject;
   i32     case_count;
   Term  **cases;
+};
+
+struct Let : Term {
+  String  lhs;
+  Term   *rhs;
+  Term   *body;
 };
 
 struct SolveArgs {i32 arg_count; Term **args;};

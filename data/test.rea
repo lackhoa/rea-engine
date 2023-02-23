@@ -243,6 +243,13 @@ testSubstFinal :: (x,y,z,w: Bool, p: Foo(x,z), p: x=y, q: y=z, r: x=w) -> Foo(y,
 
 check_truth [true, false] = true cons single(false);
 
+Vector :: union(n: Nat)
+{ nil() -> Vector(0),
+  cons(n: Nat, head: Nat, tail: Vector(n)) -> Vector(++(n)) }
+
+check let n=0 {return cons(n, 2, nil())}: Vector(1);
+print let n=0 {return cons(++(n), 1, cons(n, 2, nil()))};
+
 ;; ---------------------------
 ;; The Manhattan algebra test!
 ;; ---------------------------

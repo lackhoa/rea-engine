@@ -36,6 +36,16 @@ maybeDeref(Term **in0)
   {
     *in0 = record;
   }
+  else if (Pointer *in = castTerm(*in0, Pointer))
+  {
+    if (in->pointer_kind == Pointer_Stack)
+    {
+      if (in->stack.value)
+      {
+        *in0 = in->stack.value;
+      }
+    }
+  }
 }
 
 inline b32
@@ -267,7 +277,7 @@ isSequenced(Ast *ast)
   switch (ast->kind)
   {
     case Ast_RewriteAst:
-    case Ast_Let:
+    case Ast_LetAst:
     case Ast_ForkAst:
     {out = true;} break;
     default: out = false;
@@ -440,12 +450,12 @@ addRewrite(ProofState *state, Term *eq_proof, TreePath *path, b32 right_to_left)
 }
 
 inline LocalBindings *
-extendBindings(Typer *env)
+extendBindings(Typer *typer)
 {
   LocalBindings *out = pushStruct(temp_arena, LocalBindings, true);
-  out->tail     = env->bindings;
-  out->arena    = temp_arena;
-  env->bindings = out;
+  out->tail  = typer->bindings;
+  out->arena = temp_arena;
+  typer->bindings = out;
   return out;
 }
 
@@ -560,7 +570,8 @@ printComposite(Arena *buffer, Composite *in, PrintOptions opt)
   b32 print_exists = false;
   if (!print_list)
   {
-    print_exists = (in->op == rea.Exists);
+    print_exists = (in->op == rea.Exists &&
+                    getArg(in, 1)->kind == Term_Function);
   }
 
   if (print_list)
@@ -887,9 +898,9 @@ print(Arena *buffer, Ast *in0, PrintOptions opt)
 
       case Ast_FunctionAst: {print(buffer, "lambda");} break;
 
-      case Ast_Let:
+      case Ast_LetAst:
       {
-        Let *in = castAst(in0, Let);
+        LetAst *in = castAst(in0, LetAst);
         print(buffer, in->lhs);
         if (in->type)
         {
@@ -942,11 +953,19 @@ printTermsInParentheses(Arena *buffer, i32 count, Term **terms, PrintOptions opt
 }
 
 internal void
-printStackPointerName(Arena *buffer, StackPointer *in)
+printStackPointerName(StringBuffer *buffer, Pointer *in)
 {
-  bool has_name = in->name.chars;
+  String name; i32 depth; i32 index;
+  if (in->pointer_kind == Pointer_Stack)
+  {
+    name  = in->stack.name;
+    depth = in->stack.depth;
+    index = in->stack.index;
+  }
+
+  bool has_name = name.chars;
   if (has_name)
-    print(buffer, in->name);
+    print(buffer, name);
   else
     print(buffer, "anon");
 
@@ -955,11 +974,11 @@ printStackPointerName(Arena *buffer, StackPointer *in)
     print(buffer, "<");
     if (!has_name || print_var_delta)
     {
-      print(buffer, "%d", in->depth);
+      print(buffer, "%d", depth);
     }
     if (!has_name || print_var_index)
     {
-      print(buffer, ",%d", in->index);
+      print(buffer, ",%d", index);
     }
     print(buffer, ">");
   }
@@ -977,17 +996,21 @@ printPointerName(StringBuffer *buffer, Pointer *in)
     Pointer *iter = in;
     for (b32 stop = false; !stop;)
     {
-      if (iter->is_stack_pointer)
+      switch (iter->pointer_kind)
       {
-        printStackPointerName(buffer, &iter->stack);
-        stop = true;
-      }
-      else
-      {
-        HeapPointer *heap = &iter->heap;
-        rev_field_names[path_length++] = heap->debug_field_name;
-        assert(path_length < max_path_length);
-        iter = heap->record;
+        case Pointer_Stack:
+        {
+          printStackPointerName(buffer, iter);
+          stop = true;
+        } break;
+
+        case Pointer_Heap:
+        {
+          HeapPointer *heap = &iter->heap;
+          rev_field_names[path_length++] = heap->debug_field_name;
+          assert(path_length < max_path_length);
+          iter = heap->record;
+        }
       }
     }
 
@@ -1242,6 +1265,18 @@ print(Arena *buffer, Term *in0, PrintOptions opt)
           print(buffer, "}");
         } break;
 
+        case Term_Let:
+        {
+          Let *in = (Let *)in0;
+          print(buffer, "let ");
+          print(buffer, in->lhs);
+          print(buffer, "=");
+          print(buffer, in->rhs);
+          print(buffer, " {");
+          print(buffer, in->body);
+          print(buffer, " }");
+        } break;
+
         default:
         {
           todoIncomplete;
@@ -1326,35 +1361,38 @@ prettyPrintScope(StringBuffer *buffer, Scope *scope)
          param_i < scope->param_count;
          param_i++)
     {
-      PointerList *list = pushStruct(arena, PointerList);
+      TermList *list = pushStruct(arena, TermList);
       list->head = pointers[param_i];
       list->tail = 0;
 
       while (list)
       {
-        Pointer *pointer = list->head;
+        Term *head = list->head;
         list = list->tail;
-        if (pointer)  // sometimes we error out, so pointer is null
+        if (Pointer *pointer = castTerm(head, Pointer))
         {
-          if (shouldPrintTypeInScope(pointer))
+          if (pointer)  // sometimes we error out, so pointer is null
           {
-            printPointerName(buffer, pointer);
-            print(buffer, ": ");
-            print(buffer, pointer->type);
-            print(buffer, "\n");
-          }
-
-          if (Record *record = castRecord(pointer))
-          {
-            Arrow *signature = getSignature(record->ctor);
-            for (i32 i=0; i < record->member_count; i++)
+            if (shouldPrintTypeInScope(pointer))
             {
-              // NOTE: print the member types.
-              if (!isInferredParameter(signature, i))
+              printPointerName(buffer, pointer);
+              print(buffer, ": ");
+              print(buffer, pointer->type);
+              print(buffer, "\n");
+            }
+
+            if (Record *record = castRecord(pointer))
+            {
+              Arrow *signature = getSignature(record->ctor);
+              for (i32 i=0; i < record->member_count; i++)
               {
-                Pointer *member = castTerm(record->members[i], Pointer);
-                assert(member);
-                llPush(arena, member, list);
+                // NOTE: print the member types.
+                if (!isInferredParameter(signature, i))
+                {
+                  Pointer *member = castTerm(record->members[i], Pointer);
+                  assert(member);
+                  llPush(arena, member, list);
+                }
               }
             }
           }
@@ -1375,9 +1413,9 @@ inline Scope *
 newScope(Scope *outer, i32 param_count, Pointer **values)
 {
   Scope *scope = pushStruct(temp_arena, Scope, true);
-  scope->outer       = outer;
-  scope->depth       = outer ? outer->depth+1 : 1;
-  scope->pointers    = values;
+  scope->outer    = outer;
+  scope->depth    = outer ? outer->depth+1 : 1;
+  scope->pointers = values;
   scope->param_count = param_count;
   return scope;
 }
@@ -1606,9 +1644,8 @@ evaluate_(EvalContext *ctx, Term *in0)
 inline Term *
 toValue(Scope *scope, Term *in0)
 {
-  Term **args = (Term **)scope->pointers;  // NOTE: not gonna write to the scope, so casting is ok
   EvalContext ctx = {.arg_count = scope->param_count,
-                     .args=args,
+                     .args=(Term **)scope->pointers,
                      .substitute_only=true};
   return evaluate_(&ctx, in0);
 }
@@ -1689,13 +1726,13 @@ isGround(Term *in0)
 inline b32
 isRootedFrom(Term *pointer0, Pointer *test_root)
 {
-  assert(test_root->is_stack_pointer);
+  assert(test_root->pointer_kind == Pointer_Stack);
   if (Pointer *pointer = castTerm(pointer0, Pointer))
   {
-    if (!pointer->is_stack_pointer)
+    if (pointer->pointer_kind == Pointer_Heap)
     {
       Pointer *root = pointer;
-      while (!root->is_stack_pointer)
+      while (root->pointer_kind == Pointer_Heap)
       {
         root = root->heap.record;
       }
@@ -1729,12 +1766,15 @@ equalPointer(Term *l0, Term *r0)
   Pointer *r = castTerm(r0, Pointer);
   if (l && r)
   {
-    if (l->is_stack_pointer && r->is_stack_pointer)
+    if (l->pointer_kind == Pointer_Stack &&
+        r->pointer_kind == Pointer_Stack)
     {
       out = (l->stack.depth == r->stack.depth &&
              l->stack.index == r->stack.index);
     }
-    else if (l->heap.index == r->heap.index)
+    else if (l->pointer_kind == Pointer_Heap &&
+             r->pointer_kind == Pointer_Heap &&
+             l->heap.index == r->heap.index)
     {
       // TODO: not happy with this "looping up" thing. Since "compareTerms"
       // might have already compared the parents, then descend down.
@@ -2053,7 +2093,7 @@ toAbstractTerm_(AbstractContext *ctx, Term *in0)
       case Term_Pointer:
       {
         Pointer *in = castTerm(in0, Pointer);
-        if (in->is_stack_pointer)
+        if (in->pointer_kind == Pointer_Stack)
         {
           if (in->stack.depth > ctx->env_depth)
           {
@@ -2071,6 +2111,7 @@ toAbstractTerm_(AbstractContext *ctx, Term *in0)
         }
         else
         {
+          assert(in->pointer_kind == Pointer_Heap);
           Term *record = toAbstractTerm_(ctx, in->heap.record);
           if (record != in->heap.record)
           {
@@ -2215,10 +2256,34 @@ newStackPointer(String name, i32 depth, i32 index, Term *type)
 {
   assert(depth);
   Pointer *out = newTerm(temp_arena, Pointer, type);
-  out->is_stack_pointer = true;
-  out->stack.name       = name;
-  out->stack.depth      = depth;
-  out->stack.index      = index;
+  out->pointer_kind = Pointer_Stack;
+  out->stack.name   = name;
+  out->stack.depth  = depth;
+  out->stack.index  = index;
+  return out;
+}
+
+inline Pointer *
+newLetPointer(String name, i32 depth, i32 index, Term *rhs)
+{
+  assert(depth);
+  Pointer *out = newTerm(temp_arena, Pointer, rhs->type);
+  out->pointer_kind = Pointer_Stack;
+  out->stack.name   = name;
+  out->stack.depth  = depth;
+  out->stack.index  = index;
+  out->stack.value    = rhs;
+  return out;
+}
+
+inline Pointer *
+newHeapPointer(String field_name, i32 field_index, Pointer *record, Term *type)
+{
+  Pointer *out = newTerm(temp_arena, Pointer, type);
+  out->pointer_kind          = Pointer_Heap;
+  out->heap.record           = record;
+  out->heap.index            = field_index;
+  out->heap.debug_field_name = field_name;
   return out;
 }
 
@@ -2519,7 +2584,7 @@ checkRecursiveCall(Term *op0, i32 arg_count, Term **args, Term *reduce_proof)
         auto &subject = fixpoint->fork_subject;
         if (subject)
         {
-          assert(subject->is_stack_pointer);
+          assert(subject->pointer_kind == Pointer_Stack);  // todo do we enforce this anywhere?
           i32 index = subject->stack.index;
           recursive_call_valid = isRootedFrom(args[index], subject);
         }
@@ -2576,13 +2641,10 @@ instantiate(Term *in0, i32 ctor_i)
       }
       for (i32 mem_i=poly_count; mem_i < member_count; mem_i++)
       {
-        Term *member_type = signature->param_types[mem_i];
-        member_type = substitute(member_type, member_count, members);
-        Pointer *member          = newTerm(arena, Pointer, member_type);
-        member->heap.record           = pointer;
-        member->heap.index            = mem_i;
-        member->heap.debug_field_name = signature->param_names[mem_i];
-        members[mem_i] = member;
+        String mem_name = signature->param_names[mem_i];
+        Term *mem_type = signature->param_types[mem_i];
+        mem_type = substitute(mem_type, member_count, members);
+        members[mem_i] = newHeapPointer(mem_name, mem_i, pointer, mem_type);
       }
       pointer->ref = newComposite(ctor, member_count, members);
       success = true;
@@ -2749,10 +2811,10 @@ apply(Term *op, i32 arg_count, Term **args, String unfold_name)
 }
 
 inline void
-addLocalBinding(Typer *env, String key, i32 var_id)
+addLocalBinding(Typer *typer, String key, i32 var_index)
 {
-  auto lookup = lookupCurrentFrame(env->bindings, key, true);
-  lookup.slot->var_id = var_id;
+  auto lookup = lookupCurrentFrame(typer->bindings, key, true);
+  lookup.slot->var_index = var_index;
 }
 
 inline Scope *
@@ -2764,6 +2826,7 @@ introduceSignature(Scope *outer_scope, Arrow *signature)
   {
     String  name = signature->param_names[param_i];
     Term   *type = toValue(scope, signature->param_types[param_i]);
+    // :fixpoint-pointers
     scope->pointers[param_i] = newStackPointer(name, scope->depth, param_i, type);
   }
   return scope;
@@ -2848,8 +2911,8 @@ lookupLocalName(Typer *typer, Token *token)
     LookupCurrentFrame lookup = lookupCurrentFrame(bindings, name, false);
     if (lookup.found)
     {
-      assert(lookup.slot->var_id < scope->param_count);
-      out = scope->pointers[lookup.slot->var_id];
+      assert(lookup.slot->var_index < scope->param_count);
+      out = scope->pointers[lookup.slot->var_index];
       break;
     }
     else
@@ -3517,7 +3580,11 @@ termKindScore(Term *in0)
     case Term_Pointer:
     {
       Pointer *in = (Pointer *)in0;
-      return in->is_stack_pointer ? 0 : 1;
+      switch (in->pointer_kind)
+      {
+        case Pointer_Stack: return 0;
+        case Pointer_Heap:  return 1;
+      }
     } break;
   };
   return 10 + in0->kind;
@@ -3557,22 +3624,25 @@ algebraLessThan(Term *a0, Term *b0)
           Pointer *a = (Pointer *)a0;
           Pointer *b = (Pointer *)b0;
           {
-            b32 is_stack_pointer = a->is_stack_pointer;
-            assert(b->is_stack_pointer == is_stack_pointer);
-            if (is_stack_pointer)
+            assert(a->pointer_kind == b->pointer_kind);
+            switch (a->pointer_kind)
             {
-              out = stringLessThan(a->stack.name, b->stack.name);
-            }
-            else
-            {
-              if (algebraLessThan(a->heap.record, b->heap.record))
+              case Pointer_Stack:
               {
-                out = true;
-              }
-              else if (a->heap.record == b->heap.record)
+                out = stringLessThan(a->stack.name, b->stack.name);
+              } break;
+
+              case Pointer_Heap:
               {
-                out = a->heap.index < b->heap.index;
-              }
+                if (algebraLessThan(a->heap.record, b->heap.record))
+                {
+                  out = true;
+                }
+                else if (a->heap.record == b->heap.record)
+                {
+                  out = a->heap.index < b->heap.index;
+                }
+              } break;
             }
           }
         } break;
@@ -4298,7 +4368,7 @@ buildFunctionGivenSignature(Typer *typer0, Arrow *signature, Ast *in_body,
       addGlobalBinding(global_name, out, in_fun->tag_count, in_fun->tags);
 
       fixpoint.fun  = out;
-      fixpoint.args = typer->scope->pointers;
+      fixpoint.args = typer->scope->pointers;  // :fixpoint-pointers
       if (in_fun->measure_function)
       {
         if (in_fun->well_founded_proof)
@@ -5310,7 +5380,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
                 Term *asset = newRewrite(eq_proof, in_expression, search.path, right_to_left);
                 String name = {};
                 Pointer *var = castTerm(in_expression, Pointer);
-                if (var && var->is_stack_pointer)
+                if (var && var->pointer_kind == Pointer_Stack)
                 {
                   name = var->stack.name;
                   hidePointer(typer, var);
@@ -5480,9 +5550,9 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
       }
     } break;
 
-    case Ast_Let:
+    case Ast_LetAst:
     {
-      Let  *in = castAst(in0, Let);
+      LetAst  *in = castAst(in0, LetAst);
       Term *type_hint = hole;
       if (in->type && in->type->kind != Ast_NormalizeMeAst)
       {
@@ -5522,7 +5592,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
             {
               if (Pointer *pointer = castTerm(rhs0, Pointer))
               {
-                if (pointer->is_stack_pointer)
+                if (pointer->pointer_kind == Pointer_Stack)
                 {
                   lhs = pointer->stack.name;
                 }
@@ -5711,6 +5781,28 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
         }
         else
           reportError(in, "can only alias to pointers");
+      }
+    } break;
+
+    case Ast_NewLetAst:
+    {
+      NewLetAst *in = (NewLetAst *)in0;
+      if (Term *rhs = buildTerm(typer, in->rhs, hole))
+      {
+        Scope *scope = typer->scope = newScope(typer->scope, 1);
+        Pointer *pointer = newLetPointer(in->lhs, scope->depth, 0, rhs);
+        scope->pointers[0] = pointer;
+        extendBindings(typer);
+        addLocalBinding(typer, in->lhs, 0);
+        if (Term *body = buildTerm(typer, in->body, goal0))
+        {
+          Let *out = newTerm(arena, Let, body->type);
+          out->lhs  = in->lhs;
+          out->rhs  = rhs;
+          out->body = body;
+          value = out;
+        }
+        unwindBindingsAndScope(typer);
       }
     } break;
 

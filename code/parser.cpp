@@ -212,7 +212,7 @@ inline Ast **
 getAstBody(Ast *item0)
 {
   // todo #speed at least use a switch here!
-  if (Let *let = castAst(item0, Let))
+  if (LetAst *let = castAst(item0, LetAst))
   {
     return &let->body;
   }
@@ -348,7 +348,7 @@ parseSequence(b32 require_braces=true)
         }
         else if (Ast *expression = parseExpression())
         {// normalize with let.
-          Let *let = newAst(arena, Let, token);
+          LetAst *let = newAst(arena, LetAst, token);
           let->rhs  = expression;
           let->type = ast_goal;
           let->lhs  = norm_name;
@@ -436,7 +436,7 @@ parseSequence(b32 require_braces=true)
           }
           if (noError())
           {
-            Let *let = newAst(arena, Let, token);
+            LetAst *let = newAst(arena, LetAst, token);
             let->lhs  = name;
             let->rhs  = proof;
             let->type = proposition;
@@ -454,7 +454,7 @@ parseSequence(b32 require_braces=true)
       {
         if (noError())
         {
-          Let *let = newAst(arena, Let, token);
+          LetAst *let = newAst(arena, LetAst, token);
           let->rhs  = expression;
           ast0 = let;
         }
@@ -569,7 +569,7 @@ parseSequence(b32 require_braces=true)
           pushContext("let: NAME := VALUE");
           if (Ast *rhs = parseExpression())
           {
-            Let *let = newAst(arena, Let, name);
+            LetAst *let = newAst(arena, LetAst, name);
             ast0 = let;
             let->lhs = name->string;
             let->rhs = rhs;
@@ -586,7 +586,7 @@ parseSequence(b32 require_braces=true)
             {
               if (Ast *rhs = parseExpression())
               {
-                Let *let = newAst(arena, Let, name);
+                LetAst *let = newAst(arena, LetAst, name);
                 let->lhs  = name->string;
                 let->rhs  = rhs;
                 let->type = type;
@@ -1027,6 +1027,27 @@ parseExists()
   return out;
 }
 
+internal NewLetAst *
+parseNewLet()
+{
+  Arena *arena = temp_arena;
+  NewLetAst *out = newAst(arena, NewLetAst, lastToken());
+  if (requireIdentifier())
+  {
+    out->lhs = lastString();
+    if (requireChar('='))
+    {
+      if (Ast *rhs = parseExpression())
+      {
+        out->rhs  = rhs;
+        out->body = parseSequence();
+      }
+    }
+  }
+  NULL_WHEN_ERROR(out);
+  return out;
+}
+
 internal Ast *
 parseOperand()
 {
@@ -1044,6 +1065,11 @@ parseOperand()
     case '[':
     {// :list-opening-brace-eaten
       operand = parseList(arena);
+    } break;
+
+    case Token_Keyword_let:
+    {
+      operand = parseNewLet();
     } break;
 
     case Token_Keyword_fn:
@@ -1396,7 +1422,7 @@ insertAutoNormalizations(Arena *arena, NormList norm_list, Ast *in0)
         {
           Identifier *item = norm_list.items[norm_id];
           // todo cleanup: we'll need to clean useless let-normalization too!
-          Let *new_body = newAst(arena, Let, &item->token);
+          LetAst *new_body = newAst(arena, LetAst, &item->token);
           new_body->lhs   = item->token.string;
           new_body->rhs   = item;
           new_body->type  = newAst(arena, NormalizeMeAst, &item->token);
@@ -1419,9 +1445,9 @@ insertAutoNormalizations(Arena *arena, NormList norm_list, Ast *in0)
       insertAutoNormalizations(arena, norm_list, in->body);
     } break;
 
-    case Ast_Let:
+    case Ast_LetAst:
     {
-      Let *in = castAst(in0, Let);
+      LetAst *in = castAst(in0, LetAst);
       insertAutoNormalizations(arena, norm_list, in->body);
     } break;
 

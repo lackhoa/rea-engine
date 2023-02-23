@@ -25,12 +25,13 @@ enum AstKind {
   Ast_ListAst,
   Ast_SubstAst,
   Ast_AlgebraNormAst,
+  Ast_NewLetAst,
 
   // Sequence
   Ast_ForkAst,
   Ast_RewriteAst,
   Ast_FunctionDecl,
-  Ast_Let,
+  Ast_LetAst,
   Ast_UnionAst,
   Ast_GoalTransform,
   Ast_Invert,
@@ -96,7 +97,14 @@ struct AstList
   AstList *tail;
 };
 
-struct Let : Ast {
+struct LetAst : Ast {
+  String  lhs;
+  Ast    *rhs;
+  Ast    *type;
+  Ast    *body;
+};
+
+struct NewLetAst : Ast {
   String  lhs;
   Ast    *rhs;
   Ast    *type;
