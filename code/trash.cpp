@@ -798,3 +798,25 @@ newConjunctionN(Arena *arena, i32 count, Term **conjuncts)
       }
     }
 #endif
+
+inline Fork *
+newForkOld(Term *subject, i32 case_count, Term **cases, Term *goal)
+{
+  i32 unused_var serial = DEBUG_SERIAL;
+  Arena *arena = temp_arena;
+  Union *uni = getUnionOrPolyUnion(subject->type);
+  assert(case_count == uni->ctor_count);
+  for (i32 i=0; i < case_count; i++)
+  {
+    instantiate(subject, i);
+    assertEqualNorm(cases[i]->type, goal);
+    uninstantiate(subject);
+  }
+
+  Fork *out = newTerm(arena, Fork, goal);
+  out->subject    = subject;
+  out->case_count = case_count;
+  out->cases      = cases;
+  return out;
+}
+

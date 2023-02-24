@@ -132,7 +132,6 @@ testExecutionModel :: (a,b: Nat) -> (x: Nat) -> Nat
   return(fn(x: Nat) -> Nat { fy := fn(y: Nat) -> Nat {return a+b+x+y;};
                              return fy(a)})
  }
-print testExecutionModel(1,2);
 check_truth testExecutionModel(1,2)(1) = 5;
 
 oneIsNotZero : 1 != 0 := prove {norm; return fn {seek}};
@@ -247,7 +246,10 @@ Vector :: union(n: Nat)
   cons(n: Nat, head: Nat, tail: Vector(n)) -> Vector(++(n)) }
 
 check prove Vector(1) {n := 0; return cons(n, 2, nil())};
-print prove {n := 0; return cons(++(n), 1, cons(n, 2, nil()))};
+check prove {n := 0; return cons(++(n), 1, cons(n, 2, nil()))};
+
+dreamTest :: (a,b: Nat, P: a=b) -> Nat
+{fork b {0 = 0, ++ fun := fn (Q: b.p=0) -> a=1 { rewrite Q in P; }; = 0}}
 
 ;; ---------------------------
 ;; The Manhattan algebra test!

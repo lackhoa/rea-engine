@@ -70,7 +70,7 @@ newAst_(Arena *arena, AstKind cat, Token *token, size_t size)
   ((cat *) newAst_(arena, Ast_##cat, token, sizeof(cat)))
 
 #define castAst(exp, Cat) ((exp)->kind == Ast_##Cat ? (Cat*)(exp) : 0)
-#define castTerm(exp, Cat) ((exp)->kind == Term_##Cat ? (Cat*)(exp) : 0)
+#define castTerm(exp, Cat) (((exp) && (exp)->kind == Term_##Cat) ? (Cat*)(exp) : 0)
 
 struct Identifier : Ast {
   // NOTE: Since the ast has a token, which already has the identifier in it, we

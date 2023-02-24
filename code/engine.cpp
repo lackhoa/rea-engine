@@ -1,11 +1,8 @@
 /*
   General Todos: 
   - #speed string interning.
-  - #tool something that cleans up when it goes out of scope
-  - #speed evaluating functions by substituting the body is really bad in case of "let"
   - clean up the data tree containing constructors
-  - we're printing terms every time we encounter an error, but the error might be recoverable so it's just wasted work. Either pass the intention down, or abandon the recoveriy route.
-  - Get stretchy buffer in here
+  - #tool Get stretchy buffer in here
  */
 
 #include "utils.h"
@@ -2700,42 +2697,46 @@ newEquality(Term *lhs, Term *rhs)
   return reaComposite(rea.equal, lhs->type, lhs, rhs);
 }
 
-internal b32
+internal void
 instantiate(Term *in0, i32 ctor_i)
 {
-  b32 success = false;
   Arena *arena = temp_arena;
+  Pointer *pointer = castTerm(in0, Pointer);
+  assert(!pointer->ref);
+  auto [uni, args] = castUnion(in0->type);
+  i32 poly_count = 0;
+  if (Arrow *uni_params = castTerm(uni->type, Arrow))
+  {
+    poly_count = getPolyParamCount(uni_params);
+  }
+
+  Constructor *ctor = uni->constructors[ctor_i];
+  Arrow *signature = getSignature(ctor);
+  i32 member_count = signature->param_count;
+  Term **members = pushArray(arena, member_count, Term *);
+  for (i32 mem_i = 0; mem_i < poly_count; mem_i++)
+  {
+    members[mem_i] = args[mem_i];
+  }
+  for (i32 mem_i=poly_count; mem_i < member_count; mem_i++)
+  {
+    String mem_name = signature->param_names[mem_i];
+    Term *mem_type = signature->param_types[mem_i];
+    mem_type = substitute(mem_type, member_count, members);
+    members[mem_i] = newHeapPointer(mem_name, mem_i, pointer, mem_type);
+  }
+  pointer->ref = newComposite(ctor, member_count, members);
+}
+
+inline b32
+canForkThisTerm(Term *in0)
+{
+  // #cutnpaste from "instantiate"
   if (Pointer *pointer = castTerm(in0, Pointer))
   {
-    auto [uni, args] = castUnion(in0->type);
-    if (!pointer->ref)
-    {
-      i32 poly_count = 0;
-      if (Arrow *uni_params = castTerm(uni->type, Arrow))
-      {
-        poly_count = getPolyParamCount(uni_params);
-      }
-
-      Constructor *ctor = uni->constructors[ctor_i];
-      Arrow *signature = getSignature(ctor);
-      i32 member_count = signature->param_count;
-      Term **members = pushArray(arena, member_count, Term *);
-      for (i32 mem_i = 0; mem_i < poly_count; mem_i++)
-      {
-        members[mem_i] = args[mem_i];
-      }
-      for (i32 mem_i=poly_count; mem_i < member_count; mem_i++)
-      {
-        String mem_name = signature->param_names[mem_i];
-        Term *mem_type = signature->param_types[mem_i];
-        mem_type = substitute(mem_type, member_count, members);
-        members[mem_i] = newHeapPointer(mem_name, mem_i, pointer, mem_type);
-      }
-      pointer->ref = newComposite(ctor, member_count, members);
-      success = true;
-    }
+    return !pointer->ref;
   }
-  return success;
+  return false;
 }
 
 inline void
@@ -2746,24 +2747,58 @@ uninstantiate(Term *in0)
   pointer->ref = 0;
 }
 
-inline Fork *
-newFork(Term *subject, i32 case_count, Term **cases, Term *goal)
+struct ForkBuilder {
+  i32     case_i;
+  Term  **cases;
+  Term   *goal;
+  Term   *subject;
+  Union  *uni;
+};
+
+inline ForkBuilder
+beginFork(Term *subject, Term *goal)
 {
   i32 unused_var serial = DEBUG_SERIAL;
-  Arena *arena = temp_arena;
-  Union *uni = getUnionOrPolyUnion(subject->type);
-  assert(case_count == uni->ctor_count);
+
+  assert(goal->kind != Term_Hole);
+  ForkBuilder builder = ForkBuilder{.goal=goal, .subject=subject};
+  builder.uni   = getUnionOrPolyUnion(subject->type);
+  builder.goal  = goal;
+  allocateArray(temp_arena, builder.uni->ctor_count, builder.cases, true);
+
+  return builder;
+}
+
+inline void
+startForkCase(ForkBuilder *builder, i32 case_i)
+{
+  builder->case_i = case_i;
+  assert(!builder->cases[case_i]);
+  instantiate(builder->subject, case_i);
+}
+
+inline void
+submitForkCase(ForkBuilder *builder, Term *case_)
+{
+  assertEqualNorm(case_->type, builder->goal);
+  assert(!builder->cases[builder->case_i]);
+  builder->cases[builder->case_i] = case_;
+  uninstantiate(builder->subject);
+}
+
+inline Fork *
+endFork(ForkBuilder *builder)
+{
+  Fork *out = 0;
+  i32 case_count = builder->uni->ctor_count;
   for (i32 i=0; i < case_count; i++)
   {
-    assert(instantiate(subject, i));
-    assertEqualNorm(cases[i]->type, goal);
-    uninstantiate(subject);
+    assert(builder->cases[i]);
   }
-
-  Fork *out = newTerm(arena, Fork, goal);
-  out->subject    = subject;
+  out = newTerm(temp_arena, Fork, builder->goal);
+  out->subject    = builder->subject;
   out->case_count = case_count;
-  out->cases      = cases;
+  out->cases      = builder->cases;
   return out;
 }
 
@@ -3269,6 +3304,13 @@ reaIdentity(Term *term)
   return newComputation_(term, term);
 }
 
+inline Fork*
+forkFalse(Term *false_proof, Term *goal)
+{
+  ForkBuilder builder = beginFork(false_proof, goal);
+  return endFork(&builder);
+}
+
 inline Term *
 seekGoalRecursive(Solver *solver, Term *value, Term *goal)
 {
@@ -3276,7 +3318,7 @@ seekGoalRecursive(Solver *solver, Term *value, Term *goal)
 
   if (equal(value->type, rea.False))
   {
-    out = newFork(value, 0, 0, goal);
+    out = forkFalse(value, goal);
   }
 
   if (!out && equalNorm(value->type, goal))
@@ -3305,7 +3347,7 @@ seekGoalRecursive(Solver *solver, Term *value, Term *goal)
         if (solve_args.args)
         {
           Term *f = newComposite(value, solve_args.arg_count, solve_args.args);
-          out = newFork(f, 0, 0, goal);
+          out = forkFalse(f, goal);
         }
       }
     }
@@ -4741,7 +4783,12 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
             }
             else
             {
-              if (expectedWrongType(typer)) silentError();
+              if (expectedWrongType(typer))
+              {
+                if (isDebugOn())
+                  breakhere;
+                silentError();
+              }
               else
               {
                 reportError(&in->token, "argument count does not match the number of explicit parameters (expected: %d, got: %d)", explicit_param_count, in->arg_count);
@@ -4912,7 +4959,7 @@ buildComposite(Typer *typer, CompositeAst *in, Term *goal)
                   }
                   else
                   {
-                    reportError("reduce proof is only applicable when the function is the fixpoint being built");
+                    reportError(in->reduce_proof, "reduce proof is only applicable when the function is the fixpoint being built");
                   }
                 }
 
@@ -5954,7 +6001,6 @@ forward_declare internal Term *
 buildFork(Typer *typer, ForkAst *in, Term *goal)
 {
   assert(goal->kind != Term_Hole);
-  Arena *arena = temp_arena;
   Fork *out = 0;
   i32 UNUSED_VAR serial = DEBUG_SERIAL++;
   if (Term *subject = buildTerm(typer, in->subject, hole))
@@ -5989,13 +6035,19 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
 
     if (Union *uni = getUnionOrPolyUnion(subject->type))
     {
-      Term **ordered_cases = pushArray(arena, uni->ctor_count, Term *, true);
+      ForkBuilder builder_ = beginFork(subject, goal);
+      auto builder = &builder_;
 
       // NOTE: For ux reason, we don't care if you have less cases, just
       // typecheck what we have.
       if (in->case_count > uni->ctor_count)
       {
         reportError(in, "fork provides more cases than expected! (expected %d)", uni->ctor_count);
+      }
+
+      if (!canForkThisTerm(subject))
+      {
+        reportError(in->subject, "cannot fork this term");
       }
 
       for (i32 input_case_i = 0;
@@ -6009,7 +6061,7 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
         {
           for (i32 i=0; i < in->case_count; i++)
           {
-            if (!ordered_cases[i])
+            if (!builder->cases[i])
             {
               ctor_i = i;
               break;
@@ -6030,25 +6082,21 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
 
         if (ctor_i != -1)
         {
-          if (instantiate(subject, ctor_i))
+          if (builder->cases[ctor_i])
           {
-            if (ordered_cases[ctor_i])
-            {
-              reportError(in->cases[input_case_i], "fork case handled twice");
-              attach("constructor", getConstructorName(uni, ctor_i));
-            }
-            else
-            {
-              typer->try_reductio = true;
-              pushPointerHider(typer);
-              ordered_cases[ctor_i] = buildTerm(typer, in->cases[input_case_i], goal);
-              popPointerHider(typer);
-            }
-            uninstantiate(subject);
+            reportError(in->cases[input_case_i], "fork case handled twice");
+            attach("constructor", getConstructorName(uni, ctor_i));
           }
           else
           {
-            reportError(in->subject, "cannot fork this term");
+            typer->try_reductio = true;
+            pushPointerHider(typer);
+            startForkCase(builder, ctor_i);
+            if (Term *build_case = buildTerm(typer, in->cases[input_case_i], goal))
+            {
+              submitForkCase(builder, build_case);
+            }
+            popPointerHider(typer);
           }
         }
         else
@@ -6067,26 +6115,24 @@ buildFork(Typer *typer, ForkAst *in, Term *goal)
         }
       }
 
+      if (in->case_count != uni->ctor_count)
+      {
+        reportError(in, "wrong number of cases");
+        StartString start = startString(error_buffer);
+        for (i32 ctor_i=0; ctor_i < uni->ctor_count; ctor_i++)
+        {
+          if (!builder->cases[ctor_i])
+          {
+            print(error_buffer, getConstructorName(uni, ctor_i));
+            print(error_buffer, ", ");
+          }
+        }
+        attach("constructors_remaining", endString(start));
+      }
+
       if (noError())
       {
-        if (in->case_count == uni->ctor_count)
-        {
-          out = newFork(subject, in->case_count, ordered_cases, goal);
-        }
-        else
-        {
-          reportError(in, "wrong number of cases");
-          StartString start = startString(error_buffer);
-          for (i32 ctor_i=0; ctor_i < uni->ctor_count; ctor_i++)
-          {
-            if (!ordered_cases[ctor_i])
-            {
-              print(error_buffer, getConstructorName(uni, ctor_i));
-              print(error_buffer, ", ");
-            }
-          }
-          attach("constructors_remaining", endString(start));
-        }
+        out = endFork(builder);
       }
     }
     else

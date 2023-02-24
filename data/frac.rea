@@ -11,18 +11,27 @@ define divides(q,a: Natp) := exists(t: Natp), a = t*q;
 define coprime(a,b: Natp) :=
 (r: Natp, da: divides(r, a), db: divides(r, b)) -> r = 1;
 
-difference :: fn(a,b: Natp) -> Natp
-{ fork a
-  { 1  = 1, ;; invalid
-    ++ fork b
-    { 1 = a.p,
-      ++ = difference(a.p,b.p);}}}
+;; difference :: fn(a,b: Natp) -> Natp
+;; { fork a
+;;   { 1  = 1, ;; invalid
+;;     ++ fork b
+;;     { 1 = a.p,
+;;       ++ = difference(a.p,b.p);}}}
 
-difference' :: fn(a,b: Natp, p: b < a) -> a = b+difference(a,b)
+;; difference' :: fn(a,b: Natp, p: b < a) -> a = b+difference(a,b)
+;; { fork a
+;;   { 1  unfold p; unfold p,
+;;     ++ fork b
+;;     { 1, ++ norm; recurse := difference'(a.p,b.p,p);}}}
+
+difference :: fn(a,b: Natp, p: b<a) -> exists(c:Natp) a=b+c
 { fork a
-  { 1  unfold p; unfold p,
+  { 1  unfold p; unfold p, ;; invalid
     ++ fork b
-    { 1, ++ norm; recurse := difference'(a.p,b.p,p);}}}
+    { 1  ex a.p {},
+      ++ unfold p; unfold p; prove b.p < a.p {}
+      recurse := difference(a.p,b.p,_);
+      ex recurse.e {}}}}
 
 ;; TODO: since we don't have nested fixpoints, we gotta hoist the function out here.
 ltWellFounded_ :: (a: Natp) -> Reachable(<, a)
@@ -44,61 +53,25 @@ ltWellFounded_ :: (a: Natp) -> Reachable(<, a)
 
 ltWellFounded : WellFounded(Natp, <) := prove {norm; return ltWellFounded_};
 
-;; QuotientRemainder :: union(^a,^b: Natp)
-;; { divideFail(p: a<b),
-;;   divideEvenly(quotient: Natp, p: a = quotient*b),
-;;   divideWithRemainder(quotient: Natp, remainder: Natp,
-;;                        p: a = quotient*b + remainder,
-;;                        q: remainder < b) }
+QuotientRemainder :: union(^a,^b: Natp)
+{ divideFail(p: a<b),
+  divideEvenly(quotient: Natp, p: a = quotient*b),
+  divideWithRemainder(quotient: Natp, remainder: Natp,
+                       p: a = quotient*b + remainder,
+                       q: remainder < b) }
 
-quotientRemainder :: fn(a,b: Natp) -> Natp
+quotientRemainder :: fn(a,b: Natp) -> QuotientRemainder(a,b)
 #measure(a, ltWellFounded)
 { ;; NOTE think "a / b"
   order := totalOrder(a,b);
   fork order
-  { eq return 1
+  { lt use divideFail {}
     ,
-    lt return 1  ;; fail
-    ,
-    gt
-    diff := difference(a,b);
-    recurse := use quotientRemainder
-    { a=diff, b=b,
-      #reduce { diff' := difference'(a,b, order.p);
-                rewrite diff';
-                prove diff < b + diff {=> diff < diff + b; use addIncreases}}};
-
-    ;; fork recurse
-    ;; { divideFail
-    ;;   use divideWithRemainder {quotient=1, remainder=diff.e};
-    ;;   ,
-    ;;   divideEvenly
-    ;;   prove a = b + recurse.quotient * b {rewrite <- recurse.p}
-    ;;   use divideEvenly {quotient = ++(recurse.quotient)};
-    ;;   ,
-    ;;   divideWithRemainder
-    ;;   prove a = (b + recurse.quotient * b) + recurse.remainder
-    ;;   { => a = b + recurse.quotient * b + recurse.remainder;
-    ;;     rewrite <- recurse.p;}
-    ;;   use divideWithRemainder {quotient = ++(recurse.quotient), remainder = recurse.remainder}}
-    }}
-
-quotientRemainder' :: fn(a,b: Natp) -> QuotientRemainder(a,b)
-#measure(a, ltWellFounded)
-{ ;; NOTE think "a / b"
-  order := totalOrder(a,b);
-  fork order
-  { eq
-    prove a = 1 * b {norm;}
-    return divideEvenly(1, _)
-    ,
-    lt
-    return divideFail(order.p)
+    eq
+    use divideEvenly {quotient=1}
     ,
     gt
-    diff    := difference(a,b, order.p);
-
-    ;; TODO: forcing people to use this "use" syntax isn't cool
+    diff := difference(a,b,_);
     recurse := use quotientRemainder
     { a=diff.e, b=b,
       #reduce { rewrite diff.p;
@@ -234,14 +207,14 @@ gcdUnique :: (a,b,q,q': Natp, hq: isGcd(q,a,b), hq': isGcd(q',a,b)) -> q=q'
   prove divides(q', q) {use hq.b.b}
   use dividesAntiSymmetric }
 
-FracReduce :: union {fracReduce(g,n,d: Natp)}
+FracFactor :: union {fracFactor(g,n,d: Natp)}
 
-reduce :: (a,b: Natp) -> exists(y:FracReduce) a = y.g*y.n /\ b = y.g*y.d /\ coprime(y.n, y.d)
+reduce :: (a,b: Natp) -> exists(y:FracFactor) a = y.g*y.n /\ b = y.g*y.d /\ coprime(y.n, y.d)
 { G := gcd(a, b); alias g G.e;
   unfold as h G.p;
   unfold as p seek(divides(g, a));
   unfold as q seek(divides(g, b));
-  ex fracReduce(g, p.e, q.e)
+  ex fracFactor(g, p.e, q.e)
   { prove (a * q.e = b * p.e)
     { => (p.e * g) * q.e = b * p.e;
       => (p.e * g) * q.e = (q.e * g) * p.e;
@@ -383,17 +356,12 @@ reduce_ :: (x:Fracb) -> exists(y:Fracb) x == y /\ coprime(y.n, y.d)
       => g*d*n = (g*d)*n
       => (g*d)*n = (g*d)*n}}}
 
-reduce :: (x:Fracb) -> Fracb { return reduce_(x).e;}
+reduce :: (x:Fracb) -> Fracb
+{ red := reduce_(x);
+  return red.e; }
 
-#debug
 reduceUnique :: (x,y: Fracb) -> reduce(x) = reduce(y)
-{ => reduce_(x).e = reduce_(y).e
-  ;; then we can reason about what "reduce_(x).e" is
-  }
-#debug off
-
-elimCoprime :: (a,b,c: Natp, coprime(a,b), divides(a, b*c)) -> divides(a,c)
-{}
-
-reduceUnique :: (a,b: Frac) -> reduce(a) = reduce(b)
-{}
+{ redx := reduce_(x);
+  redy := reduce_(y);
+  ;; ^ retrieve the full arguments
+  => redx.e = reduce(y)}
