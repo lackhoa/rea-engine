@@ -567,6 +567,10 @@ parseSequence(b32 require_braces=true)
       {
         LetEqAst *ast = newAst(arena, LetEqAst, token);
         ast->let_pointer = *lastToken();
+        if (optionalString("as") && requireIdentifier())
+        {
+          ast->name = lastString();
+        }
         ast0 = ast;
       }
     }

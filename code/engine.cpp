@@ -392,28 +392,40 @@ internal Term *
 rewriteTerm(Term *from, Term *to, TreePath *path, Term *in0)
 {
   Term *out0 = 0;
+  Arena *arena=temp_arena;
   maybeDeref(&in0);
   if (path)
   {
-    Composite *in  = castTerm(in0, Composite);
-    Composite *out = copyTerm(temp_arena, in);
-    if (path->head == -1)
+    if (Composite *in  = castTerm(in0, Composite))
     {
-      out->op = rewriteTerm(from, to, path->tail, in->op);
+      Composite *out = copyTerm(arena, in);
+      if (path->head == -1)
+      {
+        out->op = rewriteTerm(from, to, path->tail, in->op);
+      }
+      else
+      {
+        assert((path->head >= 0) && (path->head < out->arg_count));
+        allocateArray(arena, out->arg_count, out->args);
+        for (i32 arg_i=0; arg_i < out->arg_count; arg_i++)
+        {
+          if (arg_i == (i32)path->head)
+            out->args[arg_i] = rewriteTerm(from, to, path->tail, in->args[arg_i]);
+          else
+            out->args[arg_i] = in->args[arg_i];
+        }
+      }
+      out0 = out;
+    }
+    else if (Accessor *in = castTerm(in0, Accessor))
+    {
+      Accessor *out = copyTerm(arena, in);
+      assert(path->head == 0);
+      out->record = rewriteTerm(from, to, path->tail, in->record);
+      out0 = out;
     }
     else
-    {
-      assert((path->head >= 0) && (path->head < out->arg_count));
-      allocateArray(temp_arena, out->arg_count, out->args);
-      for (i32 arg_i=0; arg_i < out->arg_count; arg_i++)
-      {
-        if (arg_i == (i32)path->head)
-          out->args[arg_i] = rewriteTerm(from, to, path->tail, in->args[arg_i]);
-        else
-          out->args[arg_i] = in->args[arg_i];
-      }
-    }
-    out0 = out;
+      invalidCodePath;
   }
   else
   {
@@ -2696,6 +2708,59 @@ instantiate(Term *in0, i32 ctor_i)
   pointer->ref = newComposite(ctor, member_count, members);
 }
 
+// todo #speed painful accessor creation every time... must do this to support
+// arbitrary accessor.
+internal Term *
+newAccessorToStruct(Term *parent, i32 field_i)
+{
+  Term *out = 0;
+  Arena *arena = temp_arena;
+  auto [uni, args] = castUnion(parent->type);
+  i32 poly_count = 0;
+  if (Arrow *uni_params = castTerm(uni->type, Arrow))
+  {
+    poly_count = getPolyParamCount(uni_params);
+  }
+
+  Constructor *ctor = uni->constructors[0];
+  Arrow *signature = getSignature(ctor);
+  i32 member_count = signature->param_count;
+  Term **members = pushArray(arena, member_count, Term *);
+  for (i32 mem_i=0; mem_i < poly_count; mem_i++)
+  {
+    members[mem_i] = args[mem_i];
+    if (mem_i == field_i)
+    {
+      out = members[mem_i];
+      break;
+    }
+  }
+
+  if (!out)
+  {
+    for (i32 mem_i=poly_count; mem_i < member_count; mem_i++)
+    {
+      String field_name = signature->param_names[mem_i];
+      Term *mem_type = signature->param_types[mem_i];
+      mem_type = substitute(mem_type, member_count, members);
+      Accessor *member = newTerm(arena, Accessor, mem_type);
+      member->record           = parent;
+      member->debug_field_name = field_name;
+      member->index            = mem_i;
+      members[mem_i] = member;
+
+      if (mem_i == field_i)
+      {
+        out = members[field_i];
+        break;
+      }
+    }
+  }
+
+  assert(out);
+  return out;
+}
+
 inline b32
 canForkThisTerm(Term *in0)
 {
@@ -3465,6 +3530,10 @@ getOverloads(Typer *typer, Identifier *ident, Term *goal0)
     }
     else
     {
+      if (serial == 1505369)
+      {
+        DEBUG_LOG_unify = 1;
+      }
       b32 matches = false;
       allocateArray(temp_arena, slot->count, out.items);
       for (int slot_i=0; slot_i < slot->count; slot_i++)
@@ -3498,6 +3567,15 @@ getOverloads(Typer *typer, Identifier *ident, Term *goal0)
     reportError(ident, "identifier not found");
     attach("identifier", ident->token.string);
   }
+  return out;
+}
+
+inline TreePath *
+treePath(i32 head, TreePath *tail=0)
+{
+  TreePath *out = pushStruct(temp_arena, TreePath, true);
+  out->head = head;
+  out->tail = tail;
   return out;
 }
 
@@ -3554,7 +3632,7 @@ searchExpression(Term *lhs, Term* in0)
         Accessor* in = castTerm(in0, Accessor);
         SearchOutput recurse = searchExpression(lhs, in->record);
         found = recurse.found;
-        path  = recurse.path;
+        path  = treePath(0, recurse.path);
       } break;
 
       case Term_Hole:
@@ -3776,15 +3854,6 @@ algebraLessThan(Term *a0, Term *b0)
   //   DEBUG_DEDENT(); DUMP("=> ", out);
   // }
 
-  return out;
-}
-
-inline TreePath *
-treePath(i32 head, TreePath *tail=0)
-{
-  TreePath *out = pushStruct(temp_arena, TreePath, true);
-  out->head = head;
-  out->tail = tail;
   return out;
 }
 
@@ -5386,36 +5455,26 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
       AccessorAst *in = (AccessorAst *)(in0);
       if (Term *record0 = buildTerm(typer, in->record, hole))
       {
-        i32 ctor_i = 0;
-        Term **members = 0;
         if (Record *record = castRecord(record0))
         {
-          ctor_i  = record->ctor->index;
-          members = record->members;
-        }
-        else
-        {
-          reportError(in->record, "cannot access a non-record");
-        }
-
-        if (noError())
-        {
+          // is a record, or a pointer to a record
+          i32 ctor_i = record->ctor->index;
+          Term **members = record->members;
           Union *uni = getUnionOrPolyUnion((record0)->type);
           Arrow *struc = getConstructorSignature(uni, ctor_i);
           i32 param_count = struc->param_count;
-          b32 valid_param_name = false;
+
           i32 field_i = -1;
           for (i32 param_i=0; param_i < param_count; param_i++)
           {// figure out the param id
             if (equal(in->field_name.string, struc->param_names[param_i]))
             {
               field_i = param_i;
-              valid_param_name = true;
               break;
             }
           }
 
-          if (valid_param_name)
+          if (field_i != -1)
           {
             value = members[field_i];
           }
@@ -5424,6 +5483,33 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
             tokenError(&in->field_name, "accessor has invalid member");
             attach("expected a member of constructor", getConstructorName(uni, ctor_i));
           }
+        }
+        else
+        {
+          if (Union *uni = getUnionOrPolyUnion(record0->type))
+          {
+            if (uni->ctor_count == 1)
+            {
+              Arrow *struc = getConstructorSignature(uni, 0);
+              i32 param_count = struc->param_count;
+
+              i32 field_i = -1;
+              for (i32 param_i=0; param_i < param_count; param_i++)
+              {// figure out the param id
+                if (equal(in->field_name.string, struc->param_names[param_i]))
+                {
+                  field_i = param_i;
+                  break;
+                }
+              }
+
+              if (field_i != -1)
+              {
+                value = newAccessorToStruct(record0, field_i);
+              }
+            }
+          }
+          reportError(in->record, "cannot access a non-record");
         }
       }
     } break;
@@ -5923,7 +6009,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
           {
             is_let_pointer = true;
             Term *asset = newComputation_(pointer, pointer->stack.value);
-            value = buildWithNewAsset(typer, {}, asset, in->body, goal0);
+            value = buildWithNewAsset(typer, in->name, asset, in->body, goal0);
             recursed = true;
           }
         }

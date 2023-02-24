@@ -331,30 +331,55 @@ coprimeFracEq :: (a,b,c,d: Natp, E: a*d=b*c, Cab: coprime(a,b), Ccd: coprime(c,d
                                  => a*d = b*(q*a + r)
                                  => a*d = b*c}}}}
 
-reduce_ :: (x:Fracb) -> exists(y:Fracb) x == y /\ coprime(y.n, y.d)
+;; TODO: hack for this: exists(y:Fracb) x == y /\ coprime(y.n, y.d)
+FracReduce :: union(^x:Fracb)
+{ fracReduce(e: Fracb, eq: x==e, co: coprime(e.n, e.d)) }
+
+reduce_ :: (x:Fracb) -> FracReduce(x)
 #no_expand  ;; TODO: just a hack until we have Set/Prop
 { R := reduce(x.n,x.d); alias g R.e.g; alias n R.e.n; alias d R.e.d;
-  ex n / d
-  { use pair
-    { a
-      => x.n * d = x.d * n
-      => x.n * d = (g*d) * n
-      => (g*n)*d = (g*d)*n
-      => g*n*d = (g*d)*n
-      => g*d*n = (g*d)*n
-      => (g*d)*n = (g*d)*n}}}
+  use fracReduce
+  { e=n/d,
+    eq
+    => x.n * d = x.d * n
+    => x.n * d = (g*d) * n
+    => (g*n)*d = (g*d)*n
+    => g*n*d = (g*d)*n
+    => g*d*n = (g*d)*n
+    => (g*d)*n = (g*d)*n}}
 
 reduce :: (x:Fracb) -> Fracb
+#no_expand
 { red := reduce_(x);
   return red.e; }
 
 getEvidence :: ($T: Type, $prop: T -> Type, e: Exists(prop)) -> T
 { return e.e }
 
-reduceUnique :: (x,y: Fracb) -> reduce(x) = reduce(y)
+reduceUnique :: (x,y: Fracb, E: x==y) -> reduce(x) = reduce(y)
 { redx := reduce_(x);
   redy := reduce_(y);
   ;; ^ retrieve the full arguments
-  let_eq redx;
-  let_eq redy;
+  let_eq redx as Hrx;
+  let_eq redy as Hry;
+  prove reduce(x) = redx.e { unfold(reduce); rewrite <- Hrx}
+  prove reduce(y) = redy.e { unfold(reduce); rewrite <- Hry}
+
+  alias a redx.e.n; alias b redx.e.d;
+  alias c redy.e.n; alias d redy.e.d;
+
+  => a/b = reduce(y);
+  => a/b = c/d;
+
+  prove a*d = b*c
+  { => a/b == c/d {};
+    prove c/d == a/b
+    { prove c/d == x { prove x == c/d {use eqChain {b=y}} use eqSwap}
+      use eqChain {b=x}}
+    use eqSwap}
+
+  prove (a=c /\ b=d) {use coprimeFracEq {}}
+
+  => c/b = c/d
+  => c/d = c/d
   }

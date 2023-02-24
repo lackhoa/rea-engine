@@ -226,6 +226,7 @@ struct AlgebraNormAst : Ast {
 struct LetEqAst : Ast {
   Token  let_pointer;
   Ast   *body;
+  String name;
 };
 
 #define PARSER_H

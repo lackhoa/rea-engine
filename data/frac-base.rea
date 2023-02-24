@@ -44,3 +44,29 @@ mulDistributive :: (a,b,c: Fracb) -> (a+b)*c == a*c+b*c
  norm;
  algebra_norm;
  }
+
+eqChain :: (a,b,c: Fracb, P: a == b, Q: b == c) -> a == c
+#hint
+{ norm; norm P; norm Q;
+  prove
+  {
+    => (a.n * c.d) * b.n = (a.d * c.n) * b.n;
+    => (a.n * c.d) * b.n = a.d * c.n * b.n;
+    => a.n * c.d * b.n = a.d * c.n * b.n;
+    => a.n * c.d * b.n = a.d * b.n * c.n;
+    => a.n * b.n * c.d = a.d * b.n * c.n;
+    => a.n * b.d * c.n = a.d * b.n * c.n;
+    => a.n * b.d * c.n = (a.d * b.n) * c.n;
+    => a.n * b.d * c.n = (a.n * b.d) * c.n;
+    => a.n * b.d * c.n = a.n * b.d * c.n;
+    }
+  use mulCancelRight {c=b.n};
+  }
+
+eqSwap :: (a,b: Fracb, P: a==b) -> b==a
+#hint
+{ norm; norm P;
+  => b.n * a.d = a.n * b.d
+  => a.d * b.n = a.n * b.d
+  => a.d * b.n = a.d * b.n
+  }
