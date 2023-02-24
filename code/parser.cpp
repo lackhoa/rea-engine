@@ -240,6 +240,10 @@ getAstBody(Ast *item0)
   {
     return &item->body;
   }
+  if (LetEqAst *item = castAst(item0, LetEqAst))
+  {
+    return &item->body;
+  }
   invalidCodePath;
   return 0;
 }
@@ -556,6 +560,15 @@ parseSequence(b32 require_braces=true)
     {
       AlgebraNormAst *ast = newAst(arena, AlgebraNormAst, token);
       ast0 = ast;
+    }
+    else if (equal(tactic, "let_eq"))
+    {
+      if (requireIdentifier())
+      {
+        LetEqAst *ast = newAst(arena, LetEqAst, token);
+        ast->let_pointer = *lastToken();
+        ast0 = ast;
+      }
     }
     else if (isIdentifier(token))
     {
@@ -1027,6 +1040,7 @@ parseExists()
   return out;
 }
 
+#if 0
 internal NewLetAst *
 parseNewLet()
 {
@@ -1047,6 +1061,7 @@ parseNewLet()
   NULL_WHEN_ERROR(out);
   return out;
 }
+#endif
 
 internal Ast *
 parseOperand()
@@ -1067,10 +1082,12 @@ parseOperand()
       operand = parseList(arena);
     } break;
 
+#if 0
     case Token_Keyword_let:
     {
       operand = parseNewLet();
     } break;
+#endif
 
     case Token_Keyword_fn:
     {

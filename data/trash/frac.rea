@@ -70,3 +70,17 @@ coprimeFracImpossible ::
       }
     , 
     }}
+
+;; difference :: fn(a,b: Natp) -> Natp
+;; { fork a
+;;   { 1  = 1, ;; invalid
+;;     ++ fork b
+;;     { 1 = a.p,
+;;       ++ = difference(a.p,b.p);}}}
+
+;; difference' :: fn(a,b: Natp, p: b < a) -> a = b+difference(a,b)
+;; { fork a
+;;   { 1  unfold p; unfold p,
+;;     ++ fork b
+;;     { 1, ++ norm; recurse := difference'(a.p,b.p,p);}}}
+

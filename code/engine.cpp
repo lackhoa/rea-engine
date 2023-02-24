@@ -1802,34 +1802,6 @@ reaIsCons(Term *in0)
   return in->ctor == rea.cons;
 }
 
-// TODO: I think we can eliminate this comparison by simply storing a temporary
-// pointer in the fork case.
-inline b32
-equalPointer(Term *l0, Term *r0)
-{
-  b32 out = false;
-  Pointer *l = castTerm(l0, Pointer);
-  Pointer *r = castTerm(r0, Pointer);
-  if (l && r)
-  {
-    if (l->pointer_kind == Pointer_Stack &&
-        r->pointer_kind == Pointer_Stack)
-    {
-      out = (l->stack.depth == r->stack.depth &&
-             l->stack.index == r->stack.index);
-    }
-    else if (l->pointer_kind == Pointer_Heap &&
-             r->pointer_kind == Pointer_Heap &&
-             l->heap.index == r->heap.index)
-    {
-      // TODO: not happy with this "looping up" thing. Since "compareTerms"
-      // might have already compared the parents, then descend down.
-      out = equalPointer(l->heap.record, r->heap.record);
-    }
-  }
-  return out;
-}
-
 // TODO: We should only compare terms of the same type!
 internal CompareTerms
 compareTerms(Arena *arena, Term *l0, Term *r0)
@@ -1843,10 +1815,6 @@ compareTerms(Arena *arena, Term *l0, Term *r0)
   }
 
   if (l0 == r0)
-  {
-    out.result = {Trinary_True};
-  }
-  else if (equalPointer(l0, r0))
   {
     out.result = {Trinary_True};
   }
@@ -5938,6 +5906,30 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
         }
         else
           reportError(in, "can only alias to pointers");
+      }
+    } break;
+
+    case Ast_LetEqAst:
+    {
+      LetEqAst *in = (LetEqAst *)in0;
+     
+      if (Term *pointer0 = lookupLocalName(typer, &in->let_pointer))
+      {
+        b32 is_let_pointer = false;
+        if (Pointer *pointer = castTerm(pointer0, Pointer))
+        {
+          if (pointer->pointer_kind == Pointer_Stack &&
+              pointer->stack.value)
+          {
+            is_let_pointer = true;
+            Term *asset = newComputation_(pointer, pointer->stack.value);
+            value = buildWithNewAsset(typer, {}, asset, in->body, goal0);
+            recursed = true;
+          }
+        }
+
+        if (!is_let_pointer)
+          reportError(&in->let_pointer, "expected a let-pointer");
       }
     } break;
   }

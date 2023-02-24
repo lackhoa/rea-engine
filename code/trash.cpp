@@ -820,3 +820,31 @@ newForkOld(Term *subject, i32 case_count, Term **cases, Term *goal)
   return out;
 }
 
+// TODO: I think we can eliminate this comparison by simply storing a temporary
+// pointer in the fork case.
+inline b32
+equalPointer(Term *l0, Term *r0)
+{
+  b32 out = false;
+  Pointer *l = castTerm(l0, Pointer);
+  Pointer *r = castTerm(r0, Pointer);
+  if (l && r)
+  {
+    if (l->pointer_kind == Pointer_Stack &&
+        r->pointer_kind == Pointer_Stack)
+    {
+      out = (l->stack.depth == r->stack.depth &&
+             l->stack.index == r->stack.index);
+    }
+    else if (l->pointer_kind == Pointer_Heap &&
+             r->pointer_kind == Pointer_Heap &&
+             l->heap.index == r->heap.index)
+    {
+      // TODO: not happy with this "looping up" thing. Since "compareTerms"
+      // might have already compared the parents, then descend down.
+      out = equalPointer(l->heap.record, r->heap.record);
+    }
+  }
+  return out;
+}
+

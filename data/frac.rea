@@ -11,19 +11,6 @@ define divides(q,a: Natp) := exists(t: Natp), a = t*q;
 define coprime(a,b: Natp) :=
 (r: Natp, da: divides(r, a), db: divides(r, b)) -> r = 1;
 
-;; difference :: fn(a,b: Natp) -> Natp
-;; { fork a
-;;   { 1  = 1, ;; invalid
-;;     ++ fork b
-;;     { 1 = a.p,
-;;       ++ = difference(a.p,b.p);}}}
-
-;; difference' :: fn(a,b: Natp, p: b < a) -> a = b+difference(a,b)
-;; { fork a
-;;   { 1  unfold p; unfold p,
-;;     ++ fork b
-;;     { 1, ++ norm; recurse := difference'(a.p,b.p,p);}}}
-
 difference :: fn(a,b: Natp, p: b<a) -> exists(c:Natp) a=b+c
 { fork a
   { 1  unfold p; unfold p, ;; invalid
@@ -345,6 +332,7 @@ coprimeFracEq :: (a,b,c,d: Natp, E: a*d=b*c, Cab: coprime(a,b), Ccd: coprime(c,d
                                  => a*d = b*c}}}}
 
 reduce_ :: (x:Fracb) -> exists(y:Fracb) x == y /\ coprime(y.n, y.d)
+#no_expand  ;; TODO: just a hack until we have Set/Prop
 { R := reduce(x.n,x.d); alias g R.e.g; alias n R.e.n; alias d R.e.d;
   ex n / d
   { use pair
@@ -360,8 +348,13 @@ reduce :: (x:Fracb) -> Fracb
 { red := reduce_(x);
   return red.e; }
 
+getEvidence :: ($T: Type, $prop: T -> Type, e: Exists(prop)) -> T
+{ return e.e }
+
 reduceUnique :: (x,y: Fracb) -> reduce(x) = reduce(y)
 { redx := reduce_(x);
   redy := reduce_(y);
   ;; ^ retrieve the full arguments
-  => redx.e = reduce(y)}
+  let_eq redx;
+  let_eq redy;
+  }

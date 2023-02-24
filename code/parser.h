@@ -25,7 +25,8 @@ enum AstKind {
   Ast_ListAst,
   Ast_SubstAst,
   Ast_AlgebraNormAst,
-  Ast_NewLetAst,
+  // Ast_NewLetAst,
+  Ast_LetEqAst,
 
   // Sequence
   Ast_ForkAst,
@@ -220,6 +221,11 @@ struct SubstAst : Ast {
 struct AlgebraNormAst : Ast {
   Ast *expression;
   Ast *body;
+};
+
+struct LetEqAst : Ast {
+  Token  let_pointer;
+  Ast   *body;
 };
 
 #define PARSER_H
