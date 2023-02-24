@@ -1262,7 +1262,7 @@ precedenceOf(String op)
   {
     out = eq_precedence + 5;
   }
-  else if (equal(op, "+") || equal(op, "-"))
+  else if (equal(op, "+") || equal(op, "-") || equal(op, "+/"))
   {
     out = eq_precedence + 10;
   }
@@ -1270,7 +1270,7 @@ precedenceOf(String op)
   {
     out = eq_precedence + 15;
   }
-  else if (equal(op, "&") || equal(op, "*") || equal(op, "/"))
+  else if (equal(op, "&") || equal(op, "*") || equal(op, "*/") || equal(op, "/"))
   {
     out = eq_precedence + 20;
   }
@@ -1602,6 +1602,7 @@ parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
         if (is_theorem)
         {
           insertAutoNormalizations(arena, norm_list, body);
+          setFlag(&out->function_flags, FunctionFlag_never_expand);
         }
         out->body      = body;
         out->signature = signature;

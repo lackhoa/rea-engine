@@ -1,0 +1,46 @@
+#load "frac.rea"
+
+Q :: union {|(l,r: Frac)}
+
+== :: fn(a,b: Q) -> Type
+{return a.l+b.r = a.r+b.l}
+
++ :: fn(a,b: Q) -> Q
+{return (a.l+b.l) | (a.r+b.r)}
+
+* :: fn(a,b: Q) -> Q
+{return (a.l*b.r + a.r*b.l) | (a.l*b.l + a.r*b.r)}
+
+addCommutative :: (a,b: Q) -> a+b == b+a
+#hint
+{
+ norm;
+ algebra_norm;
+ }
+
+addAssociative :: (a,b,c: Q) -> (a+b)+c == a+b+c
+#hint
+{
+ norm;
+ algebra_norm;
+ }
+
+mulCommutative :: (a,b: Q) -> b*a == a*b
+#hint
+{
+ norm;
+ algebra_norm;
+ }
+
+mulAssociative :: (a,b,c: Q) -> (a*b)*c == a*b*c
+#hint
+{
+ norm;
+ algebra_norm;
+ }
+
+mulDistributive :: (a,b,c: Q) -> (a+b)*c == a*c+b*c
+{
+ norm;
+ algebra_norm;
+ }

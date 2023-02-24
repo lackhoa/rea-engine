@@ -1,11 +1,5 @@
 #load "frac-base.rea"
 
-addSameDenominator :: (a,b,c: Natp) -> a/c + b/c == (a+b)/c
-{ norm; algebra_norm;}
-
-cancelCommonFactor :: (a,b,r: Natp) -> (a*r)/(b*r) == a/b
-{ norm; algebra_norm; }
-
 define divides(q,a: Natp) := exists(t: Natp), a = t*q;
 
 define coprime(a,b: Natp) :=
@@ -331,11 +325,11 @@ coprimeFracEq :: (a,b,c,d: Natp, E: a*d=b*c, Cab: coprime(a,b), Ccd: coprime(c,d
                                  => a*d = b*(q*a + r)
                                  => a*d = b*c}}}}
 
-;; TODO: hack for this: exists(y:Fracb) x == y /\ coprime(y.n, y.d)
-FracReduce :: union(^x:Fracb)
-{ fracReduce(e: Fracb, eq: x==e, co: coprime(e.n, e.d)) }
+;; TODO: hack for this: exists(y:Frac) x == y /\ coprime(y.n, y.d)
+FracReduce :: union(^x:Frac)
+{ fracReduce(e: Frac, eq: x==e, co: coprime(e.n, e.d)) }
 
-reduce_ :: (x:Fracb) -> FracReduce(x)
+reduce_ :: (x:Frac) -> FracReduce(x)
 #no_expand  ;; TODO: just a hack until we have Set/Prop
 { R := reduce(x.n,x.d); alias g R.e.g; alias n R.e.n; alias d R.e.d;
   use fracReduce
@@ -348,7 +342,7 @@ reduce_ :: (x:Fracb) -> FracReduce(x)
     => g*d*n = (g*d)*n
     => (g*d)*n = (g*d)*n}}
 
-reduce :: (x:Fracb) -> Fracb
+reduce :: fn (x:Frac) -> Frac
 #no_expand
 { red := reduce_(x);
   return red.e; }
@@ -356,7 +350,7 @@ reduce :: (x:Fracb) -> Fracb
 getEvidence :: ($T: Type, $prop: T -> Type, e: Exists(prop)) -> T
 { return e.e }
 
-reduceUnique :: (x,y: Fracb, E: x==y) -> reduce(x) = reduce(y)
+reduceUnique :: (x,y: Frac, E: x==y) -> reduce(x) = reduce(y)
 { redx := reduce_(x);
   redy := reduce_(y);
   ;; ^ retrieve the full arguments
@@ -383,3 +377,71 @@ reduceUnique :: (x,y: Fracb, E: x==y) -> reduce(x) = reduce(y)
   => c/b = c/d
   => c/d = c/d
   }
+
+reduceEq :: (x: Frac) -> reduce(x) == x
+#hint
+{ redx := reduce_(x);
+  let_eq redx as Hrx;
+  prove reduce(x) = redx.e { unfold(reduce); rewrite <- Hrx}
+  => redx.e == x}
+
++ :: fn(a,b: Frac) -> Frac
+#tag(Frac) #no_expand
+{return reduce(a+/b)}
+
+* :: fn(a,b: Frac) -> Frac
+#tag(Frac) #no_expand
+{return reduce(a*/b)}
+
+addCommutative :: (a,b: Frac) -> a+b = b+a
+#hint #tag(Frac)
+{ unfold(+); norm; use reduceUnique}
+
+addAssociative :: (a,b,c: Frac) -> (a+b)+c = a+b+c
+#hint #tag(Frac)
+{ unfold(+); norm;
+  prove reduce(a +/ b) +/ c == a +/ reduce(b +/ c)
+  { prove reduce(a +/ b) +/ c == (a +/ b) +/ c { use addWellDefined }
+    prove (a +/ b) +/ c == a +/ reduce(b +/ c)
+    { prove (a +/ b) +/ c == a +/ b +/ c {use addAssociative'}
+      prove a +/ b +/ c == a +/ reduce(b +/ c) {use addWellDefined}
+      use eqChain {b=a +/ b +/ c}}
+    use eqChain {b=(a +/ b) +/ c}}
+  use reduceUnique
+  }
+
+mulCommutative :: (a,b: Frac) -> a*b = b*a
+#hint #tag(Frac)
+{ unfold(*); norm; use reduceUnique}
+
+mulAssociative :: (a,b,c: Frac) -> (a*b)*c = a*b*c
+#hint #tag(Frac)
+{ unfold(*); norm;
+  prove reduce(a */ b) */ c == a */ reduce(b */ c)
+  { use eqChain
+    { b=(a */ b) */ c,
+      P use mulWellDefined,
+      Q use eqChain
+      { b=a */ b */ c,
+        Q use mulWellDefined}}}
+  use reduceUnique}
+
+mulDistributive :: (a,b,c: Frac) -> (a+b)*c = a*c+b*c
+#hint #tag(Frac, right)
+{ unfold(*); unfold(+); norm;
+  prove reduce(a +/ b) */ c == reduce(a */ c) +/ reduce(b */ c)
+  { use eqChain
+    { b=(a +/ b) */ c,
+      P use mulWellDefined,
+      Q use eqChain
+      { b=a*/c +/ b*/c,
+        Q use addWellDefined}}}
+  use reduceUnique}
+
+mulDistributive :: (a,b,c: Frac) -> c*(a+b) = c*a+c*b
+#hint #tag(Frac, left)
+{ => (a+b)*c = c*a+c*b
+  => (a+b)*c = a*c+c*b
+  => (a+b)*c = a*c+b*c}
+
+algebra_declare Frac;

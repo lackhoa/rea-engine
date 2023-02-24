@@ -127,7 +127,7 @@ mulPosv2 :: (a,b: Nat, a_positive: a != 0, b_positive: b != 0) -> a*b != 0
   ,
   }}
 
-testExecutionModel :: (a,b: Nat) -> (x: Nat) -> Nat
+testExecutionModel :: fn(a,b: Nat) -> (x: Nat) -> Nat
 {
   return(fn(x: Nat) -> Nat { fy := fn(y: Nat) -> Nat {return a+b+x+y;};
                              return fy(a)})

@@ -1,51 +1,90 @@
 #load "natp.rea"
 
-Fracb :: union {/(n,d: Natp)}
+Frac :: union {/(n,d: Natp)}
 
-== :: fn(a,b: Fracb) -> Type
+== :: fn(a,b: Frac) -> Type
 {return a.n*b.d = a.d*b.n}
 
-+ :: fn(a,b: Fracb) -> Fracb
++/ :: fn(a,b: Frac) -> Frac
+#no_expand
 {return (a.n*b.d + a.d*b.n) / (a.d*b.d)}
 
-* :: fn(a,b: Fracb) -> Fracb
+*/ :: fn(a,b: Frac) -> Frac
+#no_expand
 {return (a.n*b.n) / (a.d*b.d)}
 
-addCommutative :: (a,b: Fracb) -> a+b == b+a
+addWellDefined :: fn(a,b,x,y: Frac, P: a==b, Q: x==y) -> a+/x == b+/y
+{ unfold(+/); norm P; norm Q; algebra_norm; norm;
+  ;; a.n * b.d * x.d * y.d + a.d * b.d * x.n * y.d =
+  ;; a.d * b.n * x.d * y.d + a.d * b.d * x.d * y.n
+
+  prove a.n * b.d * x.d * y.d = a.d * b.n * x.d * y.d
+  { prove a.n * b.d * x.d * y.d = (a.d * b.n) * x.d * y.d
+    { prove a.n * b.d * x.d * y.d = (a.n * b.d) * x.d * y.d {algebra_norm}
+      prove (a.n * b.d) * x.d * y.d = (a.d * b.n) * x.d * y.d {rewrite P}
+      use eqChain {b=(a.n * b.d) * x.d * y.d}}
+    prove (a.d * b.n) * x.d * y.d = a.d * b.n * x.d * y.d {algebra_norm}
+    use eqChain {b=(a.d * b.n) * x.d * y.d}} as P1;
+
+  prove a.d * b.d * x.n * y.d = a.d * b.d * x.d * y.n {rewrite Q} as P2
+
+  rewrite P1; rewrite P2;
+  }
+
+mulWellDefined :: fn(a,b,x,y: Frac, P: a==b, Q: x==y) -> a*/x == b*/y
+{ unfold(*/); norm P; norm Q; algebra_norm; norm;
+  => (a.n * b.d) * x.n * y.d = a.d * b.n * x.d * y.n
+  => (a.d * b.n) * x.n * y.d = a.d * b.n * x.d * y.n
+  => a.d * b.n * x.n * y.d = a.d * b.n * x.d * y.n
+  => a.d * b.n * x.n * y.d = a.d * b.n * x.n * y.d }
+
+addCommutative' :: (a,b: Frac) -> a+/b == b+/a
 #hint
 {
- norm;
+ unfold(+/);
  algebra_norm;
  }
 
-addAssociative :: (a,b,c: Fracb) -> (a+b)+c == a+b+c
+addAssociative' :: (a,b,c: Frac) -> (a+/b)+/c == a+/b+/c
 #hint
 {
- norm;
+ unfold(+/);
  algebra_norm;
  }
 
-mulCommutative :: (a,b: Fracb) -> b*a == a*b
+mulCommutative' :: (a,b: Frac) -> b*/a == a*/b
 #hint
 {
- norm;
+ unfold(*/);
  algebra_norm;
  }
 
-mulAssociative :: (a,b,c: Fracb) -> (a*b)*c == a*b*c
+mulAssociative' :: (a,b,c: Frac) -> (a*/b)*/c == a*/b*/c
 #hint
 {
- norm;
+ unfold(*/);
  algebra_norm;
  }
 
-mulDistributive :: (a,b,c: Fracb) -> (a+b)*c == a*c+b*c
+mulDistributiveRight :: (a,b,c: Frac) -> (a+/b)*/c == a*/c+/b*/c
+#hint
 {
- norm;
+ unfold(+/); unfold(*/);
  algebra_norm;
  }
 
-eqChain :: (a,b,c: Fracb, P: a == b, Q: b == c) -> a == c
+mulDistributiveLeft :: (a,b,c: Frac) -> c*/(a+/b) == c*/a+/c*/b
+#hint
+{
+ unfold(+/); unfold(*/);
+ algebra_norm;
+ }
+
+eqSame :: (a: Frac) -> a==a
+#hint
+{norm;}
+
+eqChain :: (a,b,c: Frac, P: a == b, Q: b == c) -> a == c
 #hint
 { norm; norm P; norm Q;
   prove
@@ -63,7 +102,7 @@ eqChain :: (a,b,c: Fracb, P: a == b, Q: b == c) -> a == c
   use mulCancelRight {c=b.n};
   }
 
-eqSwap :: (a,b: Fracb, P: a==b) -> b==a
+eqSwap :: (a,b: Frac, P: a==b) -> b==a
 #hint
 { norm; norm P;
   => b.n * a.d = a.n * b.d

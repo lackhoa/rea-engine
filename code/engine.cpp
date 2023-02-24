@@ -2504,6 +2504,7 @@ normalize(Term *in0, NormOptions options={})
 forward_declare inline b32
 equalNorm(Term *l, Term *r)
 {
+  i32 unused_var serial = DEBUG_SERIAL;
   if (equal(l, r))
   {
     return true;
@@ -2512,6 +2513,11 @@ equalNorm(Term *l, Term *r)
   {
     Term *lnorm = normalize(l, {.unfold_name=Unfold_Everything});
     Term *rnorm = normalize(r, {.unfold_name=Unfold_Everything});
+    if (serial == 2991002)
+    {
+      DUMP(lnorm);
+      DUMP(rnorm);
+    }
     return equal(lnorm, rnorm);
   }
   return false;
@@ -2904,11 +2910,12 @@ apply(Term *op, i32 arg_count, Term **args, String unfold_name)
   if (Function *fun = castTerm(op, Function))
   {// Function application
     b32 should_apply_function = true;
-    if (fun->body == 0)
+    auto flags = fun->function_flags;
+    if (fun->body == 0 || checkFlag(flags, FunctionFlag_never_expand))
     {
       should_apply_function = false;  // NOTE: not strictly needed
     }
-    else if (checkFlag(fun->function_flags, FunctionFlag_no_expand))
+    else if (checkFlag(flags, FunctionFlag_no_expand))
     {
       should_apply_function = (unfold_name.chars &&
                                (unfold_name.chars == Unfold_Everything.chars ||
@@ -3322,6 +3329,7 @@ maybeEqualByComputation(Term *lhs, Term *rhs)
 inline Term *
 reaEqualByComputation(Term *lhs, Term *rhs)
 {
+  i32 unused_var serial = DEBUG_SERIAL;
   Term *out = maybeEqualByComputation(lhs, rhs);
   if (!out)
   {
@@ -4288,6 +4296,9 @@ algebraNorm_(Algebra *algebra, Transformation *transform)
         associative = algebra->mulAssociative;
         commutative = algebra->mulCommutative;
       }
+
+      if (serial == 2990839)
+        breakhere;
 
       algebraFlatten(op, associative, transform);
 
@@ -7018,7 +7029,7 @@ int engineMain()
     "../data/test.rea",
     // "../data/natp.rea",
     "../data/z-slider.rea",
-    "../data/frac.rea",
+    "../data/q.rea",
   };
   for (i32 file_id=0; file_id < arrayCount(files); file_id++)
   {
