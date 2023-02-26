@@ -2,6 +2,23 @@
 
 #include <cstdint>
 #include <stdio.h>
+#include "stdlib.h"
+
+struct BufferHeader {
+  size_t len;
+  size_t cap;
+  void *items[0];
+};
+
+#define bufHeader_(buffer) ((BufferHeader *)((char *)(buffer) - offsetof(BufferHeader, items)))
+#define doesBufFit_(buffer, new_len) (new_len <= bufCap(buffer))
+#define bufFit_(buffer, new_len) doesBufFit_(buffer, new_len) ? 0 : (buffer = (mytypeof(buffer))bufGrow_(buffer, new_len, sizeof(*buffer)))
+#define bufLen(buffer) (buffer ? bufHeader_(buffer)->len : 0)
+#define bufCap(buffer) (buffer ? bufHeader_(buffer)->cap : 0)
+#define bufPush(buffer, item) (bufFit_(buffer, bufLen(buffer)+1)), buffer[bufHeader_(buffer)->len++] = item
+#define bufFree(buffer) free(bufHeader_(buffer))
+
+void * bufGrow_(void *buffer, size_t new_len, size_t item_size);
 
 //
 // Compilers

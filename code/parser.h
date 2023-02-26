@@ -170,7 +170,6 @@ struct FunctionAst : Ast {
 
   String builtin_name;
 
-  i32     tag_count;
   String *tags;
 
   FunctionAst *measure_function;

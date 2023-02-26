@@ -1,5 +1,6 @@
 #include "engine.h"
 #include "lexer.cpp"
+#include "utils.h"
 
 #define NULL_WHEN_ERROR(name) if (noError()) {assert(name);} else {name = {};}
 
@@ -1558,14 +1559,11 @@ parseGlobalFunction(Arena *arena, Token *name, b32 is_theorem)
         {
           if (requireChar('('))
           {
-            i32 todo_cap = 8;
-            allocateArray(arena, todo_cap, out->tags);
             for (; hasMore();)
             {
               if (requireIdentifier())
               {
-                out->tags[out->tag_count++] = lastToken()->string;
-                assert(out->tag_count <= todo_cap);
+                bufPush(out->tags, lastString());
               }
               if (eitherOrChar(',', ')')) break;
             }

@@ -246,26 +246,24 @@ struct Arrow : Term {
   Term   *output_type;
 };
 
-struct GlobalBinding {
+struct GlobalSlot {
   String key;
-  i32    count;
 
-  Term   *terms[8];
-  i32     tag_counts[8];
-  String *tags[8];
+  Term   **terms;
+  String **tags;
 
-  GlobalBinding *hash_tail;
+  GlobalSlot *hash_tail;
 };
 
 struct GlobalBindings  // :global-bindings-zero-at-startup
 {
-    GlobalBinding table[1024];
+    GlobalSlot table[1024];
 };
 
 struct BuildTerm
 {
   Term *value;
-  operator bool()   { return value; }
+  operator bool()  { return value; }
   operator Term*() { return value; }
 };
 

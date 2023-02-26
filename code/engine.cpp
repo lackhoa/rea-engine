@@ -11,6 +11,7 @@
 #include "engine.h"
 #include "parser.cpp"
 #include "debug_config.h"
+#include "utils.cpp"
 
 global_variable Fixpoint *current_global_fixpoint;
 
@@ -18,6 +19,8 @@ Term  hole_ = {.kind = Term_Hole};
 Term *hole = &hole_;
 
 global_variable EngineState global_state;
+
+inline i32 slotCount(GlobalSlot *slot) {return (i32)bufLen(slot->terms);}
 
 inline b32
 isDebugOn()
@@ -2004,11 +2007,11 @@ equalTrinary(Term *lhs0, Term *rhs0)
   return compareTerms(0, lhs0, rhs0).result;
 }
 
-internal GlobalBinding *
+internal GlobalSlot *
 lookupGlobalNameSlot(String key, b32 add_new)
 {
   // :global-bindings-zero-at-startup
-  GlobalBinding *slot = 0;
+  GlobalSlot *slot = 0;
   u32 hash = stringHash(key) % arrayCount(global_state.bindings->table);
   slot = global_state.bindings->table + hash;
   b32 first_slot_valid = slot->key.length == 0;
@@ -2024,7 +2027,7 @@ lookupGlobalNameSlot(String key, b32 add_new)
       {
         if (add_new)
         {
-          slot->hash_tail = pushStruct(global_state.top_level_arena, GlobalBinding, true);
+          slot->hash_tail = pushStruct(global_state.top_level_arena, GlobalSlot, true);
           slot = slot->hash_tail;
           slot->key = key;
         }
@@ -2040,12 +2043,12 @@ lookupGlobalNameSlot(String key, b32 add_new)
     slot = 0;
 
   if (slot && !add_new)
-    assert(slot->count != 0);
+    assert(bufLen(slot->terms) != 0);
 
   return slot;
 }
 
-internal GlobalBinding *
+internal GlobalSlot *
 lookupGlobalNameSlot(Identifier *ident, b32 add_new)
 {
   return lookupGlobalNameSlot(ident->token.string, add_new);
@@ -2992,10 +2995,10 @@ introduceSignature(Scope *outer_scope, Arrow *signature)
   return scope;
 }
 
-inline GlobalBinding *
+inline GlobalSlot *
 lookupGlobalName(Token *token)
 {
-  if (GlobalBinding *slot = lookupGlobalNameSlot(token->string, false))
+  if (GlobalSlot *slot = lookupGlobalNameSlot(token->string, false))
     return slot;
   else
   {
@@ -3011,30 +3014,24 @@ inline Term *
 lookupBuiltin(char *name)
 {
   Token token = newToken(name);
-  GlobalBinding *slot = lookupGlobalName(&token);
-  assert(slot->count == 1);
+  GlobalSlot *slot = lookupGlobalName(&token);
+  assert(slotCount(slot) == 1);
   return slot->terms[0];
 }
 
 inline void
-addGlobalBinding(Token *name, Term *value, i32 tag_count=0, String *tags=0)
+addGlobalBinding(Token *name, Term *value, String *tags=0)
 {
   Arena *arena = global_state.top_level_arena;
   assert(inArena(arena, value));
-  GlobalBinding *slot = lookupGlobalNameSlot(name->string, true);
+  GlobalSlot *slot = lookupGlobalNameSlot(name->string, true);
   // TODO #cleanup check for type conflict
 
-  i32 slot_i = slot->count++;
-  slot->terms[slot_i] = value;
-  assert(slot->count <= arrayCount(slot->terms));
+  bufPush(slot->terms, value);
+  bufPush(slot->tags, tags);
 
   Token *name_copy = pushCopy(arena, name);
   value->global_name = name_copy;
-  if (tags)
-  {
-    slot->tag_counts[slot_i] = tag_count;
-    slot->tags[slot_i]       = copyArray(arena, tag_count, tags);
-  }
 }
 
 inline void
@@ -3528,23 +3525,19 @@ getOverloads(Typer *typer, Identifier *ident, Term *goal0)
 {
   i32 UNUSED_VAR serial = DEBUG_SERIAL;
   TermArray out = {};
-  if (GlobalBinding *slot = lookupGlobalNameSlot(ident, false))
+  if (GlobalSlot *slot = lookupGlobalNameSlot(ident, false))
   {
     if (goal0->kind == Term_Hole)
     {
       // bypass typechecking.
       out.items = slot->terms;
-      out.count = slot->count;
+      out.count = slotCount(slot);
     }
     else
     {
-      if (serial == 1505369)
-      {
-        DEBUG_LOG_unify = 1;
-      }
       b32 matches = false;
-      allocateArray(temp_arena, slot->count, out.items);
-      for (int slot_i=0; slot_i < slot->count; slot_i++)
+      allocateArray(temp_arena, slotCount(slot), out.items);
+      for (int slot_i=0; slot_i < slotCount(slot); slot_i++)
       {
         Term *item = slot->terms[slot_i];
         if (Arrow *signature = castTerm((item)->type, Arrow))
@@ -3565,7 +3558,7 @@ getOverloads(Typer *typer, Identifier *ident, Term *goal0)
           reportError(ident, "found no matching overload");
           attach("operator", ident->token.string);
           attach("output_type_goal", goal0);
-          attach("available_overloads", slot->count, slot->terms, printOptionPrintType());
+          attach("available_overloads", slotCount(slot), slot->terms, printOptionPrintType());
         }
       }
     }
@@ -3702,15 +3695,17 @@ addHint(Arena *arena, HintDatabase *hint_db, Term *term)
 }
 
 inline Term *
-getOverloadFromTags(GlobalBinding *lookup, i32 query_tag_count, String *query_tags)
+getOverloadFromTags(GlobalSlot *lookup, i32 query_tag_count, String *query_tags)
 {
   Term *out = 0;
-  for (i32 slot_i=0; slot_i < lookup->count && !out; slot_i++)
+  for (i32 slot_i=0; slot_i < slotCount(lookup) && !out; slot_i++)
   {
-    i32 tag_count = lookup->tag_counts[slot_i];
     String *tags  = lookup->tags[slot_i];
+    size_t tag_count = bufLen(tags);
     b32 failed = false;
-    for (i32 query_tag_i=0; query_tag_i < query_tag_count && !failed; query_tag_i++)
+    for (i32 query_tag_i=0;
+         query_tag_i < query_tag_count && !failed;
+         query_tag_i++)
     {
       String query_tag = query_tags[query_tag_i];
       failed = true;
@@ -4554,7 +4549,7 @@ buildFunctionGivenSignature(Typer *typer0, Arrow *signature, Ast *in_body,
     if (global_name)
     {
       // NOTE: add binding first to support recursion
-      addGlobalBinding(global_name, out, in_fun->tag_count, in_fun->tags);
+      addGlobalBinding(global_name, out, in_fun->tags);
 
       fixpoint.fun  = out;
       fixpoint.args = typer->scope->pointers;  // :fixpoint-pointers
@@ -4686,22 +4681,34 @@ buildWithNewAsset(Typer *typer, String name, Term *asset, Ast *body, Term *goal)
   return out;
 }
 
-inline void
+inline b32
 reportAmbiguousError(Typer *typer, Ast *ast, char *message)
 {
   if (expectedAmbiguous(typer))
+  {
     silentError();
+    return false;
+  }
   else
+  {
     reportError(ast, message);
+    return true;
+  }
 }
 
-inline void
+inline b32
 reportWrongTypeError(Typer *typer, Ast *ast, char *message)
 {
   if (expectedWrongType(typer))
+  {
     silentError();
+    return false;
+  }
   else
+  {
     reportError(ast, message);
+    return true;
+  }
 }
 
 
@@ -5322,6 +5329,8 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
 
     case Ast_Identifier:
     {
+      if (serial == 10)
+        breakhere;
       Identifier *in = castAst(in0, Identifier);
       Token *name = &in->token;
       if (goal0 == rea.U32)
@@ -5343,20 +5352,16 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
         }
         else
         {
-          if (GlobalBinding *globals = lookupGlobalName(name))
+          if (GlobalSlot *slot = lookupGlobalName(name))
           {
-            for (i32 value_id = 0; value_id < globals->count; value_id++)
+            for (i32 value_id = 0; value_id < slotCount(slot); value_id++)
             {
-              Term *slot_value = globals->terms[value_id];
+              Term *slot_value = slot->terms[value_id];
               if (matchType((slot_value)->type, goal0))
               {
                 if (value)
-                {// ambiguous
-                  if (expectedAmbiguous(typer)) silentError();
-                  else
-                  {
-                    tokenError(name, "not enough type information to disambiguate global name");
-                  }
+                {
+                  reportAmbiguousError(typer, in, "not enough type information to disambiguate global name");
                   break;
                 }
                 else
@@ -5365,17 +5370,16 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
                 }
               }
             }
+
             if (!value)
             {
-              if (expectedWrongType(typer)) silentError();
-              else
+              if (reportWrongTypeError(typer, in, "global name does not match expected type"))
               {
-                tokenError(name, "global name does not match expected type");
                 attach("name", name);
                 attach("expected_type", goal0);
-                if (globals->count == 1)
+                if (slotCount(slot) == 1)
                 {
-                  attach("actual_type", (globals->terms[0])->type);
+                  attach("actual_type", slot->terms[0]->type);
                 }
               }
             }
@@ -5703,10 +5707,10 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
               {
                 if (!lookupLocalName(typer, &ident->token))
                 {
-                  if (GlobalBinding *slot = lookupGlobalNameSlot(ident, false))
+                  if (GlobalSlot *slot = lookupGlobalNameSlot(ident, false))
                   {
                     is_global_identifier = true;
-                    for (i32 i=0; i < slot->count; i++)
+                    for (i32 i=0; i < slotCount(slot); i++)
                     {
                       hints = addHint(temp_arena, hints, slot->terms[i]);
                     }
@@ -5860,7 +5864,7 @@ buildTerm(Typer *typer, Ast *in0, Term *goal0)
     case Ast_OverloadAst:
     {
       OverloadAst *in = castAst(in0, OverloadAst);
-      if (GlobalBinding *lookup = lookupGlobalNameSlot(in->function_name, false))
+      if (GlobalSlot *lookup = lookupGlobalNameSlot(in->function_name, false))
       {
         pushItemsAs(arena, tags, in->distinguisher);
         value = getOverloadFromTags(lookup, 1, tags);
@@ -6708,7 +6712,7 @@ interpretTopLevel(EngineState *state)
           for (i32 fun_i=0; fun_i < function_count && noError(); fun_i++)
           {
             String function_name = toString(function_names[fun_i]);
-            if (GlobalBinding *lookup = lookupGlobalNameSlot(function_name, false))
+            if (GlobalSlot *lookup = lookupGlobalNameSlot(function_name, false))
             {
               assert(type->global_name);
               i32     tag_count = 0;
@@ -7003,6 +7007,26 @@ beginInterpreterSession(Arena *top_level_arena, FilePath input_path)
   return success;
 }
 
+internal void
+bufTest()
+{
+  int *buffer = 0;
+  for (i32 i=0; i < 100; i++)
+  {
+    bufFit_(buffer, bufLen(buffer)+1);
+    buffer[bufLen(buffer)] = i;
+    bufHeader_(buffer)->len++;
+  }
+
+  assert(bufLen(buffer) == 100);
+  for (i32 i=0; i < 100; i++)
+  {
+    assert(buffer[i] == i);
+  }
+
+  bufFree(buffer);
+}
+
 int engineMain()
 {
   int success = true;
@@ -7011,6 +7035,7 @@ int engineMain()
   // for printf debugging: when it crashes you can still see the prints
   setvbuf(stdout, NULL, _IONBF, 0);
 #endif
+  bufTest();
 
   assert(arrayCount(language_keywords) == Token_Keyword_END - Token_Keyword_START);
 
@@ -7027,8 +7052,6 @@ int engineMain()
 
   char *files[] = {
     "../data/test.rea",
-    // "../data/natp.rea",
-    "../data/z-slider.rea",
     "../data/q.rea",
   };
   for (i32 file_id=0; file_id < arrayCount(files); file_id++)
